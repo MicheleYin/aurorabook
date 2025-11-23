@@ -18,7 +18,7 @@ import type {
   ChapterProgressSnapshot,
   ChapterSelectionOptions,
 } from "./components/reader/types";
-import { getChapterPageCount, getLibraryBookStatus } from "./lib/utils";
+import { getLibraryBookStatus } from "./lib/utils";
 
 const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   theme: "system",
@@ -26,6 +26,8 @@ const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   contentPadding: "comfortable",
   fontSize: "medium",
 };
+
+const PROGRESS_LOG_PREFIX = "[ReaderProgress]";
 
 function App() {
   const {
@@ -114,14 +116,17 @@ function App() {
 
   type ProgressUpdatePayload = {
     chapterId: string;
-    pageIndex?: number;
-    pageCount?: number;
+    scrollTop?: number;
+    scrollHeight?: number;
+    clientHeight?: number;
     percent?: number;
   };
 
   const updateBookProgress = useCallback(
     (bookId: string, payload: ProgressUpdatePayload) => {
       if (!payload?.chapterId) return;
+
+      console.debug(`${PROGRESS_LOG_PREFIX} update requested`, { bookId, payload });
 
       setLibrary((prev) => {
         let updated = false;
@@ -145,38 +150,53 @@ function App() {
             existingProgress?.currentChapterId === chapter.id &&
             existingProgress.currentChapterIndex === chapterIndex;
 
-          const resolvedPageCountCandidate =
-            typeof payload.pageCount === "number" && Number.isFinite(payload.pageCount)
-              ? payload.pageCount
-              : getChapterPageCount(chapter) ??
-                (chapterMatchesExisting
-                  ? existingProgress?.currentChapterPageCount
-                  : undefined) ??
-                1;
+          const previousScrollTop =
+            typeof existingProgress?.currentChapterScrollTop === "number" &&
+            Number.isFinite(existingProgress.currentChapterScrollTop)
+              ? Math.max(existingProgress.currentChapterScrollTop, 0)
+              : 0;
+          const previousScrollHeight =
+            typeof existingProgress?.currentChapterScrollHeight === "number" &&
+            Number.isFinite(existingProgress.currentChapterScrollHeight)
+              ? Math.max(existingProgress.currentChapterScrollHeight, 0)
+              : 0;
+          const previousClientHeight =
+            typeof existingProgress?.currentChapterClientHeight === "number" &&
+            Number.isFinite(existingProgress.currentChapterClientHeight)
+              ? Math.max(existingProgress.currentChapterClientHeight, 0)
+              : 0;
+          const previousPercent =
+            typeof existingProgress?.chapterProgressPercent === "number" &&
+            Number.isFinite(existingProgress.chapterProgressPercent)
+              ? existingProgress.chapterProgressPercent
+              : 0;
 
-          const pageCount = Math.max(1, Math.round(resolvedPageCountCandidate));
-
-          const requestedPageIndex =
-            typeof payload.pageIndex === "number" && Number.isFinite(payload.pageIndex)
-              ? Math.round(payload.pageIndex)
+          const resolvedScrollTop =
+            typeof payload.scrollTop === "number" && Number.isFinite(payload.scrollTop)
+              ? Math.max(payload.scrollTop, 0)
               : chapterMatchesExisting
-                ? existingProgress?.currentChapterPageIndex ?? 0
+                ? previousScrollTop
                 : 0;
 
-          const pageIndex = Math.min(
-            Math.max(requestedPageIndex, 0),
-            Math.max(pageCount - 1, 0),
-          );
+          const resolvedScrollHeight =
+            typeof payload.scrollHeight === "number" && Number.isFinite(payload.scrollHeight)
+              ? Math.max(payload.scrollHeight, 0)
+              : chapterMatchesExisting
+                ? previousScrollHeight
+                : 0;
+
+          const resolvedClientHeight =
+            typeof payload.clientHeight === "number" && Number.isFinite(payload.clientHeight)
+              ? Math.max(payload.clientHeight, 0)
+              : chapterMatchesExisting
+                ? previousClientHeight
+                : 0;
 
           const percentSource =
             typeof payload.percent === "number" && Number.isFinite(payload.percent)
               ? payload.percent
               : chapterMatchesExisting
-                ? existingProgress?.chapterProgressPercent ?? 0
-                : pageCount > 1
-                  ? pageIndex / (pageCount - 1)
-                  : pageIndex > 0
-                    ? 1
+                ? previousPercent
                     : 0;
 
           const percent = Number(Math.min(Math.max(percentSource ?? 0, 0), 1).toFixed(4));
@@ -185,8 +205,9 @@ function App() {
             currentChapterId: chapter.id,
             currentChapterHref: chapter.href,
             currentChapterIndex: chapterIndex,
-            currentChapterPageIndex: pageIndex,
-            currentChapterPageCount: pageCount,
+            currentChapterScrollTop: resolvedScrollTop,
+            currentChapterScrollHeight: resolvedScrollHeight,
+            currentChapterClientHeight: resolvedClientHeight,
             chapterProgressPercent: percent,
             updatedAt: timestamp,
           };
@@ -195,16 +216,38 @@ function App() {
             existingProgress &&
             existingProgress.currentChapterId === nextProgress.currentChapterId &&
             existingProgress.currentChapterIndex === nextProgress.currentChapterIndex &&
-            existingProgress.currentChapterPageIndex === nextProgress.currentChapterPageIndex &&
-            existingProgress.currentChapterPageCount === nextProgress.currentChapterPageCount &&
+            Math.abs(
+              (typeof existingProgress.currentChapterScrollTop === "number"
+                ? existingProgress.currentChapterScrollTop
+                : 0) - nextProgress.currentChapterScrollTop,
+            ) < 1 &&
+            Math.abs(
+              (typeof existingProgress.currentChapterScrollHeight === "number"
+                ? existingProgress.currentChapterScrollHeight
+                : 0) - nextProgress.currentChapterScrollHeight,
+            ) < 1 &&
+            Math.abs(
+              (typeof existingProgress.currentChapterClientHeight === "number"
+                ? existingProgress.currentChapterClientHeight
+                : 0) - nextProgress.currentChapterClientHeight,
+            ) < 1 &&
             Math.abs(existingProgress.chapterProgressPercent - nextProgress.chapterProgressPercent) <
-              0.001;
+              0.002;
 
           if (isUnchanged) {
+            console.debug(`${PROGRESS_LOG_PREFIX} unchanged progress, skipping persist`, {
+              bookId,
+              chapterId: chapter.id,
+            });
             return book;
           }
 
           updated = true;
+          console.debug(`${PROGRESS_LOG_PREFIX} persisting progress`, {
+            bookId,
+            chapterId: chapter.id,
+            progress: nextProgress,
+          });
           return {
             ...book,
             progress: nextProgress,
@@ -291,6 +334,7 @@ function App() {
     (bookId: string) => {
       const selectedBook = library.find((book) => book.id === bookId);
       setActiveBookId(bookId);
+      console.debug(`${PROGRESS_LOG_PREFIX} select book`, { bookId });
       let progressChapterId: string | undefined;
       if (selectedBook?.progress?.currentChapterId) {
         const candidate = selectedBook.progress.currentChapterId;
@@ -321,17 +365,20 @@ function App() {
       const progressUpdate: ProgressUpdatePayload = { chapterId };
 
       if (requestedScrollPosition === "top") {
-        progressUpdate.pageIndex = 0;
+        progressUpdate.scrollTop = 0;
+        progressUpdate.scrollHeight = 0;
+        progressUpdate.clientHeight = 0;
         progressUpdate.percent = 0;
       } else if (requestedScrollPosition === "bottom") {
-        const chapter = activeBook?.chapters.find((entry) => entry.id === chapterId);
-        const pageCountCandidate =
-          (chapter ? getChapterPageCount(chapter) ?? chapter.estimatedPageCount : undefined) ?? 1;
-        const pageCount = Math.max(1, Math.round(pageCountCandidate));
-        progressUpdate.pageCount = pageCount;
-        progressUpdate.pageIndex = pageCount - 1;
         progressUpdate.percent = 1;
       }
+
+      console.debug(`${PROGRESS_LOG_PREFIX} select chapter`, {
+        bookId: activeBookId,
+        chapterId,
+        requestedScrollPosition,
+        progressUpdate,
+      });
 
       updateBookProgress(activeBookId, progressUpdate);
 
@@ -339,15 +386,17 @@ function App() {
       setPendingFragment(fragment && fragment.length > 0 ? fragment.replace(/^#/, "") : null);
       setActiveView("reader");
     },
-    [activeBook, activeBookId, updateBookProgress],
+    [activeBookId, updateBookProgress],
   );
 
   const handleChapterProgress = useCallback(
     (bookId: string, snapshot: ChapterProgressSnapshot) => {
+      console.debug(`${PROGRESS_LOG_PREFIX} received progress snapshot`, { bookId, snapshot });
       updateBookProgress(bookId, {
         chapterId: snapshot.chapterId,
-        pageIndex: snapshot.pageIndex,
-        pageCount: snapshot.pageCount,
+        scrollTop: snapshot.scrollTop,
+        scrollHeight: snapshot.scrollHeight,
+        clientHeight: snapshot.clientHeight,
         percent: snapshot.percent,
       });
     },
@@ -460,7 +509,7 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
       <HiddenFileInput
         ref={fileInputRef}
         accept=".epub,application/epub+zip"
@@ -469,16 +518,16 @@ function App() {
         tabIndex={-1}
         onChange={handleWebFileSelection}
       />
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
         <div className="flex justify-end">
           <ThemeSwitcher value={uiTheme} onChange={setUiTheme} />
         </div>
 
-        <div className="flex-1 space-y-6">
+        <div className="flex-1 min-h-0 space-y-6">
           {isLibraryView ? (
-            <div className="flex flex-col">{libraryView}</div>
+            <div className="flex flex-1 min-h-0 flex-col">{libraryView}</div>
           ) : (
-            <div className="flex flex-col">{readerView}</div>
+            <div className="flex flex-1 min-h-0 flex-col">{readerView}</div>
           )}
         </div>
       </div>

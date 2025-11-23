@@ -87,7 +87,7 @@ export function ReaderPanel({
   };
 
   return (
-    <section className="flex h-full flex-col">
+    <section className="flex flex-1 min-h-0 flex-col">
       <div
         className={cn(
           "sticky top-0 z-20 flex flex-col gap-3 border-b border-border bg-background/95 px-4 py-4 backdrop-blur transition-all duration-300",
@@ -143,7 +143,7 @@ export function ReaderPanel({
         </div>
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden min-h-0">
         <ReaderViewport
           activeBook={activeBook}
           activeChapter={activeChapter}

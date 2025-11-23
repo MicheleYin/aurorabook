@@ -130,6 +130,108 @@ const applyDerivedFields = (book: Book): Book => {
   return nextBook;
 };
 
+type LegacyProgressFields = {
+  currentChapterPageIndex?: number;
+  currentChapterPageCount?: number;
+};
+
+const LIBRARY_LOG_PREFIX = "[LibraryPersistence]";
+
+const normalizeBookProgressShape = (book: Book): Book => {
+  if (!book.progress) {
+    console.debug(`${LIBRARY_LOG_PREFIX} normalize skipped (no progress)`, {
+      bookId: book.id,
+      title: book.title,
+    });
+    return book;
+  }
+
+  const progress = book.progress as BookProgress & LegacyProgressFields;
+
+  const normalizedIndex =
+    typeof progress.currentChapterIndex === "number" && Number.isFinite(progress.currentChapterIndex)
+      ? Math.max(Math.round(progress.currentChapterIndex), 0)
+      : 0;
+
+  const scrollTop =
+    typeof progress.currentChapterScrollTop === "number" &&
+    Number.isFinite(progress.currentChapterScrollTop)
+      ? Math.max(progress.currentChapterScrollTop, 0)
+      : 0;
+  const scrollHeight =
+    typeof progress.currentChapterScrollHeight === "number" &&
+    Number.isFinite(progress.currentChapterScrollHeight)
+      ? Math.max(progress.currentChapterScrollHeight, 0)
+      : 0;
+  const clientHeight =
+    typeof progress.currentChapterClientHeight === "number" &&
+    Number.isFinite(progress.currentChapterClientHeight)
+      ? Math.max(progress.currentChapterClientHeight, 0)
+      : 0;
+
+  let percent =
+    typeof progress.chapterProgressPercent === "number" && Number.isFinite(progress.chapterProgressPercent)
+      ? progress.chapterProgressPercent
+      : undefined;
+
+  if (
+    (percent === undefined || percent === 0) &&
+    scrollHeight > 0 &&
+    clientHeight >= 0 &&
+    scrollTop > 0
+  ) {
+    const maxScroll = Math.max(scrollHeight - clientHeight, 0);
+    if (maxScroll > 0) {
+      percent = Math.min(Math.max(scrollTop / maxScroll, 0), 1);
+    }
+  }
+
+  if (percent === undefined) {
+    if (
+      typeof progress.currentChapterPageIndex === "number" &&
+      Number.isFinite(progress.currentChapterPageIndex) &&
+      typeof progress.currentChapterPageCount === "number" &&
+      Number.isFinite(progress.currentChapterPageCount) &&
+      progress.currentChapterPageCount > 1
+    ) {
+      percent = Math.min(
+        Math.max(
+          Math.round(progress.currentChapterPageIndex) /
+            Math.max(Math.round(progress.currentChapterPageCount) - 1, 1),
+          0,
+        ),
+        1,
+      );
+    } else {
+      percent = 0;
+    }
+  }
+
+  const normalizedPercent = Number(Math.min(Math.max(percent ?? 0, 0), 1).toFixed(4));
+
+  const normalizedBook = {
+    ...book,
+    progress: {
+      currentChapterId: progress.currentChapterId,
+      currentChapterHref: progress.currentChapterHref,
+      currentChapterIndex: normalizedIndex,
+      currentChapterScrollTop: scrollTop,
+      currentChapterScrollHeight: scrollHeight,
+      currentChapterClientHeight: clientHeight,
+      chapterProgressPercent: normalizedPercent,
+      updatedAt: progress.updatedAt ?? new Date().toISOString(),
+    },
+  };
+
+  console.debug(`${LIBRARY_LOG_PREFIX} normalized progress`, {
+    bookId: book.id,
+    title: book.title,
+    progress: normalizedBook.progress,
+  });
+
+  return normalizedBook;
+};
+
 export function usePersistentLibrary(): PersistentLibrary {
   const [library, setLibrary] = useState<Book[]>([]);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -260,6 +362,10 @@ export function usePersistentLibrary(): PersistentLibrary {
 
       let appliedProgress: BookProgress | undefined;
       if (savedProgress && filteredChapters.length) {
+        console.debug(`${LIBRARY_LOG_PREFIX} restoring saved progress`, {
+          sourcePath,
+          savedProgress,
+        });
         const maxIndex = filteredChapters.length - 1;
         const storedIndex =
           typeof savedProgress.currentChapterIndex === "number"
@@ -283,40 +389,81 @@ export function usePersistentLibrary(): PersistentLibrary {
             (chapter) => chapter.id === resolvedChapter.id,
           );
           const chapterIndex = resolvedIndex === -1 ? 0 : resolvedIndex;
-          const chapterPageCount =
-            getChapterPageCount(resolvedChapter) ??
-            (typeof savedProgress.currentChapterPageCount === "number" &&
-            Number.isFinite(savedProgress.currentChapterPageCount)
-              ? Math.max(1, Math.round(savedProgress.currentChapterPageCount))
-              : 1);
-          const storedPageIndex =
-            typeof savedProgress.currentChapterPageIndex === "number" &&
-            Number.isFinite(savedProgress.currentChapterPageIndex)
-              ? Math.round(savedProgress.currentChapterPageIndex)
+
+          const storedScrollTop =
+            typeof savedProgress.currentChapterScrollTop === "number" &&
+            Number.isFinite(savedProgress.currentChapterScrollTop)
+              ? Math.max(savedProgress.currentChapterScrollTop, 0)
               : 0;
-          const pageIndex = Math.min(
-            Math.max(storedPageIndex, 0),
-            Math.max(chapterPageCount - 1, 0),
-          );
-          const percentSource =
+          const storedScrollHeight =
+            typeof savedProgress.currentChapterScrollHeight === "number" &&
+            Number.isFinite(savedProgress.currentChapterScrollHeight)
+              ? Math.max(savedProgress.currentChapterScrollHeight, 0)
+              : 0;
+          const storedClientHeight =
+            typeof savedProgress.currentChapterClientHeight === "number" &&
+            Number.isFinite(savedProgress.currentChapterClientHeight)
+              ? Math.max(savedProgress.currentChapterClientHeight, 0)
+              : 0;
+
+          let percentSource =
             typeof savedProgress.chapterProgressPercent === "number" &&
             Number.isFinite(savedProgress.chapterProgressPercent)
-              ? Math.min(Math.max(savedProgress.chapterProgressPercent, 0), 1)
-              : chapterPageCount > 1
-                ? pageIndex / (chapterPageCount - 1)
-                : pageIndex > 0
-                  ? 1
-                  : 0;
+              ? savedProgress.chapterProgressPercent
+              : undefined;
+
+          if (
+            (percentSource === undefined || percentSource === 0) &&
+            storedScrollHeight > 0 &&
+            storedClientHeight >= 0 &&
+            storedScrollTop > 0
+          ) {
+            const savedMaxScroll = Math.max(storedScrollHeight - storedClientHeight, 0);
+            if (savedMaxScroll > 0) {
+              percentSource = Math.min(Math.max(storedScrollTop / savedMaxScroll, 0), 1);
+            }
+          }
+
+          if (percentSource === undefined) {
+            const legacy = savedProgress as unknown as {
+              currentChapterPageIndex?: number;
+              currentChapterPageCount?: number;
+            };
+            if (
+              typeof legacy.currentChapterPageIndex === "number" &&
+              Number.isFinite(legacy.currentChapterPageIndex) &&
+              typeof legacy.currentChapterPageCount === "number" &&
+              Number.isFinite(legacy.currentChapterPageCount) &&
+              legacy.currentChapterPageCount > 1
+            ) {
+              percentSource = Math.min(
+                Math.max(
+                  Math.round(legacy.currentChapterPageIndex) /
+                    Math.max(Math.round(legacy.currentChapterPageCount) - 1, 1),
+                  0,
+                ),
+                1,
+              );
+            } else {
+              percentSource = 0;
+            }
+          }
 
           appliedProgress = {
             currentChapterId: resolvedChapter.id,
             currentChapterHref: resolvedChapter.href,
             currentChapterIndex: chapterIndex,
-            currentChapterPageIndex: pageIndex,
-            currentChapterPageCount: chapterPageCount,
-            chapterProgressPercent: Number(percentSource.toFixed(4)),
+            currentChapterScrollTop: storedScrollTop,
+            currentChapterScrollHeight: storedScrollHeight,
+            currentChapterClientHeight: storedClientHeight,
+            chapterProgressPercent: Number(Math.min(Math.max(percentSource ?? 0, 0), 1).toFixed(4)),
             updatedAt: savedProgress.updatedAt ?? new Date().toISOString(),
           };
+          console.debug(`${LIBRARY_LOG_PREFIX} applied restored progress`, {
+            sourcePath,
+            bookId: newBookId,
+            progress: appliedProgress,
+          });
         }
       }
 
@@ -380,12 +527,17 @@ export function usePersistentLibrary(): PersistentLibrary {
         pageCount: estimatedPageCount,
       };
 
-      const normalizedBook = applyDerivedFields(newBook);
+      const normalizedBook = normalizeBookProgressShape(applyDerivedFields(newBook));
 
       setLibrary((prev) => {
         if (prev.some((book) => book.sourcePath === sourcePath)) {
+          console.debug(`${LIBRARY_LOG_PREFIX} skipped duplicate import`, { sourcePath });
           return prev;
         }
+        console.debug(`${LIBRARY_LOG_PREFIX} adding book to library`, {
+          bookId: normalizedBook.id,
+          title: normalizedBook.title,
+        });
         return [...prev, normalizedBook];
       });
     },
@@ -396,6 +548,9 @@ export function usePersistentLibrary(): PersistentLibrary {
     async (books: Book[]) => {
       try {
         if (isTauriEnvironment()) {
+          console.debug(`${LIBRARY_LOG_PREFIX} persisting library to store`, {
+            count: books.length,
+          });
           const store = await ensureLibraryStore();
           if (store) {
             const payload: PersistedLibraryFile = {
@@ -415,6 +570,9 @@ export function usePersistentLibrary(): PersistentLibrary {
             await store.save();
           }
         } else if (typeof window !== "undefined") {
+          console.debug(`${LIBRARY_LOG_PREFIX} persisting library to localStorage`, {
+            count: books.length,
+          });
           const payload: PersistedLibraryFile = {
             version: LIBRARY_STORE_VERSION,
             books,
@@ -443,6 +601,9 @@ export function usePersistentLibrary(): PersistentLibrary {
           const payload = await store?.get<PersistedLibraryFile>(LIBRARY_STORE_KEY);
 
           if (payload?.version === LIBRARY_STORE_VERSION && Array.isArray(payload.books)) {
+            console.debug(`${LIBRARY_LOG_PREFIX} hydrating via store`, {
+              bookCount: payload.books.length,
+            });
             for (const entry of payload.books) {
               if (cancelled) {
                 return;
@@ -451,6 +612,9 @@ export function usePersistentLibrary(): PersistentLibrary {
                 continue;
               }
               if (entry.sourcePath.startsWith("web://")) {
+                console.debug(`${LIBRARY_LOG_PREFIX} skipping web entry during store hydrate`, {
+                  sourcePath: entry.sourcePath,
+                });
                 continue;
               }
 
@@ -467,6 +631,9 @@ export function usePersistentLibrary(): PersistentLibrary {
                   fallbackTitle: entry.title,
                   progress: entryWithMeta.progress,
                   pageCountHint: entryWithMeta.pageCount,
+                });
+                console.debug(`${LIBRARY_LOG_PREFIX} restored book from store`, {
+                  sourcePath: entry.sourcePath,
                 });
               } catch (restoreError) {
                 console.warn(
@@ -495,6 +662,9 @@ export function usePersistentLibrary(): PersistentLibrary {
           if (serialized) {
             const parsed = JSON.parse(serialized) as PersistedLibraryFile;
             if (Array.isArray(parsed?.books) && !cancelled) {
+              console.debug(`${LIBRARY_LOG_PREFIX} hydrating from localStorage`, {
+                bookCount: parsed.books.length,
+              });
               const storedBooks = parsed.books.filter(
                 (entry): entry is Book =>
                   typeof entry === "object" &&
@@ -502,7 +672,12 @@ export function usePersistentLibrary(): PersistentLibrary {
                   Array.isArray((entry as Book).chapters),
               );
               if (storedBooks.length) {
-                const normalizedBooks = storedBooks.map((book) => applyDerivedFields(book));
+                const normalizedBooks = storedBooks.map((book) =>
+                  normalizeBookProgressShape(applyDerivedFields(book)),
+                );
+                console.debug(`${LIBRARY_LOG_PREFIX} restored books from localStorage`, {
+                  bookIds: normalizedBooks.map((book) => book.id),
+                });
                 setLibrary(normalizedBooks);
               }
             }

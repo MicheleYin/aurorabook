@@ -8,8 +8,9 @@ export type ChapterSelectionOptions = {
 
 export type ChapterProgressSnapshot = {
   chapterId: string;
-  pageIndex: number;
-  pageCount: number;
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
   percent: number;
 };
 

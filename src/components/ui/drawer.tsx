@@ -9,14 +9,19 @@ const DrawerPortal = DrawerPrimitive.Portal;
 const DrawerClose = DrawerPrimitive.Close;
 const DrawerHandle = DrawerPrimitive.Handle;
 
+type DrawerOverlayProps = React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Overlay> & {
+  backdropBlur?: boolean;
+};
+
 const DrawerOverlay = React.forwardRef<
   React.ElementRef<typeof DrawerPrimitive.Overlay>,
-  React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Overlay>
->(({ className, ...props }, ref) => (
+  DrawerOverlayProps
+>(({ className, backdropBlur = true, ...props }, ref) => (
   <DrawerPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-background/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 sm:bg-background/80 sm:backdrop-blur-md",
+      "fixed inset-0 z-50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 ",
+      backdropBlur && "backdrop-blur-sm sm:backdrop-blur-md bg-background/60",
       className,
     )}
     {...props}
@@ -24,12 +29,16 @@ const DrawerOverlay = React.forwardRef<
 ));
 DrawerOverlay.displayName = "DrawerOverlay";
 
+type DrawerContentProps = React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Content> & {
+  backdropBlur?: boolean;
+};
+
 const DrawerContent = React.forwardRef<
   React.ElementRef<typeof DrawerPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+  DrawerContentProps
+>(({ className, children, backdropBlur, ...props }, ref) => (
   <DrawerPortal>
-    <DrawerOverlay />
+    <DrawerOverlay backdropBlur={backdropBlur} />
     <DrawerPrimitive.Content
       ref={ref}
       className={cn(

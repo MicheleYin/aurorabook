@@ -27,8 +27,9 @@ export type BookProgress = {
   currentChapterId: string;
   currentChapterHref: string;
   currentChapterIndex: number;
-  currentChapterPageIndex: number;
-  currentChapterPageCount: number;
+  currentChapterScrollTop: number;
+  currentChapterScrollHeight: number;
+  currentChapterClientHeight: number;
   chapterProgressPercent: number;
   updatedAt: string;
 };

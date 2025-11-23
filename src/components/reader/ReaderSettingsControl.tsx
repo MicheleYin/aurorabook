@@ -245,14 +245,14 @@ export function ReaderSettingsControl({
   );
 
   return (
-    <Drawer open={isOpen} onOpenChange={onOpenChange}>
+    <Drawer open={isOpen} onOpenChange={onOpenChange} >
       <DrawerTrigger asChild>
         <Button variant="outline" size="sm">
           <Settings2 className="sm:mr-2 h-4 w-4" />
           <span className="hidden sm:block">Reader settings</span>
         </Button>
       </DrawerTrigger>
-      <DrawerContent>
+      <DrawerContent backdropBlur={false}>
         <DrawerHandle className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-muted" />
         <DrawerModalHeader className="flex flex-row items-start justify-between text-left">
           <div>

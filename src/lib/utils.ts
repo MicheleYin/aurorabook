@@ -65,13 +65,14 @@ export type BookProgressSummary = {
   isFinished: boolean;
   label: string;
   chapterLabel?: string;
-  pageLabel?: string;
-  pageIndex?: number;
-  pageNumber?: number;
-  pageCount?: number;
   percent?: number;
   chapterNumber?: number;
   currentChapterTitle?: string;
+};
+
+type LegacyProgressFields = {
+  currentChapterPageIndex?: number;
+  currentChapterPageCount?: number;
 };
 
 export function getBookProgressSummary(
@@ -86,21 +87,16 @@ export function getBookProgressSummary(
       isStarted: false,
       isFinished: false,
       label: "No chapters available",
+      percent: 0,
       currentChapterTitle: undefined,
     };
   }
 
   const fallbackChapter = book.chapters[0];
-  const defaultPageCount = fallbackChapter ? getChapterPageCount(fallbackChapter) : undefined;
 
   if (!book.progress) {
     const defaultChapterLabel =
       total > 0 ? `Chapter 1 of ${total}` : fallbackChapter ? "Chapter 1" : undefined;
-    const defaultPageLabel = defaultPageCount ? `Page 1 of ${defaultPageCount}` : undefined;
-
-    const labelParts = [defaultChapterLabel, defaultPageLabel].filter(
-      (part): part is string => Boolean(part),
-    );
 
     return {
       current: 0,
@@ -108,56 +104,92 @@ export function getBookProgressSummary(
       total,
       isStarted: false,
       isFinished: false,
-      label: labelParts.length ? labelParts.join(" · ") : `0 of ${total} chapters`,
+      label: defaultChapterLabel ?? `0 of ${total} chapters`,
       chapterLabel: defaultChapterLabel,
-      pageLabel: defaultPageLabel,
-      pageIndex: 0,
-      pageNumber: 1,
-      pageCount: defaultPageCount,
+      percent: 0,
       chapterNumber: 1,
       currentChapterTitle: fallbackChapter?.title,
     };
   }
 
-  const progress = book.progress;
+  const progress = book.progress as Book["progress"] & LegacyProgressFields;
   const byIdIndex =
-    progress.currentChapterId !== undefined
+    progress?.currentChapterId !== undefined
       ? book.chapters.findIndex((chapter) => chapter.id === progress.currentChapterId)
       : -1;
-  const rawIndexCandidate = clamp(progress.currentChapterIndex, 0, total - 1);
+  const rawIndexCandidate =
+    typeof progress?.currentChapterIndex === "number" && Number.isFinite(progress.currentChapterIndex)
+      ? Math.round(progress.currentChapterIndex)
+      : 0;
   const rawIndex = byIdIndex >= 0 ? byIdIndex : rawIndexCandidate;
-  const normalizedIndex = clamp(rawIndex, 0, total - 1);
+  const normalizedIndex = clamp(rawIndex, 0, Math.max(total - 1, 0));
   const currentChapter = book.chapters[normalizedIndex];
 
   const chapterNumber = normalizedIndex + 1;
   const chapterLabel = `Chapter ${chapterNumber} of ${total}`;
 
-  const resolvedPageCount =
-    normalizePositiveInteger(progress.currentChapterPageCount) ??
-    (currentChapter ? getChapterPageCount(currentChapter) ?? 1 : 1);
-  const pageCount = Math.max(resolvedPageCount ?? 1, 1);
+  const scrollTop =
+    typeof progress?.currentChapterScrollTop === "number" && Number.isFinite(progress.currentChapterScrollTop)
+      ? Math.max(progress.currentChapterScrollTop, 0)
+      : 0;
+  const scrollHeight =
+    typeof progress?.currentChapterScrollHeight === "number" &&
+    Number.isFinite(progress.currentChapterScrollHeight)
+      ? Math.max(progress.currentChapterScrollHeight, 0)
+      : 0;
+  const clientHeight =
+    typeof progress?.currentChapterClientHeight === "number" &&
+    Number.isFinite(progress.currentChapterClientHeight)
+      ? Math.max(progress.currentChapterClientHeight, 0)
+      : 0;
 
-  const pageIndex = clamp(
-    typeof progress.currentChapterPageIndex === "number"
-      ? Math.round(progress.currentChapterPageIndex)
-      : 0,
-    0,
-    Math.max(pageCount - 1, 0),
-  );
-  const pageNumber = pageIndex + 1;
-
-  const percent =
-    typeof progress.chapterProgressPercent === "number" && Number.isFinite(progress.chapterProgressPercent)
+  let percent =
+    typeof progress?.chapterProgressPercent === "number" &&
+    Number.isFinite(progress.chapterProgressPercent)
       ? clamp(progress.chapterProgressPercent, 0, 1)
-      : pageCount > 1
-        ? pageIndex / (pageCount - 1)
-        : pageIndex > 0
-          ? 1
-          : 0;
+      : undefined;
 
-  const pageLabel = pageCount ? `Page ${pageNumber} of ${pageCount}` : undefined;
+  if (
+    (percent === undefined || percent === 0) &&
+    scrollHeight > 0 &&
+    clientHeight >= 0 &&
+    scrollTop > 0
+  ) {
+    const maxScroll = Math.max(scrollHeight - clientHeight, 0);
+    if (maxScroll > 0) {
+      percent = clamp(scrollTop / maxScroll, 0, 1);
+    }
+  }
 
-  const labelParts = [chapterLabel, pageLabel].filter(
+  if (percent === undefined) {
+    if (
+      typeof progress?.currentChapterPageIndex === "number" &&
+      Number.isFinite(progress.currentChapterPageIndex) &&
+      typeof progress?.currentChapterPageCount === "number" &&
+      Number.isFinite(progress.currentChapterPageCount) &&
+      progress.currentChapterPageCount > 1
+    ) {
+      percent = clamp(
+        Math.round(progress.currentChapterPageIndex) /
+          Math.max(Math.round(progress.currentChapterPageCount) - 1, 1),
+        0,
+        1,
+      );
+    } else {
+      percent = 0;
+    }
+  }
+
+  const resolvedPercent = Number((percent ?? 0).toFixed(4));
+
+  let percentLabel: string | undefined;
+  if (resolvedPercent >= 0.999) {
+    percentLabel = "Finished";
+  } else if (resolvedPercent > 0) {
+    percentLabel = `${Math.round(resolvedPercent * 100)}% read`;
+  }
+
+  const labelParts = [chapterLabel, percentLabel].filter(
     (part): part is string => Boolean(part),
   );
   const label =
@@ -165,23 +197,17 @@ export function getBookProgressSummary(
       ? labelParts.join(" · ")
       : `${chapterNumber} of ${total} chapters`;
 
-  const isLastChapter = normalizedIndex === total - 1;
-  const isLastPage = pageCount <= 1 ? isLastChapter : pageIndex >= pageCount - 1;
-  const isFinished = isLastChapter && isLastPage;
+  const isFinished = normalizedIndex === total - 1 && resolvedPercent >= 0.999;
 
   return {
     current: chapterNumber,
     currentIndex: normalizedIndex,
     total,
-    isStarted: true,
+    isStarted: resolvedPercent > 0 || normalizedIndex > 0,
     isFinished,
     label,
     chapterLabel,
-    pageLabel,
-    pageIndex,
-    pageNumber,
-    pageCount,
-    percent,
+    percent: resolvedPercent,
     chapterNumber,
     currentChapterTitle: currentChapter?.title,
   };

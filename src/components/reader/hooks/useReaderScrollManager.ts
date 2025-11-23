@@ -7,8 +7,9 @@ import {
   type MutableRefObject,
 } from "react";
 
-import { getChapterPageCount } from "../../../lib/utils";
 import type { Book, Chapter, ReaderPreferences } from "../../../types/reader";
+
+const LOG_PREFIX = "[ReaderScroll]";
 import type { ChapterProgressSnapshot } from "../types";
 
 const clampValue = (value: number, min: number, max: number) =>
@@ -50,8 +51,9 @@ export function useReaderScrollManager({
   const pendingScrollIntentRef = useRef<"top" | "bottom" | null>(null);
   const lastProgressRef = useRef<{
     chapterId: string;
-    pageIndex: number;
-    pageCount: number;
+    scrollTop: number;
+    scrollHeight: number;
+    clientHeight: number;
     percent: number;
   } | null>(null);
   const scrollRafRef = useRef<number | null>(null);
@@ -59,8 +61,28 @@ export function useReaderScrollManager({
 
   const hasActiveBook = Boolean(activeBook && activeBook.chapters.length);
 
+  useEffect(() => {
+    const node = contentRef.current;
+    if (!node) {
+      console.debug(`${LOG_PREFIX} content ref missing on layout`);
+      return;
+    }
+    console.debug(`${LOG_PREFIX} content metrics`, {
+      chapterId: activeChapter?.id,
+      scrollTop: node.scrollTop,
+      scrollHeight: node.scrollHeight,
+      clientHeight: node.clientHeight,
+      offsetHeight: node.offsetHeight,
+      styleOverflowY: node.style?.overflowY,
+    });
+  }, [activeChapter?.id, chromeVisible, audioPlayerVisible]);
+
   const chapterProgress = useMemo(() => {
     if (!activeBook || !activeBook.progress || !activeChapter) {
+      console.debug(`${LOG_PREFIX} no chapter progress available`, {
+        bookId: activeBook?.id,
+        chapterId: activeChapter?.id,
+      });
       return null;
     }
 
@@ -90,35 +112,63 @@ export function useReaderScrollManager({
       }
     }
 
-    const pageCountCandidate =
-      typeof progress.currentChapterPageCount === "number" &&
-      Number.isFinite(progress.currentChapterPageCount)
-        ? progress.currentChapterPageCount
-        : getChapterPageCount(activeChapter) ?? 1;
-    const pageCount = Math.max(1, Math.round(pageCountCandidate));
-
-    const pageIndexCandidate =
-      typeof progress.currentChapterPageIndex === "number" &&
-      Number.isFinite(progress.currentChapterPageIndex)
-        ? progress.currentChapterPageIndex
+    const scrollTop =
+      typeof progress.currentChapterScrollTop === "number" && Number.isFinite(progress.currentChapterScrollTop)
+        ? Math.max(progress.currentChapterScrollTop, 0)
         : 0;
-    const pageIndex = clampValue(Math.round(pageIndexCandidate), 0, Math.max(pageCount - 1, 0));
+    const scrollHeight =
+      typeof progress.currentChapterScrollHeight === "number" &&
+      Number.isFinite(progress.currentChapterScrollHeight)
+        ? Math.max(progress.currentChapterScrollHeight, 0)
+        : 0;
+    const clientHeight =
+      typeof progress.currentChapterClientHeight === "number" &&
+      Number.isFinite(progress.currentChapterClientHeight)
+        ? Math.max(progress.currentChapterClientHeight, 0)
+        : 0;
 
     const percentCandidate = progress.chapterProgressPercent;
-    const percent =
+    let percent =
       typeof percentCandidate === "number" && Number.isFinite(percentCandidate)
         ? clampValue(percentCandidate, 0, 1)
-        : pageCount > 1
-          ? pageIndex / Math.max(pageCount - 1, 1)
-          : pageIndex > 0
-            ? 1
-            : 0;
+        : 0;
 
-    return {
-      pageIndex,
-      pageCount,
+    if (percent === 0 && scrollHeight > 0 && clientHeight > 0 && scrollTop > 0) {
+      const maxScroll = Math.max(scrollHeight - clientHeight, 0);
+      if (maxScroll > 0) {
+        percent = clampValue(scrollTop / maxScroll, 0, 1);
+      }
+    }
+
+    if (percent === 0) {
+      const legacyPageIndex = (progress as unknown as { currentChapterPageIndex?: number }).currentChapterPageIndex;
+      const legacyPageCount = (progress as unknown as { currentChapterPageCount?: number }).currentChapterPageCount;
+      if (
+        typeof legacyPageIndex === "number" &&
+        Number.isFinite(legacyPageIndex) &&
+        typeof legacyPageCount === "number" &&
+        Number.isFinite(legacyPageCount) &&
+        legacyPageCount > 1
+      ) {
+        percent = clampValue(
+          Math.round(legacyPageIndex) / Math.max(Math.round(legacyPageCount) - 1, 1),
+          0,
+          1,
+        );
+      }
+    }
+
+    const snapshot = {
+      chapterId: activeChapter.id,
+      scrollTop,
+      scrollHeight,
+      clientHeight,
       percent,
     };
+
+    console.debug(`${LOG_PREFIX} resolved stored progress`, snapshot);
+
+    return snapshot;
   }, [activeBook, activeChapter]);
 
   const emitChapterProgress = useCallback(() => {
@@ -127,53 +177,50 @@ export function useReaderScrollManager({
     }
 
     const node = contentRef.current;
-    const pageCount = Math.max(getChapterPageCount(activeChapter) ?? 1, 1);
+    if (!node) {
+      return;
+    }
+
+    const scrollTop = Math.max(node.scrollTop, 0);
+    const scrollHeight = Math.max(node.scrollHeight, 0);
+    const clientHeight = Math.max(node.clientHeight, 0);
+    const maxScroll = Math.max(scrollHeight - clientHeight, 0);
 
     let percent = 0;
-    if (node) {
-      const maxScroll = Math.max(node.scrollHeight - node.clientHeight, 0);
       if (maxScroll > 0) {
-        percent = Math.min(Math.max(node.scrollTop / maxScroll, 0), 1);
+      percent = clampValue(scrollTop / maxScroll, 0, 1);
       } else {
-        percent = node.scrollTop > 0 ? 1 : 0;
+      percent = scrollTop > 0 ? 1 : 0;
       }
 
       const atBottom =
-        maxScroll <= 1 ||
-        node.scrollTop + node.clientHeight >= node.scrollHeight - 1;
+      maxScroll <= 1 || scrollTop + clientHeight >= scrollHeight - 1;
       if (atBottom) {
         percent = 1;
       }
-    }
-
-    const rawPageIndex = Math.floor(percent * pageCount);
-    const pageIndex =
-      percent >= 0.999 || rawPageIndex >= pageCount
-        ? pageCount - 1
-        : Math.min(Math.max(rawPageIndex, 0), Math.max(pageCount - 1, 0));
-
-    const normalizedPercent =
-      pageCount <= 1 ? (pageIndex > 0 ? 1 : percent) : percent;
 
     const snapshot: ChapterProgressSnapshot = {
       chapterId: activeChapter.id,
-      pageIndex,
-      pageCount,
-      percent: Number(normalizedPercent.toFixed(4)),
+      scrollTop,
+      scrollHeight,
+      clientHeight,
+      percent: Number(percent.toFixed(4)),
     };
 
     const last = lastProgressRef.current;
     if (
       last &&
       last.chapterId === snapshot.chapterId &&
-      last.pageIndex === snapshot.pageIndex &&
-      last.pageCount === snapshot.pageCount &&
-      Math.abs(last.percent - snapshot.percent) < 0.005
+      Math.abs(last.scrollTop - snapshot.scrollTop) < 1 &&
+      Math.abs(last.scrollHeight - snapshot.scrollHeight) < 1 &&
+      Math.abs(last.clientHeight - snapshot.clientHeight) < 1 &&
+      Math.abs(last.percent - snapshot.percent) < 0.002
     ) {
       return;
     }
 
     lastProgressRef.current = snapshot;
+    console.debug(`${LOG_PREFIX} emitting progress`, snapshot);
     onChapterProgress(snapshot);
   }, [activeChapter, onChapterProgress]);
 
@@ -182,6 +229,10 @@ export function useReaderScrollManager({
       return;
     }
     if (scrollRafRef.current !== null) {
+      console.debug(`${LOG_PREFIX} emit already scheduled`, {
+        chapterId: activeChapter?.id,
+        scrollTop: contentRef.current?.scrollTop ?? null,
+      });
       return;
     }
 
@@ -189,12 +240,27 @@ export function useReaderScrollManager({
       scrollRafRef.current = null;
       emitChapterProgress();
     });
+    console.debug(`${LOG_PREFIX} queued progress emit`, {
+      chapterId: activeChapter.id,
+      scrollTop: contentRef.current?.scrollTop ?? null,
+    });
   }, [activeChapter, emitChapterProgress, onChapterProgress]);
 
   const handleScroll = useCallback(() => {
     if (!activeChapter || !onChapterProgress) {
+      console.debug(`${LOG_PREFIX} handleScroll skipped`, {
+        hasActiveChapter: Boolean(activeChapter),
+        hasProgressHandler: Boolean(onChapterProgress),
+      });
       return;
     }
+    const node = contentRef.current;
+    console.debug(`${LOG_PREFIX} handleScroll`, {
+      chapterId: activeChapter.id,
+      scrollTop: node?.scrollTop ?? null,
+      scrollHeight: node?.scrollHeight ?? null,
+      clientHeight: node?.clientHeight ?? null,
+    });
     scheduleProgressEmit();
   }, [activeChapter, onChapterProgress, scheduleProgressEmit]);
 
@@ -301,31 +367,49 @@ export function useReaderScrollManager({
     }
 
     const rafId = requestAnimationFrame(() => {
-      const maxScroll = Math.max(node.scrollHeight - node.clientHeight, 0);
+      const scrollHeight = Math.max(node.scrollHeight, 0);
+      const clientHeight = Math.max(node.clientHeight, 0);
+      const maxScroll = Math.max(scrollHeight - clientHeight, 0);
 
-      if (maxScroll <= 0) {
-        shouldRestoreProgressRef.current = false;
-        scheduleProgressEmit();
-        return;
+      const savedMaxScroll = Math.max(
+        chapterProgress.scrollHeight - chapterProgress.clientHeight,
+        0,
+      );
+
+      let target = 0;
+      if (chapterProgress.percent >= 0.999 && maxScroll > 0) {
+        target = maxScroll;
+      } else if (savedMaxScroll > 0 && maxScroll > 0 && chapterProgress.scrollTop > 0) {
+        const savedRatio = clampValue(chapterProgress.scrollTop / savedMaxScroll, 0, 1);
+        target = Math.round(savedRatio * maxScroll);
+      } else if (maxScroll > 0) {
+        target = Math.round(clampValue(chapterProgress.percent, 0, 1) * maxScroll);
       }
 
-      const target =
-        chapterProgress.percent >= 0.999
-          ? maxScroll
-          : clampValue(Math.round(maxScroll * chapterProgress.percent), 0, maxScroll);
-
       if (Math.abs(node.scrollTop - target) > 1) {
+        console.debug(`${LOG_PREFIX} restoring scroll position`, {
+          chapterId: activeChapter.id,
+          target,
+          current: node.scrollTop,
+          maxScroll,
+          saved: chapterProgress,
+        });
         node.scrollTop = target;
       }
 
+      const normalizedPercent =
+        maxScroll > 0 ? clampValue(node.scrollTop / maxScroll, 0, 1) : chapterProgress.percent;
+
       lastProgressRef.current = {
         chapterId: activeChapter.id,
-        pageIndex: chapterProgress.pageIndex,
-        pageCount: chapterProgress.pageCount,
-        percent: chapterProgress.percent,
+        scrollTop: Math.max(node.scrollTop, 0),
+        scrollHeight,
+        clientHeight,
+        percent: normalizedPercent,
       };
 
       shouldRestoreProgressRef.current = false;
+      console.debug(`${LOG_PREFIX} restore complete`, lastProgressRef.current);
       scheduleProgressEmit();
     });
 
@@ -359,18 +443,6 @@ export function useReaderScrollManager({
     observer.observe(node);
     return () => observer.disconnect();
   }, [activeChapter?.id, scheduleProgressEmit, applyScrollIntent]);
-
-  useEffect(() => {
-    const node = contentRef.current;
-    if (!node) return;
-    node.scrollTo({ top: 0, behavior: "auto" });
-    scheduleProgressEmit();
-  }, [
-    preferences.fontFamily,
-    preferences.fontSize,
-    preferences.contentPadding,
-    scheduleProgressEmit,
-  ]);
 
   useEffect(() => {
     if (!pendingFragment) return;

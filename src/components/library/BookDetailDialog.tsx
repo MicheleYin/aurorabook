@@ -147,7 +147,7 @@ export function BookDetailDialog({
 
       <Button onClick={onOpenBook}>Open book</Button>
       <Button variant="destructive" onClick={() => setConfirmOpen(true)}>
-        Delete audiobook
+        Delete book
       </Button>
     </div>
   );
