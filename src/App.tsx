@@ -361,7 +361,7 @@ function App() {
   useEffect(() => {
     if (!library.length) {
       setActiveView("library");
-      }
+    }
   }, [library.length]);
 
   const normalizedLibrarySearch = librarySearchTerm.trim().toLowerCase();
