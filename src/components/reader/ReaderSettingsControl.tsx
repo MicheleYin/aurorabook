@@ -59,6 +59,8 @@ export function ReaderSettingsControl({
                 <span
                   className={cn(
                     "size-4 rounded-full border",
+                    option.id === "system" &&
+                      "bg-gradient-to-br from-white via-[#f4ecd8] to-zinc-900 border-slate-300",
                     option.id === "light" && "bg-white border-slate-300",
                     option.id === "dark" && "bg-zinc-900 border-zinc-700",
                     option.id === "sepia" && "bg-[#f4ecd8] border-[#e0cfb0]",

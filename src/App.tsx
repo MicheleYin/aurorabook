@@ -6,6 +6,7 @@ import ePub from "epubjs";
 import { toast } from "sonner";
 
 import { HiddenFileInput } from "./components/HiddenFileInput";
+import { ThemeSwitcher } from "./components/ThemeSwitcher";
 import { LibraryPanel } from "./components/LibraryPanel";
 import type {
   LibraryFilterOption,
@@ -19,6 +20,7 @@ import type {
   NavItem,
   ReaderPreferences,
 } from "./types/reader";
+import type { UITheme } from "./types/ui";
 
 const sharedTextDecoder =
   typeof TextDecoder !== "undefined" ? new TextDecoder("utf-8") : null;
@@ -189,16 +191,67 @@ function App() {
   );
   const [activeView, setActiveView] = useState<"library" | "reader">("library");
   const [isImporting, setIsImporting] = useState(false);
+  const [uiTheme, setUiTheme] = useState<UITheme>(() => {
+    if (typeof window !== "undefined") {
+      const stored = window.localStorage.getItem("ui-theme");
+      if (stored === "light" || stored === "dark" || stored === "system") {
+        return stored;
+      }
+    }
+    return "system";
+  });
   const [librarySearchTerm, setLibrarySearchTerm] = useState("");
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilterOption>("all");
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("grid");
   const [readerPreferences, setReaderPreferences] = useState<ReaderPreferences>({
-    theme: "light",
+    theme: "system",
     fontFamily: "merriweather",
   });
   const [pendingFragment, setPendingFragment] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const resolveTheme = useCallback((theme: UITheme) => {
+    if (theme === "system") {
+      if (
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches
+      ) {
+        return "dark" as const;
+      }
+      return "light" as const;
+    }
+    return theme;
+  }, []);
+
+  const resolvedUiTheme = useMemo(
+    () => resolveTheme(uiTheme),
+    [uiTheme, resolveTheme],
+  );
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    const root = document.documentElement;
+    const applyTheme = (theme: UITheme) => {
+      const resolved = resolveTheme(theme);
+      root.classList.toggle("dark", resolved === "dark");
+    };
+
+    applyTheme(uiTheme);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("ui-theme", uiTheme);
+    }
+
+    if (uiTheme !== "system" || typeof window === "undefined") {
+      return;
+    }
+
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const listener = () => applyTheme("system");
+    media.addEventListener("change", listener);
+    return () => media.removeEventListener("change", listener);
+  }, [uiTheme, resolveTheme]);
 
   const activeBook = useMemo(() => {
     if (!activeBookId) return undefined;
@@ -512,6 +565,7 @@ function App() {
       pendingFragment={pendingFragment}
       onFragmentConsumed={handleFragmentConsumed}
       onNavigateLibrary={() => setActiveView("library")}
+      resolvedUiTheme={resolvedUiTheme}
     />
   );
 
@@ -535,6 +589,10 @@ function App() {
       />
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
         {/* Header removed per redesign */}
+
+        <div className="flex justify-end">
+          <ThemeSwitcher value={uiTheme} onChange={setUiTheme} />
+        </div>
 
         <div className="flex-1 space-y-6">
           {isLibraryView ? (

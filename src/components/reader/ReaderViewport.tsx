@@ -9,7 +9,10 @@ import {
   themeClasses,
 } from "./constants";
 import type { ReaderPanelBaseProps } from "./types";
+import type { ReaderTheme } from "../../types/reader";
 import { Button } from "../ui/button";
+
+type ResolvedReaderTheme = Exclude<ReaderTheme, "system">;
 
 type ReaderViewportProps = Pick<
   ReaderPanelBaseProps,
@@ -21,6 +24,7 @@ type ReaderViewportProps = Pick<
   | "onSelectChapter"
 > & {
   chromeVisible: boolean;
+  resolvedTheme: ResolvedReaderTheme;
   onToggleChrome: () => void;
 };
 
@@ -31,6 +35,8 @@ export function ReaderViewport({
   pendingFragment,
   onFragmentConsumed,
   onSelectChapter,
+  chromeVisible,
+  resolvedTheme,
   onToggleChrome,
 }: ReaderViewportProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -141,12 +147,18 @@ export function ReaderViewport({
     };
   }, [activeBook, activeChapter]);
 
+  const appliedTheme = resolvedTheme;
+  const proseColorClass = appliedTheme === "dark" ? "prose-invert" : "prose-neutral";
+  const navButtonVariant = appliedTheme === "dark" ? "secondary" : "outline";
+  const navButtonClass = appliedTheme === "dark" ? "border-zinc-700 bg-zinc-900 text-zinc-100 hover:bg-zinc-800" : "";
+
   const renderNavigation = () => (
     <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
       {previousChapter ? (
         <Button
-          variant="outline"
+          variant={navButtonVariant}
           size="sm"
+          className={cn(navButtonClass)}
           onClick={(event) => {
             event.stopPropagation();
             onSelectChapter(previousChapter.id);
@@ -159,8 +171,9 @@ export function ReaderViewport({
       )}
       {nextChapter ? (
         <Button
-          variant="outline"
+          variant={navButtonVariant}
           size="sm"
+          className={cn(navButtonClass)}
           onClick={(event) => {
             event.stopPropagation();
             onSelectChapter(nextChapter.id);
@@ -180,7 +193,7 @@ export function ReaderViewport({
         <div
           className={cn(
             "flex-1 overflow-y-auto px-6 py-10 transition-colors",
-            themeClasses[preferences.theme],
+            themeClasses[resolvedTheme],
             BASE_FONT_CLASS,
             BASE_LINE_HEIGHT_CLASS,
             fontClassMap[preferences.fontFamily],
@@ -200,7 +213,7 @@ export function ReaderViewport({
         ref={contentRef}
         className={cn(
           "flex-1 overflow-y-auto px-6 py-10 transition-colors",
-          themeClasses[preferences.theme],
+          themeClasses[resolvedTheme],
           BASE_FONT_CLASS,
           BASE_LINE_HEIGHT_CLASS,
           fontClassMap[preferences.fontFamily],
@@ -212,12 +225,17 @@ export function ReaderViewport({
           onToggleChrome();
         }}
       >
-        <div className="mx-auto flex max-w-3xl flex-col gap-8">
+        <div
+          className={cn(
+            "mx-auto flex w-full max-w-3xl flex-col gap-8 px-6",
+            chromeVisible ? "py-10" : "py-6",
+          )}
+        >
           {renderNavigation()}
           <article
             id={activeChapter.id}
             data-chapter-id={activeChapter.id}
-            className="prose max-w-none space-y-4 transition-colors"
+            className={cn("prose max-w-none space-y-4 transition-colors", proseColorClass)}
           >
             <h2 className="text-2xl font-semibold">{activeChapter.title}</h2>
             <div

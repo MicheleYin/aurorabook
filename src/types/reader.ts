@@ -28,7 +28,7 @@ export type NavItem = {
   subitems?: NavItem[];
 };
 
-export type ReaderTheme = "light" | "dark" | "sepia";
+export type ReaderTheme = "light" | "dark" | "sepia" | "system";
 
 export type ReaderFont =
   | "merriweather"

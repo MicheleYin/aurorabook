@@ -1,8 +1,10 @@
 import type { ReaderPreferences } from "../../types/reader";
 
+type ResolvedReaderTheme = Exclude<ReaderPreferences["theme"], "system">;
+
 export const BASE_FONT_CLASS = "text-[18px]";
 export const BASE_LINE_HEIGHT_CLASS = "leading-[1.6]";
-export const themeClasses: Record<ReaderPreferences["theme"], string> = {
+export const themeClasses: Record<ResolvedReaderTheme, string> = {
   light: "bg-white text-slate-900",
   dark: "bg-zinc-950 text-zinc-100",
   sepia: "bg-[#f4ecd8] text-[#403127]",
@@ -33,6 +35,7 @@ export const fontOptions: Array<{ id: ReaderPreferences["fontFamily"]; label: st
 ];
 
 export const themeOptions: Array<{ id: ReaderPreferences["theme"]; label: string }> = [
+  { id: "system", label: "System" },
   { id: "light", label: "Light" },
   { id: "sepia", label: "Sepia" },
   { id: "dark", label: "Dark" },

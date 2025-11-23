@@ -8,7 +8,9 @@ import { ReaderViewport } from "./reader/ReaderViewport";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 
-type ReaderPanelProps = ReaderPanelBaseProps;
+type ReaderPanelProps = ReaderPanelBaseProps & {
+  resolvedUiTheme: "light" | "dark";
+};
 
 export function ReaderPanel({
   activeBook,
@@ -19,6 +21,7 @@ export function ReaderPanel({
   pendingFragment,
   onFragmentConsumed,
   onNavigateLibrary,
+  resolvedUiTheme,
 }: ReaderPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
@@ -43,6 +46,9 @@ export function ReaderPanel({
     setIsImmersive(false);
     onNavigateLibrary?.();
   };
+
+  const appliedTheme: "light" | "dark" | "sepia" =
+     preferences.theme === "system" ? resolvedUiTheme : preferences.theme;
 
   return (
     <section className="flex h-full flex-col">
@@ -109,6 +115,7 @@ export function ReaderPanel({
           onFragmentConsumed={onFragmentConsumed}
           onSelectChapter={onSelectChapter}
           chromeVisible={!isImmersive}
+          resolvedTheme={appliedTheme}
           onToggleChrome={() => setIsImmersive((prev) => !prev)}
         />
       </div>
