@@ -15,6 +15,7 @@ import { ReaderAudioPlayer } from "./reader/ReaderAudioPlayer";
 
 type ReaderPanelProps = ReaderPanelBaseProps & {
   resolvedUiTheme: "light" | "dark";
+  onChromeVisibilityChange?: (visible: boolean) => void;
 };
 
 export function ReaderPanel({
@@ -28,6 +29,7 @@ export function ReaderPanel({
   onNavigateLibrary,
   resolvedUiTheme,
   onChapterProgress,
+  onChromeVisibilityChange,
 }: ReaderPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
@@ -50,6 +52,16 @@ export function ReaderPanel({
   useEffect(() => {
     setIsImmersive(false);
   }, [activeBook?.id]);
+
+  useEffect(() => {
+    onChromeVisibilityChange?.(!isImmersive);
+  }, [isImmersive, onChromeVisibilityChange]);
+
+  useEffect(() => {
+    return () => {
+      onChromeVisibilityChange?.(true);
+    };
+  }, [onChromeVisibilityChange]);
 
   useEffect(() => {
     if (isImmersive) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
 
 import type { AudioTrack } from "../../types/reader";
@@ -14,6 +14,8 @@ const formatTime = (value: number) => {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 };
 
+const PLAYBACK_RATE_OPTIONS = [0.75, 1, 1.25, 1.5, 1.75, 2] as const;
+
 type ReaderAudioPlayerProps = {
   tracks: AudioTrack[];
   bookTitle?: string;
@@ -24,6 +26,7 @@ export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps)
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const tracksRef = useRef<AudioTrack[]>(tracks);
@@ -116,6 +119,7 @@ export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps)
     audio.src = currentTrack.url;
     audio.load();
     audio.currentTime = 0;
+    audio.playbackRate = playbackRate;
     setCurrentTime(0);
     setDuration(0);
 
@@ -130,7 +134,15 @@ export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps)
           isPlayingRef.current = false;
         });
     }
-  }, [currentTrack]);
+  }, [currentTrack, playbackRate]);
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+    audio.playbackRate = playbackRate;
+  }, [playbackRate]);
+
 
   const togglePlayback = useCallback(() => {
     const audio = audioRef.current;
@@ -206,6 +218,14 @@ export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps)
     if (!duration) return 0;
     return Math.min(100, Math.max(0, (currentTime / duration) * 100));
   }, [currentTime, duration]);
+  const handlePlaybackRateChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
+    const nextRate = Number(event.target.value);
+    if (!Number.isFinite(nextRate)) {
+      return;
+    }
+    setPlaybackRate(nextRate);
+  }, []);
+
 
   useEffect(() => {
     if (progressRef.current) {
@@ -255,6 +275,21 @@ export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps)
             >
               <SkipForward className="h-4 w-4" />
             </Button>
+          </div>
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <span>Speed</span>
+            <select
+              aria-label="Playback speed"
+              value={playbackRate.toString()}
+              onChange={handlePlaybackRateChange}
+              className="rounded-md border border-input bg-background px-2 py-1 text-xs font-medium text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              {PLAYBACK_RATE_OPTIONS.map((rate) => (
+                <option key={rate} value={rate.toString()}>
+                  {rate % 1 === 0 ? `${rate.toFixed(0)}x` : `${rate.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}x`}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
         <div className="flex items-center gap-3">

@@ -491,7 +491,19 @@ export function usePersistentLibrary(): PersistentLibrary {
             .map(async ([id, entry], trackIndex) => {
               if (!entry.href) return null;
               try {
-                const url = await epubBook.resources.createUrl(entry.href);
+                const resolvedHref =
+                  typeof epubBook?.resolve === "function"
+                    ? epubBook.resolve(entry.href, false)
+                    : entry.href;
+                const normalizedHref =
+                  typeof resolvedHref === "string" && resolvedHref.length > 0
+                    ? resolvedHref
+                    : entry.href;
+                const archiveHref =
+                  /^[a-z]+:/i.test(normalizedHref) || normalizedHref.startsWith("/")
+                    ? normalizedHref
+                    : `/${normalizedHref}`;
+                const url = await epubBook.resources.createUrl(archiveHref);
                 if (typeof url !== "string") {
                   return null;
                 }

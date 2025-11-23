@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { HiddenFileInput } from "./components/HiddenFileInput";
-import { ThemeSwitcher } from "./components/ThemeSwitcher";
 import { LibraryPanel } from "./components/LibraryPanel";
 import type {
   LibraryFilterOption,
@@ -11,14 +10,16 @@ import { ReaderPanel } from "./components/ReaderPanel";
 import { BookDetailDialog } from "./components/library/BookDetailDialog";
 import { Toaster } from "./components/ui/sonner";
 import { LoadingScreen } from "./components/app/LoadingScreen";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { usePersistentLibrary } from "./hooks/usePersistentLibrary";
+import { usePersistentSettings } from "./hooks/usePersistentSettings";
 import type { ReaderPreferences } from "./types/reader";
 import type { UITheme } from "./types/ui";
 import type {
   ChapterProgressSnapshot,
   ChapterSelectionOptions,
 } from "./components/reader/types";
-import { getLibraryBookStatus } from "./lib/utils";
+import { cn, getLibraryBookStatus } from "./lib/utils";
 
 const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   theme: "system",
@@ -28,6 +29,8 @@ const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
 };
 
 const PROGRESS_LOG_PREFIX = "[ReaderProgress]";
+
+type AppView = "library" | "reader" | "settings";
 
 function App() {
   const {
@@ -41,7 +44,7 @@ function App() {
 
   const [activeBookId, setActiveBookId] = useState<string | undefined>();
   const [activeChapterId, setActiveChapterId] = useState<string | undefined>();
-  const [activeView, setActiveView] = useState<"library" | "reader">("library");
+  const [activeView, setActiveView] = useState<AppView>("library");
   const [librarySearchTerm, setLibrarySearchTerm] = useState("");
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilterOption>("all");
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("grid");
@@ -50,17 +53,27 @@ function App() {
   );
   const [pendingFragment, setPendingFragment] = useState<string | null>(null);
   const [detailBookId, setDetailBookId] = useState<string | null>(null);
+  const [isReaderChromeVisible, setIsReaderChromeVisible] = useState(true);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const {
+    settings,
+    updateSettings,
+    isHydrated: isSettingsHydrated,
+  } = usePersistentSettings();
+  const uiTheme = settings.theme;
 
-  const [uiTheme, setUiTheme] = useState<UITheme>(() => {
-    if (typeof window !== "undefined") {
-      const stored = window.localStorage.getItem("ui-theme");
-      if (stored === "light" || stored === "dark" || stored === "system") {
-        return stored;
-      }
+  const handleThemeChange = useCallback(
+    (theme: UITheme) => {
+      updateSettings({ theme });
+    },
+    [updateSettings],
+  );
+
+  useEffect(() => {
+    if (activeView !== "reader") {
+      setIsReaderChromeVisible(true);
     }
-    return "system";
-  });
+  }, [activeView]);
 
   const resolveTheme = useCallback((theme: UITheme) => {
     if (theme === "system") {
@@ -533,6 +546,7 @@ function App() {
       onNavigateLibrary={() => setActiveView("library")}
       resolvedUiTheme={resolvedUiTheme}
       onChapterProgress={handleChapterProgress}
+      onChromeVisibilityChange={setIsReaderChromeVisible}
     />
   );
 
@@ -541,9 +555,24 @@ function App() {
     return library.find((book) => book.id === detailBookId);
   }, [detailBookId, library]);
 
-  const isLibraryView = activeView === "library";
+  const canOpenReader = Boolean(activeBook);
+  const navigationItems: Array<{ id: AppView; label: string; disabled?: boolean }> = [
+    { id: "library", label: "Library" },
+    { id: "reader", label: "Reader", disabled: !canOpenReader },
+    { id: "settings", label: "Settings" },
+  ];
+  const settingsView = (
+    <SettingsPanel theme={uiTheme} onThemeChange={handleThemeChange} />
+  );
+  const currentView =
+    activeView === "settings"
+      ? settingsView
+      : activeView === "library"
+        ? libraryView
+        : readerView;
+  const hideNavigation = activeView === "reader" && !isReaderChromeVisible;
 
-  if (!isHydrated) {
+  if (!isHydrated || !isSettingsHydrated) {
     return <LoadingScreen message="Loading your library…" />;
   }
 
@@ -558,16 +587,43 @@ function App() {
         onChange={handleWebFileSelection}
       />
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <div className="flex justify-end">
-          <ThemeSwitcher value={uiTheme} onChange={setUiTheme} />
-        </div>
+        <div className="flex flex-1 min-h-0 flex-col">{currentView}</div>
 
-        <div className="flex-1 min-h-0 space-y-6">
-          {isLibraryView ? (
-            <div className="flex flex-1 min-h-0 flex-col">{libraryView}</div>
-          ) : (
-            <div className="flex flex-1 min-h-0 flex-col">{readerView}</div>
+        <div
+          className={cn(
+            "flex items-center justify-center transition-all duration-200",
+            hideNavigation && "pointer-events-none opacity-0 translate-y-4",
           )}
+        >
+          <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card/60 p-1">
+            {navigationItems.map((item) => {
+              const isActive = activeView === item.id;
+              const isDisabled = Boolean(item.disabled);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  disabled={isDisabled}
+                  onClick={() => {
+                    if (isDisabled) return;
+                    setActiveView(item.id);
+                  }}
+                  className={cn(
+                    "rounded-full px-4 py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    isActive
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted",
+                    isDisabled && "cursor-not-allowed opacity-50 hover:bg-transparent",
+                  )}
+                  title={
+                    item.id === "reader" && isDisabled ? "Open a book to enter the reader" : undefined
+                  }
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
       {detailBook ? (
