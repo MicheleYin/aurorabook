@@ -3,15 +3,6 @@ import { Settings2, X } from "lucide-react";
 
 import type { ReaderPreferences } from "../../types/reader";
 import { cn } from "../../lib/utils";
-import { useMediaQuery } from "../../hooks/use-media-query";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader as DialogModalHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "../ui/dialog";
 import {
   Drawer,
   DrawerClose,
@@ -49,7 +40,6 @@ export function ReaderSettingsControl({
     firaMono: null,
     atkinson: null,
   });
-  const isDesktop = useMediaQuery("(min-width: 1024px)");
 
   const settingsBody = (
     <div className="space-y-6">
@@ -109,30 +99,6 @@ export function ReaderSettingsControl({
       </section>
     </div>
   );
-
-  if (isDesktop) {
-    return (
-      <Dialog open={isOpen} onOpenChange={onOpenChange}>
-        <DialogTrigger asChild>
-          <Button variant="outline" size="sm">
-            <Settings2 className="mr-2 h-4 w-4" />
-            Reader settings
-          </Button>
-        </DialogTrigger>
-        <DialogContent className="fixed inset-x-0 bottom-0 top-auto w-full max-h-[85vh] overflow-hidden rounded-t-3xl border bg-card p-6 shadow-2xl duration-200 sm:left-1/2 sm:top-1/2 sm:bottom-auto sm:w-full sm:max-w-2xl sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-lg sm:p-6 sm:shadow-lg">
-          <DialogModalHeader>
-            <DialogTitle>Reader preferences</DialogTitle>
-            <DialogDescription>
-              Personalise the reading experience to match your environment.
-            </DialogDescription>
-          </DialogModalHeader>
-          <div className="mt-4 max-h-[65vh] overflow-y-auto pr-2 sm:pr-0">
-            {settingsBody}
-          </div>
-        </DialogContent>
-      </Dialog>
-    );
-  }
 
   return (
     <Drawer open={isOpen} onOpenChange={onOpenChange}>

@@ -1,17 +1,12 @@
 import { useEffect, useState } from "react";
+import { ArrowLeft } from "lucide-react";
 
 import type { ReaderPanelBaseProps } from "./reader/types";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "./ui/card";
 import { ReaderSettingsControl } from "./reader/ReaderSettingsControl";
 import { ReaderTocDrawer } from "./reader/ReaderTocDrawer";
 import { ReaderViewport } from "./reader/ReaderViewport";
 import { cn } from "../lib/utils";
+import { Button } from "./ui/button";
 
 type ReaderPanelProps = ReaderPanelBaseProps;
 
@@ -23,6 +18,7 @@ export function ReaderPanel({
   onSelectChapter,
   pendingFragment,
   onFragmentConsumed,
+  onNavigateLibrary,
 }: ReaderPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
@@ -43,57 +39,68 @@ export function ReaderPanel({
     }
   }, [isImmersive]);
 
-  return (
-    <Card
-      className={cn(
-        "flex h-full flex-col",
-        isImmersive && "border-transparent bg-transparent shadow-none",
-      )}
-    >
-      {!isImmersive && (
-        <CardHeader className="space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <CardTitle>{activeChapter?.title ?? "Select a chapter"}</CardTitle>
-              <CardDescription>
-                {activeBook
-                  ? `${activeBook.title} · ${activeBook.author}`
-                  : "Add an ebook to begin reading."}
-              </CardDescription>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {activeBook && (
-                <ReaderTocDrawer
-                  book={activeBook}
-                  activeChapterId={activeChapter?.id}
-                  isOpen={isTocOpen}
-                  onOpenChange={(open) => {
-                    setIsImmersive(false);
-                    setIsTocOpen(open);
-                  }}
-                  onSelectChapter={onSelectChapter}
-                />
-              )}
-              <ReaderSettingsControl
-                preferences={preferences}
-                onPreferencesChange={onPreferencesChange}
-                isOpen={isSettingsOpen}
-                onOpenChange={(open) => {
-                  setIsImmersive(false);
-                  setIsSettingsOpen(open);
-                }}
-              />
-            </div>
-          </div>
-        </CardHeader>
-      )}
+  const handleBack = () => {
+    setIsImmersive(false);
+    onNavigateLibrary?.();
+  };
 
-      <CardContent
+  return (
+    <section className="flex h-full flex-col">
+      <div
         className={cn(
-          "flex flex-1 overflow-hidden",
-          isImmersive && "p-0",
+          "sticky top-0 z-20 flex flex-col gap-3 border-b border-border bg-background/95 px-4 py-4 backdrop-blur transition-all duration-300",
+          isImmersive &&
+            "pointer-events-none -translate-y-full opacity-0 h-0 overflow-hidden border-transparent py-0",
         )}
       >
+        <div className="flex items-center justify-between gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="px-2"
+            onClick={handleBack}
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Library
+          </Button>
+          <div className="flex items-center gap-2">
+            {activeBook && (
+              <ReaderTocDrawer
+                book={activeBook}
+                activeChapterId={activeChapter?.id}
+                isOpen={isTocOpen}
+                onOpenChange={(open) => {
+                  setIsImmersive(false);
+                  setIsTocOpen(open);
+                }}
+                onSelectChapter={onSelectChapter}
+              />
+            )}
+            <ReaderSettingsControl
+              preferences={preferences}
+              onPreferencesChange={onPreferencesChange}
+              isOpen={isSettingsOpen}
+              onOpenChange={(open) => {
+                setIsImmersive(false);
+                setIsSettingsOpen(open);
+              }}
+            />
+          </div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <h2 className="text-lg font-semibold">
+            {activeChapter?.title ?? "Select a chapter"}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {activeBook
+              ? `${activeBook.title} · ${activeBook.author}`
+              : "Once you import an EPUB, choose a chapter to begin."}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex flex-1 overflow-hidden">
         <ReaderViewport
           activeBook={activeBook}
           activeChapter={activeChapter}
@@ -104,7 +111,7 @@ export function ReaderPanel({
           chromeVisible={!isImmersive}
           onToggleChrome={() => setIsImmersive((prev) => !prev)}
         />
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }

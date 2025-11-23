@@ -1,5 +1,4 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import DOMPurify from "dompurify";
@@ -13,7 +12,6 @@ import type {
   LibraryViewMode,
 } from "./components/library/types";
 import { ReaderPanel } from "./components/ReaderPanel";
-import { Button } from "./components/ui/button";
 import { Toaster } from "./components/ui/sonner";
 import type {
   Book,
@@ -513,6 +511,7 @@ function App() {
       onSelectChapter={handleSelectChapter}
       pendingFragment={pendingFragment}
       onFragmentConsumed={handleFragmentConsumed}
+      onNavigateLibrary={() => setActiveView("library")}
     />
   );
 
@@ -541,19 +540,7 @@ function App() {
           {isLibraryView ? (
             <div className="flex flex-col">{libraryView}</div>
           ) : (
-            <div className="space-y-4">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="w-fit"
-                onClick={() => setActiveView("library")}
-              >
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Back to library
-              </Button>
-              {readerView}
-            </div>
+            <div className="flex flex-col">{readerView}</div>
           )}
         </div>
       </div>

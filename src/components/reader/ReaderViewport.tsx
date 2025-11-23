@@ -175,18 +175,18 @@ export function ReaderViewport({
   );
 
   if (!activeBook || !activeChapter) {
-    return (
+     return (
       <div className="flex flex-1 flex-col overflow-hidden">
         <div
           className={cn(
-            "flex-1 overflow-y-auto rounded-lg p-6 shadow-inner transition duration-300",
+            "flex-1 overflow-y-auto px-6 py-10 transition-colors",
             themeClasses[preferences.theme],
             BASE_FONT_CLASS,
             BASE_LINE_HEIGHT_CLASS,
             fontClassMap[preferences.fontFamily],
           )}
         >
-          <p className="prose max-w-none text-muted-foreground">
+          <p className="prose max-w-3xl text-muted-foreground">
             Once you import an EPUB, pick a chapter to start reading.
           </p>
         </div>
@@ -199,7 +199,7 @@ export function ReaderViewport({
       <div
         ref={contentRef}
         className={cn(
-          "flex-1 overflow-y-auto rounded-lg p-6 shadow-inner transition duration-300",
+          "flex-1 overflow-y-auto px-6 py-10 transition-colors",
           themeClasses[preferences.theme],
           BASE_FONT_CLASS,
           BASE_LINE_HEIGHT_CLASS,
@@ -212,7 +212,7 @@ export function ReaderViewport({
           onToggleChrome();
         }}
       >
-        <div className="flex flex-col gap-8">
+        <div className="mx-auto flex max-w-3xl flex-col gap-8">
           {renderNavigation()}
           <article
             id={activeChapter.id}

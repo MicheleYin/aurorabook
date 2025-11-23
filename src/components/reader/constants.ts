@@ -3,9 +3,9 @@ import type { ReaderPreferences } from "../../types/reader";
 export const BASE_FONT_CLASS = "text-[18px]";
 export const BASE_LINE_HEIGHT_CLASS = "leading-[1.6]";
 export const themeClasses: Record<ReaderPreferences["theme"], string> = {
-  light: "bg-white text-slate-900 border border-slate-200",
-  dark: "bg-zinc-950 text-zinc-100 border border-zinc-800",
-  sepia: "bg-[#f4ecd8] text-[#403127] border border-[#e0cfb0]",
+  light: "bg-white text-slate-900",
+  dark: "bg-zinc-950 text-zinc-100",
+  sepia: "bg-[#f4ecd8] text-[#403127]",
 };
 
 export const fontClassMap: Record<ReaderPreferences["fontFamily"], string> = {

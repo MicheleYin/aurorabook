@@ -8,4 +8,5 @@ export type ReaderPanelBaseProps = {
   onSelectChapter: (chapterId: string, fragment?: string) => void;
   pendingFragment: string | null;
   onFragmentConsumed: () => void;
+  onNavigateLibrary?: () => void;
 };
