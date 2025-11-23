@@ -48,6 +48,7 @@ export function ReaderAudioPlayer({
   const isPlayingRef = useRef(false);
   const progressRef = useRef<HTMLDivElement | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
+  const desiredSeekRef = useRef<number | null>(null);
   const currentTimeRef = useRef(0);
   const onProgressRef = useRef<ReaderAudioPlayerProps["onProgress"]>(undefined);
   const lastProgressSnapshotRef = useRef<{
@@ -64,18 +65,26 @@ export function ReaderAudioPlayer({
     onProgressRef.current = onProgress;
   }, [onProgress]);
 
-  const applyPendingSeek = useCallback(() => {
+  const normalizeSeekTarget = (value: number | null | undefined) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return null;
+    }
+    return Math.max(value, 0);
+  };
+
+  const setDesiredSeek = useCallback((target: number | null | undefined) => {
+    const normalized = normalizeSeekTarget(target);
+    pendingSeekRef.current = normalized;
+    desiredSeekRef.current = normalized;
+  }, []);
+
+  const applySeekTarget = useCallback((target: number | null) => {
     const audio = audioRef.current;
-    if (!audio) {
+    if (!audio || typeof target !== "number") {
       return false;
     }
-    if (pendingSeekRef.current === null) {
-      return false;
-    }
-    const target = Math.max(pendingSeekRef.current, 0);
     try {
       audio.currentTime = target;
-      pendingSeekRef.current = null;
       const nextTime = audio.currentTime || target;
       setCurrentTime(nextTime);
       currentTimeRef.current = nextTime;
@@ -84,6 +93,26 @@ export function ReaderAudioPlayer({
       return false;
     }
   }, []);
+
+  const applyPendingSeek = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return false;
+    }
+    if (pendingSeekRef.current === null) {
+      return false;
+    }
+    const target = pendingSeekRef.current;
+    const applied = applySeekTarget(target);
+    if (applied) {
+      pendingSeekRef.current = null;
+    }
+    return applied;
+  }, [applySeekTarget]);
+
+  const applyDesiredSeek = useCallback(() => {
+    return applySeekTarget(desiredSeekRef.current);
+  }, [applySeekTarget]);
 
   const emitProgressSnapshot = useCallback(
     (timeOverride?: number) => {
@@ -208,13 +237,13 @@ export function ReaderAudioPlayer({
       Number.isFinite(initialAudioState.currentTimeSeconds)
         ? Math.max(initialAudioState.currentTimeSeconds, 0)
         : 0;
-    pendingSeekRef.current = restoredTime;
+    setDesiredSeek(restoredTime);
     setCurrentTime(restoredTime);
     currentTimeRef.current = restoredTime;
     setIsPlaying(false);
     isPlayingRef.current = false;
     lastProgressSnapshotRef.current = { timestamp: 0 };
-  }, [bookId, initialAudioState, tracks]);
+  }, [bookId, initialAudioState, tracks, setDesiredSeek]);
 
   useEffect(() => {
     tracksRef.current = tracks;
@@ -274,7 +303,7 @@ export function ReaderAudioPlayer({
 
     const handleLoadedMetadata = () => {
       setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
-      if (!applyPendingSeek()) {
+      if (!applyPendingSeek() && !applyDesiredSeek()) {
         const fallbackTime = audio.currentTime || 0;
         setCurrentTime(fallbackTime);
         currentTimeRef.current = fallbackTime;
@@ -307,13 +336,17 @@ export function ReaderAudioPlayer({
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
       audio.removeEventListener("ended", handleEnded);
     };
-  }, [applyPendingSeek]);
+  }, [applyDesiredSeek, applyPendingSeek]);
 
   const currentTrack = tracks[currentIndex];
+  const expectedTrack = tracks[currentIndexRef.current];
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !currentTrack) {
+      return;
+    }
+    if (expectedTrack && currentTrack.id !== expectedTrack.id) {
       return;
     }
 
@@ -342,7 +375,7 @@ export function ReaderAudioPlayer({
           isPlayingRef.current = false;
         });
     }
-  }, [applyPendingSeek, currentTrack, playbackRate]);
+  }, [applyPendingSeek, currentTrack, expectedTrack, playbackRate]);
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) {
@@ -385,7 +418,7 @@ export function ReaderAudioPlayer({
       currentIndexRef.current = nextIndex;
       setCurrentTime(0);
       setDuration(0);
-      pendingSeekRef.current = null;
+      setDesiredSeek(null);
       lastProgressSnapshotRef.current = { timestamp: 0 };
       if (isPlayingRef.current) {
         const audio = audioRef.current;
@@ -403,7 +436,7 @@ export function ReaderAudioPlayer({
         }
       }
     },
-    [tracks],
+    [setDesiredSeek, tracks],
   );
 
   const handlePrevious = useCallback(() => {
@@ -413,13 +446,13 @@ export function ReaderAudioPlayer({
         audio.currentTime = 0;
         setCurrentTime(0);
         currentTimeRef.current = 0;
-        pendingSeekRef.current = null;
+        setDesiredSeek(null);
         emitProgressSnapshot(0);
       }
       return;
     }
     playTrackAt(currentIndex - 1);
-  }, [currentIndex, playTrackAt]);
+  }, [currentIndex, playTrackAt, setDesiredSeek]);
 
   const handleNext = useCallback(() => {
     if (currentIndex + 1 >= tracks.length) {
