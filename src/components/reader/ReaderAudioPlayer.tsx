@@ -17,6 +17,7 @@ const formatTime = (value: number) => {
 };
 
 const PLAYBACK_RATE_OPTIONS = [0.75, 1, 1.25, 1.5, 1.75, 2] as const;
+const PROGRESS_ECHO_TOLERANCE_SECONDS = 0.5;
 
 type ReaderAudioPlayerProps = {
   bookId?: string;
@@ -49,9 +50,13 @@ export function ReaderAudioPlayer({
   const pendingSeekRef = useRef<number | null>(null);
   const currentTimeRef = useRef(0);
   const onProgressRef = useRef<ReaderAudioPlayerProps["onProgress"]>(undefined);
-  const lastProgressSnapshotRef = useRef<{ trackId?: string; currentTimeSeconds?: number; timestamp: number }>({
-    timestamp: 0,
-  });
+  const lastProgressSnapshotRef = useRef<{
+    trackId?: string;
+    trackHref?: string;
+    trackIndex?: number;
+    currentTimeSeconds?: number;
+    timestamp: number;
+  }>({ timestamp: 0 });
   const lastAppliedAudioStateSignatureRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
@@ -100,6 +105,8 @@ export function ReaderAudioPlayer({
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
       lastProgressSnapshotRef.current = {
         trackId: track.id,
+        trackHref: track.href,
+        trackIndex: currentIndexRef.current,
         currentTimeSeconds: normalizedSeconds,
         timestamp: now,
       };
@@ -136,6 +143,31 @@ export function ReaderAudioPlayer({
     ];
     const signature = signatureComponents.join("|");
     if (lastAppliedAudioStateSignatureRef.current === signature) {
+      return;
+    }
+    const snapshot = lastProgressSnapshotRef.current;
+    // Ignore echoes from our own progress emissions so playback state stays stable while audio is running.
+    const nextTrackIndex =
+      typeof initialAudioState?.currentTrackIndex === "number" && Number.isFinite(initialAudioState.currentTrackIndex)
+        ? initialAudioState.currentTrackIndex
+        : undefined;
+    const nextTimeSeconds =
+      typeof initialAudioState?.currentTimeSeconds === "number" && Number.isFinite(initialAudioState.currentTimeSeconds)
+        ? initialAudioState.currentTimeSeconds
+        : undefined;
+    const trackMatches =
+      Boolean(snapshot.trackId && snapshot.trackId === initialAudioState?.currentTrackId) ||
+      Boolean(snapshot.trackHref && snapshot.trackHref === initialAudioState?.currentTrackHref) ||
+      (typeof snapshot.trackIndex === "number" &&
+        typeof nextTrackIndex === "number" &&
+        snapshot.trackIndex === nextTrackIndex);
+    const isProgressEcho =
+      trackMatches &&
+      typeof snapshot.currentTimeSeconds === "number" &&
+      typeof nextTimeSeconds === "number" &&
+      Math.abs(snapshot.currentTimeSeconds - nextTimeSeconds) <= PROGRESS_ECHO_TOLERANCE_SECONDS;
+    if (isProgressEcho) {
+      lastAppliedAudioStateSignatureRef.current = signature;
       return;
     }
     lastAppliedAudioStateSignatureRef.current = signature;

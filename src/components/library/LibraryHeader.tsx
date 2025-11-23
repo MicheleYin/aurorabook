@@ -36,37 +36,33 @@ export function LibraryHeader({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2 text-lg font-semibold">
-            <BookOpen className="h-5 w-5 text-primary" />
-            Library
-          </div>
           {actionSlot ? <div className="sm:ml-auto">{actionSlot}</div> : null}
-        </div>
         <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground">
           {LIBRARY_FILTER_OPTIONS.map((option) => {
             const isActive = option === activeFilter;
             const pressedProps = isActive
-              ? ({ "aria-pressed": "true" } as const)
-              : ({} as const);
+            ? ({ "aria-pressed": "true" } as const)
+            : ({} as const);
             const label = LIBRARY_FILTER_LABELS[option];
             return (
               <button
-                key={option}
-                type="button"
-                onClick={() => onFilterChange(option)}
-                className={cn(
-                  "rounded-full border px-3 py-1 transition",
-                  isActive
-                    ? "border-primary bg-primary/5 text-primary"
-                    : "border-border hover:bg-muted",
-                )}
-                {...pressedProps}
+              key={option}
+              type="button"
+              onClick={() => onFilterChange(option)}
+              className={cn(
+                "rounded-full border px-3 py-1 transition",
+                isActive
+                ? "border-primary bg-primary/5 text-primary"
+                : "border-border hover:bg-muted",
+              )}
+              {...pressedProps}
               >
                 {label}
               </button>
             );
           })}
+          
+
           <div className="ml-auto flex items-center gap-1 text-muted-foreground">
             {LIBRARY_VIEW_MODES.map((mode) => {
               const isActive = mode === viewMode;

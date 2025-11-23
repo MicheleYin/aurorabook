@@ -1,4 +1,3 @@
-import { Palette } from "lucide-react";
 
 import type { UITheme } from "../types/ui";
 import { ThemeSwitcher } from "./ThemeSwitcher";
@@ -12,17 +11,7 @@ type SettingsPanelProps = {
 export function SettingsPanel({ theme, onThemeChange }: SettingsPanelProps) {
   return (
     <div className="flex h-full flex-col gap-6">
-      <div className="flex items-start gap-3">
-        <div className="rounded-full border border-border p-2 text-primary">
-          <Palette className="h-5 w-5" aria-hidden="true" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-semibold">Settings</h1>
-          <p className="text-sm text-muted-foreground">
-            Control how the reader looks and feels.
-          </p>
-        </div>
-      </div>
+     
 
       <Card className="flex-1">
         <CardHeader>
