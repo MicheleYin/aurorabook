@@ -1,11 +1,20 @@
-import { BookOpen, ImageOff, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 
 import type { Book } from "../types/reader";
-import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
+import { LibraryEmpty } from "./library/LibraryEmpty";
+import { LibraryGrid } from "./library/LibraryGrid";
+import { LibraryHeader } from "./library/LibraryHeader";
+import { LibrarySearchBar } from "./library/LibrarySearchBar";
+import type { LibraryFilterOption } from "./library/types";
 
 export type LibraryPanelProps = {
   library: Book[];
+  totalBooks: number;
+  searchTerm: string;
+  onSearchChange: (value: string) => void;
+  activeFilter: LibraryFilterOption;
+  onFilterChange: (filter: LibraryFilterOption) => void;
   activeBookId?: string;
   isImporting: boolean;
   onAddEbook: () => void;
@@ -14,95 +23,58 @@ export type LibraryPanelProps = {
 
 export function LibraryPanel({
   library,
+  totalBooks,
+  searchTerm,
+  onSearchChange,
+  activeFilter,
+  onFilterChange,
   activeBookId,
   isImporting,
   onAddEbook,
   onOpenBook,
 }: LibraryPanelProps) {
+  const isSearching = searchTerm.trim().length > 0;
   const hasBooks = library.length > 0;
 
   return (
     <div className="flex h-full flex-col gap-6">
-      <div className="space-y-2">
-        <div className="flex items-center gap-2 text-lg font-semibold">
-          <BookOpen className="h-5 w-5 text-primary" />
-          Library
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Import EPUB files and build your personal narrated shelf.
-        </p>
-      </div>
+      <LibraryHeader
+        totalBooks={totalBooks}
+        filteredCount={library.length}
+        isSearching={isSearching}
+        activeFilter={activeFilter}
+        onFilterChange={onFilterChange}
+        actionSlot={
+          <Button onClick={onAddEbook} disabled={isImporting} className="w-full sm:w-auto">
+            {isImporting ? (
+              "Adding…"
+            ) : (
+              <>
+                <Plus className="mr-2 h-4 w-4" />
+                Add ebook
+              </>
+            )}
+          </Button>
+        }
+      />
 
-      <div className={cn("flex-1", !hasBooks && "flex flex-col justify-center") }>
-        {hasBooks ? (
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-            {library.map((book) => {
-              const isActive = book.id === activeBookId;
-              return (
-                <button
-                  key={book.id}
-                  type="button"
-                  onClick={() => onOpenBook(book.id)}
-                  className={cn(
-                    "group flex h-full flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                    isActive && "border-primary shadow-md ring-1 ring-primary/40",
-                  )}
-                >
-                  <div className="relative aspect-[3/4] w-full overflow-hidden bg-muted">
-                    {book.coverUrl ? (
-                      <img
-                        src={book.coverUrl}
-                        alt={`${book.title} cover`}
-                        className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-                        <ImageOff className="h-10 w-10" />
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex flex-1 flex-col gap-2 p-4">
-                    <div>
-                      <p className="line-clamp-1 text-sm font-semibold text-foreground">
-                        {book.title}
-                      </p>
-                      <p className="line-clamp-1 text-xs text-muted-foreground">
-                        {book.author}
-                      </p>
-                    </div>
-                    <div className="mt-auto flex items-center justify-between text-xs text-muted-foreground">
-                      <span>{book.chapters.length} chapters</span>
-                      <span>Tap to open</span>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="rounded-md border border-dashed p-8 text-center">
-            <p className="text-sm font-medium">Your shelf is empty.</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Bring an EPUB into Whisperleaf to start reading.
-            </p>
-          </div>
-        )}
-      </div>
-
-      <Button
-        onClick={onAddEbook}
+      <LibrarySearchBar
+        value={searchTerm}
+        onChange={onSearchChange}
         disabled={isImporting}
-        className="mt-auto w-full"
-      >
-        {isImporting ? (
-          "Adding…"
+      />
+
+      <div className="flex-1">
+        {hasBooks ? (
+          <LibraryGrid
+            books={library}
+            activeBookId={activeBookId}
+            onOpenBook={onOpenBook}
+          />
         ) : (
-          <>
-            <Plus className="mr-2 h-4 w-4" />
-            Add ebook
-          </>
+          <LibraryEmpty isSearching={isSearching} activeFilter={activeFilter} />
         )}
-      </Button>
+      </div>
     </div>
   );
 }

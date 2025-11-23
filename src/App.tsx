@@ -17,6 +17,7 @@ import type {
   NavItem,
   ReaderPreferences,
 } from "./types/reader";
+import type { LibraryFilterOption } from "./components/library/types";
 
 const sharedTextDecoder =
   typeof TextDecoder !== "undefined" ? new TextDecoder("utf-8") : null;
@@ -187,6 +188,8 @@ function App() {
   );
   const [activeView, setActiveView] = useState<"library" | "reader">("library");
   const [isImporting, setIsImporting] = useState(false);
+  const [librarySearchTerm, setLibrarySearchTerm] = useState("");
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilterOption>("all");
   const [readerPreferences, setReaderPreferences] = useState<ReaderPreferences>({
     theme: "light",
     fontFamily: "merriweather",
@@ -456,9 +459,38 @@ function App() {
     [ingestEpub, library],
   );
 
+  const normalizedLibrarySearch = librarySearchTerm.trim().toLowerCase();
+  const searchFilteredLibrary = useMemo(() => {
+    if (!normalizedLibrarySearch) return library;
+    return library.filter((book) => {
+      const haystack = `${book.title} ${book.author}`.toLowerCase();
+      return haystack.includes(normalizedLibrarySearch);
+    });
+  }, [library, normalizedLibrarySearch]);
+
+  const filteredLibrary = useMemo(() => {
+    switch (libraryFilter) {
+      case "recent": {
+        return [...searchFilteredLibrary].reverse();
+      }
+      case "author": {
+        return [...searchFilteredLibrary].sort((a, b) =>
+          a.author.localeCompare(b.author, undefined, { sensitivity: "base" }),
+        );
+      }
+      default:
+        return searchFilteredLibrary;
+    }
+  }, [searchFilteredLibrary, libraryFilter]);
+
   const libraryView = (
     <LibraryPanel
-      library={library}
+      library={filteredLibrary}
+      totalBooks={library.length}
+      searchTerm={librarySearchTerm}
+      onSearchChange={setLibrarySearchTerm}
+      activeFilter={libraryFilter}
+      onFilterChange={setLibraryFilter}
       activeBookId={activeBookId}
       isImporting={isImporting}
       onAddEbook={handleAddEbook}
