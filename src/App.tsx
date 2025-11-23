@@ -64,13 +64,6 @@ function App() {
   } = usePersistentSettings();
   const uiTheme = settings.theme;
 
-  const handleThemeChange = useCallback(
-    (theme: UITheme) => {
-      updateSettings({ theme });
-    },
-    [updateSettings],
-  );
-
   useEffect(() => {
     if (activeView !== "reader") {
       setIsReaderChromeVisible(true);
@@ -624,9 +617,7 @@ function App() {
     { id: "reader", label: "Reader", disabled: !canOpenReader },
     { id: "settings", label: "Settings" },
   ];
-  const settingsView = (
-    <SettingsPanel theme={uiTheme} onThemeChange={handleThemeChange} />
-  );
+  const settingsView = <SettingsPanel settings={settings} onSettingsChange={updateSettings} />;
   const currentView =
     activeView === "settings"
       ? settingsView

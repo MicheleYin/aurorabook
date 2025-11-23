@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { DEFAULT_KOKORO_VOICE_ID } from "../constants/kokoro";
 import type { AppSettings } from "../types/settings";
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
+  ttsVoiceId: DEFAULT_KOKORO_VOICE_ID,
 };
 
 const WEB_SETTINGS_STORAGE_KEY = "tts-settings-cache-v1";
