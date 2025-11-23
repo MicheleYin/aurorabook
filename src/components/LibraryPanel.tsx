@@ -3,7 +3,6 @@ import { BookOpen, ImageOff, Plus } from "lucide-react";
 import type { Book } from "../types/reader";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 
 export type LibraryPanelProps = {
   library: Book[];
@@ -23,31 +22,20 @@ export function LibraryPanel({
   const hasBooks = library.length > 0;
 
   return (
-    <Card className="h-full">
-      <CardHeader className="space-y-4">
-        <div>
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <BookOpen className="h-5 w-5 text-primary" />
-            Library
-          </CardTitle>
-          <CardDescription>
-            Import EPUB files and build your personal narrated shelf.
-          </CardDescription>
+    <div className="flex h-full flex-col gap-6">
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 text-lg font-semibold">
+          <BookOpen className="h-5 w-5 text-primary" />
+          Library
         </div>
-        <Button onClick={onAddEbook} disabled={isImporting}>
-          {isImporting ? (
-            "Adding…"
-          ) : (
-            <>
-              <Plus className="mr-2 h-4 w-4" />
-              Add ebook
-            </>
-          )}
-        </Button>
-      </CardHeader>
-      <CardContent>
+        <p className="text-sm text-muted-foreground">
+          Import EPUB files and build your personal narrated shelf.
+        </p>
+      </div>
+
+      <div className={cn("flex-1", !hasBooks && "flex flex-col justify-center") }>
         {hasBooks ? (
-          <div className="grid gap-4 grid-cols-2">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
             {library.map((book) => {
               const isActive = book.id === activeBookId;
               return (
@@ -92,15 +80,30 @@ export function LibraryPanel({
             })}
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center gap-3 rounded-md border border-dashed p-8 text-center">
+          <div className="rounded-md border border-dashed p-8 text-center">
             <p className="text-sm font-medium">Your shelf is empty.</p>
-            <p className="text-sm text-muted-foreground">
-              Bring an EPUB into Whisperleaf to start reading and listening.
+            <p className="mt-1 text-sm text-muted-foreground">
+              Bring an EPUB into Whisperleaf to start reading.
             </p>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+
+      <Button
+        onClick={onAddEbook}
+        disabled={isImporting}
+        className="mt-auto w-full"
+      >
+        {isImporting ? (
+          "Adding…"
+        ) : (
+          <>
+            <Plus className="mr-2 h-4 w-4" />
+            Add ebook
+          </>
+        )}
+      </Button>
+    </div>
   );
 }
 

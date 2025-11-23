@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "../../lib/utils";
 import {
@@ -18,7 +19,10 @@ type ReaderViewportProps = Pick<
   | "pendingFragment"
   | "onFragmentConsumed"
   | "onSelectChapter"
->;
+> & {
+  chromeVisible: boolean;
+  onToggleChrome: () => void;
+};
 
 export function ReaderViewport({
   activeBook,
@@ -27,6 +31,7 @@ export function ReaderViewport({
   pendingFragment,
   onFragmentConsumed,
   onSelectChapter,
+  onToggleChrome,
 }: ReaderViewportProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const hasActiveBook = Boolean(activeBook && activeBook.chapters.length);
@@ -142,7 +147,10 @@ export function ReaderViewport({
         <Button
           variant="outline"
           size="sm"
-          onClick={() => onSelectChapter(previousChapter.id)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelectChapter(previousChapter.id);
+          }}
         >
           ← Previous chapter
         </Button>
@@ -153,7 +161,10 @@ export function ReaderViewport({
         <Button
           variant="outline"
           size="sm"
-          onClick={() => onSelectChapter(nextChapter.id)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelectChapter(nextChapter.id);
+          }}
         >
           Next chapter →
         </Button>
@@ -194,6 +205,12 @@ export function ReaderViewport({
           BASE_LINE_HEIGHT_CLASS,
           fontClassMap[preferences.fontFamily],
         )}
+        onClick={(event: ReactMouseEvent<HTMLDivElement>) => {
+          if ((event.target as HTMLElement)?.closest("a,button")) {
+            return;
+          }
+          onToggleChrome();
+        }}
       >
         <div className="flex flex-col gap-8">
           {renderNavigation()}

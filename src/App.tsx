@@ -1,32 +1,22 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import DOMPurify from "dompurify";
 import ePub from "epubjs";
-import { KokoroTTS } from "kokoro-js";
+import { toast } from "sonner";
 
 import { HiddenFileInput } from "./components/HiddenFileInput";
 import { LibraryPanel } from "./components/LibraryPanel";
-import { MobileNavigation } from "./components/MobileNavigation";
-import { PlaybackPanel } from "./components/PlaybackPanel";
 import { ReaderPanel } from "./components/ReaderPanel";
+import { Button } from "./components/ui/button";
+import { Toaster } from "./components/ui/sonner";
 import type {
   Book,
   Chapter,
   NavItem,
   ReaderPreferences,
 } from "./types/reader";
-
-type PlaybackState = "idle" | "loading" | "playing" | "paused";
-type VoiceId = keyof KokoroTTS["voices"];
-
-const VOICE_OPTIONS: ReadonlyArray<{ label: string; value: VoiceId }> = [
-  { label: "Heart", value: "af_heart" },
-  { label: "Alloy", value: "af_alloy" },
-  { label: "Echo", value: "am_echo" },
-];
-
-const MAX_CHAPTER_CHARACTERS = 8000;
 
 const sharedTextDecoder =
   typeof TextDecoder !== "undefined" ? new TextDecoder("utf-8") : null;
@@ -195,27 +185,14 @@ function App() {
   const [activeChapterId, setActiveChapterId] = useState<string | undefined>(
     undefined,
   );
-  const [activeView, setActiveView] = useState<"library" | "reader" | "player">(
-    "library",
-  );
-  const [playbackState, setPlaybackState] = useState<PlaybackState>("idle");
-  const [isLoadingModel, setIsLoadingModel] = useState(false);
+  const [activeView, setActiveView] = useState<"library" | "reader">("library");
   const [isImporting, setIsImporting] = useState(false);
-  const [voice, setVoice] = useState<VoiceId>(VOICE_OPTIONS[0].value);
-  const [error, setError] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0);
-  const [duration, setDuration] = useState(0);
   const [readerPreferences, setReaderPreferences] = useState<ReaderPreferences>({
     theme: "light",
     fontFamily: "merriweather",
   });
   const [pendingFragment, setPendingFragment] = useState<string | null>(null);
 
-  const ttsRef = useRef<KokoroTTS | null>(null);
-  const audioElementRef = useRef<HTMLAudioElement | null>(null);
-  const audioUrlRef = useRef<string | null>(null);
-  const activeChapterForAudio = useRef<string | null>(null);
-  const audioCleanupRef = useRef<(() => void) | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeBook = useMemo(() => {
@@ -227,42 +204,6 @@ function App() {
     if (!activeBook || !activeChapterId) return undefined;
     return activeBook.chapters.find((chapter) => chapter.id === activeChapterId);
   }, [activeBook, activeChapterId]);
-
-  const resetProgress = useCallback(() => {
-    setProgress(0);
-    setDuration(0);
-  }, []);
-
-  const releaseAudioResources = useCallback(() => {
-    if (audioCleanupRef.current) {
-      audioCleanupRef.current();
-      audioCleanupRef.current = null;
-    }
-
-    const audio = audioElementRef.current;
-    if (audio) {
-      audio.pause();
-      audio.src = "";
-      audio.removeAttribute("src");
-      audio.load();
-    }
-    audioElementRef.current = null;
-    activeChapterForAudio.current = null;
-
-    if (audioUrlRef.current) {
-      URL.revokeObjectURL(audioUrlRef.current);
-      audioUrlRef.current = null;
-    }
-
-    resetProgress();
-    setPlaybackState("idle");
-  }, [resetProgress]);
-
-  useEffect(() => {
-    return () => {
-      releaseAudioResources();
-    };
-  }, [releaseAudioResources]);
 
   useEffect(() => {
     if (!library.length) {
@@ -288,159 +229,6 @@ function App() {
     }
   }, [library, activeBookId, activeChapterId]);
 
-  const loadTts = useCallback(async () => {
-    if (ttsRef.current) {
-      return ttsRef.current;
-    }
-    setIsLoadingModel(true);
-    try {
-      const model = await KokoroTTS.from_pretrained(
-        "onnx-community/Kokoro-82M-v1.0-ONNX",
-        {
-          dtype: "q4",
-          device: "webgpu",
-        },
-      );
-      ttsRef.current = model;
-      return model;
-    } finally {
-      setIsLoadingModel(false);
-    }
-  }, []);
-
-  const attachAudioEvents = useCallback((audio: HTMLAudioElement) => {
-    const handleTimeUpdate = () => {
-      setProgress(audio.currentTime);
-      setDuration(audio.duration || 0);
-    };
-    const handleLoadedMetadata = () => {
-      setDuration(audio.duration || 0);
-      setProgress(audio.currentTime);
-    };
-
-    const handlePlay = () => setPlaybackState("playing");
-    const handlePause = () => {
-      if (!audio.ended) {
-        setPlaybackState("paused");
-      }
-    };
-    const handleEnded = () => {
-      setPlaybackState("idle");
-      setProgress(audio.duration || 0);
-    };
-    const handleError = () => {
-      setError("The audio element encountered an error.");
-      setPlaybackState("idle");
-    };
-
-    audio.addEventListener("timeupdate", handleTimeUpdate);
-    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
-    audio.addEventListener("play", handlePlay);
-    audio.addEventListener("pause", handlePause);
-    audio.addEventListener("ended", handleEnded);
-    audio.addEventListener("error", handleError);
-
-    return () => {
-      audio.removeEventListener("timeupdate", handleTimeUpdate);
-      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      audio.removeEventListener("play", handlePlay);
-      audio.removeEventListener("pause", handlePause);
-      audio.removeEventListener("ended", handleEnded);
-      audio.removeEventListener("error", handleError);
-    };
-  }, []);
-
-  const generateAudioForChapter = useCallback(
-    async (text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed) {
-        throw new Error("There's nothing in this chapter to play.");
-      }
-
-      if (trimmed.length > MAX_CHAPTER_CHARACTERS) {
-        throw new Error(
-          "This chapter is quite long. Try splitting it into smaller sections before generating audio.",
-        );
-      }
-
-      const tts = await loadTts();
-      const audio = await tts.generate(trimmed, {
-        voice,
-      });
-
-      setProgress(0);
-      setDuration(0);
-
-      const blob = audio.toBlob();
-      const url = URL.createObjectURL(blob);
-      audioUrlRef.current = url;
-      const element = new Audio(url);
-      const cleanup = attachAudioEvents(element);
-      audioCleanupRef.current = cleanup;
-      element.addEventListener(
-        "ended",
-        () => {
-          cleanup();
-          audioCleanupRef.current = null;
-          releaseAudioResources();
-        },
-        { once: true },
-      );
-
-      audioElementRef.current = element;
-      return element;
-    },
-    [attachAudioEvents, loadTts, releaseAudioResources, voice],
-  );
-
-  const playChapter = useCallback(async () => {
-    const chapterToPlay = activeChapter;
-    if (!chapterToPlay) {
-      setError("Select a chapter to start listening.");
-      return;
-    }
-
-    setError(null);
-
-    try {
-      if (
-        audioElementRef.current &&
-        activeChapterForAudio.current === chapterToPlay.id
-      ) {
-        await audioElementRef.current.play();
-        return;
-      }
-
-      releaseAudioResources();
-      setPlaybackState("loading");
-
-      const audio = await generateAudioForChapter(chapterToPlay.plainText);
-      activeChapterForAudio.current = chapterToPlay.id;
-      await audio.play();
-      setActiveView("player");
-    } catch (err) {
-      console.error(err);
-      setPlaybackState("idle");
-      setError(
-        err instanceof Error ? err.message : "We couldn't start the audiobook.",
-      );
-    }
-  }, [activeChapter, generateAudioForChapter, releaseAudioResources]);
-
-  const pausePlayback = useCallback(() => {
-    audioElementRef.current?.pause();
-  }, []);
-
-  const stopPlayback = useCallback(() => {
-    releaseAudioResources();
-  }, [releaseAudioResources]);
-
-  const handleSeek = useCallback((value: number[]) => {
-    if (!audioElementRef.current) return;
-    const [nextTime] = value;
-    audioElementRef.current.currentTime = nextTime;
-  }, []);
-
   const updateReaderPreferences = useCallback(
     (update: Partial<ReaderPreferences>) => {
       setReaderPreferences((prev: ReaderPreferences) => ({
@@ -460,11 +248,10 @@ function App() {
       const selectedBook = library.find((book) => book.id === bookId);
       setActiveBookId(bookId);
       setActiveChapterId(selectedBook?.chapters[0]?.id);
-      releaseAudioResources();
       setPendingFragment(null);
       setActiveView("reader");
     },
-    [library, releaseAudioResources],
+    [library],
   );
 
   const handleSelectChapter = useCallback(
@@ -472,20 +259,9 @@ function App() {
       if (!activeBookId) return;
       setActiveChapterId(chapterId);
       setPendingFragment(fragment && fragment.length > 0 ? fragment : null);
-      releaseAudioResources();
       setActiveView("reader");
     },
-    [activeBookId, releaseAudioResources],
-  );
-
-  const handleVoiceSelect = useCallback(
-    (value: VoiceId) => {
-      setVoice(value);
-      if (audioElementRef.current && playbackState !== "idle") {
-        releaseAudioResources();
-      }
-    },
-    [playbackState, releaseAudioResources],
+    [activeBookId],
   );
 
   const ingestEpub = useCallback(
@@ -572,13 +348,8 @@ function App() {
       };
 
       setLibrary((prev) => [...prev, newBook]);
-      setActiveBookId(newBook.id);
-      setActiveChapterId(newBook.chapters[0]?.id);
-      setActiveView("reader");
-      releaseAudioResources();
-
     },
-    [releaseAudioResources],
+    [],
   );
 
   const handleAddEbook = useCallback(async () => {
@@ -591,7 +362,6 @@ function App() {
     }
 
     try {
-      setError(null);
       setIsImporting(true);
 
       const selection = await open({
@@ -606,12 +376,12 @@ function App() {
       if (!filePath) return;
 
       if (!filePath.toLowerCase().endsWith(".epub")) {
-        setError("Please choose an EPUB (.epub) file.");
+        toast.error("Please choose an EPUB (.epub) file.");
         return;
       }
 
       if (library.some((book) => book.sourcePath === filePath)) {
-        setError("This ebook is already in your library.");
+        toast.error("This ebook is already in your library.");
         return;
       }
 
@@ -627,11 +397,11 @@ function App() {
       });
     } catch (err) {
       console.error(err);
-      setError(
+      const message =
         err instanceof Error
           ? err.message
-          : "Something went wrong while importing that ebook.",
-      );
+          : "Something went wrong while importing that ebook.";
+      toast.error(message);
     } finally {
       setIsImporting(false);
     }
@@ -647,24 +417,23 @@ function App() {
       }
 
       if (file.type && file.type !== "application/epub+zip") {
-        setError("Please choose an EPUB file.");
+        toast.error("Please choose an EPUB file.");
         return;
       }
 
       if (!file.name.toLowerCase().endsWith(".epub")) {
-        setError("Please choose an EPUB (.epub) file.");
+        toast.error("Please choose an EPUB (.epub) file.");
         return;
       }
 
       const sourceKey = `web://${file.name}:${file.size}:${file.lastModified}`;
 
       if (library.some((book) => book.sourcePath === sourceKey)) {
-        setError("This ebook is already in your library.");
+        toast.error("This ebook is already in your library.");
         return;
       }
 
       setIsImporting(true);
-      setError(null);
 
       try {
         const buffer = await file.arrayBuffer();
@@ -675,11 +444,11 @@ function App() {
         });
       } catch (err) {
         console.error(err);
-        setError(
+        const message =
           err instanceof Error
             ? err.message
-            : "Something went wrong while importing that ebook.",
-        );
+            : "Something went wrong while importing that ebook.";
+        toast.error(message);
       } finally {
         setIsImporting(false);
       }
@@ -697,26 +466,6 @@ function App() {
     />
   );
 
-  const playbackView = (
-    <PlaybackPanel
-      activeBook={activeBook}
-      activeChapter={activeChapter}
-      playbackState={playbackState}
-      isLoadingModel={isLoadingModel}
-      isImporting={isImporting}
-      voice={voice}
-      voices={VOICE_OPTIONS}
-      progress={progress}
-      duration={duration}
-      error={error}
-      onPlay={playChapter}
-      onPause={pausePlayback}
-      onStop={stopPlayback}
-      onSeek={handleSeek}
-      onSelectVoice={handleVoiceSelect}
-    />
-  );
-
   const readerView = (
     <ReaderPanel
       activeBook={activeBook}
@@ -729,6 +478,14 @@ function App() {
     />
   );
 
+  useEffect(() => {
+    if (!library.length) {
+      setActiveView("library");
+    }
+  }, [library.length]);
+
+  const isLibraryView = activeView === "library";
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <HiddenFileInput
@@ -740,36 +497,29 @@ function App() {
         onChange={handleWebFileSelection}
       />
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        {/* <header className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Headphones className="h-8 w-8 text-primary" />
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-              Whisperleaf Reader
-            </h1>
-          </div>
-          <p className="max-w-3xl text-sm text-muted-foreground sm:text-base">
-            Import any EPUB, browse its chapters, and let Whisperleaf narrate
-            every page. Designed for focused reading on desktop and a tab-first
-            experience on mobile.
-          </p>
-        </header> */}
+        {/* Header removed per redesign */}
 
-        <MobileNavigation
-          activeView={activeView}
-          onChange={setActiveView}
-          librarySlot={libraryView}
-          readerSlot={readerView}
-          playerSlot={playbackView}
-        />
-
-        <div className="hidden gap-6 lg:grid lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)] xl:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
-          <div className="space-y-6">{libraryView}</div>
-          <div className="flex flex-col gap-6">
-            {playbackView}
-            {readerView}
-          </div>
+        <div className="flex-1 space-y-6">
+          {isLibraryView ? (
+            <div className="flex flex-col">{libraryView}</div>
+          ) : (
+            <div className="space-y-4">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="w-fit"
+                onClick={() => setActiveView("library")}
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to library
+              </Button>
+              {readerView}
+            </div>
+          )}
         </div>
       </div>
+      <Toaster position="top-center" richColors />
     </div>
   );
 }
