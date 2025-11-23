@@ -181,7 +181,7 @@ export function ReaderViewport({
   }, [scheduleProgressEmit]);
 
   useEffect(() => {
-    if (!activeChapter) {
+    if (!activeChapter || scrollIntent) {
       return;
     }
 
@@ -221,6 +221,7 @@ export function ReaderViewport({
     activeChapter?.contentHtml,
     computeScrollMetrics,
     scheduleProgressEmit,
+    scrollIntent,
   ]);
 
   useEffect(() => {
@@ -234,14 +235,26 @@ export function ReaderViewport({
       return;
     }
 
-    const rafId = requestAnimationFrame(() => {
+    let rafId: number | null = null;
+    let attempts = 0;
+    const maxAttempts = 12;
+    const tolerance = 1;
+
+    const finalize = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      onScrollIntentConsumed?.();
+    };
+
+    const applyIntent = () => {
       const metrics = computeScrollMetrics();
       if (!metrics) {
-        onScrollIntentConsumed?.();
+        finalize();
         return;
       }
-      const target =
-        scrollIntent === "bottom" ? metrics.maxScroll : 0;
+      const target = scrollIntent === "bottom" ? metrics.maxScroll : 0;
 
       if (typeof window !== "undefined") {
         const rectTop = node.getBoundingClientRect().top;
@@ -251,10 +264,32 @@ export function ReaderViewport({
         node.scrollTop = target;
       }
       scheduleProgressEmit();
-      onScrollIntentConsumed?.();
-    });
 
-    return () => cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const verifyMetrics = computeScrollMetrics();
+        if (!verifyMetrics) {
+          finalize();
+          return;
+        }
+
+        const reached = Math.abs(verifyMetrics.scrollTop - target) <= tolerance;
+        if (reached || attempts >= maxAttempts) {
+          finalize();
+          return;
+        }
+
+        attempts += 1;
+        applyIntent();
+      });
+    };
+
+    applyIntent();
+
+    return () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
+    };
   }, [
     scrollIntent,
     activeChapter?.id,
