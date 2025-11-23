@@ -1,12 +1,13 @@
 import type { Book } from "../../types/reader";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import type { ChapterSelectionOptions } from "./types";
 
 type ChapterListProps = {
   book: Book;
   activeChapterId?: string;
   className?: string;
-  onSelectChapter: (chapterId: string, fragment?: string) => void;
+  onSelectChapter: (chapterId: string, options?: ChapterSelectionOptions) => void;
   onAfterSelect?: () => void;
 };
 
@@ -28,7 +29,7 @@ export function ChapterList({
             size="sm"
             className="justify-start"
             onClick={() => {
-              onSelectChapter(chapter.id, `#${chapter.id}`);
+              onSelectChapter(chapter.id, { fragment: chapter.id });
               onAfterSelect?.();
             }}
           >

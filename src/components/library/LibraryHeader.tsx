@@ -5,6 +5,7 @@ import { cn } from "../../lib/utils";
 import {
   LIBRARY_FILTER_OPTIONS,
   LIBRARY_VIEW_MODES,
+  LIBRARY_FILTER_LABELS,
   type LibraryFilterOption,
   type LibraryViewMode,
 } from "./types";
@@ -48,6 +49,7 @@ export function LibraryHeader({
             const pressedProps = isActive
               ? ({ "aria-pressed": "true" } as const)
               : ({} as const);
+            const label = LIBRARY_FILTER_LABELS[option];
             return (
               <button
                 key={option}
@@ -61,9 +63,7 @@ export function LibraryHeader({
                 )}
                 {...pressedProps}
               >
-                {option === "all" && "All books"}
-                {option === "recent" && "Recently added"}
-                {option === "author" && "By author"}
+                {label}
               </button>
             );
           })}

@@ -14,6 +14,11 @@ import { LoadingScreen } from "./components/app/LoadingScreen";
 import { usePersistentLibrary } from "./hooks/usePersistentLibrary";
 import type { ReaderPreferences } from "./types/reader";
 import type { UITheme } from "./types/ui";
+import type {
+  ChapterProgressSnapshot,
+  ChapterSelectionOptions,
+} from "./components/reader/types";
+import { getChapterPageCount, getLibraryBookStatus } from "./lib/utils";
 
 const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   theme: "system",
@@ -107,6 +112,111 @@ function App() {
     return activeBook.chapters.find((chapter) => chapter.id === activeChapterId);
   }, [activeBook, activeChapterId]);
 
+  type ProgressUpdatePayload = {
+    chapterId: string;
+    pageIndex?: number;
+    pageCount?: number;
+    percent?: number;
+  };
+
+  const updateBookProgress = useCallback(
+    (bookId: string, payload: ProgressUpdatePayload) => {
+      if (!payload?.chapterId) return;
+
+      setLibrary((prev) => {
+        let updated = false;
+        const timestamp = new Date().toISOString();
+
+        const nextLibrary = prev.map((book) => {
+          if (book.id !== bookId) {
+            return book;
+          }
+
+          const chapterIndex = book.chapters.findIndex(
+            (chapter) => chapter.id === payload.chapterId,
+          );
+          if (chapterIndex === -1) {
+            return book;
+          }
+
+          const chapter = book.chapters[chapterIndex];
+          const existingProgress = book.progress;
+          const chapterMatchesExisting =
+            existingProgress?.currentChapterId === chapter.id &&
+            existingProgress.currentChapterIndex === chapterIndex;
+
+          const resolvedPageCountCandidate =
+            typeof payload.pageCount === "number" && Number.isFinite(payload.pageCount)
+              ? payload.pageCount
+              : getChapterPageCount(chapter) ??
+                (chapterMatchesExisting
+                  ? existingProgress?.currentChapterPageCount
+                  : undefined) ??
+                1;
+
+          const pageCount = Math.max(1, Math.round(resolvedPageCountCandidate));
+
+          const requestedPageIndex =
+            typeof payload.pageIndex === "number" && Number.isFinite(payload.pageIndex)
+              ? Math.round(payload.pageIndex)
+              : chapterMatchesExisting
+                ? existingProgress?.currentChapterPageIndex ?? 0
+                : 0;
+
+          const pageIndex = Math.min(
+            Math.max(requestedPageIndex, 0),
+            Math.max(pageCount - 1, 0),
+          );
+
+          const percentSource =
+            typeof payload.percent === "number" && Number.isFinite(payload.percent)
+              ? payload.percent
+              : chapterMatchesExisting
+                ? existingProgress?.chapterProgressPercent ?? 0
+                : pageCount > 1
+                  ? pageIndex / (pageCount - 1)
+                  : pageIndex > 0
+                    ? 1
+                    : 0;
+
+          const percent = Number(Math.min(Math.max(percentSource ?? 0, 0), 1).toFixed(4));
+
+          const nextProgress = {
+            currentChapterId: chapter.id,
+            currentChapterHref: chapter.href,
+            currentChapterIndex: chapterIndex,
+            currentChapterPageIndex: pageIndex,
+            currentChapterPageCount: pageCount,
+            chapterProgressPercent: percent,
+            updatedAt: timestamp,
+          };
+
+          const isUnchanged =
+            existingProgress &&
+            existingProgress.currentChapterId === nextProgress.currentChapterId &&
+            existingProgress.currentChapterIndex === nextProgress.currentChapterIndex &&
+            existingProgress.currentChapterPageIndex === nextProgress.currentChapterPageIndex &&
+            existingProgress.currentChapterPageCount === nextProgress.currentChapterPageCount &&
+            Math.abs(existingProgress.chapterProgressPercent - nextProgress.chapterProgressPercent) <
+              0.001;
+
+          if (isUnchanged) {
+            return book;
+          }
+
+          updated = true;
+          return {
+            ...book,
+            progress: nextProgress,
+          };
+        });
+
+        return updated ? nextLibrary : prev;
+      });
+    },
+    [setLibrary],
+  );
+
   useEffect(() => {
     if (!library.length) {
       setActiveBookId(undefined);
@@ -117,19 +227,51 @@ function App() {
     if (!activeBookId || !library.some((book) => book.id === activeBookId)) {
       const firstBook = library[0];
       setActiveBookId(firstBook.id);
-      setActiveChapterId(firstBook.chapters[0]?.id);
+      let fallbackChapterId =
+        firstBook.progress?.currentChapterId ??
+        firstBook.chapters[firstBook.progress?.currentChapterIndex ?? 0]?.id ??
+        firstBook.chapters[0]?.id;
+      if (
+        fallbackChapterId &&
+        !firstBook.chapters.some((chapter) => chapter.id === fallbackChapterId)
+      ) {
+        fallbackChapterId = firstBook.chapters[0]?.id;
+      }
+      setActiveChapterId(fallbackChapterId);
+      if (fallbackChapterId) {
+        updateBookProgress(firstBook.id, { chapterId: fallbackChapterId });
+      }
       return;
     }
 
     const selectedBook = library.find((book) => book.id === activeBookId);
-    if (
-      selectedBook &&
-      (!activeChapterId ||
-        !selectedBook.chapters.some((chapter) => chapter.id === activeChapterId))
-    ) {
-      setActiveChapterId(selectedBook.chapters[0]?.id);
+    if (!selectedBook) {
+      setActiveBookId(undefined);
+      setActiveChapterId(undefined);
+      return;
     }
-  }, [library, activeBookId, activeChapterId]);
+
+    const hasActiveChapter = activeChapterId
+      ? selectedBook.chapters.some((chapter) => chapter.id === activeChapterId)
+      : false;
+
+    if (!hasActiveChapter) {
+      let fallbackChapterId =
+        selectedBook.progress?.currentChapterId ??
+        selectedBook.chapters[selectedBook.progress?.currentChapterIndex ?? 0]?.id ??
+        selectedBook.chapters[0]?.id;
+      if (
+        fallbackChapterId &&
+        !selectedBook.chapters.some((chapter) => chapter.id === fallbackChapterId)
+      ) {
+        fallbackChapterId = selectedBook.chapters[0]?.id;
+      }
+      setActiveChapterId(fallbackChapterId);
+      if (fallbackChapterId) {
+        updateBookProgress(selectedBook.id, { chapterId: fallbackChapterId });
+      }
+    }
+  }, [library, activeBookId, activeChapterId, updateBookProgress]);
 
   const updateReaderPreferences = useCallback(
     (update: Partial<ReaderPreferences>) => {
@@ -149,21 +291,48 @@ function App() {
     (bookId: string) => {
       const selectedBook = library.find((book) => book.id === bookId);
       setActiveBookId(bookId);
-      setActiveChapterId(selectedBook?.chapters[0]?.id);
+      let progressChapterId: string | undefined;
+      if (selectedBook?.progress?.currentChapterId) {
+        const candidate = selectedBook.progress.currentChapterId;
+        if (selectedBook.chapters.some((chapter) => chapter.id === candidate)) {
+          progressChapterId = candidate;
+        }
+      }
+      const indexFallbackId =
+        selectedBook?.chapters[selectedBook.progress?.currentChapterIndex ?? 0]?.id;
+      const nextChapterId = progressChapterId ?? indexFallbackId ?? selectedBook?.chapters[0]?.id;
+      setActiveChapterId(nextChapterId);
+      if (nextChapterId) {
+        updateBookProgress(bookId, { chapterId: nextChapterId });
+      }
       setPendingFragment(null);
       setActiveView("reader");
     },
-    [library],
+    [library, updateBookProgress],
   );
 
   const handleSelectChapter = useCallback(
-    (chapterId: string, fragment?: string) => {
+    (chapterId: string, options?: ChapterSelectionOptions) => {
       if (!activeBookId) return;
       setActiveChapterId(chapterId);
-      setPendingFragment(fragment && fragment.length > 0 ? fragment : null);
+      updateBookProgress(activeBookId, { chapterId, pageIndex: 0, percent: 0 });
+      const fragment = options?.fragment;
+      setPendingFragment(fragment && fragment.length > 0 ? fragment.replace(/^#/, "") : null);
       setActiveView("reader");
     },
-    [activeBookId],
+    [activeBookId, updateBookProgress],
+  );
+
+  const handleChapterProgress = useCallback(
+    (bookId: string, snapshot: ChapterProgressSnapshot) => {
+      updateBookProgress(bookId, {
+        chapterId: snapshot.chapterId,
+        pageIndex: snapshot.pageIndex,
+        pageCount: snapshot.pageCount,
+        percent: snapshot.percent,
+      });
+    },
+    [updateBookProgress],
   );
 
   const handleAddEbook = useCallback(async () => {
@@ -192,7 +361,7 @@ function App() {
   useEffect(() => {
     if (!library.length) {
       setActiveView("library");
-    }
+      }
   }, [library.length]);
 
   const normalizedLibrarySearch = librarySearchTerm.trim().toLowerCase();
@@ -206,6 +375,16 @@ function App() {
 
   const filteredLibrary = useMemo(() => {
     switch (libraryFilter) {
+      case "new":
+        return searchFilteredLibrary.filter((book) => getLibraryBookStatus(book) === "new");
+      case "resume":
+        return searchFilteredLibrary.filter(
+          (book) => getLibraryBookStatus(book) === "resume",
+        );
+      case "finished":
+        return searchFilteredLibrary.filter(
+          (book) => getLibraryBookStatus(book) === "finished",
+        );
       case "recent":
         return [...searchFilteredLibrary].reverse();
       case "author":
@@ -246,6 +425,7 @@ function App() {
       onFragmentConsumed={handleFragmentConsumed}
       onNavigateLibrary={() => setActiveView("library")}
       resolvedUiTheme={resolvedUiTheme}
+      onChapterProgress={handleChapterProgress}
     />
   );
 

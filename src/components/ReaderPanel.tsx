@@ -1,7 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 
-import type { ReaderPanelBaseProps } from "./reader/types";
+import type {
+  ChapterProgressSnapshot,
+  ChapterSelectionOptions,
+  ReaderPanelBaseProps,
+} from "./reader/types";
 import { ReaderSettingsControl } from "./reader/ReaderSettingsControl";
 import { ReaderTocDrawer } from "./reader/ReaderTocDrawer";
 import { ReaderViewport } from "./reader/ReaderViewport";
@@ -23,18 +27,29 @@ export function ReaderPanel({
   onFragmentConsumed,
   onNavigateLibrary,
   resolvedUiTheme,
+  onChapterProgress,
 }: ReaderPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
   const [isImmersive, setIsImmersive] = useState(false);
+  const preserveChromeNextSelectionRef = useRef(false);
+  const scrollIntentRef = useRef<"top" | "bottom" | null>(null);
 
   useEffect(() => {
     setIsTocOpen(false);
   }, [activeBook?.id]);
 
   useEffect(() => {
+    if (preserveChromeNextSelectionRef.current) {
+      preserveChromeNextSelectionRef.current = false;
+      return;
+    }
     setIsImmersive(false);
   }, [activeBook?.id, activeChapter?.id]);
+
+  useEffect(() => {
+    setIsImmersive(false);
+  }, [activeBook?.id]);
 
   useEffect(() => {
     if (isImmersive) {
@@ -52,6 +67,24 @@ export function ReaderPanel({
      preferences.theme === "system" ? resolvedUiTheme : preferences.theme;
   const audioTracks = activeBook?.audioTracks ?? [];
   const showAudioPlayer = audioTracks.length > 0;
+
+  const handleChapterChange = (chapterId: string, options?: ChapterSelectionOptions) => {
+    const requestedScrollPosition = options?.scrollPosition ?? "maintain";
+    scrollIntentRef.current =
+      requestedScrollPosition === "maintain" ? null : (requestedScrollPosition as "top" | "bottom");
+
+    if (options?.preserveChrome) {
+      preserveChromeNextSelectionRef.current = true;
+    }
+    onSelectChapter(chapterId, options);
+  };
+
+  const handleChapterProgress = (snapshot: ChapterProgressSnapshot) => {
+    if (!activeBook?.id) {
+      return;
+    }
+    onChapterProgress?.(activeBook.id, snapshot);
+  };
 
   return (
     <section className="flex h-full flex-col">
@@ -84,7 +117,7 @@ export function ReaderPanel({
                   setIsImmersive(false);
                   setIsTocOpen(open);
                 }}
-                onSelectChapter={onSelectChapter}
+                onSelectChapter={handleChapterChange}
               />
             )}
             <ReaderSettingsControl
@@ -117,11 +150,16 @@ export function ReaderPanel({
           preferences={preferences}
           pendingFragment={pendingFragment}
           onFragmentConsumed={onFragmentConsumed}
-          onSelectChapter={onSelectChapter}
+          onSelectChapter={handleChapterChange}
           chromeVisible={!isImmersive}
           resolvedTheme={appliedTheme}
           onToggleChrome={() => setIsImmersive((prev) => !prev)}
           audioPlayerVisible={showAudioPlayer}
+          scrollIntent={scrollIntentRef.current}
+          onScrollIntentConsumed={() => {
+            scrollIntentRef.current = null;
+          }}
+          onChapterProgress={handleChapterProgress}
         />
       </div>
       {showAudioPlayer ? (

@@ -4,7 +4,7 @@ import { readFile } from "@tauri-apps/plugin-fs";
 import ePub from "epubjs";
 import { toast } from "sonner";
 
-import type { AudioTrack, Book, Chapter, NavItem } from "../types/reader";
+import type { AudioTrack, Book, BookProgress, Chapter, NavItem } from "../types/reader";
 import {
   buildNavigationMap,
   createId,
@@ -16,6 +16,12 @@ import {
   normalizeChapterContent,
   sanitizeChapterHtml,
 } from "../lib/epub";
+import {
+  countWords,
+  estimatePagesFromWords,
+  getChapterPageCount,
+  getChapterWordCount,
+} from "../lib/utils";
 
 const WEB_LIBRARY_STORAGE_KEY = "tts-library-cache-v1";
 const LIBRARY_STORE_PATH = "library.store.json";
@@ -29,6 +35,8 @@ type PersistedLibraryEntry = {
   publisher?: string;
   publishedYear?: string;
   subjects?: string[];
+  progress?: BookProgress;
+  pageCount?: number;
 };
 
 type PersistedLibraryFile = {
@@ -46,6 +54,8 @@ type IngestParams = {
   buffer: ArrayBuffer;
   sourcePath: string;
   fallbackTitle?: string;
+  progress?: BookProgress;
+  pageCountHint?: number;
 };
 
 type PersistentLibrary = {
@@ -61,6 +71,64 @@ const isTauriEnvironment = () =>
   typeof window !== "undefined" &&
   typeof (window as typeof window & { __TAURI_INTERNALS__?: { invoke?: unknown } })
     .__TAURI_INTERNALS__?.invoke === "function";
+
+const applyDerivedFields = (book: Book): Book => {
+  let chaptersChanged = false;
+
+  const normalizedChapters = book.chapters.map((chapter) => {
+    const normalizedWordCount = getChapterWordCount(chapter);
+    const normalizedPageCount = getChapterPageCount({
+      ...chapter,
+      wordCount: normalizedWordCount,
+    });
+
+    const needsWordCountUpdate =
+      typeof chapter.wordCount !== "number" || chapter.wordCount !== normalizedWordCount;
+    const needsPageCountUpdate =
+      normalizedPageCount !== undefined && chapter.estimatedPageCount !== normalizedPageCount;
+
+    if (!needsWordCountUpdate && !needsPageCountUpdate) {
+      return chapter;
+    }
+
+    chaptersChanged = true;
+    return {
+      ...chapter,
+      wordCount: normalizedWordCount,
+      estimatedPageCount: normalizedPageCount ?? chapter.estimatedPageCount,
+    };
+  });
+
+  const totalWords = normalizedChapters.reduce(
+    (sum, chapter) => sum + getChapterWordCount(chapter),
+    0,
+  );
+  const derivedPageCount = estimatePagesFromWords(totalWords);
+  const normalizedPageCount =
+    derivedPageCount !== undefined ? Math.max(1, Math.round(derivedPageCount)) : undefined;
+
+  const existingPageCount =
+    typeof book.pageCount === "number" && Number.isFinite(book.pageCount)
+      ? Math.max(1, Math.round(book.pageCount))
+      : undefined;
+  const needsBookPageUpdate =
+    normalizedPageCount !== undefined && normalizedPageCount !== existingPageCount;
+
+  if (!chaptersChanged && !needsBookPageUpdate) {
+    return book;
+  }
+
+  const nextBook: Book = {
+    ...book,
+    chapters: chaptersChanged ? normalizedChapters : book.chapters,
+  };
+
+  if (normalizedPageCount !== undefined) {
+    nextBook.pageCount = normalizedPageCount;
+  }
+
+  return nextBook;
+};
 
 export function usePersistentLibrary(): PersistentLibrary {
   const [library, setLibrary] = useState<Book[]>([]);
@@ -86,7 +154,13 @@ export function usePersistentLibrary(): PersistentLibrary {
   }, []);
 
   const ingestEpub = useCallback(
-    async ({ buffer, sourcePath, fallbackTitle }: IngestParams) => {
+    async ({
+      buffer,
+      sourcePath,
+      fallbackTitle,
+      progress: savedProgress,
+      pageCountHint,
+    }: IngestParams) => {
       ensureEpubSignature(buffer);
 
       const epubBook = ePub(buffer) as any;
@@ -149,6 +223,9 @@ export function usePersistentLibrary(): PersistentLibrary {
             const title =
               navMap.get(lookupKey) ?? item.label?.trim() ?? `Section ${index + 1}`;
 
+            const wordCount = countWords(plainText);
+            const estimatedChapterPages = estimatePagesFromWords(wordCount);
+
             return {
               id: `${newBookId}-${item?.idref ?? item?.id ?? index}`,
               title,
@@ -156,6 +233,8 @@ export function usePersistentLibrary(): PersistentLibrary {
               plainText,
               order: index,
               href: chapterHref,
+              wordCount,
+              estimatedPageCount: estimatedChapterPages,
             } as Chapter;
           } catch (chapterError) {
             console.warn("Could not load chapter", chapterError);
@@ -167,6 +246,79 @@ export function usePersistentLibrary(): PersistentLibrary {
       const filteredChapters = chapters.filter(
         (chapter): chapter is Chapter => Boolean(chapter && chapter.plainText.trim()),
       );
+
+      const totalWordCount = filteredChapters.reduce(
+        (sum, chapter) => sum + (chapter.wordCount ?? countWords(chapter.plainText)),
+        0,
+      );
+
+      const estimatedPageCount =
+        estimatePagesFromWords(totalWordCount) ??
+        (typeof pageCountHint === "number" && Number.isFinite(pageCountHint) && pageCountHint > 0
+          ? Math.max(1, Math.round(pageCountHint))
+          : undefined);
+
+      let appliedProgress: BookProgress | undefined;
+      if (savedProgress && filteredChapters.length) {
+        const maxIndex = filteredChapters.length - 1;
+        const storedIndex =
+          typeof savedProgress.currentChapterIndex === "number"
+            ? savedProgress.currentChapterIndex
+            : 0;
+        const normalizedIndex = Math.min(Math.max(storedIndex, 0), maxIndex);
+        const candidateByHref = savedProgress.currentChapterHref
+          ? filteredChapters.find(
+              (chapter) =>
+                chapter.href === savedProgress.currentChapterHref ||
+                chapter.href.split("#")[0] === savedProgress.currentChapterHref.split("#")[0],
+            )
+          : undefined;
+        const resolvedChapter =
+          candidateByHref ??
+          filteredChapters[normalizedIndex] ??
+          filteredChapters[Math.min(normalizedIndex, maxIndex)];
+
+        if (resolvedChapter) {
+          const resolvedIndex = filteredChapters.findIndex(
+            (chapter) => chapter.id === resolvedChapter.id,
+          );
+          const chapterIndex = resolvedIndex === -1 ? 0 : resolvedIndex;
+          const chapterPageCount =
+            getChapterPageCount(resolvedChapter) ??
+            (typeof savedProgress.currentChapterPageCount === "number" &&
+            Number.isFinite(savedProgress.currentChapterPageCount)
+              ? Math.max(1, Math.round(savedProgress.currentChapterPageCount))
+              : 1);
+          const storedPageIndex =
+            typeof savedProgress.currentChapterPageIndex === "number" &&
+            Number.isFinite(savedProgress.currentChapterPageIndex)
+              ? Math.round(savedProgress.currentChapterPageIndex)
+              : 0;
+          const pageIndex = Math.min(
+            Math.max(storedPageIndex, 0),
+            Math.max(chapterPageCount - 1, 0),
+          );
+          const percentSource =
+            typeof savedProgress.chapterProgressPercent === "number" &&
+            Number.isFinite(savedProgress.chapterProgressPercent)
+              ? Math.min(Math.max(savedProgress.chapterProgressPercent, 0), 1)
+              : chapterPageCount > 1
+                ? pageIndex / (chapterPageCount - 1)
+                : pageIndex > 0
+                  ? 1
+                  : 0;
+
+          appliedProgress = {
+            currentChapterId: resolvedChapter.id,
+            currentChapterHref: resolvedChapter.href,
+            currentChapterIndex: chapterIndex,
+            currentChapterPageIndex: pageIndex,
+            currentChapterPageCount: chapterPageCount,
+            chapterProgressPercent: Number(percentSource.toFixed(4)),
+            updatedAt: savedProgress.updatedAt ?? new Date().toISOString(),
+          };
+        }
+      }
 
       if (!filteredChapters.length) {
         throw new Error("We couldn't extract any readable chapters from this ebook.");
@@ -224,13 +376,17 @@ export function usePersistentLibrary(): PersistentLibrary {
         subjects,
         fileSizeBytes,
         audioTracks,
+        progress: appliedProgress,
+        pageCount: estimatedPageCount,
       };
+
+      const normalizedBook = applyDerivedFields(newBook);
 
       setLibrary((prev) => {
         if (prev.some((book) => book.sourcePath === sourcePath)) {
           return prev;
         }
-        return [...prev, newBook];
+        return [...prev, normalizedBook];
       });
     },
     [],
@@ -251,6 +407,8 @@ export function usePersistentLibrary(): PersistentLibrary {
                 publisher: book.publisher,
                 publishedYear: book.publishedYear,
                 subjects: book.subjects,
+                progress: book.progress,
+                pageCount: book.pageCount,
               })),
             };
             await store.set(LIBRARY_STORE_KEY, payload);
@@ -297,6 +455,7 @@ export function usePersistentLibrary(): PersistentLibrary {
               }
 
               try {
+                const entryWithMeta = entry as PersistedLibraryEntry & Partial<Book>;
                 const binary = await readFile(entry.sourcePath);
                 const arrayBuffer = binary.buffer.slice(
                   binary.byteOffset,
@@ -306,6 +465,8 @@ export function usePersistentLibrary(): PersistentLibrary {
                   buffer: arrayBuffer,
                   sourcePath: entry.sourcePath,
                   fallbackTitle: entry.title,
+                  progress: entryWithMeta.progress,
+                  pageCountHint: entryWithMeta.pageCount,
                 });
               } catch (restoreError) {
                 console.warn(
@@ -341,7 +502,8 @@ export function usePersistentLibrary(): PersistentLibrary {
                   Array.isArray((entry as Book).chapters),
               );
               if (storedBooks.length) {
-                setLibrary(storedBooks);
+                const normalizedBooks = storedBooks.map((book) => applyDerivedFields(book));
+                setLibrary(normalizedBooks);
               }
             }
           }

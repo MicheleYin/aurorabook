@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "../../lib/utils";
@@ -10,9 +10,14 @@ import {
   lineHeightClassMap,
   themeClasses,
 } from "./constants";
-import type { ReaderPanelBaseProps } from "./types";
+import type {
+  ChapterProgressSnapshot,
+  ChapterSelectionOptions,
+  ReaderPanelBaseProps,
+} from "./types";
 import type { ReaderTheme } from "../../types/reader";
 import { Button } from "../ui/button";
+import { useReaderScrollManager } from "./hooks/useReaderScrollManager";
 
 type ResolvedReaderTheme = Exclude<ReaderTheme, "system">;
 
@@ -29,6 +34,9 @@ type ReaderViewportProps = Pick<
   resolvedTheme: ResolvedReaderTheme;
   onToggleChrome: () => void;
   audioPlayerVisible?: boolean;
+  scrollIntent?: "top" | "bottom" | null;
+  onScrollIntentConsumed?: () => void;
+  onChapterProgress?: (snapshot: ChapterProgressSnapshot) => void;
 };
 
 export function ReaderViewport({
@@ -42,97 +50,24 @@ export function ReaderViewport({
   resolvedTheme,
   onToggleChrome,
   audioPlayerVisible = false,
+  scrollIntent,
+  onScrollIntentConsumed,
+  onChapterProgress,
 }: ReaderViewportProps) {
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const hasActiveBook = Boolean(activeBook && activeBook.chapters.length);
+  const { contentRef, handleScroll, requestNavigationIntent } = useReaderScrollManager({
+    activeBook,
+    activeChapter,
+    preferences,
+    chromeVisible,
+    audioPlayerVisible,
+    pendingFragment,
+    onFragmentConsumed,
+    scrollIntent,
+    onScrollIntentConsumed,
+    onChapterProgress,
+  });
 
-  useEffect(() => {
-    const node = contentRef.current;
-    if (!node) return;
-    node.scrollTo({ top: 0, behavior: "auto" });
-  }, [
-    activeChapter?.id,
-    preferences.fontFamily,
-    preferences.fontSize,
-    preferences.contentPadding,
-  ]);
-
-  useEffect(() => {
-    if (!pendingFragment) return;
-    const root = contentRef.current;
-    if (!root) return;
-
-    const fragment = pendingFragment.replace(/^#/, "");
-
-    const scrollToFragment = () => {
-      const selector =
-        typeof CSS !== "undefined" && CSS.escape
-          ? `#${CSS.escape(fragment)}`
-          : `#${fragment}`;
-      const target =
-        root.querySelector<HTMLElement>(selector) ??
-        root.querySelector<HTMLElement>(`a[name="${fragment}"]`);
-      if (target) {
-        target.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-      onFragmentConsumed();
-    };
-
-    const id = requestAnimationFrame(scrollToFragment);
-    return () => cancelAnimationFrame(id);
-  }, [pendingFragment, onFragmentConsumed, activeChapter?.id, hasActiveBook]);
-
-  useEffect(() => {
-    const root = contentRef.current;
-    if (!root || !activeBook) return;
-
-    const handler = (event: MouseEvent) => {
-      const element = (event.target as HTMLElement | null)?.closest("a");
-      if (!(element instanceof HTMLAnchorElement)) return;
-
-      const href = element.getAttribute("href");
-      if (!href) return;
-
-      if (href.startsWith("http") || href.startsWith("mailto:")) {
-        return;
-      }
-
-      event.preventDefault();
-
-      if (href.startsWith("#")) {
-        const fragment = href.slice(1);
-        const selector =
-          typeof CSS !== "undefined" && CSS.escape
-            ? `#${CSS.escape(fragment)}`
-            : `#${fragment}`;
-        const target =
-          root.querySelector<HTMLElement>(selector) ??
-          root.querySelector<HTMLElement>(`a[name="${fragment}"]`);
-        if (target) {
-          target.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-        return;
-      }
-
-      const [pathPart, fragmentPart] = href.split("#");
-      const normalized = pathPart.replace(/^\.\//, "");
-      const match = activeBook.chapters.find((chapter) => {
-        const chapterPath = chapter.href.split("#")[0];
-        return (
-          chapterPath === normalized ||
-          chapterPath.endsWith(normalized) ||
-          normalized.endsWith(chapterPath)
-        );
-      });
-
-      if (match) {
-        onSelectChapter(match.id, fragmentPart);
-      }
-    };
-
-    root.addEventListener("click", handler);
-    return () => root.removeEventListener("click", handler);
-  }, [activeBook, onSelectChapter, activeChapter?.id]);
+  const showAudioPlayer = audioPlayerVisible;
 
   const { previousChapter, nextChapter } = useMemo(() => {
     if (!activeBook || !activeChapter) {
@@ -175,6 +110,22 @@ export function ReaderViewport({
     ? paddingConfig.innerChrome
     : paddingConfig.innerImmersive;
 
+  const requestChapterChange = (chapterId: string, options?: ChapterSelectionOptions) => {
+    onSelectChapter(chapterId, options);
+  };
+
+  const handlePrevious = () => {
+    if (!previousChapter) return;
+    requestNavigationIntent("bottom");
+    requestChapterChange(previousChapter.id, { preserveChrome: true, scrollPosition: "bottom" });
+  };
+
+  const handleNext = () => {
+    if (!nextChapter) return;
+    requestNavigationIntent("top");
+    requestChapterChange(nextChapter.id, { preserveChrome: true, scrollPosition: "top" });
+  };
+
   const renderNavigation = () => (
     <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
       {previousChapter ? (
@@ -184,7 +135,7 @@ export function ReaderViewport({
           className={cn(navButtonClass)}
           onClick={(event) => {
             event.stopPropagation();
-            onSelectChapter(previousChapter.id);
+            handlePrevious();
           }}
         >
           ← Previous chapter
@@ -199,7 +150,7 @@ export function ReaderViewport({
           className={cn(navButtonClass)}
           onClick={(event) => {
             event.stopPropagation();
-            onSelectChapter(nextChapter.id);
+            handleNext();
           }}
         >
           Next chapter →
@@ -209,6 +160,59 @@ export function ReaderViewport({
       )}
     </div>
   );
+
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!root || !activeBook) return;
+
+    const handler = (event: MouseEvent) => {
+      const element = (event.target as HTMLElement | null)?.closest("a");
+      if (!(element instanceof HTMLAnchorElement)) return;
+
+      const href = element.getAttribute("href");
+      if (!href) return;
+
+      if (href.startsWith("http") || href.startsWith("mailto:")) {
+        return;
+      }
+
+      event.preventDefault();
+
+      if (href.startsWith("#")) {
+        const fragment = href.slice(1);
+        const selector =
+          typeof CSS !== "undefined" && CSS.escape
+            ? `#${CSS.escape(fragment)}`
+            : `#${fragment}`;
+        const target =
+          root.querySelector<HTMLElement>(selector) ??
+          root.querySelector<HTMLElement>(`a[name="${fragment}"]`);
+        if (target) {
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        return;
+      }
+
+      const [pathPart, fragmentPart] = href.split("#");
+      const normalized = pathPart.replace(/^\.\//, "");
+
+      const match = activeBook.chapters.find((chapter) => {
+        const chapterPath = chapter.href.split("#")[0];
+        return (
+          chapterPath === normalized ||
+          chapterPath.endsWith(normalized) ||
+          normalized.endsWith(chapterPath)
+        );
+      });
+
+      if (match) {
+        onSelectChapter(match.id, { fragment: fragmentPart });
+      }
+    };
+
+    root.addEventListener("click", handler);
+    return () => root.removeEventListener("click", handler);
+  }, [activeBook, onSelectChapter, activeChapter?.id, contentRef]);
 
   if (!activeBook || !activeChapter) {
      return (
@@ -243,6 +247,7 @@ export function ReaderViewport({
           fontClassMap[preferences.fontFamily],
           paddingConfig.outer,
         )}
+        onScroll={handleScroll}
         onClick={(event: ReactMouseEvent<HTMLDivElement>) => {
           if ((event.target as HTMLElement)?.closest("a,button")) {
             return;
@@ -255,7 +260,7 @@ export function ReaderViewport({
             "mx-auto flex w-full max-w-3xl flex-col gap-8 transition-[padding]",
             paddingConfig.innerBase,
             innerVerticalPaddingClass,
-            audioPlayerVisible && "pb-32",
+            showAudioPlayer && "pb-32",
           )}
         >
           {renderNavigation()}

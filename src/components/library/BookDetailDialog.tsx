@@ -12,7 +12,7 @@ import {
   DrawerTitle,
 } from "../ui/drawer";
 import { useMediaQuery } from "../../hooks/use-media-query";
-import { cn } from "../../lib/utils";
+import { cn, formatPageCount, getBookProgressSummary } from "../../lib/utils";
 
 type BookDetailDialogProps = {
   book: Book;
@@ -50,9 +50,30 @@ export function BookDetailDialog({
   const isDesktop = useMediaQuery("(min-width: 640px)");
   const genres = (book.subjects ?? []).filter(Boolean);
   const hasAudio = book.audioTracks.length > 0;
+  const progressSummary = getBookProgressSummary(book);
+  const progressPrimaryText = book.chapters.length
+    ? progressSummary.label
+    : "No chapters available";
+  const progressSecondaryText =
+    progressSummary.currentChapterTitle && progressSummary.current > 0 && !progressSummary.isFinished
+      ? `Current chapter: ${progressSummary.currentChapterTitle}`
+      : progressSummary.isFinished && book.chapters.length
+        ? "You're finished with this book."
+        : undefined;
 
   const detailFields = (
     <div className="grid gap-4 text-sm text-foreground">
+      <div className="grid gap-1">
+        <span className="text-xs uppercase text-muted-foreground">Reading progress</span>
+        <span>{progressPrimaryText}</span>
+        {progressSecondaryText ? (
+          <span className="text-xs text-muted-foreground">{progressSecondaryText}</span>
+        ) : null}
+      </div>
+      <div className="grid gap-1">
+        <span className="text-xs uppercase text-muted-foreground">Page count</span>
+        <span>{formatPageCount(book.pageCount) ?? "Unknown"}</span>
+      </div>
       <div className="grid gap-1">
         <span className="text-xs uppercase text-muted-foreground">Author</span>
         <span>{book.author || "Unknown author"}</span>

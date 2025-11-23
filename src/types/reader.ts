@@ -19,6 +19,18 @@ export type Chapter = {
   plainText: string;
   order: number;
   href: string;
+  wordCount?: number;
+  estimatedPageCount?: number;
+};
+
+export type BookProgress = {
+  currentChapterId: string;
+  currentChapterHref: string;
+  currentChapterIndex: number;
+  currentChapterPageIndex: number;
+  currentChapterPageCount: number;
+  chapterProgressPercent: number;
+  updatedAt: string;
 };
 
 export type Book = {
@@ -33,6 +45,8 @@ export type Book = {
   subjects?: string[];
   fileSizeBytes?: number;
   audioTracks: AudioTrack[];
+  progress?: BookProgress;
+  pageCount?: number;
 };
 
 export type NavItem = {

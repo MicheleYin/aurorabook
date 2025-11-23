@@ -2,8 +2,14 @@ import type { KeyboardEvent } from "react";
 import { ImageOff } from "lucide-react";
 
 import type { Book } from "../../types/reader";
-import { cn } from "../../lib/utils";
+import {
+  cn,
+  formatPageCount,
+  getBookProgressSummary,
+  getLibraryBookStatusFromSummary,
+} from "../../lib/utils";
 import { Button } from "../ui/button";
+import { LibraryStatusBadge } from "./LibraryStatusBadge";
 
 interface LibraryListProps {
   books: Book[];
@@ -29,6 +35,16 @@ export function LibraryList({
     <div className="flex flex-col divide-y divide-border overflow-hidden rounded-xl border">
       {books.map((book) => {
         const isActive = book.id === activeBookId;
+        const progressSummary = getBookProgressSummary(book);
+        const status = getLibraryBookStatusFromSummary(progressSummary);
+        const hasChapters = book.chapters.length > 0;
+        const progressText = hasChapters
+          ? `Progress: ${progressSummary.label}`
+          : "Progress: No chapters available";
+        const chapterSummary = hasChapters
+          ? `Chapters: ${book.chapters.length}`
+          : "Chapters: Not available";
+        const pageSummary = formatPageCount(book.pageCount) ?? "Pages unknown";
         return (
           <div
             key={book.id}
@@ -55,14 +71,18 @@ export function LibraryList({
               )}
             </div>
             <div className="flex flex-1 flex-col gap-1">
-              <span className="line-clamp-1 text-sm font-semibold text-foreground">
-                {book.title}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="line-clamp-1 text-sm font-semibold text-foreground">
+                  {book.title}
+                </span>
+                <LibraryStatusBadge status={status} className="shrink-0" />
+              </div>
               <span className="line-clamp-1 text-xs text-muted-foreground">
                 {book.author}
               </span>
-              <span className="text-xs text-muted-foreground">
-                {book.chapters.length} chapter{book.chapters.length === 1 ? "" : "s"}
+              <span className="line-clamp-1 text-xs text-muted-foreground">{progressText}</span>
+              <span className="line-clamp-1 text-xs text-muted-foreground">
+                {`${chapterSummary} · ${pageSummary}`}
               </span>
             </div>
             <Button

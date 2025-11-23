@@ -2,8 +2,14 @@ import type { KeyboardEvent } from "react";
 import { ImageOff } from "lucide-react";
 
 import type { Book } from "../../types/reader";
-import { cn } from "../../lib/utils";
+import {
+  cn,
+  formatPageCount,
+  getBookProgressSummary,
+  getLibraryBookStatusFromSummary,
+} from "../../lib/utils";
 import { Button } from "../ui/button";
+import { LibraryStatusBadge } from "./LibraryStatusBadge";
 
 interface LibraryGridProps {
   books: Book[];
@@ -29,6 +35,16 @@ export function LibraryGrid({
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
       {books.map((book) => {
         const isActive = book.id === activeBookId;
+        const progressSummary = getBookProgressSummary(book);
+        const status = getLibraryBookStatusFromSummary(progressSummary);
+        const hasChapters = book.chapters.length > 0;
+        const progressText = hasChapters
+          ? `Progress: ${progressSummary.label}`
+          : "Progress: No chapters available";
+        const chapterSummary = hasChapters
+          ? `Chapters: ${book.chapters.length}`
+          : "Chapters: Not available";
+        const pageSummary = formatPageCount(book.pageCount) ?? "Pages unknown";
         return (
           <div
             key={book.id}
@@ -42,6 +58,7 @@ export function LibraryGrid({
             )}
           >
             <div className="relative aspect-[3/4] w-full overflow-hidden bg-muted">
+              <LibraryStatusBadge status={status} className="absolute left-2 top-2" />
               {book.coverUrl ? (
                 <img
                   src={book.coverUrl}
@@ -63,8 +80,12 @@ export function LibraryGrid({
                   {book.author}
                 </p>
               </div>
+              <p className="text-xs text-muted-foreground">{progressText}</p>
               <div className="mt-auto flex items-center justify-between text-xs text-muted-foreground">
-                <span>{book.chapters.length} chapters</span>
+                <div className="flex flex-col">
+                  <span>{chapterSummary}</span>
+                  <span>{pageSummary}</span>
+                </div>
                 <Button
                   variant="ghost"
                   size="sm"
