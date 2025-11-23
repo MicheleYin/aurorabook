@@ -153,6 +153,9 @@ const buildNavigationMap = (items?: NavItem[]) => {
   return map;
 };
 
+const SAFE_URI_REGEXP =
+  /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|blob):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i;
+
 const sanitizeChapterHtml = (html: string) => {
   const stripped = html
     .replace(/<!DOCTYPE[^>]*>/gi, "")
@@ -163,6 +166,7 @@ const sanitizeChapterHtml = (html: string) => {
       USE_PROFILES: { html: true },
       ADD_TAGS: ["svg", "math", "path", "g"],
       ADD_ATTR: ["xmlns", "viewBox", "xlink:href", "xml:lang"],
+      ALLOWED_URI_REGEXP: SAFE_URI_REGEXP,
     });
   } catch (error) {
     console.warn("DOMPurify failed to sanitize chapter, falling back.", error);
@@ -330,8 +334,8 @@ function App() {
     }) => {
       ensureEpubSignature(params.buffer);
 
-      const epubBook = ePub(params.buffer);
-      await epubBook.ready;
+      const epubBook = ePub(params.buffer) as any;
+      await epubBook.opened;
 
       const [metadata, navigation, spine, coverUrl] = await Promise.all([
         epubBook.loaded.metadata,
@@ -340,22 +344,34 @@ function App() {
         epubBook
           .coverUrl()
           .catch(() => undefined)
-          .then((url) => url || undefined),
+          .then((url: string | null | undefined) => url || undefined),
       ]);
 
       const navMap = buildNavigationMap(navigation?.toc as NavItem[] | undefined);
       const newBookId = createId();
 
+      const spineItems = (spine?.items ?? []) as any[];
+
       const chapters = await Promise.all(
-        spine.items.map(async (item, index) => {
+        spineItems.map(async (item: any, index: number) => {
           try {
-            const rawHtml = await epubBook.load(item.href);
+            const section = epubBook.spine.get(item?.href ?? index);
+            const rawHtml = await (section
+              ? section.render(epubBook.load.bind(epubBook))
+              : epubBook.load(item.href));
             const normalizedHtml = await normalizeChapterContent(rawHtml);
             if (!normalizedHtml) {
               return null;
             }
 
-            const sanitized = sanitizeChapterHtml(normalizedHtml);
+            const substitutedHtml = section
+              ? normalizedHtml
+              : epubBook.resources?.substitute(
+                  normalizedHtml,
+                  section?.url ?? epubBook.resolve(item.href),
+                ) ?? normalizedHtml;
+
+            const sanitized = sanitizeChapterHtml(substitutedHtml);
             if (!sanitized.trim()) {
               return null;
             }
