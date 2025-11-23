@@ -149,14 +149,14 @@ export function ReaderViewport({
 
   const appliedTheme = resolvedTheme;
   const proseColorClass = appliedTheme === "dark" ? "prose-invert" : "prose-neutral";
-  const navButtonVariant = appliedTheme === "dark" ? "secondary" : "outline";
-  const navButtonClass = appliedTheme === "dark" ? "border-zinc-700 bg-zinc-900 text-zinc-100 hover:bg-zinc-800" : "";
+  const navButtonClass =
+    appliedTheme === "dark" ? "border-zinc-700 text-zinc-100 hover:text-zinc-100 hover:bg-zinc-900" : "";
 
   const renderNavigation = () => (
     <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
       {previousChapter ? (
         <Button
-          variant={navButtonVariant}
+          variant="ghost"
           size="sm"
           className={cn(navButtonClass)}
           onClick={(event) => {
@@ -171,7 +171,7 @@ export function ReaderViewport({
       )}
       {nextChapter ? (
         <Button
-          variant={navButtonVariant}
+          variant="ghost"
           size="sm"
           className={cn(navButtonClass)}
           onClick={(event) => {

@@ -62,6 +62,7 @@ export function ReaderPanel({
         <div className="flex items-center justify-between gap-2">
           <Button
             type="button"
+
             variant="ghost"
             size="sm"
             className="px-2"
