@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Settings2, X } from "lucide-react";
 
 import type { ReaderPreferences } from "../../types/reader";
@@ -72,30 +72,32 @@ export function ReaderSettingsControl({
     spacious: null,
   });
 
-  useEffect(() => {
-    const activeThemeButton = themeOptionRefs.current[preferences.theme];
-    activeThemeButton?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-  }, [preferences.theme]);
+  const scrollActiveOptions = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      const nodes = [
+        themeOptionRefs.current[preferences.theme],
+        fontOptionRefs.current[preferences.fontFamily],
+        fontSizeOptionRefs.current[preferences.fontSize],
+        contentPaddingOptionRefs.current[preferences.contentPadding],
+      ];
+
+      nodes.forEach((node) =>
+        node?.scrollIntoView({ behavior, inline: "center", block: "nearest" }),
+      );
+    },
+    [
+      preferences.theme,
+      preferences.fontFamily,
+      preferences.fontSize,
+      preferences.contentPadding,
+    ],
+  );
 
   useEffect(() => {
-    const activeFontButton = fontOptionRefs.current[preferences.fontFamily];
-    activeFontButton?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-  }, [preferences.fontFamily]);
-
-  useEffect(() => {
-    const activeSizeButton = fontSizeOptionRefs.current[preferences.fontSize];
-    activeSizeButton?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-  }, [preferences.fontSize]);
-
-  useEffect(() => {
-    const activePaddingButton =
-      contentPaddingOptionRefs.current[preferences.contentPadding];
-    activePaddingButton?.scrollIntoView({
-      behavior: "smooth",
-      inline: "center",
-      block: "nearest",
-    });
-  }, [preferences.contentPadding]);
+    if (!isOpen) return;
+    const frame = requestAnimationFrame(() => scrollActiveOptions());
+    return () => cancelAnimationFrame(frame);
+  }, [isOpen, scrollActiveOptions]);
 
   const settingsBody = (
     <div className="space-y-6">
