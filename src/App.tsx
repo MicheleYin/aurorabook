@@ -1,9 +1,4 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
-import { readFile } from "@tauri-apps/plugin-fs";
-import DOMPurify from "dompurify";
-import ePub from "epubjs";
-import { toast } from "sonner";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { HiddenFileInput } from "./components/HiddenFileInput";
 import { ThemeSwitcher } from "./components/ThemeSwitcher";
@@ -15,210 +10,41 @@ import type {
 import { ReaderPanel } from "./components/ReaderPanel";
 import { BookDetailDialog } from "./components/library/BookDetailDialog";
 import { Toaster } from "./components/ui/sonner";
-import type {
-  AudioTrack,
-  Book,
-  Chapter,
-  NavItem,
-  ReaderPreferences,
-} from "./types/reader";
+import { LoadingScreen } from "./components/app/LoadingScreen";
+import { usePersistentLibrary } from "./hooks/usePersistentLibrary";
+import type { ReaderPreferences } from "./types/reader";
 import type { UITheme } from "./types/ui";
 
-const sharedTextDecoder =
-  typeof TextDecoder !== "undefined" ? new TextDecoder("utf-8") : null;
-const sharedXmlSerializer =
-  typeof XMLSerializer !== "undefined" ? new XMLSerializer() : null;
-
-const isTauriEnvironment = () =>
-  typeof window !== "undefined" &&
-  typeof (window as typeof window & { __TAURI_INTERNALS__?: { invoke?: unknown } })
-    .__TAURI_INTERNALS__?.invoke === "function";
-
-const ensureEpubSignature = (buffer: ArrayBuffer) => {
-  const bytes = new Uint8Array(buffer.slice(0, 2));
-  if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
-    throw new Error("Please choose a valid EPUB file.");
-  }
-};
-
-const decodeBufferToString = (value: ArrayBuffer | ArrayBufferView): string => {
-  if (!sharedTextDecoder) {
-    return "";
-  }
-
-  const view =
-    value instanceof Uint8Array
-      ? value
-      : value instanceof ArrayBuffer
-        ? new Uint8Array(value)
-        : ArrayBuffer.isView(value)
-          ? new Uint8Array(value.buffer)
-          : undefined;
-
-  if (!view) {
-    return "";
-  }
-
-  return sharedTextDecoder.decode(view);
-};
-
-const normalizeChapterContent = async (content: unknown): Promise<string> => {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (content instanceof Blob) {
-    return await content.text();
-  }
-
-  if (content instanceof ArrayBuffer) {
-    return decodeBufferToString(content);
-  }
-
-  if (ArrayBuffer.isView(content)) {
-    return decodeBufferToString(content);
-  }
-
-  if (
-    typeof content === "object" &&
-    content !== null &&
-    "buffer" in content &&
-    content.buffer instanceof ArrayBuffer
-  ) {
-    return decodeBufferToString(
-      ArrayBuffer.isView(content) ? content : new Uint8Array(content.buffer),
-    );
-  }
-
-  if (
-    typeof Document !== "undefined" &&
-    content instanceof Document &&
-    sharedXmlSerializer
-  ) {
-    return sharedXmlSerializer.serializeToString(content);
-  }
-
-  if (
-    typeof Element !== "undefined" &&
-    content instanceof Element &&
-    sharedXmlSerializer
-  ) {
-    return sharedXmlSerializer.serializeToString(content);
-  }
-
-  if (
-    typeof content === "object" &&
-    content !== null &&
-    "textContent" in content &&
-    typeof (content as { textContent: unknown }).textContent === "string"
-  ) {
-    return (content as { textContent: string }).textContent;
-  }
-
-  console.warn(
-    "Unexpected chapter content type received from EPUB spine:",
-    content,
-  );
-  return "";
-};
-
-const createId = () => {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `wl-${Date.now().toString(36)}-${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
-};
-
-const deriveTitleFromPath = (filepath: string) => {
-  const filename = filepath.split(/[/\\]/).pop() ?? "Untitled";
-  return filename.replace(/\.epub$/i, "").replace(/[-_]+/g, " ").trim();
-};
-
-const buildNavigationMap = (items?: NavItem[]) => {
-  const map = new Map<string, string>();
-  const visit = (nodes?: NavItem[]) => {
-    if (!nodes) return;
-    nodes.forEach((node) => {
-      if (!node) return;
-      const key = node.href?.split("#")[0];
-      if (key) {
-        map.set(key, node.label?.trim() ?? "");
-      }
-      if (node.subitems?.length) {
-        visit(node.subitems);
-      }
-    });
-  };
-  visit(items);
-  return map;
-};
-
-const SAFE_URI_REGEXP =
-  /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|blob):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i;
-
-const sanitizeChapterHtml = (html: string) => {
-  const stripped = html
-    .replace(/<!DOCTYPE[^>]*>/gi, "")
-    .replace(/<\?xml[^>]*\?>/gi, "");
-
-  try {
-    return DOMPurify.sanitize(stripped, {
-      USE_PROFILES: { html: true },
-      ADD_TAGS: ["svg", "math", "path", "g"],
-      ADD_ATTR: ["xmlns", "viewBox", "xlink:href", "xml:lang"],
-      ALLOWED_URI_REGEXP: SAFE_URI_REGEXP,
-    });
-  } catch (error) {
-    console.warn("DOMPurify failed to sanitize chapter, falling back.", error);
-    return stripped.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
-  }
-};
-
-const extractPlainText = (html: string) => {
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, "text/html");
-    return doc.body?.textContent?.replace(/\s+/g, " ").trim() ?? "";
-  } catch (error) {
-    console.warn("DOMParser could not extract plain text, using fallback.", error);
-    return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-  }
-};
-
-const extractYear = (value?: string | null) => {
-  if (!value) return undefined;
-  const match = value.match(/\d{4}/);
-  return match ? match[0] : undefined;
-};
-
-const ensureStringArray = (value: unknown): string[] => {
-  if (!value) return [];
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => (typeof item === "string" ? item.trim() : String(item).trim()))
-      .filter(Boolean);
-  }
-  if (typeof value === "string") {
-    return value
-      .split(/[,;]/)
-      .map((part) => part.trim())
-      .filter(Boolean);
-  }
-  return [String(value).trim()].filter(Boolean);
+const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
+  theme: "system",
+  fontFamily: "merriweather",
+  contentPadding: "comfortable",
+  fontSize: "medium",
 };
 
 function App() {
-  const [library, setLibrary] = useState<Book[]>([]);
-  const [activeBookId, setActiveBookId] = useState<string | undefined>(
-    undefined,
-  );
-  const [activeChapterId, setActiveChapterId] = useState<string | undefined>(
-    undefined,
-  );
+  const {
+    library,
+    setLibrary,
+    isHydrated,
+    isImporting,
+    importFromDialog,
+    handleWebFileSelection,
+  } = usePersistentLibrary();
+
+  const [activeBookId, setActiveBookId] = useState<string | undefined>();
+  const [activeChapterId, setActiveChapterId] = useState<string | undefined>();
   const [activeView, setActiveView] = useState<"library" | "reader">("library");
-  const [isImporting, setIsImporting] = useState(false);
+  const [librarySearchTerm, setLibrarySearchTerm] = useState("");
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilterOption>("all");
+  const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("grid");
+  const [readerPreferences, setReaderPreferences] = useState<ReaderPreferences>(
+    DEFAULT_READER_PREFERENCES,
+  );
+  const [pendingFragment, setPendingFragment] = useState<string | null>(null);
+  const [detailBookId, setDetailBookId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const [uiTheme, setUiTheme] = useState<UITheme>(() => {
     if (typeof window !== "undefined") {
       const stored = window.localStorage.getItem("ui-theme");
@@ -228,19 +54,6 @@ function App() {
     }
     return "system";
   });
-  const [librarySearchTerm, setLibrarySearchTerm] = useState("");
-  const [libraryFilter, setLibraryFilter] = useState<LibraryFilterOption>("all");
-  const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("grid");
-  const [readerPreferences, setReaderPreferences] = useState<ReaderPreferences>({
-    theme: "system",
-    fontFamily: "merriweather",
-    contentPadding: "comfortable",
-    fontSize: "medium",
-  });
-  const [pendingFragment, setPendingFragment] = useState<string | null>(null);
-  const [detailBookId, setDetailBookId] = useState<string | null>(null);
-
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const resolveTheme = useCallback((theme: UITheme) => {
     if (theme === "system") {
@@ -320,7 +133,7 @@ function App() {
 
   const updateReaderPreferences = useCallback(
     (update: Partial<ReaderPreferences>) => {
-      setReaderPreferences((prev: ReaderPreferences) => ({
+      setReaderPreferences((prev) => ({
         ...prev,
         ...update,
       }));
@@ -353,266 +166,34 @@ function App() {
     [activeBookId],
   );
 
-  const ingestEpub = useCallback(
-    async (params: {
-      buffer: ArrayBuffer;
-      sourcePath: string;
-      fallbackTitle?: string;
-    }) => {
-      ensureEpubSignature(params.buffer);
-
-      const epubBook = ePub(params.buffer) as any;
-      await epubBook.opened;
-
-      const [metadata, navigation, spine, coverUrl] = await Promise.all([
-        epubBook.loaded.metadata,
-        epubBook.loaded.navigation.catch(() => undefined),
-        epubBook.loaded.spine,
-        epubBook
-          .coverUrl()
-          .catch(() => undefined)
-          .then((url: string | null | undefined) => url || undefined),
-      ]);
-
-      const navMap = buildNavigationMap(navigation?.toc as NavItem[] | undefined);
-      const newBookId = createId();
-
-      const spineItems = (spine?.items ?? []) as any[];
-      const manifestItems = (epubBook.packaging?.manifest ?? {}) as Record<
-        string,
-        { href: string; type?: string }
-      >;
-
-      const chapters = await Promise.all(
-        spineItems.map(async (item: any, index: number) => {
-          try {
-            const section = epubBook.spine.get(item?.href ?? index);
-            const rawHtml = await (section
-              ? section.render(epubBook.load.bind(epubBook))
-              : epubBook.load(item.href));
-            const normalizedHtml = await normalizeChapterContent(rawHtml);
-            if (!normalizedHtml) {
-              return null;
-            }
-
-            const substitutedHtml = section
-              ? normalizedHtml
-              : epubBook.resources?.substitute(
-                  normalizedHtml,
-                  section?.url ?? epubBook.resolve(item.href),
-                ) ?? normalizedHtml;
-
-            const sanitized = sanitizeChapterHtml(substitutedHtml);
-            if (!sanitized.trim()) {
-              return null;
-            }
-
-            const plainText = extractPlainText(sanitized);
-            const manifestItem =
-              (item?.idref && manifestItems[item.idref]) ||
-              Object.values(manifestItems).find(
-                (entry) => entry.href === item?.href,
-              );
-
-            const chapterHref = manifestItem?.href ?? item?.href ?? item?.url ?? "";
-            if (!chapterHref) {
-              return null;
-            }
-
-            const lookupKey = chapterHref.split("#")[0];
-            const title =
-              navMap.get(lookupKey) ??
-              item.label?.trim() ??
-              `Section ${index + 1}`;
-
-            return {
-              id: `${newBookId}-${item?.idref ?? item?.id ?? index}`,
-              title,
-              contentHtml: sanitized,
-              plainText,
-              order: index,
-              href: chapterHref,
-            } as Chapter;
-          } catch (chapterError) {
-            console.warn("Could not load chapter", chapterError);
-            return null;
-          }
-        }),
-      );
-
-      const filteredChapters = chapters.filter(
-        (chapter): chapter is Chapter =>
-          Boolean(chapter && chapter.plainText.trim()),
-      );
-
-      if (!filteredChapters.length) {
-        throw new Error(
-          "We couldn't extract any readable chapters from this ebook.",
-        );
-      }
-
-      const audioTracks = (
-        await Promise.all(
-          Object.entries(manifestItems)
-            .filter(([, entry]) => entry.type?.startsWith("audio/"))
-            .map(async ([id, entry], trackIndex) => {
-              if (!entry.href) return null;
-              try {
-                const url = await epubBook.resources.createUrl(entry.href);
-                if (typeof url !== "string") {
-                  return null;
-                }
-                const filename = entry.href.split("/").pop() ?? id;
-                const baseTitle = decodeURIComponent(filename)
-                  .replace(/\.[^/.]+$/, "")
-                  .replace(/[-_]+/g, " ")
-                  .trim();
-                const title = baseTitle.length ? baseTitle : `Track ${trackIndex + 1}`;
-                return {
-                  id: `${newBookId}-audio-${id}`,
-                  title,
-                  href: entry.href,
-                  url,
-                } as AudioTrack;
-              } catch (error) {
-                console.warn("Could not load audio track", entry.href, error);
-                return null;
-              }
-            }),
-        )
-      ).filter((track): track is AudioTrack => Boolean(track));
-
-      const fallbackTitle =
-        params.fallbackTitle ?? deriveTitleFromPath(params.sourcePath);
-
-      const subjects = ensureStringArray(metadata.subject);
-      const publisher = metadata.publisher?.trim() || undefined;
-      const publishedYear =
-        extractYear(metadata.pubdate) ?? extractYear(metadata.modified_date);
-      const fileSizeBytes = params.buffer.byteLength;
-
-      const newBook: Book = {
-        id: newBookId,
-        title: metadata.title?.trim() || fallbackTitle,
-        author: metadata.creator?.trim() || "Unknown author",
-        chapters: filteredChapters,
-        coverUrl,
-        sourcePath: params.sourcePath,
-        publisher,
-        publishedYear,
-        subjects,
-        fileSizeBytes,
-        audioTracks,
-      };
-
-      setLibrary((prev) => [...prev, newBook]);
-    },
-    [],
-  );
-
   const handleAddEbook = useCallback(async () => {
     if (isImporting) return;
-
-    const tauriAvailable = isTauriEnvironment();
-    if (!tauriAvailable) {
+    const handled = await importFromDialog();
+    if (!handled) {
       fileInputRef.current?.click();
-      return;
     }
+  }, [importFromDialog, isImporting]);
 
-    try {
-      setIsImporting(true);
+  const handleDeleteBook = useCallback(
+    (bookId: string) => {
+      setLibrary((prev) => prev.filter((book) => book.id !== bookId));
+      setDetailBookId(null);
 
-      const selection = await open({
-        multiple: false,
-        filters: [{ name: "EPUB files", extensions: ["epub"] }],
-      });
-
-      const filePath = Array.isArray(selection)
-        ? selection[0]
-        : selection ?? undefined;
-
-      if (!filePath) return;
-
-      if (!filePath.toLowerCase().endsWith(".epub")) {
-        toast.error("Please choose an EPUB (.epub) file.");
-        return;
-      }
-
-      if (library.some((book) => book.sourcePath === filePath)) {
-        toast.error("This ebook is already in your library.");
-        return;
-      }
-
-      const binary = await readFile(filePath);
-      const arrayBuffer = binary.buffer.slice(
-        binary.byteOffset,
-        binary.byteOffset + binary.byteLength,
-      );
-
-      await ingestEpub({
-        buffer: arrayBuffer,
-        sourcePath: filePath,
-      });
-    } catch (err) {
-      console.error(err);
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Something went wrong while importing that ebook.";
-      toast.error(message);
-    } finally {
-      setIsImporting(false);
-    }
-  }, [ingestEpub, isImporting, library]);
-
-  const handleWebFileSelection = useCallback(
-    async (event: ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      event.target.value = "";
-
-      if (!file) {
-        return;
-      }
-
-      if (file.type && file.type !== "application/epub+zip") {
-        toast.error("Please choose an EPUB file.");
-        return;
-      }
-
-      if (!file.name.toLowerCase().endsWith(".epub")) {
-        toast.error("Please choose an EPUB (.epub) file.");
-        return;
-      }
-
-      const sourceKey = `web://${file.name}:${file.size}:${file.lastModified}`;
-
-      if (library.some((book) => book.sourcePath === sourceKey)) {
-        toast.error("This ebook is already in your library.");
-        return;
-      }
-
-      setIsImporting(true);
-
-      try {
-        const buffer = await file.arrayBuffer();
-        await ingestEpub({
-          buffer,
-          sourcePath: sourceKey,
-          fallbackTitle: file.name,
-        });
-      } catch (err) {
-        console.error(err);
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Something went wrong while importing that ebook.";
-        toast.error(message);
-      } finally {
-        setIsImporting(false);
+      if (activeBookId === bookId) {
+        setActiveBookId(undefined);
+        setActiveChapterId(undefined);
+        setPendingFragment(null);
+        setActiveView("library");
       }
     },
-    [ingestEpub, library],
+    [activeBookId, setLibrary],
   );
+
+  useEffect(() => {
+    if (!library.length) {
+      setActiveView("library");
+    }
+  }, [library.length]);
 
   const normalizedLibrarySearch = librarySearchTerm.trim().toLowerCase();
   const searchFilteredLibrary = useMemo(() => {
@@ -625,14 +206,12 @@ function App() {
 
   const filteredLibrary = useMemo(() => {
     switch (libraryFilter) {
-      case "recent": {
+      case "recent":
         return [...searchFilteredLibrary].reverse();
-      }
-      case "author": {
+      case "author":
         return [...searchFilteredLibrary].sort((a, b) =>
           a.author.localeCompare(b.author, undefined, { sensitivity: "base" }),
         );
-      }
       default:
         return searchFilteredLibrary;
     }
@@ -670,33 +249,16 @@ function App() {
     />
   );
 
-  const detailBook = useMemo(
-    () => (detailBookId ? library.find((book) => book.id === detailBookId) : undefined),
-    [detailBookId, library],
-  );
-
-  const handleDeleteBook = useCallback(
-    (bookId: string) => {
-      setLibrary((prev) => prev.filter((book) => book.id !== bookId));
-      setDetailBookId(null);
-
-      if (activeBookId === bookId) {
-        setActiveBookId(undefined);
-        setActiveChapterId(undefined);
-        setPendingFragment(null);
-        setActiveView("library");
-      }
-    },
-    [activeBookId],
-  );
-
-  useEffect(() => {
-    if (!library.length) {
-      setActiveView("library");
-    }
-  }, [library.length]);
+  const detailBook = useMemo(() => {
+    if (!detailBookId) return undefined;
+    return library.find((book) => book.id === detailBookId);
+  }, [detailBookId, library]);
 
   const isLibraryView = activeView === "library";
+
+  if (!isHydrated) {
+    return <LoadingScreen message="Loading your library…" />;
+  }
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -709,8 +271,6 @@ function App() {
         onChange={handleWebFileSelection}
       />
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        {/* Header removed per redesign */}
-
         <div className="flex justify-end">
           <ThemeSwitcher value={uiTheme} onChange={setUiTheme} />
         </div>
