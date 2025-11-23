@@ -27,6 +27,11 @@ const VOICE_OPTIONS: ReadonlyArray<{ label: string; value: VoiceId }> = [
 
 const MAX_CHAPTER_CHARACTERS = 8000;
 
+const sharedTextDecoder =
+  typeof TextDecoder !== "undefined" ? new TextDecoder("utf-8") : null;
+const sharedXmlSerializer =
+  typeof XMLSerializer !== "undefined" ? new XMLSerializer() : null;
+
 const isTauriEnvironment = () =>
   typeof window !== "undefined" &&
   typeof (window as typeof window & { __TAURI_INTERNALS__?: { invoke?: unknown } })
@@ -37,6 +42,87 @@ const ensureEpubSignature = (buffer: ArrayBuffer) => {
   if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
     throw new Error("Please choose a valid EPUB file.");
   }
+};
+
+const decodeBufferToString = (value: ArrayBuffer | ArrayBufferView): string => {
+  if (!sharedTextDecoder) {
+    return "";
+  }
+
+  const view =
+    value instanceof Uint8Array
+      ? value
+      : value instanceof ArrayBuffer
+        ? new Uint8Array(value)
+        : ArrayBuffer.isView(value)
+          ? new Uint8Array(value.buffer)
+          : undefined;
+
+  if (!view) {
+    return "";
+  }
+
+  return sharedTextDecoder.decode(view);
+};
+
+const normalizeChapterContent = async (content: unknown): Promise<string> => {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (content instanceof Blob) {
+    return await content.text();
+  }
+
+  if (content instanceof ArrayBuffer) {
+    return decodeBufferToString(content);
+  }
+
+  if (ArrayBuffer.isView(content)) {
+    return decodeBufferToString(content);
+  }
+
+  if (
+    typeof content === "object" &&
+    content !== null &&
+    "buffer" in content &&
+    content.buffer instanceof ArrayBuffer
+  ) {
+    return decodeBufferToString(
+      ArrayBuffer.isView(content) ? content : new Uint8Array(content.buffer),
+    );
+  }
+
+  if (
+    typeof Document !== "undefined" &&
+    content instanceof Document &&
+    sharedXmlSerializer
+  ) {
+    return sharedXmlSerializer.serializeToString(content);
+  }
+
+  if (
+    typeof Element !== "undefined" &&
+    content instanceof Element &&
+    sharedXmlSerializer
+  ) {
+    return sharedXmlSerializer.serializeToString(content);
+  }
+
+  if (
+    typeof content === "object" &&
+    content !== null &&
+    "textContent" in content &&
+    typeof (content as { textContent: unknown }).textContent === "string"
+  ) {
+    return (content as { textContent: string }).textContent;
+  }
+
+  console.warn(
+    "Unexpected chapter content type received from EPUB spine:",
+    content,
+  );
+  return "";
 };
 
 const createId = () => {
@@ -72,12 +158,7 @@ const buildNavigationMap = (items?: NavItem[]) => {
   return map;
 };
 
-const sanitizeChapterHtml = (html: unknown) => {
-  if (typeof html !== "string") {
-    console.warn("Unexpected HTML payload type from epub chapter:", typeof html);
-    return "";
-  }
-
+const sanitizeChapterHtml = (html: string) => {
   const stripped = html
     .replace(/<!DOCTYPE[^>]*>/gi, "")
     .replace(/<\?xml[^>]*\?>/gi, "");
@@ -94,11 +175,7 @@ const sanitizeChapterHtml = (html: unknown) => {
   }
 };
 
-const extractPlainText = (html: unknown) => {
-  if (typeof html !== "string") {
-    return "";
-  }
-
+const extractPlainText = (html: string) => {
   try {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
@@ -421,7 +498,16 @@ function App() {
         spine.items.map(async (item, index) => {
           try {
             const rawHtml = await epubBook.load(item.href);
-            const sanitized = sanitizeChapterHtml(rawHtml);
+            const normalizedHtml = await normalizeChapterContent(rawHtml);
+            if (!normalizedHtml) {
+              return null;
+            }
+
+            const sanitized = sanitizeChapterHtml(normalizedHtml);
+            if (!sanitized.trim()) {
+              return null;
+            }
+
             const plainText = extractPlainText(sanitized);
             const lookupKey = item.href.split("#")[0];
             const title =
