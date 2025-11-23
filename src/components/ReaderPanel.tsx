@@ -7,6 +7,7 @@ import { ReaderTocDrawer } from "./reader/ReaderTocDrawer";
 import { ReaderViewport } from "./reader/ReaderViewport";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
+import { ReaderAudioPlayer } from "./reader/ReaderAudioPlayer";
 
 type ReaderPanelProps = ReaderPanelBaseProps & {
   resolvedUiTheme: "light" | "dark";
@@ -49,6 +50,8 @@ export function ReaderPanel({
 
   const appliedTheme: "light" | "dark" | "sepia" =
      preferences.theme === "system" ? resolvedUiTheme : preferences.theme;
+  const audioTracks = activeBook?.audioTracks ?? [];
+  const showAudioPlayer = audioTracks.length > 0;
 
   return (
     <section className="flex h-full flex-col">
@@ -118,8 +121,12 @@ export function ReaderPanel({
           chromeVisible={!isImmersive}
           resolvedTheme={appliedTheme}
           onToggleChrome={() => setIsImmersive((prev) => !prev)}
+          audioPlayerVisible={showAudioPlayer}
         />
       </div>
+      {showAudioPlayer ? (
+        <ReaderAudioPlayer tracks={audioTracks} bookTitle={activeBook?.title} />
+      ) : null}
     </section>
   );
 }

@@ -4,6 +4,14 @@ export type PlaybackState = "idle" | "loading" | "playing" | "paused";
 
 export type VoiceId = keyof KokoroTTS["voices"];
 
+export type AudioTrack = {
+  id: string;
+  title: string;
+  href: string;
+  url: string;
+  duration?: number;
+};
+
 export type Chapter = {
   id: string;
   title: string;
@@ -20,6 +28,11 @@ export type Book = {
   chapters: Chapter[];
   coverUrl?: string;
   sourcePath: string;
+  publisher?: string;
+  publishedYear?: string;
+  subjects?: string[];
+  fileSizeBytes?: number;
+  audioTracks: AudioTrack[];
 };
 
 export type NavItem = {

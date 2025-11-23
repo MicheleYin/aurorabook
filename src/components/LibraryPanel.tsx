@@ -22,6 +22,7 @@ export type LibraryPanelProps = {
   isImporting: boolean;
   onAddEbook: () => void;
   onOpenBook: (bookId: string) => void;
+  onViewDetails: (bookId: string) => void;
 };
 
 export function LibraryPanel({
@@ -37,6 +38,7 @@ export function LibraryPanel({
   isImporting,
   onAddEbook,
   onOpenBook,
+  onViewDetails,
 }: LibraryPanelProps) {
   const isSearching = searchTerm.trim().length > 0;
   const hasBooks = library.length > 0;
@@ -78,12 +80,14 @@ export function LibraryPanel({
               books={library}
               activeBookId={activeBookId}
               onOpenBook={onOpenBook}
+              onViewDetails={onViewDetails}
             />
           ) : (
             <LibraryList
               books={library}
               activeBookId={activeBookId}
               onOpenBook={onOpenBook}
+              onViewDetails={onViewDetails}
             />
           )
         ) : (

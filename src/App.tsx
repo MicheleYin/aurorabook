@@ -13,8 +13,10 @@ import type {
   LibraryViewMode,
 } from "./components/library/types";
 import { ReaderPanel } from "./components/ReaderPanel";
+import { BookDetailDialog } from "./components/library/BookDetailDialog";
 import { Toaster } from "./components/ui/sonner";
 import type {
+  AudioTrack,
   Book,
   Chapter,
   NavItem,
@@ -185,6 +187,28 @@ const extractPlainText = (html: string) => {
   }
 };
 
+const extractYear = (value?: string | null) => {
+  if (!value) return undefined;
+  const match = value.match(/\d{4}/);
+  return match ? match[0] : undefined;
+};
+
+const ensureStringArray = (value: unknown): string[] => {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === "string" ? item.trim() : String(item).trim()))
+      .filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(/[,;]/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+  return [String(value).trim()].filter(Boolean);
+};
+
 function App() {
   const [library, setLibrary] = useState<Book[]>([]);
   const [activeBookId, setActiveBookId] = useState<string | undefined>(
@@ -214,6 +238,7 @@ function App() {
     fontSize: "medium",
   });
   const [pendingFragment, setPendingFragment] = useState<string | null>(null);
+  const [detailBookId, setDetailBookId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -353,6 +378,10 @@ function App() {
       const newBookId = createId();
 
       const spineItems = (spine?.items ?? []) as any[];
+      const manifestItems = (epubBook.packaging?.manifest ?? {}) as Record<
+        string,
+        { href: string; type?: string }
+      >;
 
       const chapters = await Promise.all(
         spineItems.map(async (item: any, index: number) => {
@@ -379,19 +408,30 @@ function App() {
             }
 
             const plainText = extractPlainText(sanitized);
-            const lookupKey = item.href.split("#")[0];
+            const manifestItem =
+              (item?.idref && manifestItems[item.idref]) ||
+              Object.values(manifestItems).find(
+                (entry) => entry.href === item?.href,
+              );
+
+            const chapterHref = manifestItem?.href ?? item?.href ?? item?.url ?? "";
+            if (!chapterHref) {
+              return null;
+            }
+
+            const lookupKey = chapterHref.split("#")[0];
             const title =
               navMap.get(lookupKey) ??
               item.label?.trim() ??
               `Section ${index + 1}`;
 
             return {
-              id: `${newBookId}-${item.id ?? index}`,
+              id: `${newBookId}-${item?.idref ?? item?.id ?? index}`,
               title,
               contentHtml: sanitized,
               plainText,
               order: index,
-              href: item.href,
+              href: chapterHref,
             } as Chapter;
           } catch (chapterError) {
             console.warn("Could not load chapter", chapterError);
@@ -411,8 +451,45 @@ function App() {
         );
       }
 
+      const audioTracks = (
+        await Promise.all(
+          Object.entries(manifestItems)
+            .filter(([, entry]) => entry.type?.startsWith("audio/"))
+            .map(async ([id, entry], trackIndex) => {
+              if (!entry.href) return null;
+              try {
+                const url = await epubBook.resources.createUrl(entry.href);
+                if (typeof url !== "string") {
+                  return null;
+                }
+                const filename = entry.href.split("/").pop() ?? id;
+                const baseTitle = decodeURIComponent(filename)
+                  .replace(/\.[^/.]+$/, "")
+                  .replace(/[-_]+/g, " ")
+                  .trim();
+                const title = baseTitle.length ? baseTitle : `Track ${trackIndex + 1}`;
+                return {
+                  id: `${newBookId}-audio-${id}`,
+                  title,
+                  href: entry.href,
+                  url,
+                } as AudioTrack;
+              } catch (error) {
+                console.warn("Could not load audio track", entry.href, error);
+                return null;
+              }
+            }),
+        )
+      ).filter((track): track is AudioTrack => Boolean(track));
+
       const fallbackTitle =
         params.fallbackTitle ?? deriveTitleFromPath(params.sourcePath);
+
+      const subjects = ensureStringArray(metadata.subject);
+      const publisher = metadata.publisher?.trim() || undefined;
+      const publishedYear =
+        extractYear(metadata.pubdate) ?? extractYear(metadata.modified_date);
+      const fileSizeBytes = params.buffer.byteLength;
 
       const newBook: Book = {
         id: newBookId,
@@ -421,6 +498,11 @@ function App() {
         chapters: filteredChapters,
         coverUrl,
         sourcePath: params.sourcePath,
+        publisher,
+        publishedYear,
+        subjects,
+        fileSizeBytes,
+        audioTracks,
       };
 
       setLibrary((prev) => [...prev, newBook]);
@@ -570,6 +652,7 @@ function App() {
       isImporting={isImporting}
       onAddEbook={handleAddEbook}
       onOpenBook={handleSelectBook}
+      onViewDetails={(bookId) => setDetailBookId(bookId)}
     />
   );
 
@@ -585,6 +668,26 @@ function App() {
       onNavigateLibrary={() => setActiveView("library")}
       resolvedUiTheme={resolvedUiTheme}
     />
+  );
+
+  const detailBook = useMemo(
+    () => (detailBookId ? library.find((book) => book.id === detailBookId) : undefined),
+    [detailBookId, library],
+  );
+
+  const handleDeleteBook = useCallback(
+    (bookId: string) => {
+      setLibrary((prev) => prev.filter((book) => book.id !== bookId));
+      setDetailBookId(null);
+
+      if (activeBookId === bookId) {
+        setActiveBookId(undefined);
+        setActiveChapterId(undefined);
+        setPendingFragment(null);
+        setActiveView("library");
+      }
+    },
+    [activeBookId],
   );
 
   useEffect(() => {
@@ -620,6 +723,18 @@ function App() {
           )}
         </div>
       </div>
+      {detailBook ? (
+        <BookDetailDialog
+          book={detailBook}
+          open
+          onClose={() => setDetailBookId(null)}
+          onOpenBook={() => {
+            setDetailBookId(null);
+            handleSelectBook(detailBook.id);
+          }}
+          onDeleteBook={() => handleDeleteBook(detailBook.id)}
+        />
+      ) : null}
       <Toaster position="top-center" richColors />
     </div>
   );

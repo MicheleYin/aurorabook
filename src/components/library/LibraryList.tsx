@@ -1,24 +1,41 @@
+import type { KeyboardEvent } from "react";
 import { ImageOff } from "lucide-react";
 
 import type { Book } from "../../types/reader";
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
 
 interface LibraryListProps {
   books: Book[];
   activeBookId?: string;
   onOpenBook: (bookId: string) => void;
+  onViewDetails: (bookId: string) => void;
 }
 
-export function LibraryList({ books, activeBookId, onOpenBook }: LibraryListProps) {
+export function LibraryList({
+  books,
+  activeBookId,
+  onOpenBook,
+  onViewDetails,
+}: LibraryListProps) {
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>, bookId: string) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onOpenBook(bookId);
+    }
+  };
+
   return (
     <div className="flex flex-col divide-y divide-border overflow-hidden rounded-xl border">
       {books.map((book) => {
         const isActive = book.id === activeBookId;
         return (
-          <button
+          <div
             key={book.id}
-            type="button"
+            role="button"
+            tabIndex={0}
             onClick={() => onOpenBook(book.id)}
+            onKeyDown={(event) => handleKeyDown(event, book.id)}
             className={cn(
               "flex w-full items-center gap-4 px-4 py-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
               isActive && "bg-primary/5",
@@ -48,7 +65,17 @@ export function LibraryList({ books, activeBookId, onOpenBook }: LibraryListProp
                 {book.chapters.length} chapter{book.chapters.length === 1 ? "" : "s"}
               </span>
             </div>
-          </button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(event) => {
+                event.stopPropagation();
+                onViewDetails(book.id);
+              }}
+            >
+              Details
+            </Button>
+          </div>
         );
       })}
     </div>

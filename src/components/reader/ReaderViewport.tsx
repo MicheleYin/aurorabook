@@ -28,6 +28,7 @@ type ReaderViewportProps = Pick<
   chromeVisible: boolean;
   resolvedTheme: ResolvedReaderTheme;
   onToggleChrome: () => void;
+  audioPlayerVisible?: boolean;
 };
 
 export function ReaderViewport({
@@ -40,6 +41,7 @@ export function ReaderViewport({
   chromeVisible,
   resolvedTheme,
   onToggleChrome,
+  audioPlayerVisible = false,
 }: ReaderViewportProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const hasActiveBook = Boolean(activeBook && activeBook.chapters.length);
@@ -253,6 +255,7 @@ export function ReaderViewport({
             "mx-auto flex w-full max-w-3xl flex-col gap-8 transition-[padding]",
             paddingConfig.innerBase,
             innerVerticalPaddingClass,
+            audioPlayerVisible && "pb-32",
           )}
         >
           {renderNavigation()}
@@ -280,3 +283,4 @@ export function ReaderViewport({
     </div>
   );
 }
+
