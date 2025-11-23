@@ -478,31 +478,6 @@ function App() {
     [activeBookId, releaseAudioResources],
   );
 
-  const handleStepChapter = useCallback(
-    (direction: 1 | -1) => {
-      if (!activeBook || !activeChapter) return;
-      const currentIndex = activeBook.chapters.findIndex(
-        (chapter) => chapter.id === activeChapter.id,
-      );
-      const target = activeBook.chapters[currentIndex + direction];
-      if (target) {
-        setActiveChapterId(target.id);
-        setPendingFragment(null);
-        releaseAudioResources();
-        setActiveView("reader");
-      }
-    },
-    [activeBook, activeChapter, releaseAudioResources],
-  );
-
-  const handlePrevChapter = useCallback(() => {
-    handleStepChapter(-1);
-  }, [handleStepChapter]);
-
-  const handleNextChapter = useCallback(() => {
-    handleStepChapter(1);
-  }, [handleStepChapter]);
-
   const handleVoiceSelect = useCallback(
     (value: VoiceId) => {
       setVoice(value);
@@ -749,8 +724,6 @@ function App() {
       preferences={readerPreferences}
       onPreferencesChange={updateReaderPreferences}
       onSelectChapter={handleSelectChapter}
-      onPrevChapter={handlePrevChapter}
-      onNextChapter={handleNextChapter}
       pendingFragment={pendingFragment}
       onFragmentConsumed={handleFragmentConsumed}
     />
