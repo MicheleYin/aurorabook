@@ -314,13 +314,32 @@ function App() {
   const handleSelectChapter = useCallback(
     (chapterId: string, options?: ChapterSelectionOptions) => {
       if (!activeBookId) return;
+
       setActiveChapterId(chapterId);
-      updateBookProgress(activeBookId, { chapterId, pageIndex: 0, percent: 0 });
+
+      const requestedScrollPosition = options?.scrollPosition ?? "maintain";
+      const progressUpdate: ProgressUpdatePayload = { chapterId };
+
+      if (requestedScrollPosition === "top") {
+        progressUpdate.pageIndex = 0;
+        progressUpdate.percent = 0;
+      } else if (requestedScrollPosition === "bottom") {
+        const chapter = activeBook?.chapters.find((entry) => entry.id === chapterId);
+        const pageCountCandidate =
+          (chapter ? getChapterPageCount(chapter) ?? chapter.estimatedPageCount : undefined) ?? 1;
+        const pageCount = Math.max(1, Math.round(pageCountCandidate));
+        progressUpdate.pageCount = pageCount;
+        progressUpdate.pageIndex = pageCount - 1;
+        progressUpdate.percent = 1;
+      }
+
+      updateBookProgress(activeBookId, progressUpdate);
+
       const fragment = options?.fragment;
       setPendingFragment(fragment && fragment.length > 0 ? fragment.replace(/^#/, "") : null);
       setActiveView("reader");
     },
-    [activeBookId, updateBookProgress],
+    [activeBook, activeBookId, updateBookProgress],
   );
 
   const handleChapterProgress = useCallback(
