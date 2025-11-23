@@ -28,3 +28,19 @@ export type NavItem = {
   subitems?: NavItem[];
 };
 
+export type ReaderTheme = "light" | "dark" | "sepia";
+
+export type ReaderFont =
+  | "merriweather"
+  | "inter"
+  | "lora"
+  | "firaMono"
+  | "atkinson";
+
+export type ReaderPreferences = {
+  theme: ReaderTheme;
+  fontSize: number;
+  fontFamily: ReaderFont;
+  lineHeight: number;
+};
+

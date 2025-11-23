@@ -3,7 +3,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import DOMPurify from "dompurify";
 import ePub from "epubjs";
-import { Headphones } from "lucide-react";
 import { KokoroTTS } from "kokoro-js";
 
 import { HiddenFileInput } from "./components/HiddenFileInput";
@@ -15,9 +14,11 @@ import type {
   Book,
   Chapter,
   NavItem,
-  PlaybackState,
-  VoiceId,
+  ReaderPreferences,
 } from "./types/reader";
+
+type PlaybackState = "idle" | "loading" | "playing" | "paused";
+type VoiceId = keyof KokoroTTS["voices"];
 
 const VOICE_OPTIONS: ReadonlyArray<{ label: string; value: VoiceId }> = [
   { label: "Heart", value: "af_heart" },
@@ -204,6 +205,13 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [readerPreferences, setReaderPreferences] = useState<ReaderPreferences>({
+    theme: "light",
+    fontSize: 18,
+    fontFamily: "merriweather",
+    lineHeight: 1.6,
+  });
+  const [pendingFragment, setPendingFragment] = useState<string | null>(null);
 
   const ttsRef = useRef<KokoroTTS | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
@@ -435,16 +443,67 @@ function App() {
     audioElementRef.current.currentTime = nextTime;
   }, []);
 
+  const updateReaderPreferences = useCallback(
+    (update: Partial<ReaderPreferences>) => {
+      setReaderPreferences((prev: ReaderPreferences) => ({
+        ...prev,
+        ...update,
+      }));
+    },
+    [],
+  );
+
+  const handleFragmentConsumed = useCallback(() => {
+    setPendingFragment(null);
+  }, []);
+
   const handleSelectBook = useCallback(
     (bookId: string) => {
       const selectedBook = library.find((book) => book.id === bookId);
       setActiveBookId(bookId);
       setActiveChapterId(selectedBook?.chapters[0]?.id);
       releaseAudioResources();
+      setPendingFragment(null);
       setActiveView("reader");
     },
     [library, releaseAudioResources],
   );
+
+  const handleSelectChapter = useCallback(
+    (chapterId: string, fragment?: string) => {
+      if (!activeBookId) return;
+      setActiveChapterId(chapterId);
+      setPendingFragment(fragment && fragment.length > 0 ? fragment : null);
+      releaseAudioResources();
+      setActiveView("reader");
+    },
+    [activeBookId, releaseAudioResources],
+  );
+
+  const handleStepChapter = useCallback(
+    (direction: 1 | -1) => {
+      if (!activeBook || !activeChapter) return;
+      const currentIndex = activeBook.chapters.findIndex(
+        (chapter) => chapter.id === activeChapter.id,
+      );
+      const target = activeBook.chapters[currentIndex + direction];
+      if (target) {
+        setActiveChapterId(target.id);
+        setPendingFragment(null);
+        releaseAudioResources();
+        setActiveView("reader");
+      }
+    },
+    [activeBook, activeChapter, releaseAudioResources],
+  );
+
+  const handlePrevChapter = useCallback(() => {
+    handleStepChapter(-1);
+  }, [handleStepChapter]);
+
+  const handleNextChapter = useCallback(() => {
+    handleStepChapter(1);
+  }, [handleStepChapter]);
 
   const handleVoiceSelect = useCallback(
     (value: VoiceId) => {
@@ -686,7 +745,17 @@ function App() {
   );
 
   const readerView = (
-    <ReaderPanel activeBook={activeBook} activeChapter={activeChapter} />
+    <ReaderPanel
+      activeBook={activeBook}
+      activeChapter={activeChapter}
+      preferences={readerPreferences}
+      onPreferencesChange={updateReaderPreferences}
+      onSelectChapter={handleSelectChapter}
+      onPrevChapter={handlePrevChapter}
+      onNextChapter={handleNextChapter}
+      pendingFragment={pendingFragment}
+      onFragmentConsumed={handleFragmentConsumed}
+    />
   );
 
   return (
@@ -700,7 +769,7 @@ function App() {
         onChange={handleWebFileSelection}
       />
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <header className="flex flex-col gap-3">
+        {/* <header className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <Headphones className="h-8 w-8 text-primary" />
             <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -712,7 +781,7 @@ function App() {
             every page. Designed for focused reading on desktop and a tab-first
             experience on mobile.
           </p>
-        </header>
+        </header> */}
 
         <MobileNavigation
           activeView={activeView}
