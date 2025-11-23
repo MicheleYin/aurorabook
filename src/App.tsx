@@ -441,23 +441,9 @@ function App() {
       setActiveBookId(bookId);
       setActiveChapterId(selectedBook?.chapters[0]?.id);
       releaseAudioResources();
-    },
-    [library, releaseAudioResources],
-  );
-
-  const handleSelectChapter = useCallback(
-    (bookId: string, chapterId: string) => {
-      setActiveBookId(bookId);
-      setActiveChapterId(chapterId);
-      if (
-        activeChapterForAudio.current &&
-        activeChapterForAudio.current !== chapterId
-      ) {
-        releaseAudioResources();
-      }
       setActiveView("reader");
     },
-    [releaseAudioResources],
+    [library, releaseAudioResources],
   );
 
   const handleVoiceSelect = useCallback(
@@ -673,11 +659,9 @@ function App() {
     <LibraryPanel
       library={library}
       activeBookId={activeBookId}
-      activeChapterId={activeChapterId}
       isImporting={isImporting}
       onAddEbook={handleAddEbook}
-      onSelectBook={handleSelectBook}
-      onSelectChapter={handleSelectChapter}
+      onOpenBook={handleSelectBook}
     />
   );
 
