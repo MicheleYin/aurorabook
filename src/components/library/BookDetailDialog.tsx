@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ImageOff, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Button } from "../ui/button";
@@ -49,19 +49,91 @@ export function BookDetailDialog({
   onDeleteBook,
 }: BookDetailDialogProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [durationMap, setDurationMap] = useState<Record<string, number>>({});
+  const durationMapRef = useRef<Record<string, number>>({});
   const isDesktop = useMediaQuery("(min-width: 640px)");
   const genres = (book.subjects ?? []).filter(Boolean);
   const hasAudio = book.audioTracks.length > 0;
+  useEffect(() => {
+    durationMapRef.current = durationMap;
+  }, [durationMap]);
+
+  useEffect(() => {
+    setDurationMap({});
+    durationMapRef.current = {};
+  }, [book.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !book.audioTracks.length) {
+      return;
+    }
+    const pendingTracks = book.audioTracks.filter(
+      (track) =>
+        !(typeof track.duration === "number" && Number.isFinite(track.duration)) &&
+        typeof durationMapRef.current[track.id] !== "number",
+    );
+    if (!pendingTracks.length) {
+      return;
+    }
+    let cancelled = false;
+    const cleanupFns: Array<() => void> = [];
+    pendingTracks.forEach((track) => {
+      if (!track.url) {
+        return;
+      }
+      const audio = new Audio();
+      audio.preload = "metadata";
+      audio.src = track.url;
+      audio.load();
+      const settleDuration = () => {
+        if (cancelled) {
+          return;
+        }
+        const measured = Number.isFinite(audio.duration) ? Math.max(audio.duration, 0) : undefined;
+        if (typeof measured === "number") {
+          setDurationMap((prev) => {
+            if (typeof prev[track.id] === "number") {
+              return prev;
+            }
+            return { ...prev, [track.id]: measured };
+          });
+        }
+      };
+      audio.addEventListener("loadedmetadata", settleDuration);
+      audio.addEventListener("error", settleDuration);
+      cleanupFns.push(() => {
+        audio.removeEventListener("loadedmetadata", settleDuration);
+        audio.removeEventListener("error", settleDuration);
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+      });
+    });
+    return () => {
+      cancelled = true;
+      cleanupFns.forEach((dispose) => dispose());
+    };
+  }, [book.audioTracks, book.id]);
+
+  const getTrackDuration = useCallback(
+    (track: Book["audioTracks"][number]) => {
+      if (typeof track.duration === "number" && Number.isFinite(track.duration)) {
+        return Math.max(track.duration, 0);
+      }
+      const measured = durationMap[track.id];
+      return typeof measured === "number" && Number.isFinite(measured) ? Math.max(measured, 0) : undefined;
+    },
+    [durationMap],
+  );
+
   const totalAudioDurationSeconds = useMemo(() => {
     if (!book.audioTracks.length) return undefined;
     const sum = book.audioTracks.reduce((acc, track) => {
-      if (typeof track.duration === "number" && Number.isFinite(track.duration)) {
-        return acc + Math.max(track.duration, 0);
-      }
-      return acc;
+      const resolved = getTrackDuration(track);
+      return typeof resolved === "number" ? acc + resolved : acc;
     }, 0);
     return sum > 0 ? sum : undefined;
-  }, [book.audioTracks]);
+  }, [book.audioTracks, getTrackDuration]);
   const listenedAudioSeconds = useMemo(() => {
     if (!book.audioTracks.length || !book.audioState) {
       return undefined;
@@ -82,17 +154,15 @@ export function BookDetailDialog({
       return undefined;
     }
     const completedSeconds = book.audioTracks.slice(0, index).reduce((acc, track) => {
-      if (typeof track.duration === "number" && Number.isFinite(track.duration)) {
-        return acc + Math.max(track.duration, 0);
-      }
-      return acc;
+      const resolved = getTrackDuration(track);
+      return typeof resolved === "number" ? acc + resolved : acc;
     }, 0);
     const currentSeconds =
       typeof currentTimeSeconds === "number" && Number.isFinite(currentTimeSeconds)
         ? Math.max(currentTimeSeconds, 0)
         : 0;
     return completedSeconds + currentSeconds;
-  }, [book.audioTracks, book.audioState]);
+  }, [book.audioTracks, book.audioState, getTrackDuration]);
   const audioProgressPercent =
     totalAudioDurationSeconds && listenedAudioSeconds !== undefined
       ? Math.min(Math.max(listenedAudioSeconds / totalAudioDurationSeconds, 0), 1)
@@ -176,13 +246,29 @@ export function BookDetailDialog({
         <div className="grid gap-1">
           <span className="text-xs uppercase text-muted-foreground">Audiobook</span>
           {hasAudio ? (
-            <div className="flex flex-col gap-1">
-              <span>
-                {`${book.audioTracks.length} track${book.audioTracks.length === 1 ? "" : "s"} available`}
-                {totalAudioDurationSeconds
-                  ? ` · ${formatDurationShort(totalAudioDurationSeconds)} total`
-                  : ""}
-              </span>
+            <div className="flex flex-col gap-3">
+              <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3 sm:gap-4">
+                <div className="flex flex-col gap-1">
+                  <span className="uppercase tracking-wide">Total tracks</span>
+                  <span className="text-base text-foreground">{book.audioTracks.length}</span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="uppercase tracking-wide">Total length</span>
+                  <span className="text-base text-foreground">
+                    {totalAudioDurationSeconds
+                      ? formatDurationShort(totalAudioDurationSeconds)
+                      : "Unknown"}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="uppercase tracking-wide">Time listened</span>
+                  <span className="text-base text-foreground">
+                    {listenedAudioSeconds !== undefined
+                      ? formatDurationShort(listenedAudioSeconds)
+                      : "Not started"}
+                  </span>
+                </div>
+              </div>
               {audioProgressPercentDisplay !== undefined ? (
                 <div className="flex flex-col gap-1 text-xs text-muted-foreground">
                   <span>

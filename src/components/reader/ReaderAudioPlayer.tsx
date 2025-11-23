@@ -55,6 +55,7 @@ export function ReaderAudioPlayer({
     trackHref?: string;
     trackIndex?: number;
     currentTimeSeconds?: number;
+    updatedAt?: string;
     timestamp: number;
   }>({ timestamp: 0 });
   const lastAppliedAudioStateSignatureRef = useRef<string | undefined>(undefined);
@@ -103,11 +104,13 @@ export function ReaderAudioPlayer({
             })();
       const normalizedSeconds = Number(Math.max(candidateTime, 0).toFixed(3));
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      const updatedAt = new Date().toISOString();
       lastProgressSnapshotRef.current = {
         trackId: track.id,
         trackHref: track.href,
         trackIndex: currentIndexRef.current,
         currentTimeSeconds: normalizedSeconds,
+        updatedAt,
         timestamp: now,
       };
       listener({
@@ -115,6 +118,7 @@ export function ReaderAudioPlayer({
         trackHref: track.href,
         trackIndex: currentIndexRef.current,
         currentTimeSeconds: normalizedSeconds,
+        updatedAt,
       });
     },
     [],
@@ -163,9 +167,10 @@ export function ReaderAudioPlayer({
         snapshot.trackIndex === nextTrackIndex);
     const isProgressEcho =
       trackMatches &&
-      typeof snapshot.currentTimeSeconds === "number" &&
-      typeof nextTimeSeconds === "number" &&
-      Math.abs(snapshot.currentTimeSeconds - nextTimeSeconds) <= PROGRESS_ECHO_TOLERANCE_SECONDS;
+      ((snapshot.updatedAt && snapshot.updatedAt === initialAudioState?.updatedAt) ||
+        (typeof snapshot.currentTimeSeconds === "number" &&
+          typeof nextTimeSeconds === "number" &&
+          Math.abs(snapshot.currentTimeSeconds - nextTimeSeconds) <= PROGRESS_ECHO_TOLERANCE_SECONDS));
     if (isProgressEcho) {
       lastAppliedAudioStateSignatureRef.current = signature;
       return;

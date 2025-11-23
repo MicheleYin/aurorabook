@@ -326,7 +326,7 @@ function App() {
 
       setLibrary((prev) => {
         let updated = false;
-        const timestamp = new Date().toISOString();
+        const timestamp = snapshot.updatedAt ?? new Date().toISOString();
         const nextLibrary = prev.map((book) => {
           if (book.id !== bookId || !book.audioTracks.length) {
             return book;

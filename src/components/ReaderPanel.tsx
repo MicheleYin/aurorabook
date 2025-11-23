@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ArrowLeft } from "lucide-react";
 
 import type {
   AudioProgressSnapshot,
@@ -10,6 +11,7 @@ import { ReaderSettingsControl } from "./reader/ReaderSettingsControl";
 import { ReaderTocDrawer } from "./reader/ReaderTocDrawer";
 import { ReaderViewport } from "./reader/ReaderViewport";
 import { cn } from "../lib/utils";
+import { Button } from "./ui/button";
 import { ReaderAudioPlayer } from "./reader/ReaderAudioPlayer";
 
 type ReaderPanelProps = ReaderPanelBaseProps & {
@@ -115,8 +117,18 @@ export function ReaderPanel({
             "pointer-events-none -translate-y-full opacity-0 h-0 overflow-hidden border-transparent py-0",
         )}
       >
-        <div className="flex items-center justify-end gap-2">
-         
+        <div className="flex items-center justify-between gap-2">
+          <Button
+            type="button"
+
+            variant="ghost"
+            size="sm"
+            className="px-2"
+            onClick={handleBack}
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Library
+          </Button>
           <div className="flex items-center gap-2">
             {activeBook && (
               <ReaderTocDrawer

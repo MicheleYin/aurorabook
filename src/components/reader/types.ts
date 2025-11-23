@@ -26,6 +26,7 @@ export type AudioProgressSnapshot = {
   trackHref: string;
   trackIndex: number;
   currentTimeSeconds: number;
+  updatedAt: string;
 };
 
 export type ReaderPanelBaseProps = {
