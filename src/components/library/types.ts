@@ -5,3 +5,7 @@ export const LIBRARY_FILTER_OPTIONS: readonly LibraryFilterOption[] = [
   "recent",
   "author",
 ];
+
+export type LibraryViewMode = "grid" | "list";
+
+export const LIBRARY_VIEW_MODES: readonly LibraryViewMode[] = ["grid", "list"];

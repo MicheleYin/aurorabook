@@ -8,6 +8,10 @@ import { toast } from "sonner";
 
 import { HiddenFileInput } from "./components/HiddenFileInput";
 import { LibraryPanel } from "./components/LibraryPanel";
+import type {
+  LibraryFilterOption,
+  LibraryViewMode,
+} from "./components/library/types";
 import { ReaderPanel } from "./components/ReaderPanel";
 import { Button } from "./components/ui/button";
 import { Toaster } from "./components/ui/sonner";
@@ -17,7 +21,6 @@ import type {
   NavItem,
   ReaderPreferences,
 } from "./types/reader";
-import type { LibraryFilterOption } from "./components/library/types";
 
 const sharedTextDecoder =
   typeof TextDecoder !== "undefined" ? new TextDecoder("utf-8") : null;
@@ -190,6 +193,7 @@ function App() {
   const [isImporting, setIsImporting] = useState(false);
   const [librarySearchTerm, setLibrarySearchTerm] = useState("");
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilterOption>("all");
+  const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("grid");
   const [readerPreferences, setReaderPreferences] = useState<ReaderPreferences>({
     theme: "light",
     fontFamily: "merriweather",
@@ -491,6 +495,8 @@ function App() {
       onSearchChange={setLibrarySearchTerm}
       activeFilter={libraryFilter}
       onFilterChange={setLibraryFilter}
+      viewMode={libraryViewMode}
+      onViewModeChange={setLibraryViewMode}
       activeBookId={activeBookId}
       isImporting={isImporting}
       onAddEbook={handleAddEbook}

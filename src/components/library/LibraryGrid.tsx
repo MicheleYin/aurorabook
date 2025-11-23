@@ -11,7 +11,7 @@ interface LibraryGridProps {
 
 export function LibraryGrid({ books, activeBookId, onOpenBook }: LibraryGridProps) {
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
       {books.map((book) => {
         const isActive = book.id === activeBookId;
         return (

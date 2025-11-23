@@ -5,8 +5,9 @@ import { Button } from "./ui/button";
 import { LibraryEmpty } from "./library/LibraryEmpty";
 import { LibraryGrid } from "./library/LibraryGrid";
 import { LibraryHeader } from "./library/LibraryHeader";
+import { LibraryList } from "./library/LibraryList";
 import { LibrarySearchBar } from "./library/LibrarySearchBar";
-import type { LibraryFilterOption } from "./library/types";
+import type { LibraryFilterOption, LibraryViewMode } from "./library/types";
 
 export type LibraryPanelProps = {
   library: Book[];
@@ -15,6 +16,8 @@ export type LibraryPanelProps = {
   onSearchChange: (value: string) => void;
   activeFilter: LibraryFilterOption;
   onFilterChange: (filter: LibraryFilterOption) => void;
+  viewMode: LibraryViewMode;
+  onViewModeChange: (mode: LibraryViewMode) => void;
   activeBookId?: string;
   isImporting: boolean;
   onAddEbook: () => void;
@@ -28,6 +31,8 @@ export function LibraryPanel({
   onSearchChange,
   activeFilter,
   onFilterChange,
+  viewMode,
+  onViewModeChange,
   activeBookId,
   isImporting,
   onAddEbook,
@@ -44,6 +49,8 @@ export function LibraryPanel({
         isSearching={isSearching}
         activeFilter={activeFilter}
         onFilterChange={onFilterChange}
+        viewMode={viewMode}
+        onViewModeChange={onViewModeChange}
         actionSlot={
           <Button onClick={onAddEbook} disabled={isImporting} className="w-full sm:w-auto">
             {isImporting ? (
@@ -66,11 +73,19 @@ export function LibraryPanel({
 
       <div className="flex-1">
         {hasBooks ? (
-          <LibraryGrid
-            books={library}
-            activeBookId={activeBookId}
-            onOpenBook={onOpenBook}
-          />
+          viewMode === "grid" ? (
+            <LibraryGrid
+              books={library}
+              activeBookId={activeBookId}
+              onOpenBook={onOpenBook}
+            />
+          ) : (
+            <LibraryList
+              books={library}
+              activeBookId={activeBookId}
+              onOpenBook={onOpenBook}
+            />
+          )
         ) : (
           <LibraryEmpty isSearching={isSearching} activeFilter={activeFilter} />
         )}
