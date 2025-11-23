@@ -3,9 +3,11 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "../../lib/utils";
 import {
-  BASE_FONT_CLASS,
-  BASE_LINE_HEIGHT_CLASS,
+  contentPaddingConfigMap,
   fontClassMap,
+  fontSizeClassMap,
+  fontSizeTokenClassMap,
+  lineHeightClassMap,
   themeClasses,
 } from "./constants";
 import type { ReaderPanelBaseProps } from "./types";
@@ -46,7 +48,12 @@ export function ReaderViewport({
     const node = contentRef.current;
     if (!node) return;
     node.scrollTo({ top: 0, behavior: "auto" });
-  }, [activeChapter?.id, preferences.fontFamily]);
+  }, [
+    activeChapter?.id,
+    preferences.fontFamily,
+    preferences.fontSize,
+    preferences.contentPadding,
+  ]);
 
   useEffect(() => {
     if (!pendingFragment) return;
@@ -150,7 +157,21 @@ export function ReaderViewport({
   const appliedTheme = resolvedTheme;
   const proseColorClass = appliedTheme === "dark" ? "prose-invert" : "prose-neutral";
   const navButtonClass =
-    appliedTheme === "dark" ? "border-zinc-700 text-zinc-100 hover:text-zinc-100 hover:bg-zinc-900" : "";
+    appliedTheme === "dark"
+      ? "border-zinc-700 text-zinc-100 hover:text-zinc-100 hover:bg-zinc-900"
+      : "";
+  const fontSizeClass =
+    fontSizeClassMap[preferences.fontSize] ?? fontSizeClassMap.medium;
+  const lineHeightClass =
+    lineHeightClassMap[preferences.fontSize] ?? lineHeightClassMap.medium;
+  const fontSizeTokenClass =
+    fontSizeTokenClassMap[preferences.fontSize] ?? fontSizeTokenClassMap.medium;
+  const paddingConfig =
+    contentPaddingConfigMap[preferences.contentPadding] ??
+    contentPaddingConfigMap.comfortable;
+  const innerVerticalPaddingClass = chromeVisible
+    ? paddingConfig.innerChrome
+    : paddingConfig.innerImmersive;
 
   const renderNavigation = () => (
     <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -192,11 +213,12 @@ export function ReaderViewport({
       <div className="flex flex-1 flex-col overflow-hidden">
         <div
           className={cn(
-            "flex-1 overflow-y-auto px-6 py-10 transition-colors",
+            "flex-1 overflow-y-auto transition-colors",
             themeClasses[resolvedTheme],
-            BASE_FONT_CLASS,
-            BASE_LINE_HEIGHT_CLASS,
+            fontSizeClass,
+            lineHeightClass,
             fontClassMap[preferences.fontFamily],
+            paddingConfig.outer,
           )}
         >
           <p className="prose max-w-3xl text-muted-foreground">
@@ -212,11 +234,12 @@ export function ReaderViewport({
       <div
         ref={contentRef}
         className={cn(
-          "flex-1 overflow-y-auto px-6 py-10 transition-colors",
+          "flex-1 overflow-y-auto transition-colors",
           themeClasses[resolvedTheme],
-          BASE_FONT_CLASS,
-          BASE_LINE_HEIGHT_CLASS,
+          fontSizeClass,
+          lineHeightClass,
           fontClassMap[preferences.fontFamily],
+          paddingConfig.outer,
         )}
         onClick={(event: ReactMouseEvent<HTMLDivElement>) => {
           if ((event.target as HTMLElement)?.closest("a,button")) {
@@ -227,15 +250,22 @@ export function ReaderViewport({
       >
         <div
           className={cn(
-            "mx-auto flex w-full max-w-3xl flex-col gap-8 px-6",
-            chromeVisible ? "py-10" : "py-6",
+            "mx-auto flex w-full max-w-3xl flex-col gap-8 transition-[padding]",
+            paddingConfig.innerBase,
+            innerVerticalPaddingClass,
           )}
         >
           {renderNavigation()}
           <article
             id={activeChapter.id}
             data-chapter-id={activeChapter.id}
-            className={cn("prose max-w-none space-y-4 transition-colors", proseColorClass)}
+            className={cn(
+              "prose reader-prose max-w-none space-y-4 transition-colors",
+              proseColorClass,
+              fontSizeClass,
+              lineHeightClass,
+              fontSizeTokenClass,
+            )}
           >
             <h2 className="text-2xl font-semibold">{activeChapter.title}</h2>
             <div

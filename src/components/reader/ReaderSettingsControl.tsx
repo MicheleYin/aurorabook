@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Settings2, X } from "lucide-react";
 
 import type { ReaderPreferences } from "../../types/reader";
@@ -14,7 +14,15 @@ import {
   DrawerTrigger,
 } from "../ui/drawer";
 import { Button } from "../ui/button";
-import { fontClassMap, fontOptions, fontPreviewText, themeOptions } from "./constants";
+import {
+  contentPaddingOptions,
+  fontClassMap,
+  fontOptions,
+  fontPreviewText,
+  fontSizeClassMap,
+  fontSizeOptions,
+  themeOptions,
+} from "./constants";
 
 import type { ReaderPanelBaseProps } from "./types";
 
@@ -40,6 +48,54 @@ export function ReaderSettingsControl({
     firaMono: null,
     atkinson: null,
   });
+  const themeOptionRefs = useRef<
+    Record<ReaderPreferences["theme"], HTMLButtonElement | null>
+  >({
+    system: null,
+    light: null,
+    dark: null,
+    sepia: null,
+  });
+  const fontSizeOptionRefs = useRef<
+    Record<ReaderPreferences["fontSize"], HTMLButtonElement | null>
+  >({
+    small: null,
+    medium: null,
+    large: null,
+    xlarge: null,
+  });
+  const contentPaddingOptionRefs = useRef<
+    Record<ReaderPreferences["contentPadding"], HTMLButtonElement | null>
+  >({
+    compact: null,
+    comfortable: null,
+    spacious: null,
+  });
+
+  useEffect(() => {
+    const activeThemeButton = themeOptionRefs.current[preferences.theme];
+    activeThemeButton?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }, [preferences.theme]);
+
+  useEffect(() => {
+    const activeFontButton = fontOptionRefs.current[preferences.fontFamily];
+    activeFontButton?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }, [preferences.fontFamily]);
+
+  useEffect(() => {
+    const activeSizeButton = fontSizeOptionRefs.current[preferences.fontSize];
+    activeSizeButton?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }, [preferences.fontSize]);
+
+  useEffect(() => {
+    const activePaddingButton =
+      contentPaddingOptionRefs.current[preferences.contentPadding];
+    activePaddingButton?.scrollIntoView({
+      behavior: "smooth",
+      inline: "center",
+      block: "nearest",
+    });
+  }, [preferences.contentPadding]);
 
   const settingsBody = (
     <div className="space-y-6">
@@ -47,29 +103,44 @@ export function ReaderSettingsControl({
         <h3 className="text-sm font-semibold uppercase text-muted-foreground">
           Theme
         </h3>
-        <div className="flex flex-wrap gap-2">
-          {themeOptions.map((option) => (
-            <Button
-              key={option.id}
-              size="sm"
-              variant={preferences.theme === option.id ? "secondary" : "ghost"}
-              onClick={() => onPreferencesChange({ theme: option.id })}
-            >
-              <span className="flex items-center gap-2">
-                <span
-                  className={cn(
-                    "size-4 rounded-full border",
-                    option.id === "system" &&
-                      "bg-gradient-to-br from-white via-[#f4ecd8] to-zinc-900 border-slate-300",
-                    option.id === "light" && "bg-white border-slate-300",
-                    option.id === "dark" && "bg-zinc-900 border-zinc-700",
-                    option.id === "sepia" && "bg-[#f4ecd8] border-[#e0cfb0]",
-                  )}
-                />
-                {option.label}
-              </span>
-            </Button>
-          ))}
+        <div className="overflow-x-auto whitespace-nowrap pb-2 snap-x snap-mandatory [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          <div className="inline-flex gap-2">
+            {themeOptions.map((option) => (
+              <Button
+                key={option.id}
+                ref={(node) => {
+                  themeOptionRefs.current[option.id] = node;
+                }}
+                size="sm"
+                variant={preferences.theme === option.id ? "secondary" : "ghost"}
+                onClick={() => onPreferencesChange({ theme: option.id })}
+                className="min-w-[140px] flex-shrink-0 snap-start flex-col items-start gap-2 px-4 py-3 text-left h-auto"
+              >
+                <span className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      "size-4 rounded-full border",
+                      option.id === "system" &&
+                        "bg-gradient-to-br from-white via-[#f4ecd8] to-zinc-900 border-slate-300",
+                      option.id === "light" && "bg-white border-slate-300",
+                      option.id === "dark" && "bg-zinc-900 border-zinc-700",
+                      option.id === "sepia" && "bg-[#f4ecd8] border-[#e0cfb0]",
+                    )}
+                  />
+                  <span className="font-medium">{option.label}</span>
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {option.id === "system"
+                    ? "Match device theme"
+                    : option.id === "light"
+                      ? "Bright background"
+                      : option.id === "dark"
+                        ? "Low-light friendly"
+                        : "Warm sepia tone"}
+                </span>
+              </Button>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -88,12 +159,81 @@ export function ReaderSettingsControl({
                 size="sm"
                 variant={preferences.fontFamily === option.id ? "secondary" : "ghost"}
                 onClick={() => onPreferencesChange({ fontFamily: option.id })}
-                className="min-w-[140px] flex-shrink-0 snap-start flex-col items-start gap-1"
+                className="min-w-[140px] flex-shrink-0 snap-start flex-col items-start gap-1 h-auto"
               >
                 <span className={cn("text-lg leading-none", fontClassMap[option.id])}>
                   {fontPreviewText[option.id]}
                 </span>
                 <span className="text-xs text-muted-foreground">{option.label}</span>
+              </Button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold uppercase text-muted-foreground">
+          Text size
+        </h3>
+        <div className="overflow-x-auto whitespace-nowrap pb-2 snap-x snap-mandatory [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          <div className="inline-flex gap-2">
+            {fontSizeOptions.map((option) => (
+              <Button
+                key={option.id}
+                ref={(node) => {
+                  fontSizeOptionRefs.current[option.id] = node;
+                }}
+                size="sm"
+                variant={preferences.fontSize === option.id ? "secondary" : "ghost"}
+                className="min-w-[140px] flex-shrink-0 snap-start flex-col items-start gap-1 px-4 py-3 text-left h-auto"
+                onClick={() => onPreferencesChange({ fontSize: option.id })}
+              >
+                <span className={cn("font-semibold leading-none", fontSizeClassMap[option.id])}>
+                  Aa
+                </span>
+                <span className="text-xs font-medium">{option.label}</span>
+                <span className="text-[11px] text-muted-foreground">{option.description}</span>
+              </Button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold uppercase text-muted-foreground">
+          Page padding
+        </h3>
+        <div className="overflow-x-auto whitespace-nowrap pb-2 snap-x snap-mandatory [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          <div className="inline-flex gap-2">
+            {contentPaddingOptions.map((option) => (
+              <Button
+                key={option.id}
+                ref={(node) => {
+                  contentPaddingOptionRefs.current[option.id] = node;
+                }}
+                size="sm"
+                variant={
+                  preferences.contentPadding === option.id ? "secondary" : "ghost"
+                }
+                className="min-w-[140px] flex-shrink-0 snap-start flex-col items-start gap-2 px-4 py-3 text-left h-auto"
+                onClick={() => onPreferencesChange({ contentPadding: option.id })}
+              >
+                <span className="flex h-8 w-full items-center justify-center">
+                  <span className="relative flex h-6 w-full items-center justify-center rounded border border-border/60 bg-muted/30">
+                    <span
+                      className={cn(
+                        "h-3 rounded bg-muted-foreground/40 transition-all",
+                        option.id === "compact" && "w-20",
+                        option.id === "comfortable" && "w-14",
+                        option.id === "spacious" && "w-10",
+                      )}
+                    />
+                  </span>
+                </span>
+                <span className="text-xs font-medium">{option.label}</span>
+                <span className="text-[11px] text-muted-foreground">
+                  {option.description}
+                </span>
               </Button>
             ))}
           </div>

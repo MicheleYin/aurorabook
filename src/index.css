@@ -107,5 +107,40 @@
   .font-fira-mono {
     font-family: "Fira Mono", "Source Code Pro", Menlo, monospace;
   }
+
+  .reader-size-small {
+    --reader-font-size: 16px;
+    --reader-line-height: 1.6;
+  }
+
+  .reader-size-medium {
+    --reader-font-size: 18px;
+    --reader-line-height: 1.6;
+  }
+
+  .reader-size-large {
+    --reader-font-size: 20px;
+    --reader-line-height: 1.65;
+  }
+
+  .reader-size-xlarge {
+    --reader-font-size: 22px;
+    --reader-line-height: 1.7;
+  }
+
+  .reader-prose {
+    font-size: var(--reader-font-size, 18px) !important;
+    line-height: var(--reader-line-height, 1.6) !important;
+  }
+
+  .reader-prose :where(p, span, li, blockquote, div, a, figcaption) {
+    font-size: inherit !important;
+    line-height: inherit !important;
+  }
+
+  .reader-prose :where(td, th) {
+    font-size: inherit !important;
+    line-height: inherit !important;
+  }
 }
 

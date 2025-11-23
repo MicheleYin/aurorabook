@@ -37,8 +37,14 @@ export type ReaderFont =
   | "firaMono"
   | "atkinson";
 
+export type ReaderContentPadding = "compact" | "comfortable" | "spacious";
+
+export type ReaderFontSize = "small" | "medium" | "large" | "xlarge";
+
 export type ReaderPreferences = {
   theme: ReaderTheme;
   fontFamily: ReaderFont;
+  contentPadding: ReaderContentPadding;
+  fontSize: ReaderFontSize;
 };
 

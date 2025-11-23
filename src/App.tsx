@@ -210,6 +210,8 @@ function App() {
   const [readerPreferences, setReaderPreferences] = useState<ReaderPreferences>({
     theme: "system",
     fontFamily: "merriweather",
+    contentPadding: "comfortable",
+    fontSize: "medium",
   });
   const [pendingFragment, setPendingFragment] = useState<string | null>(null);
 
