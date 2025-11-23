@@ -1,8 +1,10 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
 
-import type { AudioTrack } from "../../types/reader";
+import type { AudioTrack, BookAudioState } from "../../types/reader";
+import type { AudioProgressSnapshot } from "./types";
 import { Button } from "../ui/button";
+import { cn } from "../../lib/utils";
 
 const formatTime = (value: number) => {
   if (!Number.isFinite(value) || value < 0) {
@@ -17,11 +19,22 @@ const formatTime = (value: number) => {
 const PLAYBACK_RATE_OPTIONS = [0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 
 type ReaderAudioPlayerProps = {
+  bookId?: string;
   tracks: AudioTrack[];
   bookTitle?: string;
+  initialAudioState?: BookAudioState;
+  onProgress?: (snapshot: AudioProgressSnapshot) => void;
+  chromeVisible?: boolean;
 };
 
-export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps) {
+export function ReaderAudioPlayer({
+  bookId,
+  tracks,
+  bookTitle,
+  initialAudioState,
+  onProgress,
+  chromeVisible = true,
+}: ReaderAudioPlayerProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -33,6 +46,138 @@ export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps)
   const currentIndexRef = useRef(0);
   const isPlayingRef = useRef(false);
   const progressRef = useRef<HTMLDivElement | null>(null);
+  const pendingSeekRef = useRef<number | null>(null);
+  const currentTimeRef = useRef(0);
+  const onProgressRef = useRef<ReaderAudioPlayerProps["onProgress"]>(undefined);
+  const lastProgressSnapshotRef = useRef<{ trackId?: string; currentTimeSeconds?: number; timestamp: number }>({
+    timestamp: 0,
+  });
+  const lastAppliedAudioStateSignatureRef = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    onProgressRef.current = onProgress;
+  }, [onProgress]);
+
+  const applyPendingSeek = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return false;
+    }
+    if (pendingSeekRef.current === null) {
+      return false;
+    }
+    const target = Math.max(pendingSeekRef.current, 0);
+    try {
+      audio.currentTime = target;
+      pendingSeekRef.current = null;
+      const nextTime = audio.currentTime || target;
+      setCurrentTime(nextTime);
+      currentTimeRef.current = nextTime;
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const emitProgressSnapshot = useCallback(
+    (timeOverride?: number) => {
+      const track = tracksRef.current[currentIndexRef.current];
+      const listener = onProgressRef.current;
+      if (!track || !listener) {
+        return;
+      }
+      const candidateTime =
+        typeof timeOverride === "number"
+          ? timeOverride
+          : (() => {
+              const audio = audioRef.current;
+              if (audio && Number.isFinite(audio.currentTime)) {
+                return audio.currentTime;
+              }
+              return currentTimeRef.current;
+            })();
+      const normalizedSeconds = Number(Math.max(candidateTime, 0).toFixed(3));
+      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      lastProgressSnapshotRef.current = {
+        trackId: track.id,
+        currentTimeSeconds: normalizedSeconds,
+        timestamp: now,
+      };
+      listener({
+        trackId: track.id,
+        trackHref: track.href,
+        trackIndex: currentIndexRef.current,
+        currentTimeSeconds: normalizedSeconds,
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      emitProgressSnapshot();
+    };
+  }, [emitProgressSnapshot]);
+
+  useEffect(() => {
+    if (!bookId) {
+      lastAppliedAudioStateSignatureRef.current = undefined;
+      return;
+    }
+
+    const signatureComponents = [
+      bookId,
+      initialAudioState?.currentTrackId ?? "no-track",
+      initialAudioState?.updatedAt ?? "no-updated-at",
+      Number.isFinite(initialAudioState?.currentTimeSeconds)
+        ? String(initialAudioState?.currentTimeSeconds)
+        : "0",
+      String(tracks.length),
+    ];
+    const signature = signatureComponents.join("|");
+    if (lastAppliedAudioStateSignatureRef.current === signature) {
+      return;
+    }
+    lastAppliedAudioStateSignatureRef.current = signature;
+
+    let nextIndex = 0;
+    if (tracks.length) {
+      const matchById =
+        initialAudioState?.currentTrackId &&
+        tracks.findIndex((track) => track.id === initialAudioState.currentTrackId);
+      if (typeof matchById === "number" && matchById >= 0) {
+        nextIndex = matchById;
+      } else {
+        const matchByHref =
+          initialAudioState?.currentTrackHref &&
+          tracks.findIndex((track) => track.href === initialAudioState.currentTrackHref);
+        if (typeof matchByHref === "number" && matchByHref >= 0) {
+          nextIndex = matchByHref;
+        } else if (
+          typeof initialAudioState?.currentTrackIndex === "number" &&
+          Number.isFinite(initialAudioState.currentTrackIndex) &&
+          initialAudioState.currentTrackIndex >= 0 &&
+          initialAudioState.currentTrackIndex < tracks.length
+        ) {
+          nextIndex = initialAudioState.currentTrackIndex;
+        }
+      }
+    }
+
+    setCurrentIndex(nextIndex);
+    currentIndexRef.current = nextIndex;
+    const restoredTime =
+      typeof initialAudioState?.currentTimeSeconds === "number" &&
+      Number.isFinite(initialAudioState.currentTimeSeconds)
+        ? Math.max(initialAudioState.currentTimeSeconds, 0)
+        : 0;
+    pendingSeekRef.current = restoredTime;
+    setCurrentTime(restoredTime);
+    currentTimeRef.current = restoredTime;
+    setIsPlaying(false);
+    isPlayingRef.current = false;
+    lastProgressSnapshotRef.current = { timestamp: 0 };
+  }, [bookId, initialAudioState, tracks]);
 
   useEffect(() => {
     tracksRef.current = tracks;
@@ -70,11 +215,33 @@ export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps)
     audioRef.current = audio;
 
     const handleTimeUpdate = () => {
-      setCurrentTime(audio.currentTime || 0);
+      const seconds = audio.currentTime || 0;
+      setCurrentTime(seconds);
+      currentTimeRef.current = seconds;
+      const track = tracksRef.current[currentIndexRef.current];
+      const listener = onProgressRef.current;
+      if (!track || !listener) {
+        return;
+      }
+      const lastSnapshot = lastProgressSnapshotRef.current;
+      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      const shouldEmit =
+        !lastSnapshot.trackId ||
+        track.id !== lastSnapshot.trackId ||
+        Math.abs((lastSnapshot.currentTimeSeconds ?? 0) - seconds) >= 0.75 ||
+        now - lastSnapshot.timestamp >= 1000;
+      if (shouldEmit) {
+        emitProgressSnapshot(seconds);
+      }
     };
 
     const handleLoadedMetadata = () => {
       setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
+      if (!applyPendingSeek()) {
+        const fallbackTime = audio.currentTime || 0;
+        setCurrentTime(fallbackTime);
+        currentTimeRef.current = fallbackTime;
+      }
     };
 
     const handleEnded = () => {
@@ -103,7 +270,7 @@ export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps)
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
       audio.removeEventListener("ended", handleEnded);
     };
-  }, []);
+  }, [applyPendingSeek]);
 
   const currentTrack = tracks[currentIndex];
 
@@ -118,9 +285,13 @@ export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps)
     audio.pause();
     audio.src = currentTrack.url;
     audio.load();
-    audio.currentTime = 0;
     audio.playbackRate = playbackRate;
-    setCurrentTime(0);
+    const seekApplied = applyPendingSeek();
+    if (!seekApplied) {
+      audio.currentTime = 0;
+      setCurrentTime(0);
+      currentTimeRef.current = 0;
+    }
     setDuration(0);
 
     if (shouldAutoPlay) {
@@ -134,7 +305,7 @@ export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps)
           isPlayingRef.current = false;
         });
     }
-  }, [currentTrack, playbackRate]);
+  }, [applyPendingSeek, currentTrack, playbackRate]);
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) {
@@ -152,6 +323,7 @@ export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps)
 
     if (isPlayingRef.current) {
       audio.pause();
+      emitProgressSnapshot();
       setIsPlaying(false);
       isPlayingRef.current = false;
       return;
@@ -176,6 +348,8 @@ export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps)
       currentIndexRef.current = nextIndex;
       setCurrentTime(0);
       setDuration(0);
+      pendingSeekRef.current = null;
+      lastProgressSnapshotRef.current = { timestamp: 0 };
       if (isPlayingRef.current) {
         const audio = audioRef.current;
         if (audio) {
@@ -201,6 +375,9 @@ export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps)
       if (audio) {
         audio.currentTime = 0;
         setCurrentTime(0);
+        currentTimeRef.current = 0;
+        pendingSeekRef.current = null;
+        emitProgressSnapshot(0);
       }
       return;
     }
@@ -238,8 +415,18 @@ export function ReaderAudioPlayer({ tracks, bookTitle }: ReaderAudioPlayerProps)
   }
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-6 sm:px-6">
-      <div className="pointer-events-auto flex w-full max-w-xl flex-col gap-3 rounded-2xl border border-border bg-background/90 p-4 shadow-lg ring-1 ring-black/5 backdrop-blur">
+    <div
+      className={cn(
+        "pointer-events-none fixed inset-x-0 bottom-14 z-50 flex justify-center px-4 pb-6 sm:px-6 transition-all duration-200",
+        !chromeVisible && "translate-y-12 ",
+      )}
+    >
+      <div
+        className={cn(
+          "pointer-events-auto flex w-full max-w-xl flex-col gap-3 rounded-2xl border border-border bg-background/90 p-4 shadow-lg ring-1 ring-black/5 backdrop-blur",
+          !chromeVisible && "pointer-events-none",
+        )}
+      >
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold">{currentTrack.title}</p>

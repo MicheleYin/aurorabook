@@ -1,4 +1,9 @@
-import type { Book, Chapter, ReaderPreferences } from "../../types/reader";
+import type {
+  Book,
+  BookAudioState,
+  Chapter,
+  ReaderPreferences,
+} from "../../types/reader";
 
 export type ChapterSelectionOptions = {
   fragment?: string;
@@ -16,6 +21,13 @@ export type ChapterProgressSnapshot = {
   activeElementIndex: number | null;
 };
 
+export type AudioProgressSnapshot = {
+  trackId: string;
+  trackHref: string;
+  trackIndex: number;
+  currentTimeSeconds: number;
+};
+
 export type ReaderPanelBaseProps = {
   activeBook?: Book;
   activeChapter?: Chapter;
@@ -26,4 +38,5 @@ export type ReaderPanelBaseProps = {
   onFragmentConsumed: () => void;
   onNavigateLibrary?: () => void;
   onChapterProgress?: (bookId: string, snapshot: ChapterProgressSnapshot) => void;
+  onAudioProgress?: (bookId: string, snapshot: AudioProgressSnapshot) => void;
 };

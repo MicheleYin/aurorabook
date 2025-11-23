@@ -4,7 +4,14 @@ import { readFile } from "@tauri-apps/plugin-fs";
 import ePub from "epubjs";
 import { toast } from "sonner";
 
-import type { AudioTrack, Book, BookProgress, Chapter, NavItem } from "../types/reader";
+import type {
+  AudioTrack,
+  Book,
+  BookAudioState,
+  BookProgress,
+  Chapter,
+  NavItem,
+} from "../types/reader";
 import {
   buildNavigationMap,
   createId,
@@ -37,6 +44,7 @@ type PersistedLibraryEntry = {
   subjects?: string[];
   progress?: BookProgress;
   pageCount?: number;
+  audioState?: BookAudioState;
 };
 
 type PersistedLibraryFile = {
@@ -56,6 +64,7 @@ type IngestParams = {
   fallbackTitle?: string;
   progress?: BookProgress;
   pageCountHint?: number;
+  audioState?: BookAudioState;
 };
 
 type PersistentLibrary = {
@@ -275,6 +284,7 @@ export function usePersistentLibrary(): PersistentLibrary {
       fallbackTitle,
       progress: savedProgress,
       pageCountHint,
+      audioState: savedAudioState,
     }: IngestParams) => {
       ensureEpubSignature(buffer);
 
@@ -527,6 +537,29 @@ export function usePersistentLibrary(): PersistentLibrary {
         )
       ).filter((track): track is AudioTrack => Boolean(track));
 
+      let restoredAudioState: BookAudioState | undefined;
+      if (savedAudioState && audioTracks.length) {
+        const resolvedTrack =
+          audioTracks.find((track) => track.href === savedAudioState.currentTrackHref) ??
+          audioTracks[savedAudioState.currentTrackIndex] ??
+          audioTracks.find((track) => track.id === savedAudioState.currentTrackId);
+        if (resolvedTrack) {
+          const resolvedIndex = audioTracks.findIndex((track) => track.id === resolvedTrack.id);
+          const normalizedSeconds =
+            typeof savedAudioState.currentTimeSeconds === "number" &&
+            Number.isFinite(savedAudioState.currentTimeSeconds)
+              ? Math.max(savedAudioState.currentTimeSeconds, 0)
+              : 0;
+          restoredAudioState = {
+            currentTrackId: resolvedTrack.id,
+            currentTrackHref: resolvedTrack.href,
+            currentTrackIndex: resolvedIndex === -1 ? 0 : resolvedIndex,
+            currentTimeSeconds: Number(normalizedSeconds.toFixed(3)),
+            updatedAt: savedAudioState.updatedAt ?? new Date().toISOString(),
+          };
+        }
+      }
+
       const fallbackTitleResolved =
         fallbackTitle ?? deriveTitleFromPath(sourcePath);
 
@@ -548,6 +581,7 @@ export function usePersistentLibrary(): PersistentLibrary {
         subjects,
         fileSizeBytes,
         audioTracks,
+        audioState: restoredAudioState,
         progress: appliedProgress,
         pageCount: estimatedPageCount,
       };
@@ -589,6 +623,7 @@ export function usePersistentLibrary(): PersistentLibrary {
                 subjects: book.subjects,
                 progress: book.progress,
                 pageCount: book.pageCount,
+              audioState: book.audioState,
               })),
             };
             await store.set(LIBRARY_STORE_KEY, payload);
@@ -656,6 +691,7 @@ export function usePersistentLibrary(): PersistentLibrary {
                   fallbackTitle: entry.title,
                   progress: entryWithMeta.progress,
                   pageCountHint: entryWithMeta.pageCount,
+                  audioState: entryWithMeta.audioState,
                 });
                 console.debug(`${LIBRARY_LOG_PREFIX} restored book from store`, {
                   sourcePath: entry.sourcePath,

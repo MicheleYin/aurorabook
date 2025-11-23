@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ImageOff, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Button } from "../ui/button";
@@ -14,7 +14,7 @@ import {
   DrawerTitle,
 } from "../ui/drawer";
 import { useMediaQuery } from "../../hooks/use-media-query";
-import { cn, getBookProgressSummary } from "../../lib/utils";
+import { cn, formatDurationShort, getBookProgressSummary } from "../../lib/utils";
 
 type BookDetailDialogProps = {
   book: Book;
@@ -52,6 +52,53 @@ export function BookDetailDialog({
   const isDesktop = useMediaQuery("(min-width: 640px)");
   const genres = (book.subjects ?? []).filter(Boolean);
   const hasAudio = book.audioTracks.length > 0;
+  const totalAudioDurationSeconds = useMemo(() => {
+    if (!book.audioTracks.length) return undefined;
+    const sum = book.audioTracks.reduce((acc, track) => {
+      if (typeof track.duration === "number" && Number.isFinite(track.duration)) {
+        return acc + Math.max(track.duration, 0);
+      }
+      return acc;
+    }, 0);
+    return sum > 0 ? sum : undefined;
+  }, [book.audioTracks]);
+  const listenedAudioSeconds = useMemo(() => {
+    if (!book.audioTracks.length || !book.audioState) {
+      return undefined;
+    }
+    const { currentTrackId, currentTrackHref, currentTrackIndex, currentTimeSeconds } = book.audioState;
+    const resolvedIndexById = book.audioTracks.findIndex((track) => track.id === currentTrackId);
+    const resolvedIndexByHref =
+      resolvedIndexById === -1
+        ? book.audioTracks.findIndex((track) => track.href === currentTrackHref)
+        : resolvedIndexById;
+    const index =
+      resolvedIndexByHref >= 0
+        ? resolvedIndexByHref
+        : typeof currentTrackIndex === "number" && Number.isFinite(currentTrackIndex)
+          ? currentTrackIndex
+          : -1;
+    if (index < 0 || index >= book.audioTracks.length) {
+      return undefined;
+    }
+    const completedSeconds = book.audioTracks.slice(0, index).reduce((acc, track) => {
+      if (typeof track.duration === "number" && Number.isFinite(track.duration)) {
+        return acc + Math.max(track.duration, 0);
+      }
+      return acc;
+    }, 0);
+    const currentSeconds =
+      typeof currentTimeSeconds === "number" && Number.isFinite(currentTimeSeconds)
+        ? Math.max(currentTimeSeconds, 0)
+        : 0;
+    return completedSeconds + currentSeconds;
+  }, [book.audioTracks, book.audioState]);
+  const audioProgressPercent =
+    totalAudioDurationSeconds && listenedAudioSeconds !== undefined
+      ? Math.min(Math.max(listenedAudioSeconds / totalAudioDurationSeconds, 0), 1)
+      : undefined;
+  const audioProgressPercentDisplay =
+    typeof audioProgressPercent === "number" ? Math.round(audioProgressPercent * 100) : undefined;
   const progressSummary = getBookProgressSummary(book);
   const progressPrimaryText = book.chapters.length
     ? progressSummary.label
@@ -128,11 +175,32 @@ export function BookDetailDialog({
         </div>
         <div className="grid gap-1">
           <span className="text-xs uppercase text-muted-foreground">Audiobook</span>
-          <span>
-            {hasAudio
-              ? `${book.audioTracks.length} track${book.audioTracks.length === 1 ? "" : "s"} available`
-              : "Not available"}
-          </span>
+          {hasAudio ? (
+            <div className="flex flex-col gap-1">
+              <span>
+                {`${book.audioTracks.length} track${book.audioTracks.length === 1 ? "" : "s"} available`}
+                {totalAudioDurationSeconds
+                  ? ` · ${formatDurationShort(totalAudioDurationSeconds)} total`
+                  : ""}
+              </span>
+              {audioProgressPercentDisplay !== undefined ? (
+                <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+                  <span>
+                    {`Listened ${formatDurationShort(listenedAudioSeconds ?? 0)} · ${audioProgressPercentDisplay}%`}
+                  </span>
+                  <progress
+                    className="h-1.5 w-full overflow-hidden rounded-full bg-muted accent-primary"
+                    value={audioProgressPercentDisplay}
+                    max={100}
+                  >
+                    {audioProgressPercentDisplay}%
+                  </progress>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <span>Not available</span>
+          )}
         </div>
       </div>
     </div>

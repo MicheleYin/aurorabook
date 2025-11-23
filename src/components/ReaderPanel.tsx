@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 
 import type {
+  AudioProgressSnapshot,
   ChapterProgressSnapshot,
   ChapterSelectionOptions,
   ReaderPanelBaseProps,
@@ -29,6 +30,7 @@ export function ReaderPanel({
   onNavigateLibrary,
   resolvedUiTheme,
   onChapterProgress,
+  onAudioProgress,
   onChromeVisibilityChange,
 }: ReaderPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -79,6 +81,7 @@ export function ReaderPanel({
      preferences.theme === "system" ? resolvedUiTheme : preferences.theme;
   const audioTracks = activeBook?.audioTracks ?? [];
   const showAudioPlayer = audioTracks.length > 0;
+  const chromeVisible = !isImmersive;
 
   const handleChapterChange = (chapterId: string, options?: ChapterSelectionOptions) => {
     const requestedScrollPosition = options?.scrollPosition ?? "maintain";
@@ -96,6 +99,13 @@ export function ReaderPanel({
       return;
     }
     onChapterProgress?.(activeBook.id, snapshot);
+  };
+
+  const handleAudioProgress = (snapshot: AudioProgressSnapshot) => {
+    if (!activeBook?.id) {
+      return;
+    }
+    onAudioProgress?.(activeBook.id, snapshot);
   };
 
   return (
@@ -163,7 +173,7 @@ export function ReaderPanel({
           pendingFragment={pendingFragment}
           onFragmentConsumed={onFragmentConsumed}
           onSelectChapter={handleChapterChange}
-          chromeVisible={!isImmersive}
+          chromeVisible={chromeVisible}
           resolvedTheme={appliedTheme}
           onToggleChrome={() => setIsImmersive((prev) => !prev)}
           audioPlayerVisible={showAudioPlayer}
@@ -175,7 +185,14 @@ export function ReaderPanel({
         />
       </div>
       {showAudioPlayer ? (
-        <ReaderAudioPlayer tracks={audioTracks} bookTitle={activeBook?.title} />
+        <ReaderAudioPlayer
+          bookId={activeBook?.id}
+          tracks={audioTracks}
+          bookTitle={activeBook?.title}
+          initialAudioState={activeBook?.audioState}
+          onProgress={handleAudioProgress}
+          chromeVisible={chromeVisible}
+        />
       ) : null}
     </section>
   );

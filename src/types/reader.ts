@@ -12,6 +12,14 @@ export type AudioTrack = {
   duration?: number;
 };
 
+export type BookAudioState = {
+  currentTrackId: string;
+  currentTrackHref: string;
+  currentTrackIndex: number;
+  currentTimeSeconds: number;
+  updatedAt: string;
+};
+
 export type Chapter = {
   id: string;
   title: string;
@@ -48,6 +56,7 @@ export type Book = {
   subjects?: string[];
   fileSizeBytes?: number;
   audioTracks: AudioTrack[];
+  audioState?: BookAudioState;
   progress?: BookProgress;
   pageCount?: number;
 };

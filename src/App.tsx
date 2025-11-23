@@ -16,6 +16,7 @@ import { usePersistentSettings } from "./hooks/usePersistentSettings";
 import type { ReaderPreferences } from "./types/reader";
 import type { UITheme } from "./types/ui";
 import type {
+  AudioProgressSnapshot,
   ChapterProgressSnapshot,
   ChapterSelectionOptions,
 } from "./components/reader/types";
@@ -310,6 +311,67 @@ function App() {
     [setLibrary],
   );
 
+  const updateBookAudioState = useCallback(
+    (bookId: string, snapshot: AudioProgressSnapshot) => {
+      if (!bookId) {
+        return;
+      }
+      if (
+        typeof snapshot?.currentTimeSeconds !== "number" ||
+        !Number.isFinite(snapshot.currentTimeSeconds) ||
+        snapshot.currentTimeSeconds < 0
+      ) {
+        return;
+      }
+
+      setLibrary((prev) => {
+        let updated = false;
+        const timestamp = new Date().toISOString();
+        const nextLibrary = prev.map((book) => {
+          if (book.id !== bookId || !book.audioTracks.length) {
+            return book;
+          }
+
+          const resolvedTrack =
+            book.audioTracks.find((track) => track.id === snapshot.trackId) ??
+            book.audioTracks.find((track) => track.href === snapshot.trackHref) ??
+            book.audioTracks[snapshot.trackIndex];
+
+          if (!resolvedTrack) {
+            return book;
+          }
+
+          const resolvedIndex = book.audioTracks.findIndex((track) => track.id === resolvedTrack.id);
+          const normalizedSeconds = Number(snapshot.currentTimeSeconds.toFixed(3));
+          const existing = book.audioState;
+
+          if (
+            existing &&
+            existing.currentTrackId === resolvedTrack.id &&
+            Math.abs(existing.currentTimeSeconds - normalizedSeconds) < 0.25
+          ) {
+            return book;
+          }
+
+          updated = true;
+          return {
+            ...book,
+            audioState: {
+              currentTrackId: resolvedTrack.id,
+              currentTrackHref: resolvedTrack.href,
+              currentTrackIndex: resolvedIndex === -1 ? snapshot.trackIndex : resolvedIndex,
+              currentTimeSeconds: normalizedSeconds,
+              updatedAt: timestamp,
+            },
+          };
+        });
+
+        return updated ? nextLibrary : prev;
+      });
+    },
+    [setLibrary],
+  );
+
   useEffect(() => {
     if (!library.length) {
       setActiveBookId(undefined);
@@ -546,6 +608,7 @@ function App() {
       onNavigateLibrary={() => setActiveView("library")}
       resolvedUiTheme={resolvedUiTheme}
       onChapterProgress={handleChapterProgress}
+      onAudioProgress={updateBookAudioState}
       onChromeVisibilityChange={setIsReaderChromeVisible}
     />
   );
@@ -586,44 +649,46 @@ function App() {
         tabIndex={-1}
         onChange={handleWebFileSelection}
       />
-      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-6 pb-28 sm:px-6 lg:px-8">
         <div className="flex flex-1 min-h-0 flex-col">{currentView}</div>
-
+      </div>
+      <div
+        className={cn(
+          "pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-6 sm:px-6 transition-all duration-200",
+          hideNavigation && "translate-y-4 opacity-0",
+        )}
+      >
         <div
           className={cn(
-            "flex items-center justify-center transition-all duration-200",
-            hideNavigation && "pointer-events-none opacity-0 translate-y-4",
+            "pointer-events-auto inline-flex items-center gap-1 rounded-full border border-border bg-card/80 p-1 backdrop-blur-md shadow-lg ring-1 ring-black/5",
+            hideNavigation && "pointer-events-none",
           )}
         >
-          <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card/60 p-1">
-            {navigationItems.map((item) => {
-              const isActive = activeView === item.id;
-              const isDisabled = Boolean(item.disabled);
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  disabled={isDisabled}
-                  onClick={() => {
-                    if (isDisabled) return;
-                    setActiveView(item.id);
-                  }}
-                  className={cn(
-                    "rounded-full px-4 py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    isActive
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-muted",
-                    isDisabled && "cursor-not-allowed opacity-50 hover:bg-transparent",
-                  )}
-                  title={
-                    item.id === "reader" && isDisabled ? "Open a book to enter the reader" : undefined
-                  }
-                >
-                  {item.label}
-                </button>
-              );
-            })}
-          </div>
+          {navigationItems.map((item) => {
+            const isActive = activeView === item.id;
+            const isDisabled = Boolean(item.disabled);
+            return (
+              <button
+                key={item.id}
+                type="button"
+                disabled={isDisabled}
+                onClick={() => {
+                  if (isDisabled) return;
+                  setActiveView(item.id);
+                }}
+                className={cn(
+                  "rounded-full px-4 py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  isActive
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted",
+                  isDisabled && "cursor-not-allowed opacity-50 hover:bg-transparent",
+                )}
+                title={item.id === "reader" && isDisabled ? "Open a book to enter the reader" : undefined}
+              >
+                {item.label}
+              </button>
+            );
+          })}
         </div>
       </div>
       {detailBook ? (
