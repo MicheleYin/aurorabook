@@ -252,10 +252,10 @@ export function BookDetailDialog({
                   <span className="uppercase tracking-wide">Total tracks</span>
                   <span className="text-base text-foreground">{book.audioTracks.length}</span>
                 </div>
-                <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1">
                   <span className="uppercase tracking-wide">Total length</span>
                   <span className="text-base text-foreground">
-                    {totalAudioDurationSeconds
+                {totalAudioDurationSeconds
                       ? formatDurationShort(totalAudioDurationSeconds)
                       : "Unknown"}
                   </span>
@@ -266,7 +266,7 @@ export function BookDetailDialog({
                     {listenedAudioSeconds !== undefined
                       ? formatDurationShort(listenedAudioSeconds)
                       : "Not started"}
-                  </span>
+              </span>
                 </div>
               </div>
               {audioProgressPercentDisplay !== undefined ? (

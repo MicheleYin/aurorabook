@@ -4,6 +4,7 @@ import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
 import type { AudioTrack, BookAudioState } from "../../types/reader";
 import type { AudioProgressSnapshot } from "./types";
 import { Button } from "../ui/button";
+import { Slider } from "../ui/slider";
 import { cn } from "../../lib/utils";
 
 const formatTime = (value: number) => {
@@ -41,14 +42,16 @@ export function ReaderAudioPlayer({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState<number>(1);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [scrubTime, setScrubTime] = useState<number | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const tracksRef = useRef<AudioTrack[]>(tracks);
   const currentIndexRef = useRef(0);
   const isPlayingRef = useRef(false);
-  const progressRef = useRef<HTMLDivElement | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
   const desiredSeekRef = useRef<number | null>(null);
+  const userScrubbingRef = useRef(false);
   const currentTimeRef = useRef(0);
   const onProgressRef = useRef<ReaderAudioPlayerProps["onProgress"]>(undefined);
   const lastProgressSnapshotRef = useRef<{
@@ -151,6 +154,23 @@ export function ReaderAudioPlayer({
       });
     },
     [],
+  );
+
+  const commitSeek = useCallback(
+    (targetSeconds: number) => {
+      const normalized = normalizeSeekTarget(targetSeconds);
+      if (normalized === null) {
+        return;
+      }
+      setDesiredSeek(normalized);
+      const applied = applyDesiredSeek();
+      if (!applied) {
+        setCurrentTime(normalized);
+        currentTimeRef.current = normalized;
+      }
+      emitProgressSnapshot(normalized);
+    },
+    [applyDesiredSeek, emitProgressSnapshot, setDesiredSeek],
   );
 
   useEffect(() => {
@@ -339,14 +359,10 @@ export function ReaderAudioPlayer({
   }, [applyDesiredSeek, applyPendingSeek]);
 
   const currentTrack = tracks[currentIndex];
-  const expectedTrack = tracks[currentIndexRef.current];
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !currentTrack) {
-      return;
-    }
-    if (expectedTrack && currentTrack.id !== expectedTrack.id) {
       return;
     }
 
@@ -375,7 +391,12 @@ export function ReaderAudioPlayer({
           isPlayingRef.current = false;
         });
     }
-  }, [applyPendingSeek, currentTrack, expectedTrack, playbackRate]);
+  }, [applyPendingSeek, currentTrack]);
+
+  useEffect(() => {
+    setIsScrubbing(false);
+    setScrubTime(null);
+  }, [currentTrack?.id]);
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) {
@@ -441,18 +462,11 @@ export function ReaderAudioPlayer({
 
   const handlePrevious = useCallback(() => {
     if (currentIndex <= 0) {
-      const audio = audioRef.current;
-      if (audio) {
-        audio.currentTime = 0;
-        setCurrentTime(0);
-        currentTimeRef.current = 0;
-        setDesiredSeek(null);
-        emitProgressSnapshot(0);
-      }
+      commitSeek(0);
       return;
     }
     playTrackAt(currentIndex - 1);
-  }, [currentIndex, playTrackAt, setDesiredSeek]);
+  }, [commitSeek, currentIndex, playTrackAt]);
 
   const handleNext = useCallback(() => {
     if (currentIndex + 1 >= tracks.length) {
@@ -461,10 +475,57 @@ export function ReaderAudioPlayer({
     playTrackAt(currentIndex + 1);
   }, [currentIndex, playTrackAt, tracks.length]);
 
-  const progress = useMemo(() => {
-    if (!duration) return 0;
-    return Math.min(100, Math.max(0, (currentTime / duration) * 100));
-  }, [currentTime, duration]);
+  const displayedCurrentTime = useMemo(() => {
+    if (isScrubbing && typeof scrubTime === "number") {
+      return scrubTime;
+    }
+    return currentTime;
+  }, [currentTime, isScrubbing, scrubTime]);
+
+  const handleScrubChange = useCallback((value: number[]) => {
+    const next = value?.[0];
+    if (typeof next !== "number" || !Number.isFinite(next)) {
+      return;
+    }
+    if (!userScrubbingRef.current) {
+      return;
+    }
+    setScrubTime(Math.max(next, 0));
+  }, []);
+
+  const handleScrubCommit = useCallback(
+    (value: number[]) => {
+      const next = value?.[0];
+      userScrubbingRef.current = false;
+      setIsScrubbing(false);
+      setScrubTime(null);
+      if (typeof next !== "number" || !Number.isFinite(next)) {
+        return;
+      }
+      commitSeek(next);
+    },
+    [commitSeek],
+  );
+
+  const handleScrubPointerDown = useCallback(() => {
+    userScrubbingRef.current = true;
+    setIsScrubbing(true);
+  }, []);
+
+  const handleScrubPointerUp = useCallback(() => {
+    userScrubbingRef.current = false;
+  }, []);
+
+  const sliderMax = useMemo(() => {
+    if (duration && duration > 0) {
+      return duration;
+    }
+    return Math.max(displayedCurrentTime, 1);
+  }, [displayedCurrentTime, duration]);
+
+  const sliderValue = useMemo(() => {
+    return Math.min(displayedCurrentTime, sliderMax);
+  }, [displayedCurrentTime, sliderMax]);
   const handlePlaybackRateChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
     const nextRate = Number(event.target.value);
     if (!Number.isFinite(nextRate)) {
@@ -473,12 +534,6 @@ export function ReaderAudioPlayer({
     setPlaybackRate(nextRate);
   }, []);
 
-
-  useEffect(() => {
-    if (progressRef.current) {
-      progressRef.current.style.width = `${progress}%`;
-    }
-  }, [progress]);
 
   if (!currentTrack) {
     return null;
@@ -551,14 +606,21 @@ export function ReaderAudioPlayer({
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs tabular-nums text-muted-foreground">
-            {formatTime(currentTime)}
+            {formatTime(displayedCurrentTime)}
           </span>
-          <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-            <div
-              ref={progressRef}
-              className="absolute inset-y-0 left-0 rounded-full bg-primary transition-all"
+          <Slider
+            className="flex-1"
+            min={0}
+            max={sliderMax}
+            step={0.01}
+            value={[sliderValue]}
+            onValueChange={handleScrubChange}
+            onValueCommit={handleScrubCommit}
+            disabled={!duration}
+            onPointerDown={handleScrubPointerDown}
+            onPointerUp={handleScrubPointerUp}
+            aria-label="Seek audio"
             />
-          </div>
           <span className="text-xs tabular-nums text-muted-foreground">
             {formatTime(duration)}
           </span>
