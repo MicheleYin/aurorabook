@@ -33,9 +33,9 @@ export function ReaderTocDrawer({
   return (
     <Drawer open={isOpen} onOpenChange={onOpenChange} direction="left">
       <DrawerTrigger asChild>
-        <Button variant="outline" size="sm">
-          <BookOpen className="mr-2 h-4 w-4" />
-          Table of contents
+        <Button variant="outline" size="sm" >
+          <BookOpen className="sm:mr-2 h-4 w-4" />
+         <span className="hidden sm:block">Table of contents</span>
         </Button>
       </DrawerTrigger>
       <DrawerContent className="data-[vaul-drawer-direction=left]:inset-y-0 data-[vaul-drawer-direction=left]:bottom-0 data-[vaul-drawer-direction=left]:left-0 data-[vaul-drawer-direction=left]:right-auto data-[vaul-drawer-direction=left]:top-0 data-[vaul-drawer-direction=left]:h-full data-[vaul-drawer-direction=left]:max-h-none data-[vaul-drawer-direction=left]:w-full data-[vaul-drawer-direction=left]:max-w-[320px] data-[vaul-drawer-direction=left]:rounded-none data-[vaul-drawer-direction=left]:border-r data-[vaul-drawer-direction=left]:p-0 data-[vaul-drawer-direction=left]:shadow-2xl data-[vaul-drawer-direction=left]:sm:inset-y-0 data-[vaul-drawer-direction=left]:sm:left-0 data-[vaul-drawer-direction=left]:sm:right-auto data-[vaul-drawer-direction=left]:sm:top-0 data-[vaul-drawer-direction=left]:sm:bottom-0 data-[vaul-drawer-direction=left]:sm:h-full data-[vaul-drawer-direction=left]:sm:max-h-none data-[vaul-drawer-direction=left]:sm:max-w-[360px] data-[vaul-drawer-direction=left]:sm:rounded-none data-[vaul-drawer-direction=left]:sm:border-r data-[vaul-drawer-direction=left]:sm:shadow-2xl data-[vaul-drawer-direction=left]:sm:-translate-x-0 data-[vaul-drawer-direction=left]:sm:-translate-y-0 data-[vaul-drawer-direction=left]:data-[state=open]:slide-in-from-left data-[vaul-drawer-direction=left]:data-[state=closed]:slide-out-to-left">

@@ -248,8 +248,8 @@ export function ReaderSettingsControl({
     <Drawer open={isOpen} onOpenChange={onOpenChange}>
       <DrawerTrigger asChild>
         <Button variant="outline" size="sm">
-          <Settings2 className="mr-2 h-4 w-4" />
-          Reader settings
+          <Settings2 className="sm:mr-2 h-4 w-4" />
+          <span className="hidden sm:block">Reader settings</span>
         </Button>
       </DrawerTrigger>
       <DrawerContent>
