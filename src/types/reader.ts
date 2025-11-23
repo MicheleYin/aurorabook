@@ -39,8 +39,6 @@ export type ReaderFont =
 
 export type ReaderPreferences = {
   theme: ReaderTheme;
-  fontSize: number;
   fontFamily: ReaderFont;
-  lineHeight: number;
 };
 

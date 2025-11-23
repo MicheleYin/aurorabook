@@ -207,9 +207,7 @@ function App() {
   const [duration, setDuration] = useState(0);
   const [readerPreferences, setReaderPreferences] = useState<ReaderPreferences>({
     theme: "light",
-    fontSize: 18,
     fontFamily: "merriweather",
-    lineHeight: 1.6,
   });
   const [pendingFragment, setPendingFragment] = useState<string | null>(null);
 

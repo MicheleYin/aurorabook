@@ -3,9 +3,6 @@ import {
   BookOpen,
   ChevronLeft,
   ChevronRight,
-  Minus,
-  Palette,
-  Plus,
   Settings2,
   X,
 } from "lucide-react";
@@ -59,8 +56,6 @@ const themeClasses: Record<ReaderPreferences["theme"], string> = {
   sepia: "bg-[#f4ecd8] text-[#403127] border border-[#e0cfb0]",
 };
 
-const FONT_SIZES = [14, 16, 18, 20, 22, 24, 26] as const;
-
 const fontClassMap: Record<ReaderPreferences["fontFamily"], string> = {
   merriweather: "font-merriweather",
   inter: "font-inter",
@@ -77,6 +72,9 @@ const fontPreviewText: Record<ReaderPreferences["fontFamily"], string> = {
   atkinson: "Aa",
 };
 
+const BASE_FONT_CLASS = "text-[18px]";
+const BASE_LINE_HEIGHT_CLASS = "leading-[1.6]";
+
 const fontOptions: Array<{ id: ReaderPreferences["fontFamily"]; label: string }> = [
   { id: "merriweather", label: "Merriweather" },
   { id: "inter", label: "Inter" },
@@ -90,26 +88,6 @@ const themeOptions: Array<{ id: ReaderPreferences["theme"]; label: string }> = [
   { id: "sepia", label: "Sepia" },
   { id: "dark", label: "Dark" },
 ];
-
-const lineHeightOptions: Array<{ id: number; label: string }> = [
-  { id: 1.4, label: "Tight" },
-  { id: 1.6, label: "Cozy" },
-  { id: 1.8, label: "Relaxed" },
-];
-
-const lineHeightClassMap: Record<number, string> = {
-  1.4: "leading-[1.4]",
-  1.6: "leading-[1.6]",
-  1.8: "leading-[1.8]",
-};
-
-const fontSizeClassMap: Record<number, string> = FONT_SIZES.reduce(
-  (acc, size) => {
-    acc[size] = `text-[${size}px]`;
-    return acc;
-  },
-  {} as Record<number, string>,
-);
 
 export function ReaderPanel({
   activeBook,
@@ -154,19 +132,6 @@ export function ReaderPanel({
     });
   }, []);
 
-  const adjustFontSize = (delta: number) => {
-    const currentIndex = FONT_SIZES.indexOf(preferences.fontSize as (typeof FONT_SIZES)[number]);
-    const safeIndex = currentIndex === -1 ? FONT_SIZES.indexOf(18) : currentIndex;
-    const nextIndex = Math.min(
-      FONT_SIZES.length - 1,
-      Math.max(0, safeIndex + (delta > 0 ? 1 : -1)),
-    );
-    const nextSize = FONT_SIZES[nextIndex];
-    if (nextSize !== preferences.fontSize) {
-      onPreferencesChange({ fontSize: nextSize });
-    }
-  };
-
   useEffect(() => {
     const activeButton = fontOptionRefs.current[preferences.fontFamily];
     activeButton?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
@@ -193,18 +158,13 @@ export function ReaderPanel({
       el.removeEventListener("scroll", computePages);
       window.removeEventListener("resize", computePages);
     };
-  }, [
-    activeChapter?.id,
-    preferences.fontSize,
-    preferences.lineHeight,
-    preferences.fontFamily,
-  ]);
+  }, [activeChapter?.id, preferences.fontFamily]);
 
   useEffect(() => {
     const el = contentRef.current;
     if (!el) return;
     el.scrollTo({ top: 0 });
-  }, [activeChapter?.id, preferences.fontSize, preferences.lineHeight]);
+  }, [activeChapter?.id, preferences.fontFamily]);
 
   useEffect(() => {
     if (!pendingFragment) return;
@@ -363,50 +323,6 @@ export function ReaderPanel({
           </div>
         </div>
       </section>
-
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold uppercase text-muted-foreground">
-          Font size
-        </h3>
-        <div className="flex items-center gap-3">
-          <Button
-            size="icon"
-            variant="outline"
-            onClick={() => adjustFontSize(-1)}
-            aria-label="Decrease font size"
-          >
-            <Minus className="h-4 w-4" />
-          </Button>
-          <span className="text-sm">{preferences.fontSize}px</span>
-          <Button
-            size="icon"
-            variant="outline"
-            onClick={() => adjustFontSize(1)}
-            aria-label="Increase font size"
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="flex items-center gap-2 text-sm font-semibold uppercase text-muted-foreground">
-          <Palette className="h-4 w-4" />
-          Line spacing
-        </h3>
-        <div className="flex flex-wrap gap-2">
-          {lineHeightOptions.map((option) => (
-            <Button
-              key={option.id}
-              size="sm"
-              variant={preferences.lineHeight === option.id ? "secondary" : "ghost"}
-              onClick={() => onPreferencesChange({ lineHeight: option.id })}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
-      </section>
     </div>
   );
 
@@ -558,8 +474,8 @@ export function ReaderPanel({
             className={cn(
               "flex-1 overflow-y-auto rounded-lg p-6 shadow-inner transition duration-300",
               themeClasses[preferences.theme],
-              fontSizeClassMap[preferences.fontSize] ?? fontSizeClassMap[18],
-              lineHeightClassMap[preferences.lineHeight] ?? lineHeightClassMap[1.6],
+              BASE_FONT_CLASS,
+              BASE_LINE_HEIGHT_CLASS,
               fontClassMap[preferences.fontFamily],
             )}
           >
