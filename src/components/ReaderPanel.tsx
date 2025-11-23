@@ -1,18 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 
-import type {
-  AudioProgressSnapshot,
-  ChapterProgressSnapshot,
-  ChapterSelectionOptions,
-  ReaderPanelBaseProps,
-} from "./reader/types";
+import type { ChapterProgressSnapshot, ChapterSelectionOptions, ReaderPanelBaseProps } from "./reader/types";
 import { ReaderSettingsControl } from "./reader/ReaderSettingsControl";
 import { ReaderTocDrawer } from "./reader/ReaderTocDrawer";
 import { ReaderViewport } from "./reader/ReaderViewport";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
-import { ReaderAudioPlayer } from "./reader/ReaderAudioPlayer";
 
 type ReaderPanelProps = ReaderPanelBaseProps & {
   resolvedUiTheme: "light" | "dark";
@@ -30,7 +24,6 @@ export function ReaderPanel({
   onNavigateLibrary,
   resolvedUiTheme,
   onChapterProgress,
-  onAudioProgress,
   onChromeVisibilityChange,
 }: ReaderPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -99,13 +92,6 @@ export function ReaderPanel({
       return;
     }
     onChapterProgress?.(activeBook.id, snapshot);
-  };
-
-  const handleAudioProgress = (snapshot: AudioProgressSnapshot) => {
-    if (!activeBook?.id) {
-      return;
-    }
-    onAudioProgress?.(activeBook.id, snapshot);
   };
 
   return (
@@ -184,16 +170,6 @@ export function ReaderPanel({
           onChapterProgress={handleChapterProgress}
         />
       </div>
-      {showAudioPlayer ? (
-        <ReaderAudioPlayer
-          bookId={activeBook?.id}
-          tracks={audioTracks}
-          bookTitle={activeBook?.title}
-          initialAudioState={activeBook?.audioState}
-          onProgress={handleAudioProgress}
-          chromeVisible={chromeVisible}
-        />
-      ) : null}
     </section>
   );
 }

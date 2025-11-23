@@ -1,9 +1,16 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
 
 import type { AudioTrack, BookAudioState } from "../../types/reader";
 import type { AudioProgressSnapshot } from "./types";
 import { Button } from "../ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Slider } from "../ui/slider";
 import { cn } from "../../lib/utils";
 
@@ -19,6 +26,13 @@ const formatTime = (value: number) => {
 
 const PLAYBACK_RATE_OPTIONS = [0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 const PROGRESS_ECHO_TOLERANCE_SECONDS = 0.5;
+
+const formatPlaybackRate = (rate: number) => {
+  if (Number.isInteger(rate)) {
+    return `${rate.toFixed(0)}x`;
+  }
+  return `${rate.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}x`;
+};
 
 type ReaderAudioPlayerProps = {
   bookId?: string;
@@ -526,8 +540,8 @@ export function ReaderAudioPlayer({
   const sliderValue = useMemo(() => {
     return Math.min(displayedCurrentTime, sliderMax);
   }, [displayedCurrentTime, sliderMax]);
-  const handlePlaybackRateChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
-    const nextRate = Number(event.target.value);
+  const handlePlaybackRateChange = useCallback((value: string) => {
+    const nextRate = Number(value);
     if (!Number.isFinite(nextRate)) {
       return;
     }
@@ -590,18 +604,21 @@ export function ReaderAudioPlayer({
           </div>
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <span>Speed</span>
-            <select
-              aria-label="Playback speed"
-              value={playbackRate.toString()}
-              onChange={handlePlaybackRateChange}
-              className="rounded-md border border-input bg-background px-2 py-1 text-xs font-medium text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            >
-              {PLAYBACK_RATE_OPTIONS.map((rate) => (
-                <option key={rate} value={rate.toString()}>
-                  {rate % 1 === 0 ? `${rate.toFixed(0)}x` : `${rate.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}x`}
-                </option>
-              ))}
-            </select>
+            <Select value={playbackRate.toString()} onValueChange={handlePlaybackRateChange}>
+              <SelectTrigger
+                aria-label="Playback speed"
+                className="h-8 min-w-[84px] rounded-md border border-input bg-background px-2 text-xs font-medium text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                {PLAYBACK_RATE_OPTIONS.map((rate) => (
+                  <SelectItem key={rate} value={rate.toString()} className="text-xs">
+                    {formatPlaybackRate(rate)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
         <div className="flex items-center gap-3">

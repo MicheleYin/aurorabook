@@ -7,6 +7,7 @@ import type {
   LibraryViewMode,
 } from "./components/library/types";
 import { ReaderPanel } from "./components/ReaderPanel";
+import { ReaderAudioPlayer } from "./components/reader/ReaderAudioPlayer";
 import { BookDetailDialog } from "./components/library/BookDetailDialog";
 import { Toaster } from "./components/ui/sonner";
 import { LoadingScreen } from "./components/app/LoadingScreen";
@@ -608,7 +609,6 @@ function App() {
       onNavigateLibrary={() => setActiveView("library")}
       resolvedUiTheme={resolvedUiTheme}
       onChapterProgress={handleChapterProgress}
-      onAudioProgress={updateBookAudioState}
       onChromeVisibilityChange={setIsReaderChromeVisible}
     />
   );
@@ -635,6 +635,9 @@ function App() {
         : readerView;
   const hideNavigation = activeView === "reader" && !isReaderChromeVisible;
 
+  const showAudioPlayer = Boolean(activeBook?.audioTracks?.length);
+  const audioPlayerChromeVisible = activeView === "reader" ? isReaderChromeVisible : true;
+
   if (!isHydrated || !isSettingsHydrated) {
     return <LoadingScreen message="Loading your library…" />;
   }
@@ -652,6 +655,18 @@ function App() {
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-6 pb-28 sm:px-6 lg:px-8">
         <div className="flex flex-1 min-h-0 flex-col">{currentView}</div>
       </div>
+      {showAudioPlayer && activeBook ? (
+        <ReaderAudioPlayer
+          bookId={activeBook.id}
+          tracks={activeBook.audioTracks}
+          bookTitle={activeBook.title}
+          initialAudioState={activeBook.audioState}
+          onProgress={(snapshot) => {
+            updateBookAudioState(activeBook.id, snapshot);
+          }}
+          chromeVisible={audioPlayerChromeVisible}
+        />
+      ) : null}
       <div
         className={cn(
           "pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-6 sm:px-6 transition-all duration-200",
