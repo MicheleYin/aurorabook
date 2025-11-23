@@ -14,7 +14,7 @@ import {
   DrawerTitle,
 } from "../ui/drawer";
 import { useMediaQuery } from "../../hooks/use-media-query";
-import { cn, formatPageCount, getBookProgressSummary } from "../../lib/utils";
+import { cn, getBookProgressSummary } from "../../lib/utils";
 
 type BookDetailDialogProps = {
   book: Book;
@@ -92,10 +92,7 @@ export function BookDetailDialog({
             <span className="text-xs text-muted-foreground">{progressSecondaryText}</span>
           ) : null}
         </div>
-        <div className="grid gap-1">
-          <span className="text-xs uppercase text-muted-foreground">Page count</span>
-          <span>{formatPageCount(book.pageCount) ?? "Unknown"}</span>
-        </div>
+       
         <div className="grid gap-1">
           <span className="text-xs uppercase text-muted-foreground">Author</span>
           <span>{book.author || "Unknown author"}</span>

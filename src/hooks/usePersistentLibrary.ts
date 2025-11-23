@@ -153,6 +153,17 @@ const normalizeBookProgressShape = (book: Book): Book => {
       ? Math.max(Math.round(progress.currentChapterIndex), 0)
       : 0;
 
+  const elementId =
+    typeof progress.currentChapterElementId === "string" &&
+    progress.currentChapterElementId.length > 0
+      ? progress.currentChapterElementId
+      : null;
+  const elementIndex =
+    typeof progress.currentChapterElementIndex === "number" &&
+    Number.isFinite(progress.currentChapterElementIndex)
+      ? Math.max(Math.round(progress.currentChapterElementIndex), 0)
+      : null;
+
   const scrollTop =
     typeof progress.currentChapterScrollTop === "number" &&
     Number.isFinite(progress.currentChapterScrollTop)
@@ -215,6 +226,8 @@ const normalizeBookProgressShape = (book: Book): Book => {
       currentChapterId: progress.currentChapterId,
       currentChapterHref: progress.currentChapterHref,
       currentChapterIndex: normalizedIndex,
+      currentChapterElementId: elementId,
+      currentChapterElementIndex: elementIndex,
       currentChapterScrollTop: scrollTop,
       currentChapterScrollHeight: scrollHeight,
       currentChapterClientHeight: clientHeight,

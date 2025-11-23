@@ -126,3 +126,4 @@ export const themeOptions: Array<{ id: ReaderPreferences["theme"]; label: string
   { id: "sepia", label: "Sepia" },
   { id: "dark", label: "Dark" },
 ];
+

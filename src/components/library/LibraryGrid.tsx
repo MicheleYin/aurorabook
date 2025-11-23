@@ -44,7 +44,6 @@ export function LibraryGrid({
         const chapterSummary = hasChapters
           ? `Chapters: ${book.chapters.length}`
           : "Chapters: Not available";
-        const pageSummary = formatPageCount(book.pageCount) ?? "Pages unknown";
         return (
           <div
             key={book.id}
@@ -84,7 +83,6 @@ export function LibraryGrid({
               <div className="mt-auto flex items-center justify-between text-xs text-muted-foreground">
                 <div className="flex flex-col">
                   <span>{chapterSummary}</span>
-                  <span>{pageSummary}</span>
                 </div>
                 <Button
                   variant="ghost"

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "../../lib/utils";
@@ -17,7 +17,6 @@ import type {
 } from "./types";
 import type { ReaderTheme } from "../../types/reader";
 import { Button } from "../ui/button";
-import { useReaderScrollManager } from "./hooks/useReaderScrollManager";
 
 type ResolvedReaderTheme = Exclude<ReaderTheme, "system">;
 
@@ -54,20 +53,263 @@ export function ReaderViewport({
   onScrollIntentConsumed,
   onChapterProgress,
 }: ReaderViewportProps) {
-  const { contentRef, handleScroll, requestNavigationIntent } = useReaderScrollManager({
-    activeBook,
-    activeChapter,
-    preferences,
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const progressRafRef = useRef<number | null>(null);
+  const scrollActivityTimeoutRef = useRef<number | null>(null);
+  const [isScrolling, setIsScrolling] = useState(false);
+  const showAudioPlayer = audioPlayerVisible;
+
+  const computeScrollMetrics = useCallback(() => {
+    const node = contentRef.current;
+    if (!node) {
+      return null;
+    }
+
+    const hasWindow = typeof window !== "undefined";
+    const scrollHeight = Math.max(node.scrollHeight, 0);
+
+    if (!hasWindow) {
+      const clientHeight = Math.max(node.clientHeight, 0);
+      const maxScroll = Math.max(scrollHeight - clientHeight, 0);
+      const scrollTop = Math.min(Math.max(node.scrollTop, 0), maxScroll);
+      return { scrollTop, scrollHeight, clientHeight, maxScroll, nodeDocumentTop: 0 };
+    }
+
+    const clientHeight = Math.max(window.innerHeight, 0);
+    const maxScroll = Math.max(scrollHeight - clientHeight, 0);
+    const rectTop = node.getBoundingClientRect().top;
+    const scrollTop = Math.min(Math.max(-rectTop, 0), maxScroll);
+    const nodeDocumentTop = window.scrollY + rectTop;
+
+    return { scrollTop, scrollHeight, clientHeight, maxScroll, nodeDocumentTop };
+  }, []);
+
+  const emitChapterProgress = useCallback(() => {
+    if (!activeChapter || !onChapterProgress) {
+      return;
+    }
+
+    const node = contentRef.current;
+    if (!node) {
+      return;
+    }
+
+    const metrics = computeScrollMetrics();
+    if (!metrics) {
+      return;
+    }
+
+    let percent = 0;
+    if (metrics.maxScroll > 0) {
+      percent = Math.min(Math.max(metrics.scrollTop / metrics.maxScroll, 0), 1);
+    } else if (metrics.scrollTop > 0) {
+      percent = 1;
+    }
+
+    const snapshot: ChapterProgressSnapshot = {
+      chapterId: activeChapter.id,
+      scrollTop: metrics.scrollTop,
+      scrollHeight: metrics.scrollHeight,
+      clientHeight: metrics.clientHeight,
+      percent: Number(percent.toFixed(4)),
+      activeElementId: null,
+      activeElementIndex: null,
+    };
+
+    onChapterProgress(snapshot);
+  }, [activeChapter, computeScrollMetrics, onChapterProgress]);
+
+  const scheduleProgressEmit = useCallback(() => {
+    if (!activeChapter || !onChapterProgress) {
+      return;
+    }
+
+    if (progressRafRef.current !== null) {
+      cancelAnimationFrame(progressRafRef.current);
+    }
+
+    progressRafRef.current = requestAnimationFrame(() => {
+      progressRafRef.current = null;
+      emitChapterProgress();
+    });
+  }, [activeChapter, emitChapterProgress, onChapterProgress]);
+
+  useEffect(() => {
+    return () => {
+      if (progressRafRef.current !== null) {
+        cancelAnimationFrame(progressRafRef.current);
+        progressRafRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    let lastScrollY = window.scrollY;
+    const handleWindowScroll = () => {
+      lastScrollY = window.scrollY;
+      console.log("Scroll Y:", lastScrollY);
+
+      if (!contentRef.current) {
+        return;
+      }
+
+      setIsScrolling(true);
+      if (scrollActivityTimeoutRef.current !== null) {
+        window.clearTimeout(scrollActivityTimeoutRef.current);
+      }
+      scrollActivityTimeoutRef.current = window.setTimeout(() => {
+        scrollActivityTimeoutRef.current = null;
+        setIsScrolling(false);
+      }, 200);
+
+      scheduleProgressEmit();
+    };
+
+    window.addEventListener("scroll", handleWindowScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", handleWindowScroll);
+      if (scrollActivityTimeoutRef.current !== null) {
+        window.clearTimeout(scrollActivityTimeoutRef.current);
+        scrollActivityTimeoutRef.current = null;
+      }
+      setIsScrolling(false);
+    };
+  }, [scheduleProgressEmit]);
+
+  useEffect(() => {
+    if (!activeChapter) {
+      return;
+    }
+
+    const node = contentRef.current;
+    if (!node) {
+      return;
+    }
+
+    const progress = activeBook?.progress;
+    const rafId = requestAnimationFrame(() => {
+      const metrics = computeScrollMetrics();
+      if (!metrics) {
+        return;
+      }
+
+      const maxScroll = metrics.maxScroll;
+      const targetWithinChapter =
+        progress && progress.currentChapterId === activeChapter.id
+          ? Math.max(Math.min(progress.currentChapterScrollTop, maxScroll), 0)
+          : 0;
+
+      if (typeof window !== "undefined") {
+        const rectTop = node.getBoundingClientRect().top;
+        const nodeDocumentTop = window.scrollY + rectTop;
+        window.scrollTo({ top: nodeDocumentTop + targetWithinChapter });
+      } else {
+        node.scrollTop = targetWithinChapter;
+      }
+      scheduleProgressEmit();
+    });
+
+    return () => cancelAnimationFrame(rafId);
+  }, [
+    activeBook?.id,
+    activeBook?.progress?.updatedAt,
+    activeChapter?.id,
+    activeChapter?.contentHtml,
+    computeScrollMetrics,
+    scheduleProgressEmit,
+  ]);
+
+  useEffect(() => {
+    if (!scrollIntent) {
+      return;
+    }
+
+    const node = contentRef.current;
+    if (!node) {
+      onScrollIntentConsumed?.();
+      return;
+    }
+
+    const rafId = requestAnimationFrame(() => {
+      const metrics = computeScrollMetrics();
+      if (!metrics) {
+        onScrollIntentConsumed?.();
+        return;
+      }
+      const target =
+        scrollIntent === "bottom" ? metrics.maxScroll : 0;
+
+      if (typeof window !== "undefined") {
+        const rectTop = node.getBoundingClientRect().top;
+        const nodeDocumentTop = window.scrollY + rectTop;
+        window.scrollTo({ top: nodeDocumentTop + target });
+      } else {
+        node.scrollTop = target;
+      }
+      scheduleProgressEmit();
+      onScrollIntentConsumed?.();
+    });
+
+    return () => cancelAnimationFrame(rafId);
+  }, [
+    scrollIntent,
+    activeChapter?.id,
+    onScrollIntentConsumed,
+    scheduleProgressEmit,
+    computeScrollMetrics,
+  ]);
+
+  useEffect(() => {
+    if (!pendingFragment) {
+      return;
+    }
+
+    const node = contentRef.current;
+    if (!node) {
+      onFragmentConsumed();
+      return;
+    }
+
+    const fragment = pendingFragment.replace(/^#/, "");
+    const rafId = requestAnimationFrame(() => {
+      const selector =
+        typeof CSS !== "undefined" && CSS.escape
+          ? `#${CSS.escape(fragment)}`
+          : `#${fragment}`;
+      const chapterRoot =
+        node.querySelector<HTMLElement>(
+          `[data-reader-chapter-content="true"][data-chapter-id="${activeChapter?.id}"]`,
+        ) ?? node;
+      const target =
+        chapterRoot.querySelector<HTMLElement>(selector) ??
+        chapterRoot.querySelector<HTMLElement>(`a[name="${fragment}"]`);
+
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+        scheduleProgressEmit();
+      }
+
+      onFragmentConsumed();
+    });
+
+    return () => cancelAnimationFrame(rafId);
+  }, [pendingFragment, activeChapter?.id, onFragmentConsumed, scheduleProgressEmit]);
+
+  useEffect(() => {
+    scheduleProgressEmit();
+  }, [
+    activeChapter?.id,
+    preferences.fontFamily,
+    preferences.fontSize,
+    preferences.contentPadding,
     chromeVisible,
     audioPlayerVisible,
-    pendingFragment,
-    onFragmentConsumed,
-    scrollIntent,
-    onScrollIntentConsumed,
-    onChapterProgress,
-  });
-
-  const showAudioPlayer = audioPlayerVisible;
+    scheduleProgressEmit,
+  ]);
 
   const { previousChapter, nextChapter } = useMemo(() => {
     if (!activeBook || !activeChapter) {
@@ -116,14 +358,18 @@ export function ReaderViewport({
 
   const handlePrevious = () => {
     if (!previousChapter) return;
-    requestNavigationIntent("bottom");
-    requestChapterChange(previousChapter.id, { preserveChrome: true, scrollPosition: "bottom" });
+    requestChapterChange(previousChapter.id, {
+      preserveChrome: true,
+      scrollPosition: "bottom",
+    });
   };
 
   const handleNext = () => {
     if (!nextChapter) return;
-    requestNavigationIntent("top");
-    requestChapterChange(nextChapter.id, { preserveChrome: true, scrollPosition: "top" });
+    requestChapterChange(nextChapter.id, {
+      preserveChrome: true,
+      scrollPosition: "top",
+    });
   };
 
   const renderNavigation = () => (
@@ -212,10 +458,10 @@ export function ReaderViewport({
 
     root.addEventListener("click", handler);
     return () => root.removeEventListener("click", handler);
-  }, [activeBook, onSelectChapter, activeChapter?.id, contentRef]);
+  }, [activeBook, onSelectChapter, activeChapter?.id]);
 
   if (!activeBook || !activeChapter) {
-     return (
+    return (
       <div className="flex flex-1 flex-col overflow-hidden">
         <div
           className={cn(
@@ -247,7 +493,7 @@ export function ReaderViewport({
           fontClassMap[preferences.fontFamily],
           paddingConfig.outer,
         )}
-        onScroll={handleScroll}
+        data-reader-scrolling={isScrolling ? "true" : "false"}
         onClick={(event: ReactMouseEvent<HTMLDivElement>) => {
           if ((event.target as HTMLElement)?.closest("a,button")) {
             return;
@@ -267,6 +513,7 @@ export function ReaderViewport({
           <article
             id={activeChapter.id}
             data-chapter-id={activeChapter.id}
+            data-reader-chapter-root="true"
             className={cn(
               "prose reader-prose max-w-none space-y-4 transition-colors",
               proseColorClass,
@@ -277,6 +524,9 @@ export function ReaderViewport({
           >
             <h2 className="text-2xl font-semibold">{activeChapter.title}</h2>
             <div
+              data-reader-chapter-content="true"
+              data-chapter-id={activeChapter.id}
+              className=""
               dangerouslySetInnerHTML={{
                 __html: activeChapter.contentHtml,
               }}
@@ -288,4 +538,5 @@ export function ReaderViewport({
     </div>
   );
 }
+
 

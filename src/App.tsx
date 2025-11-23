@@ -120,6 +120,8 @@ function App() {
     scrollHeight?: number;
     clientHeight?: number;
     percent?: number;
+    elementId?: string | null;
+    elementIndex?: number | null;
   };
 
   const updateBookProgress = useCallback(
@@ -171,6 +173,17 @@ function App() {
               ? existingProgress.chapterProgressPercent
               : 0;
 
+          const previousElementId =
+            typeof existingProgress?.currentChapterElementId === "string" &&
+            existingProgress.currentChapterElementId.length > 0
+              ? existingProgress.currentChapterElementId
+              : null;
+          const previousElementIndex =
+            typeof existingProgress?.currentChapterElementIndex === "number" &&
+            Number.isFinite(existingProgress.currentChapterElementIndex)
+              ? Math.max(Math.round(existingProgress.currentChapterElementIndex), 0)
+              : null;
+
           const resolvedScrollTop =
             typeof payload.scrollTop === "number" && Number.isFinite(payload.scrollTop)
               ? Math.max(payload.scrollTop, 0)
@@ -197,14 +210,34 @@ function App() {
               ? payload.percent
               : chapterMatchesExisting
                 ? previousPercent
-                    : 0;
+                : 0;
 
           const percent = Number(Math.min(Math.max(percentSource ?? 0, 0), 1).toFixed(4));
+
+          const resolvedElementId =
+            payload.elementId === undefined
+              ? (chapterMatchesExisting ? previousElementId : null)
+              : payload.elementId && payload.elementId.length > 0
+                ? payload.elementId
+                : null;
+
+          let resolvedElementIndex: number | null = null;
+          if (payload.elementIndex === undefined) {
+            resolvedElementIndex = chapterMatchesExisting ? previousElementIndex : null;
+          } else if (payload.elementIndex === null) {
+            resolvedElementIndex = null;
+          } else if (typeof payload.elementIndex === "number" && Number.isFinite(payload.elementIndex)) {
+            resolvedElementIndex = Math.max(Math.round(payload.elementIndex), 0);
+          } else if (chapterMatchesExisting) {
+            resolvedElementIndex = previousElementIndex;
+          }
 
           const nextProgress = {
             currentChapterId: chapter.id,
             currentChapterHref: chapter.href,
             currentChapterIndex: chapterIndex,
+            currentChapterElementId: resolvedElementId ?? null,
+            currentChapterElementIndex: resolvedElementIndex ?? null,
             currentChapterScrollTop: resolvedScrollTop,
             currentChapterScrollHeight: resolvedScrollHeight,
             currentChapterClientHeight: resolvedClientHeight,
@@ -232,7 +265,11 @@ function App() {
                 : 0) - nextProgress.currentChapterClientHeight,
             ) < 1 &&
             Math.abs(existingProgress.chapterProgressPercent - nextProgress.chapterProgressPercent) <
-              0.002;
+              0.002 &&
+            ((existingProgress.currentChapterElementId ?? null) ===
+              (nextProgress.currentChapterElementId ?? null)) &&
+            ((existingProgress.currentChapterElementIndex ?? null) ===
+              (nextProgress.currentChapterElementIndex ?? null));
 
           if (isUnchanged) {
             console.debug(`${PROGRESS_LOG_PREFIX} unchanged progress, skipping persist`, {
@@ -398,6 +435,8 @@ function App() {
         scrollHeight: snapshot.scrollHeight,
         clientHeight: snapshot.clientHeight,
         percent: snapshot.percent,
+        elementId: snapshot.activeElementId,
+        elementIndex: snapshot.activeElementIndex,
       });
     },
     [updateBookProgress],

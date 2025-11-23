@@ -12,6 +12,8 @@ export type ChapterProgressSnapshot = {
   scrollHeight: number;
   clientHeight: number;
   percent: number;
+  activeElementId: string | null;
+  activeElementIndex: number | null;
 };
 
 export type ReaderPanelBaseProps = {

@@ -4,7 +4,7 @@ import { ImageOff } from "lucide-react";
 import type { Book } from "../../types/reader";
 import {
   cn,
-  formatPageCount,
+  
   getBookProgressSummary,
   getLibraryBookStatusFromSummary,
 } from "../../lib/utils";
@@ -44,7 +44,7 @@ export function LibraryList({
         const chapterSummary = hasChapters
           ? `Chapters: ${book.chapters.length}`
           : "Chapters: Not available";
-        const pageSummary = formatPageCount(book.pageCount) ?? "Pages unknown";
+          
         return (
           <div
             key={book.id}
@@ -82,7 +82,7 @@ export function LibraryList({
               </span>
               <span className="line-clamp-1 text-xs text-muted-foreground">{progressText}</span>
               <span className="line-clamp-1 text-xs text-muted-foreground">
-                {`${chapterSummary} · ${pageSummary}`}
+                {`${chapterSummary}`}
               </span>
             </div>
             <Button
