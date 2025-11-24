@@ -60,6 +60,7 @@ function App() {
   const [isAudioPlayerDismissing, setIsAudioPlayerDismissing] = useState(false);
   const [currentAudioTime, setCurrentAudioTime] = useState<number | undefined>(undefined);
   const [currentAudioTrackHref, setCurrentAudioTrackHref] = useState<string | undefined>(undefined);
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastAudioBookIdRef = useRef<string | null>(null);
   const previousViewRef = useRef<AppView>(activeView);
@@ -651,6 +652,7 @@ function App() {
       onOpenAudioPlayer={() => setIsAudioPlayerOpen(true)}
       currentAudioTime={currentAudioTime}
       currentAudioTrackHref={currentAudioTrackHref}
+      autoScrollEnabled={autoScrollEnabled}
     />
   );
 
@@ -704,6 +706,8 @@ function App() {
           }}
           chromeVisible={audioPlayerChromeVisible}
           onClose={handleAudioPlayerClose}
+          autoScrollEnabled={autoScrollEnabled}
+          onAutoScrollToggle={setAutoScrollEnabled}
         />
       ) : null}
       <div

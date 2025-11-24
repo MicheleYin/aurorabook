@@ -39,6 +39,7 @@ type ReaderViewportProps = Pick<
   onChapterProgress?: (snapshot: ChapterProgressSnapshot) => void;
   currentAudioTime?: number;
   currentAudioTrackHref?: string;
+  autoScrollEnabled?: boolean;
 };
 
 export function ReaderViewport({
@@ -57,6 +58,7 @@ export function ReaderViewport({
   onChapterProgress,
   currentAudioTime,
   currentAudioTrackHref,
+  autoScrollEnabled = true,
 }: ReaderViewportProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const progressRafRef = useRef<number | null>(null);
@@ -65,6 +67,7 @@ export function ReaderViewport({
   const [highlightedElementId, setHighlightedElementId] = useState<string | null>(null);
   const showAudioPlayer = audioPlayerVisible;
   const lastHighlightedElementRef = useRef<string | null>(null);
+  const lastScrolledElementRef = useRef<string | null>(null);
 
   const computeScrollMetrics = useCallback(() => {
     const node = contentRef.current;
@@ -398,6 +401,7 @@ export function ReaderViewport({
       console.debug("[Audio Sync] No segment found for current time");
       setHighlightedElementId(null);
       lastHighlightedElementRef.current = null;
+      lastScrolledElementRef.current = null; // Reset scroll tracking when no segment
       return;
     }
 
@@ -413,6 +417,7 @@ export function ReaderViewport({
       console.debug("[Audio Sync] Segment doesn't match current chapter");
       setHighlightedElementId(null);
       lastHighlightedElementRef.current = null;
+      lastScrolledElementRef.current = null; // Reset scroll tracking when chapter changes
       return;
     }
 
@@ -447,17 +452,99 @@ export function ReaderViewport({
         : `#${elementId}`;
     const element = root.querySelector<HTMLElement>(selector);
 
-    if (element) {
-      const rect = element.getBoundingClientRect();
-      const isVisible =
-        rect.top >= 0 &&
-        rect.left >= 0 &&
-        rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
-        rect.right <= (window.innerWidth || document.documentElement.clientWidth);
+    // Only scroll if this is a new element (not already scrolled to)
+    const shouldScroll = element && autoScrollEnabled && lastScrolledElementRef.current !== elementId;
 
-      if (!isVisible) {
-        element.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
+    if (shouldScroll) {
+      // Mark this element as scrolled to prevent multiple scrolls
+      lastScrolledElementRef.current = elementId;
+      
+      // Always scroll to highlighted element when auto-scroll is enabled
+      console.log("[Auto-Scroll] Triggering scroll to highlighted element:", {
+        elementId,
+        selector,
+        elementText: element.textContent?.substring(0, 50),
+        currentTime: currentAudioTime,
+      });
+      
+      // Use requestAnimationFrame to ensure DOM is ready and layout is complete
+      requestAnimationFrame(() => {
+        // Check if using window scrolling (based on how other scrolls work in this component)
+        if (typeof window !== "undefined") {
+          const elementRect = element.getBoundingClientRect();
+          const rootRect = root.getBoundingClientRect();
+          
+          // Calculate position relative to document
+          const elementTop = elementRect.top + window.scrollY;
+          
+          // Calculate header height dynamically
+          // The header is sticky and contains navigation + title sections
+          const headerSelector = '[data-reader-header]';
+          const headerElement = document.querySelector<HTMLElement>(headerSelector);
+          let headerHeight = 0;
+          
+          if (headerElement) {
+            headerHeight = headerElement.offsetHeight;
+          } else {
+            // Fallback: estimate header height (navigation ~60px + title section ~60px + padding)
+            headerHeight = 120;
+          }
+          
+          // Add extra padding for visual spacing
+          const padding = 16;
+          const offset = headerHeight + padding;
+          
+          // Scroll to position element below the header
+          const targetScrollTop = Math.max(0, elementTop - offset);
+          const startScrollTop = window.scrollY;
+          const distance = targetScrollTop - startScrollTop;
+          
+          console.log("[Auto-Scroll] Scrolling window to position:", {
+            elementTop,
+            targetScrollTop,
+            startScrollTop,
+            distance,
+            headerHeight,
+            offset,
+            elementRect: { top: elementRect.top, bottom: elementRect.bottom },
+            rootRect: { top: rootRect.top, bottom: rootRect.bottom },
+          });
+          
+          // Custom smooth scroll with easing for smoother animation
+          const duration = Math.min(Math.max(Math.abs(distance) * 0.5, 300), 800); // 300-800ms based on distance
+          const startTime = performance.now();
+          
+          // Easing function: ease-in-out-cubic for smooth acceleration/deceleration
+          const easeInOutCubic = (t: number): number => {
+            return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+          };
+          
+          const animateScroll = (currentTime: number) => {
+            const elapsed = currentTime - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const easedProgress = easeInOutCubic(progress);
+            
+            const currentScrollTop = startScrollTop + distance * easedProgress;
+            window.scrollTo({ top: currentScrollTop, behavior: "auto" });
+            
+            if (progress < 1) {
+              requestAnimationFrame(animateScroll);
+            }
+          };
+          
+          requestAnimationFrame(animateScroll);
+        } else {
+          // Fallback: use scrollIntoView if window is not available
+          console.log("[Auto-Scroll] Using scrollIntoView fallback");
+          element.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
+    } else if (element && !autoScrollEnabled) {
+      console.debug("[Auto-Scroll] Auto-scroll disabled, skipping scroll to:", elementId);
+    } else if (element && lastScrolledElementRef.current === elementId) {
+      console.debug("[Auto-Scroll] Already scrolled to this element, skipping:", elementId);
+    } else if (!element) {
+      console.warn("[Auto-Scroll] Element not found:", selector, "in root:", root);
     }
   }, [
     activeBook?.audioSyncMap,

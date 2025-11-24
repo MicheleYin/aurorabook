@@ -15,6 +15,7 @@ type ReaderPanelProps = ReaderPanelBaseProps & {
   onOpenAudioPlayer?: () => void;
   currentAudioTime?: number;
   currentAudioTrackHref?: string;
+  autoScrollEnabled?: boolean;
 };
 
 export function ReaderPanel({
@@ -33,6 +34,7 @@ export function ReaderPanel({
   onOpenAudioPlayer,
   currentAudioTime,
   currentAudioTrackHref,
+  autoScrollEnabled,
 }: ReaderPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
@@ -129,6 +131,7 @@ export function ReaderPanel({
   return (
     <section className="flex flex-1 min-h-0 flex-col">
       <div
+        data-reader-header
         className={cn(
           "sticky top-0 z-20 flex flex-col gap-3 border-b border-border bg-background/95 px-4 py-4 backdrop-blur transition-all duration-300",
           isImmersive &&
@@ -219,6 +222,7 @@ export function ReaderPanel({
           onChapterProgress={handleChapterProgress}
           currentAudioTime={currentAudioTime}
           currentAudioTrackHref={currentAudioTrackHref}
+          autoScrollEnabled={autoScrollEnabled}
         />
       </div>
     </section>

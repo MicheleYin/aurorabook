@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pause, Play, SkipBack, SkipForward, X } from "lucide-react";
+import { MoveVertical, Pause, Play, SkipBack, SkipForward, X } from "lucide-react";
 
 import type { AudioTrack, BookAudioState } from "../../types/reader";
 import type { AudioProgressSnapshot } from "./types";
@@ -42,6 +42,8 @@ type ReaderAudioPlayerProps = {
   onProgress?: (snapshot: AudioProgressSnapshot) => void;
   chromeVisible?: boolean;
   onClose?: () => void;
+  autoScrollEnabled?: boolean;
+  onAutoScrollToggle?: (enabled: boolean) => void;
 };
 
 export function ReaderAudioPlayer({
@@ -52,6 +54,8 @@ export function ReaderAudioPlayer({
   onProgress,
   chromeVisible = true,
   onClose,
+  autoScrollEnabled = true,
+  onAutoScrollToggle,
 }: ReaderAudioPlayerProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -647,6 +651,18 @@ export function ReaderAudioPlayer({
                   </SelectContent>
                 </Select>
               </div>
+              {onAutoScrollToggle ? (
+                <Button
+                  variant={autoScrollEnabled ? "secondary" : "ghost"}
+                  size="icon"
+                  className="rounded-full"
+                  onClick={() => onAutoScrollToggle(!autoScrollEnabled)}
+                  aria-label={autoScrollEnabled ? "Disable auto-scroll" : "Enable auto-scroll"}
+                  title={autoScrollEnabled ? "Auto-scroll enabled" : "Auto-scroll disabled"}
+                >
+                  <MoveVertical className="h-4 w-4" />
+                </Button>
+              ) : null}
             </div>
           </div>
           {onClose ? (
