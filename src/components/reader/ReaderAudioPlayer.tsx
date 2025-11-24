@@ -13,6 +13,7 @@ import {
 } from "../ui/select";
 import { Slider } from "../ui/slider";
 import { cn } from "../../lib/utils";
+import { useAudioStateSync } from "../../hooks/useAudioStateSync";
 
 const formatTime = (value: number) => {
   if (!Number.isFinite(value) || value < 0) {
@@ -25,7 +26,6 @@ const formatTime = (value: number) => {
 };
 
 const PLAYBACK_RATE_OPTIONS = [0.75, 1, 1.25, 1.5, 1.75, 2] as const;
-const PROGRESS_ECHO_TOLERANCE_SECONDS = 0.5;
 
 const formatPlaybackRate = (rate: number) => {
   if (Number.isInteger(rate)) {
@@ -40,6 +40,7 @@ type ReaderAudioPlayerProps = {
   bookTitle?: string;
   initialAudioState?: BookAudioState;
   onProgress?: (snapshot: AudioProgressSnapshot) => void;
+  onRestorationStateChange?: (isRestoring: boolean) => void;
   chromeVisible?: boolean;
   onClose?: () => void;
   autoScrollEnabled?: boolean;
@@ -52,12 +53,34 @@ export function ReaderAudioPlayer({
   bookTitle,
   initialAudioState,
   onProgress,
+  onRestorationStateChange,
   chromeVisible = true,
   onClose,
   autoScrollEnabled = true,
   onAutoScrollToggle,
 }: ReaderAudioPlayerProps) {
-  const [currentIndex, setCurrentIndex] = useState(0);
+  // Use custom hook for state sync and restoration
+  const {
+    currentIndex,
+    setCurrentIndex,
+    restoreTime,
+    isRestoring,
+    onTrackLoaded,
+    onTrackChanged,
+    emitProgress,
+  } = useAudioStateSync({
+    bookId,
+    tracks,
+    initialAudioState,
+    onProgress,
+  });
+
+  // Notify parent of restoration state changes
+  useEffect(() => {
+    isRestoringRef.current = isRestoring;
+    onRestorationStateChange?.(isRestoring);
+  }, [isRestoring, onRestorationStateChange]);
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -68,27 +91,12 @@ export function ReaderAudioPlayer({
   const [isVisible, setIsVisible] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const tracksRef = useRef<AudioTrack[]>(tracks);
-  const currentIndexRef = useRef(0);
   const isPlayingRef = useRef(false);
-  const pendingSeekRef = useRef<number | null>(null);
-  const desiredSeekRef = useRef<number | null>(null);
   const userScrubbingRef = useRef(false);
   const currentTimeRef = useRef(0);
-  const onProgressRef = useRef<ReaderAudioPlayerProps["onProgress"]>(undefined);
-  const lastProgressSnapshotRef = useRef<{
-    trackId?: string;
-    trackHref?: string;
-    trackIndex?: number;
-    currentTimeSeconds?: number;
-    updatedAt?: string;
-    timestamp: number;
-  }>({ timestamp: 0 });
-  const lastAppliedAudioStateSignatureRef = useRef<string | undefined>(undefined);
-
-  useEffect(() => {
-    onProgressRef.current = onProgress;
-  }, [onProgress]);
+  const lastEmitTimestampRef = useRef(0);
+  const lastEmittedSecondsRef = useRef(0);
+  const isRestoringRef = useRef(false);
 
   // Handle enter animation
   useEffect(() => {
@@ -100,232 +108,51 @@ export function ReaderAudioPlayer({
     return () => clearTimeout(timer);
   }, [bookId, tracks.length]);
 
-  const normalizeSeekTarget = (value: number | null | undefined) => {
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      return null;
-    }
-    return Math.max(value, 0);
-  };
-
-  const setDesiredSeek = useCallback((target: number | null | undefined) => {
-    const normalized = normalizeSeekTarget(target);
-    pendingSeekRef.current = normalized;
-    desiredSeekRef.current = normalized;
-  }, []);
-
-  const applySeekTarget = useCallback((target: number | null) => {
-    const audio = audioRef.current;
-    if (!audio || typeof target !== "number") {
-      return false;
-    }
-    try {
-      audio.currentTime = target;
-      const nextTime = audio.currentTime || target;
-      setCurrentTime(nextTime);
-      currentTimeRef.current = nextTime;
-      return true;
-    } catch {
-      return false;
-    }
-  }, []);
-
-  const applyPendingSeek = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio) {
-      return false;
-    }
-    if (pendingSeekRef.current === null) {
-      return false;
-    }
-    const target = pendingSeekRef.current;
-    const applied = applySeekTarget(target);
-    if (applied) {
-      pendingSeekRef.current = null;
-    }
-    return applied;
-  }, [applySeekTarget]);
-
-  const applyDesiredSeek = useCallback(() => {
-    return applySeekTarget(desiredSeekRef.current);
-  }, [applySeekTarget]);
-
-  const emitProgressSnapshot = useCallback(
-    (timeOverride?: number) => {
-      const track = tracksRef.current[currentIndexRef.current];
-      const listener = onProgressRef.current;
-      if (!track || !listener) {
-        return;
-      }
-      const candidateTime =
-        typeof timeOverride === "number"
-          ? timeOverride
-          : (() => {
-              const audio = audioRef.current;
-              if (audio && Number.isFinite(audio.currentTime)) {
-                return audio.currentTime;
-              }
-              return currentTimeRef.current;
-            })();
-      const normalizedSeconds = Number(Math.max(candidateTime, 0).toFixed(3));
-      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
-      const updatedAt = new Date().toISOString();
-      lastProgressSnapshotRef.current = {
-        trackId: track.id,
-        trackHref: track.href,
-        trackIndex: currentIndexRef.current,
-        currentTimeSeconds: normalizedSeconds,
-        updatedAt,
-        timestamp: now,
-      };
-      listener({
-        trackId: track.id,
-        trackHref: track.href,
-        trackIndex: currentIndexRef.current,
-        currentTimeSeconds: normalizedSeconds,
-        updatedAt,
-      });
-    },
-    [],
-  );
-
   const commitSeek = useCallback(
     (targetSeconds: number) => {
-      const normalized = normalizeSeekTarget(targetSeconds);
-      if (normalized === null) {
+      const audio = audioRef.current;
+      if (!audio || typeof targetSeconds !== "number" || !Number.isFinite(targetSeconds)) {
         return;
       }
-      setDesiredSeek(normalized);
-      const applied = applyDesiredSeek();
-      if (!applied) {
-        setCurrentTime(normalized);
-        currentTimeRef.current = normalized;
+      const normalized = Math.max(targetSeconds, 0);
+      try {
+        audio.currentTime = normalized;
+        const appliedTime = audio.currentTime || normalized;
+        setCurrentTime(appliedTime);
+        currentTimeRef.current = appliedTime;
+        emitProgress(appliedTime);
+      } catch (error) {
+        console.warn("[Audio Player] Failed to seek:", error);
       }
-      emitProgressSnapshot(normalized);
     },
-    [applyDesiredSeek, emitProgressSnapshot, setDesiredSeek],
+    [emitProgress],
   );
 
+  // Emit progress on unmount
   useEffect(() => {
     return () => {
-      emitProgressSnapshot();
-    };
-  }, [emitProgressSnapshot]);
-
-  useEffect(() => {
-    if (!bookId) {
-      lastAppliedAudioStateSignatureRef.current = undefined;
-      return;
-    }
-
-    const signatureComponents = [
-      bookId,
-      initialAudioState?.currentTrackId ?? "no-track",
-      initialAudioState?.updatedAt ?? "no-updated-at",
-      Number.isFinite(initialAudioState?.currentTimeSeconds)
-        ? String(initialAudioState?.currentTimeSeconds)
-        : "0",
-      String(tracks.length),
-    ];
-    const signature = signatureComponents.join("|");
-    if (lastAppliedAudioStateSignatureRef.current === signature) {
-      return;
-    }
-    const snapshot = lastProgressSnapshotRef.current;
-    // Ignore echoes from our own progress emissions so playback state stays stable while audio is running.
-    const nextTrackIndex =
-      typeof initialAudioState?.currentTrackIndex === "number" && Number.isFinite(initialAudioState.currentTrackIndex)
-        ? initialAudioState.currentTrackIndex
-        : undefined;
-    const nextTimeSeconds =
-      typeof initialAudioState?.currentTimeSeconds === "number" && Number.isFinite(initialAudioState.currentTimeSeconds)
-        ? initialAudioState.currentTimeSeconds
-        : undefined;
-    const trackMatches =
-      Boolean(snapshot.trackId && snapshot.trackId === initialAudioState?.currentTrackId) ||
-      Boolean(snapshot.trackHref && snapshot.trackHref === initialAudioState?.currentTrackHref) ||
-      (typeof snapshot.trackIndex === "number" &&
-        typeof nextTrackIndex === "number" &&
-        snapshot.trackIndex === nextTrackIndex);
-    const isProgressEcho =
-      trackMatches &&
-      ((snapshot.updatedAt && snapshot.updatedAt === initialAudioState?.updatedAt) ||
-        (typeof snapshot.currentTimeSeconds === "number" &&
-          typeof nextTimeSeconds === "number" &&
-          Math.abs(snapshot.currentTimeSeconds - nextTimeSeconds) <= PROGRESS_ECHO_TOLERANCE_SECONDS));
-    if (isProgressEcho) {
-      lastAppliedAudioStateSignatureRef.current = signature;
-      return;
-    }
-    lastAppliedAudioStateSignatureRef.current = signature;
-
-    let nextIndex = 0;
-    if (tracks.length) {
-      const matchById =
-        initialAudioState?.currentTrackId &&
-        tracks.findIndex((track) => track.id === initialAudioState.currentTrackId);
-      if (typeof matchById === "number" && matchById >= 0) {
-        nextIndex = matchById;
-      } else {
-        const matchByHref =
-          initialAudioState?.currentTrackHref &&
-          tracks.findIndex((track) => track.href === initialAudioState.currentTrackHref);
-        if (typeof matchByHref === "number" && matchByHref >= 0) {
-          nextIndex = matchByHref;
-        } else if (
-          typeof initialAudioState?.currentTrackIndex === "number" &&
-          Number.isFinite(initialAudioState.currentTrackIndex) &&
-          initialAudioState.currentTrackIndex >= 0 &&
-          initialAudioState.currentTrackIndex < tracks.length
-        ) {
-          nextIndex = initialAudioState.currentTrackIndex;
-        }
+      const audio = audioRef.current;
+      if (audio && Number.isFinite(audio.currentTime)) {
+        emitProgress(audio.currentTime);
       }
-    }
+    };
+  }, [emitProgress]);
 
-    setCurrentIndex(nextIndex);
-    currentIndexRef.current = nextIndex;
-    const restoredTime =
-      typeof initialAudioState?.currentTimeSeconds === "number" &&
-      Number.isFinite(initialAudioState.currentTimeSeconds)
-        ? Math.max(initialAudioState.currentTimeSeconds, 0)
-        : 0;
-    setDesiredSeek(restoredTime);
-    setCurrentTime(restoredTime);
-    currentTimeRef.current = restoredTime;
-    setIsPlaying(false);
-    isPlayingRef.current = false;
-    lastProgressSnapshotRef.current = { timestamp: 0 };
-  }, [bookId, initialAudioState, tracks, setDesiredSeek]);
-
+  // Handle empty tracks
   useEffect(() => {
-    tracksRef.current = tracks;
     if (!tracks.length) {
       const audio = audioRef.current;
       if (audio) {
         audio.pause();
         audio.src = "";
       }
-      setCurrentIndex(0);
-      currentIndexRef.current = 0;
       setIsPlaying(false);
       isPlayingRef.current = false;
       setCurrentTime(0);
       setDuration(0);
       return;
     }
-
-    if (currentIndex >= tracks.length) {
-      setCurrentIndex(0);
-      currentIndexRef.current = 0;
-    }
-  }, [tracks, currentIndex]);
-
-  useEffect(() => {
-    currentIndexRef.current = currentIndex;
-  }, [currentIndex]);
-
-  // Track previous track ID to detect track changes
-  const previousTrackIdRef = useRef<string | null>(null);
+  }, [tracks.length]);
 
   useEffect(() => {
     isPlayingRef.current = isPlaying;
@@ -339,37 +166,60 @@ export function ReaderAudioPlayer({
       const seconds = audio.currentTime || 0;
       setCurrentTime(seconds);
       currentTimeRef.current = seconds;
-      const track = tracksRef.current[currentIndexRef.current];
-      const listener = onProgressRef.current;
-      if (!track || !listener) {
-        return;
-      }
-      const lastSnapshot = lastProgressSnapshotRef.current;
+      
+      // Throttle progress emissions (every 1 second or 0.75s change)
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
-      const shouldEmit =
-        !lastSnapshot.trackId ||
-        track.id !== lastSnapshot.trackId ||
-        Math.abs((lastSnapshot.currentTimeSeconds ?? 0) - seconds) >= 0.75 ||
-        now - lastSnapshot.timestamp >= 1000;
-      if (shouldEmit) {
-        emitProgressSnapshot(seconds);
+      const timeSinceLastEmit = now - lastEmitTimestampRef.current;
+      const timeDiff = Math.abs(seconds - lastEmittedSecondsRef.current);
+      
+      if (timeSinceLastEmit >= 1000 || timeDiff >= 0.75) {
+        emitProgress(seconds);
+        lastEmitTimestampRef.current = now;
+        lastEmittedSecondsRef.current = seconds;
       }
     };
 
     const handleLoadedMetadata = () => {
       setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
-      if (!applyPendingSeek() && !applyDesiredSeek()) {
-        const fallbackTime = audio.currentTime || 0;
-        setCurrentTime(fallbackTime);
-        currentTimeRef.current = fallbackTime;
+      // Hook handles restoration via onTrackLoaded
+      onTrackLoaded(audio);
+      
+      // Update current time from audio element
+      const audioTime = audio.currentTime || 0;
+      setCurrentTime(audioTime);
+      currentTimeRef.current = audioTime;
+      
+      // If we just restored, emit progress to ensure parent state is updated
+      // This is important for paused audio where timeupdate might not fire
+      if (!isRestoring && audioTime > 0) {
+        // Small delay to ensure restoration completed
+        setTimeout(() => {
+          emitProgress(audioTime);
+        }, 50);
+      }
+    };
+    
+    const handleCanPlay = () => {
+      // Only call onTrackLoaded if we loaded this track for restoration
+      // This prevents double restoration (loadedmetadata already calls it)
+      if (trackLoadedForRestorationRef.current) {
+        // onTrackLoaded will check if restoration is needed and prevent double application
+        onTrackLoaded(audio);
+        // Clear the flag after attempting restoration
+        trackLoadedForRestorationRef.current = false;
+      } else {
+        // After restoration completes or for normal playback, ensure progress is emitted
+        const audioTime = audio.currentTime || 0;
+        if (audioTime > 0) {
+          emitProgress(audioTime);
+        }
       }
     };
 
     const handleEnded = () => {
-      const nextIndex = currentIndexRef.current + 1;
-      if (nextIndex < tracksRef.current.length) {
+      const nextIndex = currentIndex + 1;
+      if (nextIndex < tracks.length) {
         setCurrentIndex(nextIndex);
-        currentIndexRef.current = nextIndex;
         setIsPlaying(true);
         isPlayingRef.current = true;
       } else {
@@ -383,48 +233,24 @@ export function ReaderAudioPlayer({
 
     audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("canplay", handleCanPlay);
     audio.addEventListener("ended", handleEnded);
 
     return () => {
       audio.pause();
       audio.removeEventListener("timeupdate", handleTimeUpdate);
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("canplay", handleCanPlay);
       audio.removeEventListener("ended", handleEnded);
     };
-  }, [applyDesiredSeek, applyPendingSeek]);
+  }, [currentIndex, tracks.length, isRestoring, restoreTime, onTrackLoaded, emitProgress]);
 
   const currentTrack = tracks[currentIndex];
 
-  // Reset audio timestamp when track changes (except during initial load)
-  useEffect(() => {
-    if (!currentTrack) {
-      return;
-    }
+  // Track if we've loaded a track for restoration to prevent resetting time after restoration
+  const trackLoadedForRestorationRef = useRef(false);
 
-    const currentTrackId = currentTrack.id;
-    if (previousTrackIdRef.current !== null && previousTrackIdRef.current !== currentTrackId) {
-      // Track changed - reset time to 0
-      console.log("[Audio Player] Track changed, resetting timestamp:", {
-        previousTrackId: previousTrackIdRef.current,
-        newTrackId: currentTrackId,
-        previousIndex: currentIndexRef.current,
-        newIndex: currentIndex,
-      });
-      setCurrentTime(0);
-      currentTimeRef.current = 0;
-      setDesiredSeek(null);
-      pendingSeekRef.current = null;
-      desiredSeekRef.current = null;
-      const audio = audioRef.current;
-      if (audio) {
-        audio.currentTime = 0;
-      }
-    }
-    if (currentTrackId) {
-      previousTrackIdRef.current = currentTrackId;
-    }
-  }, [currentTrack?.id, currentIndex]);
-
+  // Load track when currentIndex changes
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !currentTrack) {
@@ -433,35 +259,31 @@ export function ReaderAudioPlayer({
 
     const shouldAutoPlay = isPlayingRef.current;
 
+    // Notify hook about track change
+    onTrackChanged(currentTrack.id);
+
+    // Reset the restoration flag when starting a new track load
+    trackLoadedForRestorationRef.current = false;
+
     audio.pause();
     audio.src = currentTrack.url;
     audio.load();
     audio.playbackRate = playbackRate;
     
-    // When track changes, always start from beginning (unless restoring saved state)
-    // Check if this is a track change (not initial load) by comparing with previous track ID
-    const isTrackChange = previousTrackIdRef.current !== null && 
-                         previousTrackIdRef.current !== currentTrack.id;
+    // Reset duration while loading
+    setDuration(0);
     
-    if (isTrackChange) {
-      // Track changed - always start from beginning
-      console.log("[Audio Player] Track changed in load effect, resetting timestamp");
+    // Only reset time if we're not restoring
+    // Restoration will be handled in loadedmetadata/canplay via onTrackLoaded
+    // Use ref to avoid re-running effect when isRestoring changes
+    if (!isRestoringRef.current) {
       audio.currentTime = 0;
       setCurrentTime(0);
       currentTimeRef.current = 0;
-      setDesiredSeek(null);
-      pendingSeekRef.current = null;
-      desiredSeekRef.current = null;
     } else {
-      // Initial load or same track - check for pending seek
-      const seekApplied = applyPendingSeek();
-      if (!seekApplied) {
-        audio.currentTime = 0;
-        setCurrentTime(0);
-        currentTimeRef.current = 0;
-      }
+      // Mark that we're loading this track for restoration
+      trackLoadedForRestorationRef.current = true;
     }
-    setDuration(0);
 
     if (shouldAutoPlay) {
       audio
@@ -474,7 +296,7 @@ export function ReaderAudioPlayer({
           isPlayingRef.current = false;
         });
     }
-  }, [applyPendingSeek, currentTrack]);
+  }, [currentTrack, playbackRate, onTrackChanged]);
 
   useEffect(() => {
     setIsScrubbing(false);
@@ -497,7 +319,7 @@ export function ReaderAudioPlayer({
 
     if (isPlayingRef.current) {
       audio.pause();
-      emitProgressSnapshot();
+      emitProgress(audio.currentTime || currentTimeRef.current);
       setIsPlaying(false);
       isPlayingRef.current = false;
       return;
@@ -513,17 +335,14 @@ export function ReaderAudioPlayer({
         setIsPlaying(false);
         isPlayingRef.current = false;
       });
-  }, [currentTrack]);
+  }, [currentTrack, emitProgress]);
 
   const playTrackAt = useCallback(
     (nextIndex: number) => {
       if (!tracks[nextIndex]) return;
       setCurrentIndex(nextIndex);
-      currentIndexRef.current = nextIndex;
       setCurrentTime(0);
       setDuration(0);
-      setDesiredSeek(null);
-      lastProgressSnapshotRef.current = { timestamp: 0 };
       if (isPlayingRef.current) {
         const audio = audioRef.current;
         if (audio) {
@@ -540,7 +359,7 @@ export function ReaderAudioPlayer({
         }
       }
     },
-    [setDesiredSeek, tracks],
+    [setCurrentIndex, tracks],
   );
 
   const handlePrevious = useCallback(() => {
@@ -618,12 +437,35 @@ export function ReaderAudioPlayer({
   }, []);
 
   const handleDismiss = useCallback(() => {
-    emitProgressSnapshot();
+    const audio = audioRef.current;
+    // Ensure progress is saved before closing
+    if (audio && Number.isFinite(audio.currentTime)) {
+      emitProgress(audio.currentTime);
+    } else {
+      // Even if audio isn't ready, emit current time from ref
+      emitProgress(currentTimeRef.current);
+    }
     setIsDismissing(true);
     setIsVisible(false);
     // Parent component will handle keeping component mounted during exit animation
     onClose?.();
-  }, [emitProgressSnapshot, onClose]);
+  }, [emitProgress, onClose]);
+
+  // Save progress when component becomes hidden (not just on unmount)
+  const previousVisibleRef = useRef(isVisible);
+  useEffect(() => {
+    // When component transitions from visible to hidden, save progress
+    if (previousVisibleRef.current && !isVisible && !isDismissing) {
+      // Component became hidden - save progress
+      const audio = audioRef.current;
+      if (audio && Number.isFinite(audio.currentTime)) {
+        emitProgress(audio.currentTime);
+      } else if (currentTimeRef.current > 0) {
+        emitProgress(currentTimeRef.current);
+      }
+    }
+    previousVisibleRef.current = isVisible;
+  }, [isVisible, isDismissing, emitProgress]);
 
 
   if (!currentTrack) {
@@ -702,7 +544,7 @@ export function ReaderAudioPlayer({
                   </SelectContent>
                 </Select>
               </div>
-              {onAutoScrollToggle ? (
+              {onAutoScrollToggle && tracks.length > 0 ? (
                 <Button
                   variant={autoScrollEnabled ? "secondary" : "ghost"}
                   size="icon"

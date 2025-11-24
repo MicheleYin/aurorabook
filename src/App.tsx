@@ -62,6 +62,7 @@ function App() {
   const [isAudioPlayerDismissing, setIsAudioPlayerDismissing] = useState(false);
   const [currentAudioTime, setCurrentAudioTime] = useState<number | undefined>(undefined);
   const [currentAudioTrackHref, setCurrentAudioTrackHref] = useState<string | undefined>(undefined);
+  const [isAudioRestoring, setIsAudioRestoring] = useState(false);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const manualSelectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const manualChapterSelectionRef = useRef<{ chapterId: string; timestamp: number } | null>(null);
@@ -819,6 +820,7 @@ function App() {
   const handleAudioPlayerClose = useCallback(() => {
     setIsAudioPlayerDismissing(true);
     // Wait for exit animation to complete before hiding
+    // Audio progress is saved in handleDismiss, scroll progress is saved in ReaderViewport effect
     setTimeout(() => {
       setIsAudioPlayerOpen(false);
       setIsAudioPlayerDismissing(false);
@@ -861,6 +863,7 @@ function App() {
       currentAudioTime={currentAudioTime}
       currentAudioTrackHref={currentAudioTrackHref}
       autoScrollEnabled={autoScrollEnabled}
+      isAudioRestoring={isAudioRestoring}
     />
   );
 
@@ -916,6 +919,7 @@ function App() {
           onClose={handleAudioPlayerClose}
           autoScrollEnabled={autoScrollEnabled}
           onAutoScrollToggle={handleAutoScrollToggle}
+          onRestorationStateChange={setIsAudioRestoring}
         />
       ) : null}
       <div

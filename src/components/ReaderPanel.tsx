@@ -16,6 +16,7 @@ type ReaderPanelProps = ReaderPanelBaseProps & {
   currentAudioTime?: number;
   currentAudioTrackHref?: string;
   autoScrollEnabled?: boolean;
+  isAudioRestoring?: boolean;
 };
 
 export function ReaderPanel({
@@ -35,6 +36,7 @@ export function ReaderPanel({
   currentAudioTime,
   currentAudioTrackHref,
   autoScrollEnabled,
+  isAudioRestoring,
 }: ReaderPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
@@ -223,7 +225,8 @@ export function ReaderPanel({
           onChapterProgress={handleChapterProgress}
           currentAudioTime={currentAudioTime}
           currentAudioTrackHref={currentAudioTrackHref}
-          autoScrollEnabled={autoScrollEnabled}
+          autoScrollEnabled={Boolean(activeBook?.audioTracks?.length) && autoScrollEnabled}
+          isAudioRestoring={isAudioRestoring}
         />
       </div>
     </section>

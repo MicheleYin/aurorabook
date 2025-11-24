@@ -40,6 +40,7 @@ type ReaderViewportProps = Pick<
   currentAudioTime?: number;
   currentAudioTrackHref?: string;
   autoScrollEnabled?: boolean;
+  isAudioRestoring?: boolean;
 };
 
 export function ReaderViewport({
@@ -59,6 +60,7 @@ export function ReaderViewport({
   currentAudioTime,
   currentAudioTrackHref,
   autoScrollEnabled = true,
+  isAudioRestoring = false,
 }: ReaderViewportProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const progressRafRef = useRef<number | null>(null);
@@ -361,6 +363,21 @@ export function ReaderViewport({
     lastScrolledElementRef.current = null;
   }, [activeChapter?.id]);
 
+  // Save scroll position when audio player closes
+  const previousAudioPlayerVisibleRef = useRef(audioPlayerVisible);
+  useEffect(() => {
+    // When audio player transitions from visible to hidden, save scroll position
+    if (previousAudioPlayerVisibleRef.current && !audioPlayerVisible && activeChapter && onChapterProgress) {
+      // Small delay to ensure any pending audio progress is saved first
+      const timer = setTimeout(() => {
+        scheduleProgressEmit();
+      }, 150);
+      previousAudioPlayerVisibleRef.current = audioPlayerVisible;
+      return () => clearTimeout(timer);
+    }
+    previousAudioPlayerVisibleRef.current = audioPlayerVisible;
+  }, [audioPlayerVisible, activeChapter, onChapterProgress, scheduleProgressEmit]);
+
   // Handle audio sync highlighting
   useEffect(() => {
     console.debug("[Audio Sync] Effect running:", {
@@ -369,7 +386,14 @@ export function ReaderViewport({
       currentAudioTime,
       hasActiveChapter: !!activeChapter,
       activeChapterHref: activeChapter?.href,
+      isAudioRestoring,
     });
+
+    // Wait for audio restoration to complete before syncing scroll
+    if (isAudioRestoring) {
+      console.debug("[Audio Sync] Waiting for audio restoration to complete");
+      return;
+    }
 
     if (
       !activeBook?.audioSyncMap ||
@@ -591,6 +615,8 @@ export function ReaderViewport({
     currentAudioTime,
     activeChapter?.id,
     activeChapter?.href,
+    autoScrollEnabled,
+    isAudioRestoring,
   ]);
 
   // Apply highlighting styles to elements
