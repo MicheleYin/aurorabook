@@ -62,29 +62,31 @@ export function ReaderTocDrawer({
         </Button>
       </DrawerTrigger>
       <DrawerContent className="data-[vaul-drawer-direction=left]:inset-y-0 data-[vaul-drawer-direction=left]:bottom-0 data-[vaul-drawer-direction=left]:left-0 data-[vaul-drawer-direction=left]:right-auto data-[vaul-drawer-direction=left]:top-0 data-[vaul-drawer-direction=left]:h-full data-[vaul-drawer-direction=left]:max-h-none data-[vaul-drawer-direction=left]:w-full data-[vaul-drawer-direction=left]:max-w-[320px] data-[vaul-drawer-direction=left]:rounded-none data-[vaul-drawer-direction=left]:border-r data-[vaul-drawer-direction=left]:p-0 data-[vaul-drawer-direction=left]:shadow-2xl data-[vaul-drawer-direction=left]:sm:inset-y-0 data-[vaul-drawer-direction=left]:sm:left-0 data-[vaul-drawer-direction=left]:sm:right-auto data-[vaul-drawer-direction=left]:sm:top-0 data-[vaul-drawer-direction=left]:sm:bottom-0 data-[vaul-drawer-direction=left]:sm:h-full data-[vaul-drawer-direction=left]:sm:max-h-none data-[vaul-drawer-direction=left]:sm:max-w-[360px] data-[vaul-drawer-direction=left]:sm:rounded-none data-[vaul-drawer-direction=left]:sm:border-r data-[vaul-drawer-direction=left]:sm:shadow-2xl data-[vaul-drawer-direction=left]:sm:-translate-x-0 data-[vaul-drawer-direction=left]:sm:-translate-y-0 data-[vaul-drawer-direction=left]:data-[state=open]:slide-in-from-left data-[vaul-drawer-direction=left]:data-[state=closed]:slide-out-to-left">
-        <div className="flex h-full flex-1 flex-col overflow-hidden p-6">
-          <DrawerModalHeader className="flex flex-row items-start justify-between text-left">
-            <div>
+        <div className="flex h-full flex-1 flex-col overflow-hidden p-6 min-w-0">
+          <DrawerModalHeader className="flex flex-row items-start justify-between text-left min-w-0">
+            <div className="min-w-0 flex-1">
               <DrawerTitle className="text-lg font-semibold">Table of contents</DrawerTitle>
               <DrawerDescription>
                 Jump between chapters without leaving the reader.
               </DrawerDescription>
             </div>
             <DrawerClose asChild>
-              <Button variant="ghost" size="icon" aria-label="Close table of contents">
+              <Button variant="ghost" size="icon" aria-label="Close table of contents" className="shrink-0">
                 <X className="h-4 w-4" />
               </Button>
             </DrawerClose>
           </DrawerModalHeader>
-          <ScrollArea className="mt-4 flex-1 pr-2">
-            <ChapterList
-              book={book}
-              activeChapterId={activeChapterId}
-              currentAudioTrackHref={currentAudioTrackHref}
-              onSelectChapter={onSelectChapter}
-              onAfterSelect={() => onOpenChange(false)}
-              className="gap-1"
-            />
+          <ScrollArea className="mt-4 flex-1 pr-2 min-w-0 w-full">
+            <div className="w-full min-w-0">
+              <ChapterList
+                book={book}
+                activeChapterId={activeChapterId}
+                currentAudioTrackHref={currentAudioTrackHref}
+                onSelectChapter={onSelectChapter}
+                onAfterSelect={() => onOpenChange(false)}
+                className="gap-1 w-full"
+              />
+            </div>
           </ScrollArea>
         </div>
       </DrawerContent>

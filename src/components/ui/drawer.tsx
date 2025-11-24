@@ -56,7 +56,7 @@ const DrawerContent = React.forwardRef<
       )}
       {...props}
     >
-      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col overflow-hidden">
+      <div className="mx-auto flex w-full flex-1 flex-col overflow-hidden min-w-0 data-[vaul-drawer-direction=left]:max-w-none">
         {children}
       </div>
     </DrawerPrimitive.Content>

@@ -3,6 +3,7 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import type { ChapterSelectionOptions } from "./types";
 import { findChaptersForAudioTrack } from "../../lib/epub";
+import { anim } from "../../lib/animations";
 
 type ChapterListProps = {
   book: Book;
@@ -36,7 +37,7 @@ export function ChapterList({
   };
 
   return (
-    <div className={cn("flex flex-col gap-1", className)}>
+    <div className={cn("flex flex-col gap-1 w-full min-w-0", className)}>
       {book.chapters.map((chapter) => {
         const isActive = chapter.id === activeChapterId;
         const isCurrentlyPlaying = isChapterCurrentlyPlaying(chapter);
@@ -46,17 +47,30 @@ export function ChapterList({
             key={chapter.id}
             variant={isActive ? "secondary" : "ghost"}
             size="sm"
-            className="justify-start relative"
+            className={cn(
+              "justify-start relative min-w-0 w-full max-w-full overflow-hidden",
+              anim("normal", "all"),
+              "hover:translate-x-1 hover:bg-accent/80",
+              "active:translate-x-0.5",
+              "transition-all duration-200 ease-out"
+            )}
+            style={{ 
+              display: "flex",
+              whiteSpace: "normal",
+              width: "100%",
+              maxWidth: "100%",
+              boxSizing: "border-box",
+            }}
             onClick={() => {
               onSelectChapter(chapter.id, { fragment: chapter.id, isManualSelection: true });
               onAfterSelect?.();
             }}
           >
-            <span className="line-clamp-1 flex-1 text-left">{chapter.title}</span>
+            <span className="truncate flex-1 text-left min-w-0 pr-2 overflow-hidden">{chapter.title}</span>
             {isCurrentlyPlaying && (
               <span
                 className={cn(
-                  "ml-2 px-1.5 py-0.5 text-xs font-medium rounded",
+                  "px-1.5 py-0.5 text-xs font-medium rounded shrink-0",
                   "bg-primary text-primary-foreground",
                   "animate-pulse"
                 )}
