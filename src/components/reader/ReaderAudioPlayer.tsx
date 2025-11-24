@@ -591,73 +591,75 @@ export function ReaderAudioPlayer({
             : "translate-y-full opacity-0 scale-95",
         )}
       >
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">{currentTrack.title}</p>
-            {bookTitle ? (
-              <p className="truncate text-xs text-muted-foreground">{bookTitle}</p>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="rounded-full"
-              onClick={handlePrevious}
-              aria-label="Previous track"
-            >
-              <SkipBack className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="secondary"
-              size="icon"
-              className="h-12 w-12 rounded-full"
-              onClick={togglePlayback}
-              aria-label={isPlaying ? "Pause audio" : "Play audio"}
-            >
-              {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="rounded-full"
-              onClick={handleNext}
-              aria-label="Next track"
-            >
-              <SkipForward className="h-4 w-4" />
-            </Button>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span>Speed</span>
-              <Select value={playbackRate.toString()} onValueChange={handlePlaybackRateChange}>
-                <SelectTrigger
-                  aria-label="Playback speed"
-                  className="h-8 min-w-[84px] rounded-md border border-input bg-background px-2 text-xs font-medium text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent align="end">
-                  {PLAYBACK_RATE_OPTIONS.map((rate) => (
-                    <SelectItem key={rate} value={rate.toString()} className="text-xs">
-                      {formatPlaybackRate(rate)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+        <div className="flex flex-row justify-between items-start gap-3">
+          <div className="flex flex-col sm:flex-row items-center gap-3 min-w-0 flex-1">
+            <div className="min-w-0 flex-1 w-full sm:w-auto">
+              <p className="truncate text-sm font-semibold">{currentTrack.title}</p>
+              {bookTitle ? (
+                <p className="truncate text-xs text-muted-foreground">{bookTitle}</p>
+              ) : null}
             </div>
-            {onClose ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="rounded-full"
-                onClick={handleDismiss}
-                aria-label="Dismiss audio player"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            ) : null}
+            <div className="flex flex-row items-center gap-2 sm:gap-3">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-full"
+                  onClick={handlePrevious}
+                  aria-label="Previous track"
+                >
+                  <SkipBack className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="h-12 w-12 rounded-full"
+                  onClick={togglePlayback}
+                  aria-label={isPlaying ? "Pause audio" : "Play audio"}
+                >
+                  {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-full"
+                  onClick={handleNext}
+                  aria-label="Next track"
+                >
+                  <SkipForward className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <span className="hidden md:block">Speed</span>
+                <Select value={playbackRate.toString()} onValueChange={handlePlaybackRateChange}>
+                  <SelectTrigger
+                    aria-label="Playback speed"
+                    className="h-8 min-w-[48px] rounded-md border border-input bg-background px-2 text-xs font-medium text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent align="end">
+                    {PLAYBACK_RATE_OPTIONS.map((rate) => (
+                      <SelectItem key={rate} value={rate.toString()} className="text-xs">
+                        {formatPlaybackRate(rate)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
           </div>
+          {onClose ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="rounded-full flex-shrink-0"
+              onClick={handleDismiss}
+              aria-label="Dismiss audio player"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          ) : null}
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs tabular-nums text-muted-foreground">
