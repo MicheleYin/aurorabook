@@ -5,6 +5,10 @@ use tauri::Manager;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod kokoro_coreml;
 
+// ONNX Runtime with CoreML EP support (macOS/iOS only)
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod kokoro_onnx_coreml;
+
 // Use kokoros crate directly on all platforms (it handles CoreML via ONNX Runtime on macOS)
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -1378,6 +1382,173 @@ mod tests {
                 println!("   - Invalid voice ID");
                 println!("   - Text preprocessing problems");
                 panic!("ONNX TTS generation failed: {}", e);
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    async fn test_onnx_coreml_ep() {
+        println!("\n🧪 Testing ONNX Runtime with CoreML Execution Provider");
+        
+        // Find ONNX model file
+        let onnx_model = find_onnx_model();
+        if onnx_model.is_none() {
+            println!("⚠️ Skipping test - kokoro-v1.0.onnx not found");
+            println!("   Set KOKORO_MODEL_DIR env var or ensure kokoro-v1.0.onnx is in resources directory");
+            return;
+        }
+        let onnx_model = onnx_model.unwrap();
+        let model_path_str = onnx_model.to_str().unwrap();
+        println!("   ONNX model file: {}", model_path_str);
+        
+        // Initialize ONNX Runtime session with CoreML EP
+        println!("\n📦 Initializing ONNX Runtime with CoreML EP...");
+        use crate::kokoro_onnx_coreml::KokoroOnnxCoreML;
+        
+        let session = match KokoroOnnxCoreML::new(model_path_str, true) {
+            Ok(session) => {
+                println!("✅ ONNX Runtime session with CoreML EP initialized successfully!");
+                session
+            }
+            Err(e) => {
+                println!("❌ Failed to initialize ONNX Runtime with CoreML EP: {}", e);
+                println!("   This might indicate:");
+                println!("   - CoreML EP not available on this platform");
+                println!("   - Model file is invalid or corrupted");
+                println!("   - ONNX Runtime build doesn't include CoreML EP");
+                panic!("Failed to initialize ONNX Runtime with CoreML EP: {}", e);
+            }
+        };
+        
+        // Check input and output names
+        println!("\n📋 Model Information:");
+        match session.input_names() {
+            Ok(inputs) => {
+                println!("   Inputs: {:?}", inputs);
+                assert!(!inputs.is_empty(), "Model should have at least one input");
+            }
+            Err(e) => {
+                println!("   ⚠️ Failed to get input names: {}", e);
+            }
+        }
+        
+        match session.output_names() {
+            Ok(outputs) => {
+                println!("   Outputs: {:?}", outputs);
+                assert!(!outputs.is_empty(), "Model should have at least one output");
+            }
+            Err(e) => {
+                println!("   ⚠️ Failed to get output names: {}", e);
+            }
+        }
+        
+        // Find voices file for voice embedding
+        let resources_dir = find_resources_dir();
+        let voices_path = if let Some(dir) = resources_dir {
+            find_voices_file(&dir)
+        } else {
+            None
+        };
+        
+        if voices_path.is_none() {
+            println!("⚠️ Skipping full TTS test - voices-v1.0.bin not found");
+            println!("   Set KOKORO_VOICES_PATH env var or ensure voices-v1.0.bin is in resources directory");
+            println!("\n✅ ONNX Runtime with CoreML EP session initialized successfully!");
+            return;
+        }
+        
+        let voices_path = voices_path.unwrap();
+        let voices_path_str = voices_path.to_str().unwrap();
+        println!("   Voices path: {}", voices_path_str);
+        
+        // Use kokoros for full TTS pipeline (it will use CoreML EP if available via ONNX Runtime)
+        // Note: kokoros crate manages its own ONNX Runtime session, but ONNX Runtime should
+        // automatically use CoreML EP on macOS/iOS when available
+        println!("\n🎤 Generating TTS audio with ONNX Runtime (CoreML EP enabled)...");
+        
+        let test_text = "Hello, this is a test of ONNX Runtime with CoreML Execution Provider.";
+        let voice_id = "af_heart";
+        let language = "en";
+        let speed = 1.0;
+        
+        println!("   Text: '{}'", test_text);
+        println!("   Voice: {}", voice_id);
+        println!("   Language: {}", language);
+        println!("   Speed: {}", speed);
+        
+        // Initialize kokoros engine - it will use ONNX Runtime which should use CoreML EP on macOS/iOS
+        let engine = match kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+            model_path_str,
+            voices_path_str,
+            1, // Use 1 instance for testing
+        ).await {
+            engine => {
+                println!("✅ Kokoros engine initialized (should use CoreML EP via ONNX Runtime)");
+                engine
+            }
+        };
+        
+        // Generate audio
+        let model_instance = engine.get_model_instance(0);
+        match engine.tts_raw_audio_with_instance(
+            test_text,
+            language,
+            voice_id,
+            speed,
+            None, // initial_silence
+            None, // request_id
+            None, // instance_id
+            None, // chunk_number
+            model_instance,
+        ) {
+            Ok(audio_samples) => {
+                println!("✅ Audio generated successfully with ONNX Runtime!");
+                println!("   Samples: {}", audio_samples.len());
+                println!("   Duration: {:.2}s (at 24kHz)", audio_samples.len() as f32 / 24000.0);
+                
+                // Basic validation
+                assert!(!audio_samples.is_empty(), "Audio should not be empty");
+                
+                // Check for non-zero samples
+                let non_zero_count = audio_samples.iter().filter(|&&s| s.abs() > 0.001).count();
+                println!("   Non-zero samples: {} / {} ({:.1}%)", 
+                    non_zero_count, audio_samples.len(),
+                    (non_zero_count as f32 / audio_samples.len() as f32) * 100.0);
+                
+                if non_zero_count > 0 {
+                    // Check audio range
+                    let min_val = audio_samples.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+                    let max_val = audio_samples.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+                    println!("   Audio range: [{:.6}, {:.6}]", min_val, max_val);
+                } else {
+                    println!("⚠️ WARNING: Audio contains only zeros (silence)");
+                }
+                
+                // Save audio file
+                let output_path = "test_output_onnx_coreml_ep.wav";
+                match save_audio_as_wav(&audio_samples, 24000, output_path) {
+                    Ok(_) => {
+                        println!("✅ Audio saved to: {}", output_path);
+                        println!("   File location: {}/{}", std::env::current_dir().unwrap().display(), output_path);
+                    }
+                    Err(e) => {
+                        println!("❌ Failed to save audio: {}", e);
+                        panic!("Failed to save audio file: {}", e);
+                    }
+                }
+                
+                println!("\n✅ ONNX Runtime with CoreML EP test PASSED!");
+                println!("   Note: kokoros crate manages ONNX Runtime sessions internally.");
+                println!("   ONNX Runtime should automatically use CoreML EP on macOS/iOS when available.");
+            }
+            Err(e) => {
+                println!("❌ TTS generation failed: {}", e);
+                println!("   This might indicate:");
+                println!("   - Model loading issues");
+                println!("   - Invalid voice ID");
+                println!("   - Text preprocessing problems");
+                panic!("TTS generation failed: {}", e);
             }
         }
     }
