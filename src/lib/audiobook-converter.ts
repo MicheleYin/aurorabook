@@ -877,6 +877,16 @@ function updateContentOpf(
     metadata.appendChild(activeClassMeta);
   }
 
-  return new XMLSerializer().serializeToString(doc);
+  // Serialize and format the XML properly
+  let xmlString = new XMLSerializer().serializeToString(doc);
+  
+  // Format the XML for better readability (optional, but helps with debugging)
+  // Replace /> with />\n for self-closing tags in manifest
+  xmlString = xmlString.replace(/(<item[^>]*\/>)/g, '$1\n    ');
+  
+  // Clean up any double newlines
+  xmlString = xmlString.replace(/\n\n+/g, '\n');
+  
+  return xmlString;
 }
 

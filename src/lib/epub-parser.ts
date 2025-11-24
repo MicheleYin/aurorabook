@@ -389,6 +389,24 @@ export async function parseEpub(buffer: ArrayBuffer): Promise<EpubBook> {
       
       const file = zip.file(fullPath);
       if (!file) {
+        // Try alternative paths for debugging
+        const alternatives = [
+          `OEBPS/${normalizedHref}`,
+          normalizedHref,
+          href,
+        ];
+        for (const alt of alternatives) {
+          if (zip.file(alt)) {
+            console.warn(`[EPUB Parser] File found at alternative path: ${alt} (requested: ${href}, resolved: ${fullPath})`);
+            return await zip.file(alt)!.async("arraybuffer");
+          }
+        }
+        console.error(`[EPUB Parser] File not found: ${href}`, {
+          normalizedHref,
+          fullPath,
+          oebpsBase,
+          alternatives: alternatives.map(alt => ({ path: alt, exists: !!zip.file(alt) })),
+        });
         return null;
       }
       
@@ -416,8 +434,32 @@ export async function parseEpub(buffer: ArrayBuffer): Promise<EpubBook> {
         throw new Error(`File not found: ${href}`);
       }
       
-      const blob = new Blob([buffer]);
-      return URL.createObjectURL(blob);
+      // Validate buffer is not empty
+      if (buffer.byteLength === 0) {
+        throw new Error(`File is empty: ${href}`);
+      }
+      
+      // Determine MIME type based on file extension
+      let mimeType: string | undefined;
+      if (href.endsWith(".mp3")) {
+        mimeType = "audio/mpeg";
+      } else if (href.endsWith(".wav")) {
+        mimeType = "audio/wav";
+      } else if (href.endsWith(".m4a")) {
+        mimeType = "audio/mp4";
+      }
+      
+      const blob = new Blob([buffer], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      
+      console.debug("[EPUB Parser] Created blob URL", {
+        href,
+        bufferSize: buffer.byteLength,
+        mimeType,
+        url: url.substring(0, 50) + "...",
+      });
+      
+      return url;
     },
   };
   

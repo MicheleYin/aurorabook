@@ -215,6 +215,7 @@ export function BookDetailDialog({
     const cleanupFns: Array<() => void> = [];
     pendingTracks.forEach((track) => {
       if (!track.url) {
+        console.warn("[BookDetailDialog] Track missing URL", { trackId: track.id, href: track.href });
         return;
       }
       const audio = new Audio();
@@ -235,8 +236,20 @@ export function BookDetailDialog({
           });
         }
       };
+      const handleError = () => {
+        console.error("[BookDetailDialog] Failed to load audio track for duration", {
+          trackId: track.id,
+          href: track.href,
+          url: track.url,
+          error: audio.error ? {
+            code: audio.error.code,
+            message: audio.error.message,
+          } : "Unknown error",
+        });
+        settleDuration();
+      };
       audio.addEventListener("loadedmetadata", settleDuration);
-      audio.addEventListener("error", settleDuration);
+      audio.addEventListener("error", handleError);
       cleanupFns.push(() => {
         audio.removeEventListener("loadedmetadata", settleDuration);
         audio.removeEventListener("error", settleDuration);

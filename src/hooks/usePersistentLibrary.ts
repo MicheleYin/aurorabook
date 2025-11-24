@@ -676,7 +676,12 @@ export function usePersistentLibrary(): PersistentLibrary {
                   url,
                 } as AudioTrack;
               } catch (error) {
-                console.warn("Could not load audio track", entry.href, error);
+                console.error("Could not load audio track", {
+                  href: entry.href,
+                  id,
+                  error: error instanceof Error ? error.message : String(error),
+                  stack: error instanceof Error ? error.stack : undefined,
+                });
                 return null;
               }
             }),
