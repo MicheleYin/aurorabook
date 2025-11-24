@@ -41,4 +41,13 @@ kokoros = { git = "https://github.com/lucasjinreal/Kokoros", package = "kokoros"
 # Use kokoros crate directly - it handles CoreML via ONNX Runtime with CoreML Execution Provider
 # This provides optimal ANE/GPU utilization without custom CoreML code
 kokoros = { git = "https://github.com/lucasjinreal/Kokoros", package = "kokoros", default-features = true }
+# CoreML bindings for direct CoreML model loading (FluidInference models)
+objc2-core-ml = "0.3"
+objc2-foundation = "0.3"
+objc2 = "0.6"
+fastrand = "2"
+# espeak-rs for phonemization (same as kokoros uses)
+espeak-rs = "0.1.9"
+lazy_static = "1.5"
+regex = "1"
 

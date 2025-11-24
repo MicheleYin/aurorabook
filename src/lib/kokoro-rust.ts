@@ -21,56 +21,48 @@ export async function initKokorosEngine(): Promise<void> {
   }
 
   try {
-    // Get or set model and voices paths
+    // Get or set model paths
     const dataDir = await appDataDir();
     // Ensure trailing slash
     const dataDirPath = dataDir.endsWith("/") ? dataDir : `${dataDir}/`;
     
-    // kokoros expects the full path to an ONNX file (not a directory)
-    // ONNX Runtime with CoreML EP will use CoreML acceleration on Apple platforms
-    // See: https://github.com/lucasjinreal/Kokoros and lib.rs test comments
-    let modelPath = `${dataDirPath}kokoro-v1.0.onnx`;
-    const voicesPath = `${dataDirPath}voices-v1.0.bin`;
-
-    console.log(`Initializing Kokoros engine with model path: ${modelPath}`);
-
-    // Check if ONNX model file exists, if not copy from bundled resources
-    if (!(await exists(modelPath))) {
+    // CoreML models directory (FluidInference models)
+    // Voices are included in the kokoro-82m-coreml/voices/ directory as JSON files
+    const coremlModelDir = `${dataDirPath}kokoro-82m-coreml`;
+    let modelPath: string;
+    
+    // Check if CoreML model directory exists
+    if (await exists(coremlModelDir)) {
+      modelPath = coremlModelDir;
+      console.log(`Using existing CoreML models directory: ${modelPath}`);
+    } else {
+      // Copy CoreML models from bundled resources
       try {
-        // Copy model file from bundled resources
-        await invoke("copy_resource_file", {
-          resourcePath: "kokoro-v1.0.onnx",
-          targetPath: modelPath,
+        await invoke("copy_directory", {
+          sourcePath: "kokoro-82m-coreml",
+          targetPath: coremlModelDir,
         });
-        console.log("Copied ONNX model from bundle");
+        console.log("Copied CoreML models from bundle");
+        modelPath = coremlModelDir;
       } catch (e) {
-        console.error("Failed to copy ONNX model from bundle:", e);
+        console.error("Failed to copy CoreML models from bundle:", e);
         engineInitialized = false; // Reset flag on error
-        throw new Error(`ONNX model not found. Please ensure kokoro-v1.0.onnx is available in resources or at ${modelPath}`);
+        throw new Error(`CoreML models not found. Please ensure kokoro-82m-coreml directory is available in resources or at ${coremlModelDir}`);
       }
     }
 
-    // Copy voices file if needed
-    if (!(await exists(voicesPath))) {
-      // Copy voices file from bundled resources
-      await invoke("copy_resource_file", {
-        resourcePath: "voices-v1.0.bin",
-        targetPath: voicesPath,
-      });
-    }
-
-    // Initialize the engine with parallel instances
-    // Use 4 instances for better throughput (as recommended for Mac M2 in kokoros docs)
-    // With GPU/ANE, can handle even more instances efficiently
-    // On Apple platforms, this will use CoreML models if available
+    // Initialize the CoreML engine with parallel instances
+    // Use 4 instances for better throughput (as recommended for Mac M2)
+    // With ANE/GPU, can handle even more instances efficiently
+    // Voices are loaded from JSON files in the model directory
     await invoke("init_kokoros_engine", {
       modelPath,
-      voicesPath,
+      voicesPath: "", // Not used for CoreML - voices are in JSON files
       numInstances: 4, // 4 instances for maximum parallel processing
     });
 
     engineInitialized = true;
-    console.log("Kokoros engine initialized successfully");
+    console.log("CoreML engine initialized successfully");
   } catch (error) {
     console.error("Failed to initialize Kokoros engine:", error);
     engineInitialized = false; // Reset flag on error so we can retry
