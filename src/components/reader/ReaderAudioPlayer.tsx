@@ -97,6 +97,7 @@ export function ReaderAudioPlayer({
   const currentTimeRef = useRef(0);
   const lastEmitTimestampRef = useRef(0);
   const lastEmittedSecondsRef = useRef(0);
+  const lastCurrentTimeUpdateRef = useRef(0);
   const isRestoringRef = useRef(false);
   const hasBeenDismissedRef = useRef(false);
 
@@ -181,15 +182,21 @@ export function ReaderAudioPlayer({
 
     const handleTimeUpdate = () => {
       const seconds = audio.currentTime || 0;
-      setCurrentTime(seconds);
+      // Always update ref immediately (used for internal logic, doesn't cause re-renders)
       currentTimeRef.current = seconds;
       
-      // Throttle progress emissions (every 1 second or 0.75s change)
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
-      const timeSinceLastEmit = now - lastEmitTimestampRef.current;
-      const timeDiff = Math.abs(seconds - lastEmittedSecondsRef.current);
       
-      if (timeSinceLastEmit >= 1000 || timeDiff >= 0.75) {
+      // Throttle setCurrentTime state updates to at most once per second
+      const timeSinceLastUpdate = now - lastCurrentTimeUpdateRef.current;
+      if (timeSinceLastUpdate >= 1000) {
+        setCurrentTime(seconds);
+        lastCurrentTimeUpdateRef.current = now;
+      }
+      
+      // Throttle progress emissions to at most once per second
+      const timeSinceLastEmit = now - lastEmitTimestampRef.current;
+      if (timeSinceLastEmit >= 1000) {
         emitProgress(seconds);
         lastEmitTimestampRef.current = now;
         lastEmittedSecondsRef.current = seconds;

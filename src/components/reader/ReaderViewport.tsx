@@ -615,19 +615,30 @@ export function ReaderViewport({
             rootRect: { top: rootRect.top, bottom: rootRect.bottom },
           });
           
-          // Custom smooth scroll with easing for smoother animation
+          // Custom smooth scroll with easing and overshoot effect
           const duration = Math.min(Math.max(Math.abs(distance) * 0.5, 300), 800); // 300-800ms based on distance
           const startTime = performance.now();
           
-          // Easing function: ease-in-out-cubic for smooth acceleration/deceleration
+          // Easing function with subtle overshoot for natural bounce effect
           const easeInOutCubic = (t: number): number => {
             return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+          };
+          
+          const easeWithOvershoot = (t: number): number => {
+            // Use ease-in-out-cubic for most of the animation, add slight overshoot at the end
+            if (t < 0.85) {
+              return easeInOutCubic(t / 0.85) * 0.85;
+            }
+            // Add subtle overshoot in the last 15% (max 3% overshoot)
+            const overshootProgress = (t - 0.85) / 0.15;
+            const overshootAmount = Math.sin(overshootProgress * Math.PI) * 0.03;
+            return 0.85 + overshootProgress * 0.15 + overshootAmount;
           };
           
           const animateScroll = (currentTime: number) => {
             const elapsed = currentTime - startTime;
             const progress = Math.min(elapsed / duration, 1);
-            const easedProgress = easeInOutCubic(progress);
+            const easedProgress = easeWithOvershoot(progress);
             
             const currentScrollTop = startScrollTop + distance * easedProgress;
             window.scrollTo({ top: currentScrollTop, behavior: "auto" });
@@ -940,8 +951,10 @@ export function ReaderViewport({
           lineHeightClass,
           fontClassMap[preferences.fontFamily],
           paddingConfig.outer,
-          // Visual indicator when auto-scroll is active
+          // Visual indicator when auto-scroll is active (with smooth transition)
           autoScrollEnabled && "auto-scroll-active",
+          // Smooth transition when auto-scroll is toggled
+          "transition-all duration-300 ease-in-out",
         )}
         data-reader-scrolling={isScrolling ? "true" : "false"}
         data-auto-scroll-enabled={autoScrollEnabled ? "true" : "false"}
