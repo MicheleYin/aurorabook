@@ -41,12 +41,31 @@ export interface ButtonProps
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  ({ className, variant, size, asChild = false, onClick, ...props }, ref) => {
+    const [rippleActive, setRippleActive] = React.useState(false);
+
+    const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+      // Trigger ripple effect for primary and destructive buttons
+      if (variant === "default" || variant === "destructive" || !variant) {
+        setRippleActive(true);
+        setTimeout(() => setRippleActive(false), 600); // Match animation duration
+      }
+      
+      onClick?.(event);
+    };
+
     const Comp = asChild ? Slot : "button";
     return (
       <Comp
-        className={cn(buttonVariants({ variant, size }), animPatterns.buttonHover, className)}
+        className={cn(
+          buttonVariants({ variant, size }), 
+          animPatterns.buttonHover,
+          "relative overflow-hidden",
+          rippleActive && "button-ripple ripple-active",
+          className
+        )}
         ref={ref}
+        onClick={handleClick}
         {...props}
       />
     );

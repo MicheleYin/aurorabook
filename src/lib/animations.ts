@@ -233,10 +233,13 @@ export const animPatterns = {
     "animate-pulse-subtle"
   ),
   
-  // Button hover effect
+  // Button hover effect with scale
   buttonHover: cn(
-    anim("normal", "colors"),
-    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+    anim("normal", "all"),
+    "hover:scale-[1.02]",
+    "active:scale-[0.98]",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+    "transition-transform duration-150 ease-out"
   ),
   
   // Image zoom on hover - smoother transition
