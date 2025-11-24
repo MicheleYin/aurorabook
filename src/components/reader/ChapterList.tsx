@@ -29,7 +29,7 @@ export function ChapterList({
             size="sm"
             className="justify-start"
             onClick={() => {
-              onSelectChapter(chapter.id, { fragment: chapter.id });
+              onSelectChapter(chapter.id, { fragment: chapter.id, isManualSelection: true });
               onAfterSelect?.();
             }}
           >

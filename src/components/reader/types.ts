@@ -4,6 +4,7 @@ export type ChapterSelectionOptions = {
   fragment?: string;
   preserveChrome?: boolean;
   scrollPosition?: "top" | "bottom" | "maintain";
+  isManualSelection?: boolean; // Set to true when user manually selects chapter (e.g., from TOC)
 };
 
 export type ChapterProgressSnapshot = {

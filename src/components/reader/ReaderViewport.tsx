@@ -667,6 +667,7 @@ export function ReaderViewport({
     requestChapterChange(previousChapter.id, {
       preserveChrome: true,
       scrollPosition: "bottom",
+      isManualSelection: true,
     });
   };
 
@@ -675,6 +676,7 @@ export function ReaderViewport({
     requestChapterChange(nextChapter.id, {
       preserveChrome: true,
       scrollPosition: "top",
+      isManualSelection: true,
     });
   };
 

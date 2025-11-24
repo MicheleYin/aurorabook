@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { HiddenFileInput } from "./components/HiddenFileInput";
 import { LibraryPanel } from "./components/LibraryPanel";
@@ -62,6 +63,10 @@ function App() {
   const [currentAudioTime, setCurrentAudioTime] = useState<number | undefined>(undefined);
   const [currentAudioTrackHref, setCurrentAudioTrackHref] = useState<string | undefined>(undefined);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+  const manualSelectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const manualChapterSelectionRef = useRef<{ chapterId: string; timestamp: number } | null>(null);
+  const previousAutoScrollEnabledRef = useRef<boolean | null>(null);
+  const explicitlyDisabledRef = useRef<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastAudioBookIdRef = useRef<string | null>(null);
   const previousViewRef = useRef<AppView>(activeView);
@@ -500,6 +505,34 @@ function App() {
     (chapterId: string, options?: ChapterSelectionOptions) => {
       if (!activeBookId) return;
 
+      // If this is a manual selection (e.g., from TOC), track it and disable auto-scroll
+      if (options?.isManualSelection) {
+        console.log("[Chapter Selection] Manual chapter selection detected:", {
+          chapterId,
+          currentAutoScrollEnabled: autoScrollEnabled,
+        });
+        
+        // Track manual selection FIRST to prevent auto-switch from overriding it
+        // Always update the ref, even if it was already set, to allow selecting different chapters
+        manualChapterSelectionRef.current = {
+          chapterId,
+          timestamp: Date.now(),
+        };
+        
+        // Disable auto-scroll if it's currently enabled (don't re-enable automatically)
+        // This allows manual chapter selection to work regardless of auto-scroll state
+        if (autoScrollEnabled) {
+          console.log("[Chapter Selection] Disabling auto-scroll due to manual selection");
+          setAutoScrollEnabled(false);
+        }
+        
+        // Clear any existing timeout that would re-enable auto-scroll
+        if (manualSelectionTimeoutRef.current) {
+          clearTimeout(manualSelectionTimeoutRef.current);
+          manualSelectionTimeoutRef.current = null;
+        }
+      }
+
       setActiveChapterId(chapterId);
 
       const requestedScrollPosition = options?.scrollPosition ?? "maintain";
@@ -519,6 +552,7 @@ function App() {
         chapterId,
         requestedScrollPosition,
         progressUpdate,
+        isManualSelection: options?.isManualSelection,
       });
 
       updateBookProgress(activeBookId, progressUpdate);
@@ -552,6 +586,35 @@ function App() {
       return;
     }
 
+    // Don't auto-switch if there was a recent manual chapter selection
+    if (manualChapterSelectionRef.current) {
+      const timeSinceManualSelection = Date.now() - manualChapterSelectionRef.current.timestamp;
+      const isRecentManualSelection = timeSinceManualSelection < 10000; // Increased to 10 seconds
+      const isCurrentChapterManuallySelected = 
+        manualChapterSelectionRef.current.chapterId === activeChapterId;
+      
+      // Prevent auto-switch if:
+      // 1. Manual selection was recent (within 10 seconds), OR
+      // 2. Current chapter is the one that was manually selected (regardless of time)
+      if (isRecentManualSelection || isCurrentChapterManuallySelected) {
+        console.log("[Auto-Chapter] Skipping auto-switch due to manual selection:", {
+          manualChapterId: manualChapterSelectionRef.current.chapterId,
+          currentChapterId: activeChapterId,
+          timeSinceSelection: timeSinceManualSelection,
+          isRecentManualSelection,
+          isCurrentChapterManuallySelected,
+        });
+        return;
+      }
+      
+      // If manual selection was older than 10 seconds and current chapter doesn't match,
+      // clear the ref to allow auto-switch again
+      if (!isRecentManualSelection && !isCurrentChapterManuallySelected) {
+        console.log("[Auto-Chapter] Clearing old manual selection ref, allowing auto-switch");
+        manualChapterSelectionRef.current = null;
+      }
+    }
+
     const chaptersForTrack = findChaptersForAudioTrack(
       activeBook.audioSyncMap,
       currentAudioTrackHref,
@@ -574,11 +637,110 @@ function App() {
         chapterTitle: matchingChapter.title,
         chapterHref: matchingChapter.href,
       });
+      // Note: isManualSelection is NOT set here, so auto-scroll remains enabled
       handleSelectChapter(matchingChapter.id, {
         scrollPosition: "top",
       });
     }
   }, [activeBook, currentAudioTrackHref, activeChapterId, handleSelectChapter]);
+
+  // Helper function to find and switch to chapter matching current audio track
+  const switchToMatchingChapter = useCallback(() => {
+    if (!activeBook || !currentAudioTrackHref || !activeBook.audioSyncMap) {
+      return;
+    }
+
+    const chaptersForTrack = findChaptersForAudioTrack(
+      activeBook.audioSyncMap,
+      currentAudioTrackHref,
+    );
+
+    if (chaptersForTrack.length === 0) {
+      return;
+    }
+
+    // Find the first chapter that matches one of the chapter hrefs for this track
+    const matchingChapter = activeBook.chapters.find((chapter) => {
+      const chapterHref = chapter.href.split("#")[0];
+      return chaptersForTrack.includes(chapterHref);
+    });
+
+    if (matchingChapter && matchingChapter.id !== activeChapterId) {
+      console.log("[Auto-Scroll] Re-enabling auto-scroll, switching to matching chapter:", {
+        trackHref: currentAudioTrackHref,
+        chapterId: matchingChapter.id,
+        chapterTitle: matchingChapter.title,
+        currentChapterId: activeChapterId,
+      });
+      handleSelectChapter(matchingChapter.id, {
+        scrollPosition: "top",
+      });
+    }
+  }, [activeBook, currentAudioTrackHref, activeChapterId, handleSelectChapter]);
+
+  // Wrapper function to handle explicit user toggles
+  const handleAutoScrollToggle = useCallback((enabled: boolean) => {
+    setAutoScrollEnabled(enabled);
+    
+    // Track if user explicitly disabled it
+    if (!enabled) {
+      explicitlyDisabledRef.current = true;
+      // Clear any pending re-enable timeout from manual selection
+      if (manualSelectionTimeoutRef.current) {
+        clearTimeout(manualSelectionTimeoutRef.current);
+        manualSelectionTimeoutRef.current = null;
+      }
+    } else {
+      // User explicitly enabled it, clear the explicit disable flag
+      explicitlyDisabledRef.current = false;
+      
+      // Clear manual selection ref to allow auto-switch again
+      if (manualChapterSelectionRef.current) {
+        console.log("[Auto-Scroll] Clearing manual selection ref, allowing auto-switch");
+        manualChapterSelectionRef.current = null;
+      }
+      
+      // If current chapter doesn't match audio track, switch to matching chapter
+      // Use setTimeout to ensure state update has completed
+      setTimeout(() => {
+        switchToMatchingChapter();
+      }, 0);
+    }
+  }, [switchToMatchingChapter]);
+
+  // Show toast when auto-scroll state changes
+  useEffect(() => {
+    // Skip on initial mount
+    if (previousAutoScrollEnabledRef.current === null) {
+      previousAutoScrollEnabledRef.current = autoScrollEnabled;
+      return;
+    }
+
+    // Only show toast if state actually changed
+    if (previousAutoScrollEnabledRef.current !== autoScrollEnabled) {
+      if (autoScrollEnabled) {
+        toast.success("Auto-scroll enabled", {
+          description: "The page will automatically scroll to follow the audio",
+          duration: 2000,
+        });
+      } else {
+        toast.info("Auto-scroll disabled", {
+          description: "The page will no longer automatically scroll",
+          duration: 2000,
+        });
+      }
+      previousAutoScrollEnabledRef.current = autoScrollEnabled;
+    }
+  }, [autoScrollEnabled]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (manualSelectionTimeoutRef.current) {
+        clearTimeout(manualSelectionTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleAddEbook = useCallback(async () => {
     if (isImporting) return;
@@ -743,7 +905,7 @@ function App() {
           chromeVisible={audioPlayerChromeVisible}
           onClose={handleAudioPlayerClose}
           autoScrollEnabled={autoScrollEnabled}
-          onAutoScrollToggle={setAutoScrollEnabled}
+          onAutoScrollToggle={handleAutoScrollToggle}
         />
       ) : null}
       <div
