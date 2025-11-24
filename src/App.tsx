@@ -22,6 +22,7 @@ import type {
   ChapterSelectionOptions,
 } from "./components/reader/types";
 import { cn, getLibraryBookStatus } from "./lib/utils";
+import { findChaptersForAudioTrack } from "./lib/epub";
 
 const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   theme: "system",
@@ -146,6 +147,7 @@ function App() {
       setIsAudioPlayerOpen(true);
     }
   }, [activeBook?.id, audioTrackCount]);
+
 
   useEffect(() => {
     const previousView = previousViewRef.current;
@@ -543,6 +545,40 @@ function App() {
     },
     [updateBookProgress],
   );
+
+  // Auto-switch chapter when audio track changes
+  useEffect(() => {
+    if (!activeBook || !currentAudioTrackHref || !activeBook.audioSyncMap) {
+      return;
+    }
+
+    const chaptersForTrack = findChaptersForAudioTrack(
+      activeBook.audioSyncMap,
+      currentAudioTrackHref,
+    );
+
+    if (chaptersForTrack.length === 0) {
+      return;
+    }
+
+    // Find the first chapter that matches one of the chapter hrefs for this track
+    const matchingChapter = activeBook.chapters.find((chapter) => {
+      const chapterHref = chapter.href.split("#")[0];
+      return chaptersForTrack.includes(chapterHref);
+    });
+
+    if (matchingChapter && matchingChapter.id !== activeChapterId) {
+      console.log("[Auto-Chapter] Switching to chapter for audio track:", {
+        trackHref: currentAudioTrackHref,
+        chapterId: matchingChapter.id,
+        chapterTitle: matchingChapter.title,
+        chapterHref: matchingChapter.href,
+      });
+      handleSelectChapter(matchingChapter.id, {
+        scrollPosition: "top",
+      });
+    }
+  }, [activeBook, currentAudioTrackHref, activeChapterId, handleSelectChapter]);
 
   const handleAddEbook = useCallback(async () => {
     if (isImporting) return;

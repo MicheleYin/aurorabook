@@ -356,6 +356,11 @@ export function ReaderViewport({
     scheduleProgressEmit,
   ]);
 
+  // Reset scroll tracking when chapter changes
+  useEffect(() => {
+    lastScrolledElementRef.current = null;
+  }, [activeChapter?.id]);
+
   // Handle audio sync highlighting
   useEffect(() => {
     console.debug("[Audio Sync] Effect running:", {
@@ -414,7 +419,10 @@ export function ReaderViewport({
     });
 
     if (segment.chapterHref !== chapterHref) {
-      console.debug("[Audio Sync] Segment doesn't match current chapter");
+      console.debug("[Audio Sync] Segment doesn't match current chapter", {
+        segmentChapterHref: segment.chapterHref,
+        currentChapterHref: chapterHref,
+      });
       setHighlightedElementId(null);
       lastHighlightedElementRef.current = null;
       lastScrolledElementRef.current = null; // Reset scroll tracking when chapter changes

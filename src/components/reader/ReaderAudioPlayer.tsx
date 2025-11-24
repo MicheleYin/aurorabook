@@ -324,6 +324,9 @@ export function ReaderAudioPlayer({
     currentIndexRef.current = currentIndex;
   }, [currentIndex]);
 
+  // Track previous track ID to detect track changes
+  const previousTrackIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
@@ -392,6 +395,36 @@ export function ReaderAudioPlayer({
 
   const currentTrack = tracks[currentIndex];
 
+  // Reset audio timestamp when track changes (except during initial load)
+  useEffect(() => {
+    if (!currentTrack) {
+      return;
+    }
+
+    const currentTrackId = currentTrack.id;
+    if (previousTrackIdRef.current !== null && previousTrackIdRef.current !== currentTrackId) {
+      // Track changed - reset time to 0
+      console.log("[Audio Player] Track changed, resetting timestamp:", {
+        previousTrackId: previousTrackIdRef.current,
+        newTrackId: currentTrackId,
+        previousIndex: currentIndexRef.current,
+        newIndex: currentIndex,
+      });
+      setCurrentTime(0);
+      currentTimeRef.current = 0;
+      setDesiredSeek(null);
+      pendingSeekRef.current = null;
+      desiredSeekRef.current = null;
+      const audio = audioRef.current;
+      if (audio) {
+        audio.currentTime = 0;
+      }
+    }
+    if (currentTrackId) {
+      previousTrackIdRef.current = currentTrackId;
+    }
+  }, [currentTrack?.id, currentIndex]);
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !currentTrack) {
@@ -404,11 +437,29 @@ export function ReaderAudioPlayer({
     audio.src = currentTrack.url;
     audio.load();
     audio.playbackRate = playbackRate;
-    const seekApplied = applyPendingSeek();
-    if (!seekApplied) {
+    
+    // When track changes, always start from beginning (unless restoring saved state)
+    // Check if this is a track change (not initial load) by comparing with previous track ID
+    const isTrackChange = previousTrackIdRef.current !== null && 
+                         previousTrackIdRef.current !== currentTrack.id;
+    
+    if (isTrackChange) {
+      // Track changed - always start from beginning
+      console.log("[Audio Player] Track changed in load effect, resetting timestamp");
       audio.currentTime = 0;
       setCurrentTime(0);
       currentTimeRef.current = 0;
+      setDesiredSeek(null);
+      pendingSeekRef.current = null;
+      desiredSeekRef.current = null;
+    } else {
+      // Initial load or same track - check for pending seek
+      const seekApplied = applyPendingSeek();
+      if (!seekApplied) {
+        audio.currentTime = 0;
+        setCurrentTime(0);
+        currentTimeRef.current = 0;
+      }
     }
     setDuration(0);
 

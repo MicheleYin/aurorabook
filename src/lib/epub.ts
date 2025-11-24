@@ -446,3 +446,27 @@ export const findCurrentAudioSegment = (
   return segment;
 };
 
+/**
+ * Find chapters that use a specific audio track
+ */
+export const findChaptersForAudioTrack = (
+  syncMap: AudioSyncMap | undefined,
+  audioTrackHref: string,
+): string[] => {
+  if (!syncMap) {
+    return [];
+  }
+
+  const normalizedTrackHref = normalizeAudioHref(audioTrackHref);
+  const chapterHrefs = new Set<string>();
+
+  syncMap.segments.forEach((seg) => {
+    const normalizedSegHref = normalizeAudioHref(seg.audioTrackHref);
+    if (normalizedSegHref === normalizedTrackHref) {
+      chapterHrefs.add(seg.chapterHref);
+    }
+  });
+
+  return Array.from(chapterHrefs);
+};
+
