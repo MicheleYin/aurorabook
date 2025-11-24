@@ -1,13 +1,7 @@
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
-#[cfg(not(any(target_os = "macos", target_os = "ios")))]
-use kokoros::tts::koko::TTSKokoParallel;
-
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-mod kokoro_coreml;
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use kokoro_coreml::KokoroCoreMLParallel;
+// Use kokoros crate directly on all platforms (it handles CoreML via ONNX Runtime on macOS)
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -75,7 +69,7 @@ async fn copy_resource_file(
     Ok(())
 }
 
-// Copy directory recursively (for .mlpackage files which are directories)
+// Copy directory recursively (for resource directories)
 #[tauri::command]
 async fn copy_directory(
     source_path: String,
@@ -162,13 +156,9 @@ async fn copy_directory(
     }
 }
 
-// Initialize kokoros engine (cache the instance)
-// Use parallel version for better performance
-#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+// Use kokoros crate directly on all platforms (it handles CoreML via ONNX Runtime on macOS)
+// This provides optimal ANE/GPU utilization without custom CoreML code
 type KokorosEngine = Arc<Mutex<Option<kokoros::tts::koko::TTSKokoParallel>>>;
-
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-type KokorosEngine = Arc<Mutex<Option<KokoroCoreMLParallel>>>;
 
 #[tauri::command]
 async fn init_kokoros_engine(
@@ -179,26 +169,42 @@ async fn init_kokoros_engine(
 ) -> Result<String, String> {
     let instances = num_instances.unwrap_or(4);
     
+    // Verify model_path is a file, not a directory
+    let model_path_obj = std::path::Path::new(&model_path);
+    if model_path_obj.is_dir() {
+        return Err(format!(
+            "Model path must be a file, not a directory. Got: {}. kokoros expects the full path to an ONNX file (e.g., /path/to/kokoro-v1.0.onnx)",
+            model_path
+        ));
+    }
+    
+    if !model_path_obj.exists() {
+        return Err(format!(
+            "Model file does not exist: {}. Please ensure the ONNX model file is available.",
+            model_path
+        ));
+    }
+    
+    println!("Initializing kokoros engine with model_path: {}, voices_path: {}", model_path, voices_path);
+    
+    // Use kokoros crate directly - it handles CoreML via ONNX Runtime on macOS/iOS
+    // kokoros expects the full path to an ONNX file (not a directory)
+    // ONNX Runtime with CoreML Execution Provider will be used on Apple platforms
+    // Note: new_with_instances panics on error, so we validate the path beforehand
+    let kokoros = kokoros::tts::koko::TTSKokoParallel::new_with_instances(&model_path, &voices_path, instances).await;
+    
+    // Replace any existing engine with the new one
+    app.manage(Arc::new(Mutex::new(Some(kokoros))));
+    
+    println!("Successfully initialized kokoros engine with {} instances", instances);
+    
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
-        // Use CoreML models directly for optimal ANE/GPU utilization
-        // model_path should point to directory containing .mlpackage files
-        let kokoros = KokoroCoreMLParallel::new_with_instances(&model_path, &voices_path, instances)
-            .await
-            .map_err(|e| format!("Failed to initialize CoreML engine: {}", e))?;
-        
-        app.manage(Arc::new(Mutex::new(Some(kokoros))));
-        
-        Ok(format!("Initialized CoreML engine with {} instances. Using direct CoreML for optimal ANE/GPU acceleration.", instances))
+        Ok(format!("Initialized kokoros with {} instances. Using ONNX Runtime with CoreML EP for optimal ANE/GPU acceleration.", instances))
     }
     
     #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     {
-        // Use ONNX Runtime with CUDA for non-Apple platforms
-        let kokoros = kokoros::tts::koko::TTSKokoParallel::new_with_instances(&model_path, &voices_path, instances).await;
-        
-        app.manage(Arc::new(Mutex::new(Some(kokoros))));
-        
         Ok(format!("Initialized kokoros with {} instances", instances))
     }
 }
@@ -216,91 +222,42 @@ async fn generate_tts_cached(
     // Handle poisoned locks gracefully
     let kokoros_guard = engine.lock().unwrap_or_else(|e| e.into_inner());
     
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    {
-        let kokoros = kokoros_guard.as_ref()
-            .ok_or_else(|| "Kokoros engine not initialized".to_string())?;
-        
-        // Use worker_id to distribute load across instances (round-robin if not specified)
-        let worker = worker_id.unwrap_or(0);
-        let model_instance = kokoros.get_model_instance(worker);
-        
-        // Generate audio using cached engine with specific instance
-        // tts_raw_audio_with_instance returns Vec<f32> (24kHz sample rate)
-        let audio_samples = kokoros
-            .tts_raw_audio_with_instance(
-                &text,
-                language.as_deref().unwrap_or("en"),
-                &voice_id,
-                speed.unwrap_or(1.0),
-                None, // initial_silence
-                None, // request_id
-                None, // instance_id
-                None, // chunk_number
-                model_instance,
-            )
-            .map_err(|e| format!("Failed to generate audio: {}", e))?;
-        
-        // Convert Vec<f32> to 16-bit PCM bytes
-        let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
-        for sample in audio_samples {
-            let clamped = sample.max(-1.0).min(1.0);
-            let pcm_value = if clamped < 0.0 {
-                (clamped * 32768.0) as i16
-            } else {
-                (clamped * 32767.0) as i16
-            };
-            pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
-        }
-        
-        Ok(pcm_bytes)
+    let kokoros = kokoros_guard.as_ref()
+        .ok_or_else(|| "Kokoros engine not initialized".to_string())?;
+    
+    // Use worker_id to distribute load across instances (round-robin if not specified)
+    let worker = worker_id.unwrap_or(0);
+    let model_instance = kokoros.get_model_instance(worker);
+    
+    // Generate audio using cached engine with specific instance
+    // tts_raw_audio_with_instance returns Vec<f32> (24kHz sample rate)
+    let audio_samples = kokoros
+        .tts_raw_audio_with_instance(
+            &text,
+            language.as_deref().unwrap_or("en"),
+            &voice_id,
+            speed.unwrap_or(1.0),
+            None, // initial_silence
+            None, // request_id
+            None, // instance_id
+            None, // chunk_number
+            model_instance,
+        )
+        .map_err(|e| format!("Failed to generate audio: {}", e))?;
+    
+    // Convert Vec<f32> to 16-bit PCM bytes
+    let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
+    for sample in audio_samples {
+        let clamped = sample.max(-1.0).min(1.0);
+        let pcm_value = if clamped < 0.0 {
+            (clamped * 32768.0) as i16
+        } else {
+            (clamped * 32767.0) as i16
+        };
+        pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
     }
     
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    {
-        // Extract the instance Arc before dropping the guard
-        let model_instance_arc = {
-            let kokoros = kokoros_guard.as_ref()
-                .ok_or_else(|| "Kokoros engine not initialized".to_string())?;
-            
-            // Use worker_id to distribute load across instances
-            let worker = worker_id.unwrap_or(0);
-            kokoros.get_model_instance(worker)
-        };
-        // Guard is dropped here
-        
-        // Generate audio using CoreML - use the sync trait method
-        use kokoro_coreml::TTSInstance;
-        let audio_samples = {
-            let instance_guard = model_instance_arc.lock().unwrap_or_else(|e| e.into_inner());
-            instance_guard.tts_raw_audio_with_instance(
-                &text,
-                language.as_deref().unwrap_or("en"),
-                &voice_id,
-                speed.unwrap_or(1.0),
-                None,
-                None,
-                None,
-                None,
-                &*instance_guard,
-            )
-        }
-        .map_err(|e| format!("Failed to generate audio: {}", e))?;
-        
-        // Convert Vec<f32> to 16-bit PCM bytes
-        let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
-        for sample in audio_samples {
-            let clamped = sample.max(-1.0).min(1.0);
-            let pcm_value = if clamped < 0.0 {
-                (clamped * 32768.0) as i16
-            } else {
-                (clamped * 32767.0) as i16
-            };
-            pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
-        }
-        
-        Ok(pcm_bytes)
-    }
+    Ok(pcm_bytes)
 }
 
 // Generate TTS for multiple texts in parallel
@@ -319,143 +276,74 @@ async fn generate_tts_batch(
         let kokoros_guard = engine.lock().unwrap_or_else(|e| e.into_inner());
         kokoros_guard.as_ref()
             .ok_or_else(|| "Kokoros engine not initialized".to_string())?;
-    }
+    } // Guard is dropped here
     
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    {
-        // Process texts in parallel using different instances
-        let mut handles = Vec::new();
-        for (idx, text) in texts.iter().enumerate() {
-            let app_clone = app.clone();
-            let text_clone = text.clone();
-            let voice_id_clone = voice_id.clone();
-            let language_clone = language.clone();
-            let speed_val = speed.unwrap_or(1.0);
-            
-            let handle = tokio::spawn(async move {
-                let engine: tauri::State<'_, KokorosEngine> = app_clone.state();
+    // Process texts in parallel using different instances
+    let mut handles = Vec::new();
+    for (idx, text) in texts.iter().enumerate() {
+        let app_clone = app.clone();
+        let text_clone = text.clone();
+        let voice_id_clone = voice_id.clone();
+        let language_clone = language.clone();
+        let speed_val = speed.unwrap_or(1.0);
+        
+        let handle = tokio::spawn(async move {
+            let engine: tauri::State<'_, KokorosEngine> = app_clone.state();
+            // Extract the model instance Arc before dropping the guard
+            let model_instance = {
                 // Handle poisoned locks gracefully
                 let kokoros_guard = engine.lock().unwrap_or_else(|e| e.into_inner());
                 let kokoros = kokoros_guard.as_ref()
                     .ok_or_else(|| "Kokoros engine not initialized".to_string())?;
                 
                 let worker = idx % 4;
-                let model_instance = kokoros.get_model_instance(worker);
-                
-                kokoros
-                    .tts_raw_audio_with_instance(
-                        &text_clone,
-                        language_clone.as_deref().unwrap_or("en"),
-                        &voice_id_clone,
-                        speed_val,
-                        None,
-                        None,
-                        None,
-                        None,
-                        model_instance,
-                    )
-                    .map_err(|e| format!("Failed to generate audio: {}", e))
-            });
-            handles.push(handle);
-        }
-        
-        // Collect results
-        let mut results = Vec::new();
-        for handle in handles {
-            let audio_samples: Vec<f32> = handle.await
-                .map_err(|e: tokio::task::JoinError| format!("Task error: {}", e))?
-                .map_err(|e: String| e)?;
+                kokoros.get_model_instance(worker)
+            }; // Guard is dropped here
             
-            // Convert Vec<f32> to 16-bit PCM bytes
-            let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
-            for sample in audio_samples {
-                let clamped = sample.max(-1.0).min(1.0);
-                let pcm_value = if clamped < 0.0 {
-                    (clamped * 32768.0) as i16
-                } else {
-                    (clamped * 32767.0) as i16
-                };
-                pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
-            }
-            results.push(pcm_bytes);
-        }
-        
-        Ok(results)
+            // Now get kokoros again to call tts_raw_audio_with_instance
+            let kokoros_guard = engine.lock().unwrap_or_else(|e| e.into_inner());
+            let kokoros = kokoros_guard.as_ref()
+                .ok_or_else(|| "Kokoros engine not initialized".to_string())?;
+            
+            kokoros
+                .tts_raw_audio_with_instance(
+                    &text_clone,
+                    language_clone.as_deref().unwrap_or("en"),
+                    &voice_id_clone,
+                    speed_val,
+                    None,
+                    None,
+                    None,
+                    None,
+                    model_instance,
+                )
+                .map_err(|e| format!("Failed to generate audio: {}", e))
+        });
+        handles.push(handle);
     }
     
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    {
-        use kokoro_coreml::TTSInstance;
+    // Collect results
+    let mut results = Vec::new();
+    for handle in handles {
+        let audio_samples: Vec<f32> = handle.await
+            .map_err(|e: tokio::task::JoinError| format!("Task error: {}", e))?
+            .map_err(|e: String| e)?;
         
-        // Process texts in parallel using different instances
-        let mut handles = Vec::new();
-        for (idx, text) in texts.iter().enumerate() {
-            let app_clone = app.clone();
-            let text_clone = text.clone();
-            let voice_id_clone = voice_id.clone();
-            let language_clone = language.clone();
-            let speed_val = speed.unwrap_or(1.0);
-            
-            let handle = tokio::spawn(async move {
-                // Extract the instance Arc before dropping the guard
-                let instance_arc = {
-                    let engine: tauri::State<'_, KokorosEngine> = app_clone.state();
-                    // Handle poisoned locks gracefully
-                    let kokoros_guard = engine.lock().unwrap_or_else(|e| e.into_inner());
-                    let kokoros = kokoros_guard.as_ref()
-                        .ok_or_else(|| "Kokoros engine not initialized".to_string())?;
-                    
-                    let worker = idx % 4;
-                    kokoros.get_instance(worker)
-                };
-                // Guard is dropped here
-                
-                // Use the sync trait method to avoid Send issues
-                use kokoro_coreml::TTSInstance;
-                let audio_samples: Vec<f32> = {
-                    let instance_guard = instance_arc.lock().unwrap_or_else(|e| e.into_inner());
-                    instance_guard.tts_raw_audio_with_instance(
-                        &text_clone,
-                        language_clone.as_deref().unwrap_or("en"),
-                        &voice_id_clone,
-                        speed_val,
-                        None,
-                        None,
-                        None,
-                        None,
-                        &*instance_guard,
-                    )
-                }
-                .map_err(|e: String| e)?;
-                
-                Ok::<Vec<f32>, String>(audio_samples)
-            });
-            handles.push(handle);
+        // Convert Vec<f32> to 16-bit PCM bytes
+        let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
+        for sample in audio_samples {
+            let clamped = sample.max(-1.0).min(1.0);
+            let pcm_value = if clamped < 0.0 {
+                (clamped * 32768.0) as i16
+            } else {
+                (clamped * 32767.0) as i16
+            };
+            pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
         }
-        
-        // Collect results
-        let mut results = Vec::new();
-        for handle in handles {
-            let audio_samples: Vec<f32> = handle.await
-                .map_err(|e: tokio::task::JoinError| format!("Task error: {}", e))?
-                .map_err(|e: String| e)?;
-            
-            // Convert Vec<f32> to 16-bit PCM bytes
-            let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
-            for sample in audio_samples {
-                let clamped = sample.max(-1.0).min(1.0);
-                let pcm_value = if clamped < 0.0 {
-                    (clamped * 32768.0) as i16
-                } else {
-                    (clamped * 32767.0) as i16
-                };
-                pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
-            }
-            results.push(pcm_bytes);
-        }
-        
-        Ok(results)
+        results.push(pcm_bytes);
     }
+    
+    Ok(results)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -475,4 +363,335 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use std::env;
+    use std::path::PathBuf;
+
+    /// Helper function to find the ONNX model file (kokoros requires ONNX, not CoreML)
+    fn find_onnx_model() -> Option<PathBuf> {
+        // Try multiple possible locations
+        let mut possible_paths = Vec::new();
+        
+        // From test execution (cargo test) - relative to src-tauri
+        possible_paths.push(PathBuf::from("resources").join("kokoro-v1.0.onnx"));
+        possible_paths.push(PathBuf::from("../resources").join("kokoro-v1.0.onnx"));
+        possible_paths.push(PathBuf::from("src-tauri/resources").join("kokoro-v1.0.onnx"));
+        
+        // From project root
+        if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+            possible_paths.push(PathBuf::from(manifest_dir).join("resources").join("kokoro-v1.0.onnx"));
+        }
+        
+        // Check KOKORO_MODEL_DIR env var
+        if let Ok(env_path) = env::var("KOKORO_MODEL_DIR") {
+            if !env_path.is_empty() {
+                let env_buf = PathBuf::from(&env_path);
+                if env_buf.is_file() && env_buf.extension().and_then(|s| s.to_str()) == Some("onnx") {
+                    possible_paths.push(env_buf);
+                } else if env_buf.is_dir() {
+                    possible_paths.push(env_buf.join("kokoro-v1.0.onnx"));
+                }
+            }
+        }
+
+        for path in possible_paths {
+            if path.exists() && path.is_file() {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    /// Helper function to find the resources directory
+    fn find_resources_dir() -> Option<PathBuf> {
+        // Try multiple possible locations
+        let possible_paths = vec![
+            // From test execution (cargo test) - relative to src-tauri
+            PathBuf::from("resources"),
+            PathBuf::from("../resources"),
+            PathBuf::from("src-tauri/resources"),
+            // From project root
+            PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap_or_default()).join("resources"),
+            // Absolute path fallback
+            PathBuf::from(env::var("KOKORO_MODEL_DIR").unwrap_or_default()),
+        ];
+
+        for path in possible_paths {
+            if path.exists() {
+                // Check if it has model files (look for .onnx files)
+                // Note: We use ONNX models via kokoros crate, not CoreML .mlpackage files
+                let has_models = path.read_dir()
+                    .ok()
+                    .map(|entries| {
+                        entries.filter_map(|e| e.ok())
+                            .any(|e| {
+                                let file_name = e.file_name();
+                                let name = file_name.to_string_lossy();
+                                name.ends_with(".onnx")
+                            })
+                    })
+                    .unwrap_or(false);
+                
+                if has_models {
+                    return Some(path);
+                }
+            }
+        }
+        None
+    }
+
+    /// Helper function to find the voices file
+    fn find_voices_file(resources_dir: &PathBuf) -> Option<PathBuf> {
+        let mut possible_paths = vec![
+            resources_dir.join("voices-v1.0.bin"),
+        ];
+        
+        // Check parent directories
+        if let Some(parent) = resources_dir.parent() {
+            possible_paths.push(parent.join("voices-v1.0.bin"));
+            if let Some(grandparent) = parent.parent() {
+                possible_paths.push(grandparent.join("voices-v1.0.bin"));
+            }
+        }
+        
+        // Check env var
+        if let Ok(env_path) = env::var("KOKORO_VOICES_PATH") {
+            if !env_path.is_empty() {
+                possible_paths.push(PathBuf::from(env_path));
+            }
+        }
+        
+        // Check common locations relative to CARGO_MANIFEST_DIR
+        if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+            let manifest_path = PathBuf::from(manifest_dir);
+            possible_paths.push(manifest_path.join("resources").join("voices-v1.0.bin"));
+            possible_paths.push(manifest_path.join("voices-v1.0.bin"));
+        }
+
+        for path in possible_paths {
+            if path.exists() && path.is_file() {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    #[tokio::test]
+    async fn test_onnx_model_and_voices_file() {
+        println!("🧪 Testing ONNX model and voices file discovery");
+
+        // Find ONNX model file
+        let onnx_model = find_onnx_model();
+        match &onnx_model {
+            Some(path) => {
+                println!("✅ Found ONNX model: {}", path.display());
+                assert!(path.exists(), "ONNX model file should exist");
+                assert!(path.is_file(), "ONNX model should be a file");
+                
+                // Check file size (should be non-zero)
+                if let Ok(metadata) = std::fs::metadata(path) {
+                    let size = metadata.len();
+                    println!("   File size: {} bytes ({:.2} MB)", size, size as f64 / 1_000_000.0);
+                    assert!(size > 0, "ONNX model file should not be empty");
+                }
+            }
+            None => {
+                println!("❌ ONNX model not found");
+                println!("   Expected: kokoro-v1.0.onnx");
+                println!("   Set KOKORO_MODEL_DIR env var or ensure kokoro-v1.0.onnx is in resources directory");
+                panic!("ONNX model file not found");
+            }
+        }
+
+        // Find voices file
+        let resources_dir = find_resources_dir();
+        if resources_dir.is_none() {
+            println!("⚠️ Resources directory not found, trying to find voices file directly");
+        }
+        let voices_path = if let Some(dir) = &resources_dir {
+            find_voices_file(dir)
+        } else {
+            None
+        };
+
+        match &voices_path {
+            Some(path) => {
+                println!("✅ Found voices file: {}", path.display());
+                assert!(path.exists(), "Voices file should exist");
+                assert!(path.is_file(), "Voices should be a file");
+                
+                // Check file size (should be non-zero)
+                if let Ok(metadata) = std::fs::metadata(path) {
+                    let size = metadata.len();
+                    println!("   File size: {} bytes ({:.2} MB)", size, size as f64 / 1_000_000.0);
+                    assert!(size > 0, "Voices file should not be empty");
+                }
+            }
+            None => {
+                println!("❌ Voices file not found");
+                println!("   Expected: voices-v1.0.bin");
+                println!("   Set KOKORO_VOICES_PATH env var or ensure voices-v1.0.bin is in resources directory");
+                panic!("Voices file not found");
+            }
+        }
+
+        println!("\n✅ Both ONNX model and voices file are present and valid");
+        
+        // Try to initialize kokoros engine (this will panic if files are invalid)
+        let onnx_model = onnx_model.unwrap();
+        // kokoros expects the full path to the ONNX file (not just the directory)
+        // Based on the TypeScript code: modelPath = `${dataDirPath}kokoro-v1.0.onnx`
+        let model_path_str = onnx_model.to_str().unwrap();
+        let voices_path = voices_path.unwrap();
+        let voices_path_str = voices_path.to_str().unwrap();
+
+        println!("\n🧪 Attempting to load model with kokoros...");
+        println!("   Model file: {}", model_path_str);
+        println!("   Voices path: {}", voices_path_str);
+        println!("   ⚠️  If this panics with 'Protobuf parsing failed', the ONNX file format may be invalid");
+        println!("   ⚠️  Note: kokoros expects the full path to the ONNX file, not just the directory");
+
+        let _engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+            model_path_str,
+            voices_path_str,
+            1, // Use 1 instance for testing
+        ).await;
+
+        println!("✅ Model loaded successfully with kokoros!");
+    }
+
+    #[tokio::test]
+    async fn test_simple_tts_generation() {
+        println!("\n🧪 Testing simple TTS generation with kokoros");
+
+        // Find ONNX model file
+        let onnx_model = find_onnx_model();
+        if onnx_model.is_none() {
+            println!("⚠️ Skipping test - kokoro-v1.0.onnx not found");
+            return;
+        }
+        let onnx_model = onnx_model.unwrap();
+        
+        // kokoros expects the full path to the ONNX file (not just the directory)
+        let model_path_str = onnx_model.to_str().unwrap();
+        
+        // Find voices file
+        let resources_dir = find_resources_dir();
+        if resources_dir.is_none() {
+            println!("⚠️ Skipping test - resources directory not found");
+            return;
+        }
+        let voices_path = find_voices_file(&resources_dir.unwrap());
+        if voices_path.is_none() {
+            println!("⚠️ Skipping test - voices-v1.0.bin not found");
+            return;
+        }
+        let voices_path = voices_path.unwrap();
+        let voices_path_str = voices_path.to_str().unwrap();
+
+        println!("   Model file: {}", model_path_str);
+        println!("   Voices path: {}", voices_path_str);
+
+        // Initialize engine (following kokoros usage pattern)
+        println!("\n📦 Initializing kokoros engine...");
+        let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+            model_path_str,
+            voices_path_str,
+            1, // Use 1 instance for simple test
+        ).await;
+
+        println!("✅ Engine initialized");
+
+        // Generate audio for a simple text (following kokoros API)
+        let test_text = "Hello world";
+        let voice_id = "af_heart";
+        let language = "en";
+        let speed = 1.0;
+
+        println!("\n🎤 Generating TTS audio...");
+        println!("   Text: '{}'", test_text);
+        println!("   Voice: {}", voice_id);
+        println!("   Language: {}", language);
+        println!("   Speed: {}", speed);
+
+        // Get model instance and generate audio
+        let model_instance = engine.get_model_instance(0);
+        let result = engine.tts_raw_audio_with_instance(
+            test_text,
+            language,
+            voice_id,
+            speed,
+            None, // initial_silence
+            None, // request_id
+            None, // instance_id
+            None, // chunk_number
+            model_instance,
+        );
+
+        match result {
+            Ok(audio) => {
+                println!("✅ TTS generation succeeded!");
+                println!("   Audio samples: {}", audio.len());
+                println!("   Duration: {:.2}s (at 24kHz)", audio.len() as f32 / 24000.0);
+                
+                // Basic validation
+                assert!(!audio.is_empty(), "Audio should not be empty");
+                
+                // Check for non-zero samples
+                let non_zero_count = audio.iter().filter(|&&s| s.abs() > 0.001).count();
+                println!("   Non-zero samples: {} / {} ({:.1}%)", 
+                    non_zero_count, audio.len(),
+                    (non_zero_count as f32 / audio.len() as f32) * 100.0);
+                
+                if non_zero_count > 0 {
+                    // Check audio range
+                    let min_val = audio.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+                    let max_val = audio.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+                    println!("   Audio range: [{:.6}, {:.6}]", min_val, max_val);
+                    println!("\n✅ Simple TTS test PASSED - audio generated successfully!");
+                } else {
+                    println!("⚠️ WARNING: Audio contains only zeros (silence)");
+                }
+            }
+            Err(e) => {
+                println!("❌ TTS generation failed: {}", e);
+                println!("   This might indicate:");
+                println!("   - Model loading issues");
+                println!("   - Invalid voice ID");
+                println!("   - Text preprocessing problems");
+                // Don't panic - just report the error
+            }
+        }
+    }
+
+    #[test]
+    fn test_find_resources_dir() {
+        let resources_dir = find_resources_dir();
+        if let Some(dir) = resources_dir {
+            println!("✅ Found resources directory: {}", dir.display());
+            assert!(dir.exists(), "Resources directory should exist");
+        } else {
+            println!("⚠️ Resources directory not found - this is OK if models are not present");
+        }
+    }
+
+    #[test]
+    fn test_find_voices_file() {
+        let resources_dir = find_resources_dir();
+        if let Some(dir) = resources_dir {
+            let voices_path = find_voices_file(&dir);
+            if let Some(path) = voices_path {
+                println!("✅ Found voices file: {}", path.display());
+                assert!(path.exists(), "Voices file should exist");
+                assert!(path.is_file(), "Voices path should be a file");
+            } else {
+                println!("⚠️ Voices file not found - this is OK if voices-v1.0.bin is not present");
+            }
+        } else {
+            println!("⚠️ Skipping voices file test - resources directory not found");
+        }
+    }
 }

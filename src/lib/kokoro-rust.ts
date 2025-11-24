@@ -1,9 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { VoiceId } from "../types/reader";
-import { appDataDir, join } from "@tauri-apps/api/path";
-import { exists, readDir } from "@tauri-apps/plugin-fs";
+import { appDataDir } from "@tauri-apps/api/path";
+import { exists } from "@tauri-apps/plugin-fs";
 
 let engineInitialized = false;
+
+/**
+ * Reset the engine initialization flag (useful for debugging or re-initialization)
+ */
+export function resetEngineInitialization(): void {
+  engineInitialized = false;
+}
 
 /**
  * Initialize the Kokoros Rust engine
@@ -19,114 +26,27 @@ export async function initKokorosEngine(): Promise<void> {
     // Ensure trailing slash
     const dataDirPath = dataDir.endsWith("/") ? dataDir : `${dataDir}/`;
     
-    // Try CoreML models first (for macOS/iOS), fallback to ONNX
-    // Rust will handle platform detection and use the appropriate model type
-    let modelPath = `${dataDirPath}kokoro-coreml-models`;
+    // kokoros expects the full path to an ONNX file (not a directory)
+    // ONNX Runtime with CoreML EP will use CoreML acceleration on Apple platforms
+    // See: https://github.com/lucasjinreal/Kokoros and lib.rs test comments
+    let modelPath = `${dataDirPath}kokoro-v1.0.onnx`;
     const voicesPath = `${dataDirPath}voices-v1.0.bin`;
 
-    // Check if CoreML models directory exists
+    console.log(`Initializing Kokoros engine with model path: ${modelPath}`);
+
+    // Check if ONNX model file exists, if not copy from bundled resources
     if (!(await exists(modelPath))) {
-      // Try to copy from bundled resources first
-      const coremlModels = [
-        "kokoro_duration.mlpackage",
-        "kokoro_decoder_only_3s.mlpackage",
-        "kokoro_decoder_only_5s.mlpackage",
-        "kokoro_decoder_only_10s.mlpackage",
-        "kokoro_synthesizer_3s.mlpackage",
-        "kokoro_synthesizer_3s_nolstm.mlpackage",
-        "kokoro_f0n_3s.mlpackage",
-      ];
-      
-      let foundAny = false;
-      // Try to copy each model from bundled resources
-      for (const modelName of coremlModels) {
-        try {
-          const targetPath = await join(modelPath, modelName);
-          
-          // Try to copy from bundled resources
-          try {
-            await invoke("copy_directory", {
-              sourcePath: `resources/${modelName}`,
-              targetPath,
-            });
-            console.log(`Copied CoreML model from bundle: ${modelName}`);
-            foundAny = true;
-          } catch (e) {
-            // Model might not be in bundle, try from project directory (dev mode)
-            console.log(`Model ${modelName} not in bundle, trying project directory...`);
-          }
-        } catch (e) {
-          // Continue to next model
-        }
-      }
-      
-      // If no models found in bundle, try project directory (dev mode)
-      if (!foundAny) {
-        const possibleSourceDirs: string[] = [];
-        
-        // Try relative to app data dir (go up to find project)
-        try {
-          const homeDir = dataDir.split("/Library/Application Support")[0];
-          possibleSourceDirs.push(
-            await join(homeDir, "Documents", "tts-tauri", "kokoro-coreml", "coreml")
-          );
-        } catch (e) {
-          // Ignore
-        }
-        
-        // Try relative to current working directory (if available)
-        try {
-          const { resolve } = await import("@tauri-apps/api/path");
-          possibleSourceDirs.push(await resolve("../kokoro-coreml/coreml"));
-        } catch (e) {
-          // Ignore
-        }
-        
-        let sourceDir: string | null = null;
-        for (const dir of possibleSourceDirs) {
-          if (await exists(dir)) {
-            // Verify it has .mlpackage files
-            try {
-              const entries = await readDir(dir);
-              const hasModels = entries.some((e: any) => 
-                e.name?.endsWith(".mlpackage")
-              );
-              if (hasModels) {
-                sourceDir = dir;
-                break;
-              }
-            } catch (e) {
-              // Continue
-            }
-          }
-        }
-        
-        if (sourceDir) {
-          // Copy all .mlpackage files from project directory
-          const entries = await readDir(sourceDir);
-          for (const entry of entries) {
-            if (entry.name?.endsWith(".mlpackage")) {
-              const sourcePath = await join(sourceDir, entry.name);
-              const targetPath = await join(modelPath, entry.name);
-              await invoke("copy_directory", {
-                sourcePath,
-                targetPath,
-              });
-              console.log(`Copied CoreML model from project: ${entry.name}`);
-            }
-          }
-        } else {
-          // Fallback to ONNX model if CoreML not found
-          modelPath = `${dataDirPath}kokoro-v1.0.onnx`;
-          
-          if (!(await exists(modelPath))) {
-            // Copy model file from bundled resources
-            await invoke("copy_resource_file", {
-              resourcePath: "kokoro-v1.0.onnx",
-              targetPath: modelPath,
-            });
-          }
-        }
+      try {
+        // Copy model file from bundled resources
+        await invoke("copy_resource_file", {
+          resourcePath: "kokoro-v1.0.onnx",
+          targetPath: modelPath,
+        });
+        console.log("Copied ONNX model from bundle");
+      } catch (e) {
+        console.error("Failed to copy ONNX model from bundle:", e);
+        engineInitialized = false; // Reset flag on error
+        throw new Error(`ONNX model not found. Please ensure kokoro-v1.0.onnx is available in resources or at ${modelPath}`);
       }
     }
 
@@ -150,8 +70,10 @@ export async function initKokorosEngine(): Promise<void> {
     });
 
     engineInitialized = true;
+    console.log("Kokoros engine initialized successfully");
   } catch (error) {
     console.error("Failed to initialize Kokoros engine:", error);
+    engineInitialized = false; // Reset flag on error so we can retry
     throw error;
   }
 }

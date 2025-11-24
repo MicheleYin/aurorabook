@@ -33,14 +33,7 @@
     ],
     "resources": [
       "resources/kokoro-v1.0.onnx",
-      "resources/voices-v1.0.bin",
-      "resources/kokoro_duration.mlpackage",
-      "resources/kokoro_decoder_only_3s.mlpackage",
-      "resources/kokoro_decoder_only_5s.mlpackage",
-      "resources/kokoro_decoder_only_10s.mlpackage",
-      "resources/kokoro_synthesizer_3s.mlpackage",
-      "resources/kokoro_synthesizer_3s_nolstm.mlpackage",
-      "resources/kokoro_f0n_3s.mlpackage"
+      "resources/voices-v1.0.bin"
     ]
   }
 }

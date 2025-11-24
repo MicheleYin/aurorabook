@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import { generateTTS, generateTTSBatch, initKokorosEngine } from "./kokoro-rust";
+import { generateTTS, generateTTSBatch, initKokorosEngine, resetEngineInitialization } from "./kokoro-rust";
 import type { VoiceId } from "../types/reader";
 import type { Chapter } from "../types/reader";
 
@@ -228,7 +228,13 @@ export async function convertEpubToAudiobook(
   });
 
   // Initialize Kokoros Rust engine
-  await initKokorosEngine();
+  try {
+    await initKokorosEngine();
+  } catch (error) {
+    // Reset engine initialization flag on failure to allow retry
+    resetEngineInitialization();
+    throw error;
+  }
 
   // Load EPUB as ZIP
   const zip = await JSZip.loadAsync(epubBuffer);
