@@ -464,6 +464,30 @@ export function ReaderViewport({
     const shouldScroll = element && autoScrollEnabled && lastScrolledElementRef.current !== elementId;
 
     if (shouldScroll) {
+      // Check if element is already visible in the viewport (especially in bottom portion)
+      const elementRect = element.getBoundingClientRect();
+      const viewportHeight = typeof window !== "undefined" ? window.innerHeight : root.clientHeight;
+      const viewportBottom = viewportHeight;
+      
+      // Consider element visible if it's in the bottom 70% of the viewport
+      // This prevents scrolling when element is already near the bottom
+      const visibleThreshold = viewportHeight * 0.7;
+      const isInBottomPortion = elementRect.top >= 0 && 
+                                 elementRect.top <= visibleThreshold &&
+                                 elementRect.bottom <= viewportBottom;
+      
+      if (isInBottomPortion) {
+        console.debug("[Auto-Scroll] Element already visible in bottom portion, skipping scroll:", {
+          elementId,
+          elementTop: elementRect.top,
+          viewportHeight,
+          visibleThreshold,
+        });
+        // Mark as scrolled even though we didn't scroll, to prevent repeated checks
+        lastScrolledElementRef.current = elementId;
+        return;
+      }
+      
       // Mark this element as scrolled to prevent multiple scrolls
       lastScrolledElementRef.current = elementId;
       
@@ -473,17 +497,18 @@ export function ReaderViewport({
         selector,
         elementText: element.textContent?.substring(0, 50),
         currentTime: currentAudioTime,
+        elementRect: { top: elementRect.top, bottom: elementRect.bottom },
       });
       
       // Use requestAnimationFrame to ensure DOM is ready and layout is complete
       requestAnimationFrame(() => {
         // Check if using window scrolling (based on how other scrolls work in this component)
         if (typeof window !== "undefined") {
-          const elementRect = element.getBoundingClientRect();
+          const updatedElementRect = element.getBoundingClientRect();
           const rootRect = root.getBoundingClientRect();
           
           // Calculate position relative to document
-          const elementTop = elementRect.top + window.scrollY;
+          const elementTop = updatedElementRect.top + window.scrollY;
           
           // Calculate header height dynamically
           // The header is sticky and contains navigation + title sections
@@ -507,6 +532,12 @@ export function ReaderViewport({
           const startScrollTop = window.scrollY;
           const distance = targetScrollTop - startScrollTop;
           
+          // Don't scroll if distance is very small (less than 50px) to prevent jitter
+          if (Math.abs(distance) < 50) {
+            console.debug("[Auto-Scroll] Distance too small, skipping scroll:", Math.abs(distance));
+            return;
+          }
+          
           console.log("[Auto-Scroll] Scrolling window to position:", {
             elementTop,
             targetScrollTop,
@@ -514,7 +545,7 @@ export function ReaderViewport({
             distance,
             headerHeight,
             offset,
-            elementRect: { top: elementRect.top, bottom: elementRect.bottom },
+            elementRect: { top: updatedElementRect.top, bottom: updatedElementRect.bottom },
             rootRect: { top: rootRect.top, bottom: rootRect.bottom },
           });
           
