@@ -348,39 +348,57 @@ export const buildAudioSyncMap = async (
     
     // Try both with and without .smil extension, and handle different path formats
     // Try relative paths first (without OEBPS/), then with OEBPS/ prefix
+    // Also try variations like .xhtml.smil (common pattern)
+    const baseHref = chapterHref.replace(/\.(xhtml|html)$/, "");
     const smilHrefs = [
-      `${chapterHref}.smil`, // Try relative path first
+      // Try exact match with .smil extension
+      `${chapterHref}.smil`,
+      // Try replacing extension
       chapterHref.replace(/\.xhtml$/, ".smil"),
       chapterHref.replace(/\.html$/, ".smil"),
-      `OEBPS/${chapterHref}.smil`, // Try with OEBPS/ prefix
+      // Try .xhtml.smil pattern (common in some EPUBs)
+      chapterHref.replace(/\.(xhtml|html)$/, ".xhtml.smil"),
+      // Try base name with .smil
+      `${baseHref}.smil`,
+      // Try with OEBPS/ prefix
+      `OEBPS/${chapterHref}.smil`,
       `OEBPS/${chapterHref.replace(/\.xhtml$/, ".smil")}`,
       `OEBPS/${chapterHref.replace(/\.html$/, ".smil")}`,
+      `OEBPS/${chapterHref.replace(/\.(xhtml|html)$/, ".xhtml.smil")}`,
+      `OEBPS/${baseHref}.smil`,
+      // Try Text/ subdirectory variations
+      `Text/${baseHref}.smil`,
+      `Text/${chapterHref.replace(/\.(xhtml|html)$/, ".smil")}`,
+      `OEBPS/Text/${baseHref}.smil`,
+      `OEBPS/Text/${chapterHref.replace(/\.(xhtml|html)$/, ".smil")}`,
     ];
 
     let parsed = false;
     for (const smilHref of smilHrefs) {
       try {
-        // Use load() method (preferred) - it returns a string directly
+        // Try getFile() first since it handles missing files gracefully (returns null)
+        // load() throws errors which we want to avoid for optional SMIL files
         let smilContent: unknown;
-        if (epubBook.load) {
+        if (epubBook.getFile) {
+          try {
+            const buffer = await epubBook.getFile(smilHref);
+            if (buffer) {
+              smilContent = decodeBufferToString(buffer);
+            } else {
+              // File not found, try next variant
+              continue;
+            }
+          } catch (fileError) {
+            console.debug("Failed to load SMIL via getFile:", smilHref, fileError);
+            continue;
+          }
+        } else if (epubBook.load) {
+          // Fallback to load() method if getFile() is not available
           try {
             smilContent = await epubBook.load(smilHref);
           } catch (loadError) {
-            // If load() fails, try getFile() as fallback
-            if (epubBook.getFile) {
-              try {
-                const buffer = await epubBook.getFile(smilHref);
-                if (buffer) {
-                  smilContent = decodeBufferToString(buffer);
-                } else {
-                  continue;
-                }
-              } catch (fileError) {
-                console.debug("Failed to load SMIL via getFile:", smilHref, fileError);
-                continue;
-              }
-            } else if (epubBook.resources?.get) {
-              // Fallback to resources.get() for epubjs compatibility
+            // If load() fails, try resources.get() as fallback
+            if (epubBook.resources?.get) {
               try {
                 smilContent = await epubBook.resources.get(smilHref);
               } catch (resourcesError) {
@@ -391,18 +409,6 @@ export const buildAudioSyncMap = async (
               console.debug("No available method to load SMIL:", smilHref);
               continue;
             }
-          }
-        } else if (epubBook.getFile) {
-          try {
-            const buffer = await epubBook.getFile(smilHref);
-            if (buffer) {
-              smilContent = decodeBufferToString(buffer);
-            } else {
-              continue;
-            }
-          } catch (fileError) {
-            console.debug("Failed to load SMIL file:", smilHref, fileError);
-            continue;
           }
         } else if (epubBook.resources?.get) {
           try {

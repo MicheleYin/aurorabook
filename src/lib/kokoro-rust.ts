@@ -14,7 +14,7 @@ export function resetEngineInitialization(): void {
 
 /**
  * Initialize the Kokoros Rust engine
- * Uses ONNX Runtime with CoreML Execution Provider on macOS/iOS for optimal performance
+ * Uses ONNX Runtime with CPU execution provider
  */
 export async function initKokorosEngine(): Promise<void> {
   if (engineInitialized) {
@@ -61,7 +61,7 @@ export async function initKokorosEngine(): Promise<void> {
       }
     }
 
-    // Initialize the ONNX Runtime engine (CoreML EP enabled automatically on macOS/iOS)
+    // Initialize the ONNX Runtime engine (CPU execution provider)
     // Use 4 instances for better throughput
     await invoke("init_kokoros_engine", {
       modelPath: onnxModelPath,
@@ -70,7 +70,7 @@ export async function initKokorosEngine(): Promise<void> {
     });
 
     engineInitialized = true;
-    console.log("ONNX Runtime engine initialized successfully (CoreML EP enabled on macOS/iOS)");
+    console.log("ONNX Runtime engine initialized successfully (CPU execution provider)");
   } catch (error) {
     console.error("Failed to initialize Kokoros engine:", error);
     engineInitialized = false; // Reset flag on error so we can retry

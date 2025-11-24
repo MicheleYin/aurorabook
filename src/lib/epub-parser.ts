@@ -414,12 +414,22 @@ export async function parseEpub(buffer: ArrayBuffer): Promise<EpubBook> {
             return await zip.file(alt)!.async("arraybuffer");
           }
         }
-        console.error(`[EPUB Parser] File not found: ${href}`, {
-          normalizedHref,
-          fullPath,
-          oebpsBase,
-          alternatives: alternatives.map(alt => ({ path: alt, exists: !!zip.file(alt) })),
-        });
+        // Log at debug level for optional files (like SMIL), error level for required files
+        const isOptionalFile = href.endsWith('.smil') || href.includes('smil');
+        if (isOptionalFile) {
+          console.debug(`[EPUB Parser] Optional file not found: ${href}`, {
+            normalizedHref,
+            fullPath,
+            oebpsBase,
+          });
+        } else {
+          console.error(`[EPUB Parser] File not found: ${href}`, {
+            normalizedHref,
+            fullPath,
+            oebpsBase,
+            alternatives: alternatives.map(alt => ({ path: alt, exists: !!zip.file(alt) })),
+          });
+        }
         return null;
       }
       

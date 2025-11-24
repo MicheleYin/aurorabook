@@ -204,11 +204,11 @@ async fn init_kokoros_engine(
             ));
         }
         
-    println!("ONNX Runtime with CoreML EP will be used automatically on macOS/iOS");
+    println!("ONNX Runtime with CPU execution provider");
     println!("Model path: {}, Voices path: {}", model_path, voices_path);
     
     Ok(format!(
-        "Initialized ONNX Runtime engine (CoreML EP enabled on macOS/iOS). Model: {}",
+        "Initialized ONNX Runtime engine (CPU execution provider). Model: {}",
         model_path
     ))
 }
@@ -222,7 +222,7 @@ async fn generate_tts_cached(
     worker_id: Option<usize>,
     app: tauri::AppHandle,
 ) -> Result<Vec<u8>, String> {
-    // Use ONNX Runtime with CoreML EP (automatically enabled on macOS/iOS via kokoros)
+    // Use ONNX Runtime with CPU execution provider
         fn find_onnx_model() -> Option<std::path::PathBuf> {
             let mut possible_paths = Vec::new();
             
@@ -332,7 +332,7 @@ async fn generate_tts_batch(
     speed: Option<f32>,
     app: tauri::AppHandle,
 ) -> Result<Vec<Vec<u8>>, String> {
-    // Use ONNX Runtime with CoreML EP (automatically enabled on macOS/iOS via kokoros)
+    // Use ONNX Runtime with CPU execution provider
     fn find_onnx_model() -> Option<std::path::PathBuf> {
         let mut possible_paths = Vec::new();
         
@@ -1262,7 +1262,7 @@ mod tests {
     async fn test_generate_and_save_audio() {
         println!("\n🧪 Testing TTS generation and audio file saving");
         
-        // Use ONNX Runtime with CoreML EP (automatically enabled on macOS/iOS via kokoros)
+        // Use ONNX Runtime with CPU execution provider
         println!("   Using ONNX Runtime engine (CoreML EP enabled on macOS/iOS)...");
         let onnx_model = find_onnx_model();
         if onnx_model.is_none() {
