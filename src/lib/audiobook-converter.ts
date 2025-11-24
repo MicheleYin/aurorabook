@@ -328,7 +328,7 @@ export async function convertEpubToAudiobook(
     const audioDataArrays: Uint8Array[] = [];
     const audioSegments: Array<{ id: string; startTime: number; endTime: number }> = [];
     let currentTime = 0;
-    const BATCH_SIZE = 20; // Process 20 chunks in parallel (increased for maximum throughput)
+    const BATCH_SIZE = 4; // Process 4 chunks in parallel (max parallelism)
     const sampleRate = 24000; // Kokoro default sample rate is 24kHz
 
     for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
