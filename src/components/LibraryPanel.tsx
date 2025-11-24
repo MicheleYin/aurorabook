@@ -80,6 +80,7 @@ export function LibraryPanel({
         {hasBooks ? (
           viewMode === "grid" ? (
             <LibraryGrid
+              key="grid"
               books={library}
               activeBookId={activeBookId}
               onOpenBook={onOpenBook}
@@ -88,6 +89,7 @@ export function LibraryPanel({
             />
           ) : (
             <LibraryList
+              key="list"
               books={library}
               activeBookId={activeBookId}
               onOpenBook={onOpenBook}

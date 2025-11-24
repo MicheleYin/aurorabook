@@ -20,7 +20,10 @@ const DrawerOverlay = React.forwardRef<
   <DrawerPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 ",
+      "fixed inset-0 z-50",
+      "data-[state=open]:animate-in data-[state=closed]:animate-out",
+      "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "data-[state=open]:dialog-backdrop-enter",
       backdropBlur && "backdrop-blur-sm sm:backdrop-blur-md bg-background/60",
       className,
     )}
@@ -42,7 +45,13 @@ const DrawerContent = React.forwardRef<
     <DrawerPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed inset-x-0 bottom-0 z-50 flex h-auto max-h-[90vh] w-full flex-col rounded-t-3xl border bg-card p-6 shadow-lg outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
+        "fixed inset-x-0 bottom-0 z-50 flex h-auto max-h-[90vh] w-full flex-col rounded-t-3xl border bg-card p-6 shadow-lg outline-none",
+        "data-[state=open]:animate-in data-[state=closed]:animate-out",
+        "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
+        "data-[state=open]:drawer-slide-in-bottom data-[state=closed]:drawer-slide-out-bottom",
+        // Apply spring physics for left drawer direction
+        "data-[vaul-drawer-direction=left]:data-[state=open]:drawer-slide-in-left",
+        "data-[vaul-drawer-direction=left]:data-[state=closed]:drawer-slide-out-left",
         className,
       )}
       {...props}

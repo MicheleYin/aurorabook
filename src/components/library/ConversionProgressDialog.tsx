@@ -8,6 +8,7 @@ import {
 } from "../ui/dialog";
 import { Progress } from "../ui/progress";
 import type { ConversionProgress } from "../../lib/audiobook-converter";
+import { useAnimatedNumber } from "../../hooks/use-animated-number";
 
 type ConversionProgressDialogProps = {
   open: boolean;
@@ -20,9 +21,12 @@ export function ConversionProgressDialog({
   progress,
   bookTitle,
 }: ConversionProgressDialogProps) {
-  const progressPercent = progress
+  const targetProgressPercent = progress
     ? Math.round((progress.currentChapter / progress.totalChapters) * 100)
     : 0;
+  
+  // Animate the percentage number counting up
+  const animatedProgressPercent = useAnimatedNumber(targetProgressPercent, 500);
 
   const stepLabels: Record<ConversionProgress["currentStep"], string> = {
     initializing: "Initializing TTS engine...",
@@ -50,9 +54,14 @@ export function ConversionProgressDialog({
                   <span className="text-muted-foreground">
                     Chapter {progress.currentChapter} of {progress.totalChapters}
                   </span>
-                  <span className="font-medium">{progressPercent}%</span>
+                  <span className="font-medium">{animatedProgressPercent}%</span>
                 </div>
-                <Progress value={progressPercent} className="h-2" />
+                <Progress 
+                  value={animatedProgressPercent} 
+                  className="h-2"
+                  showPulse={true}
+                  showWave={true}
+                />
               </div>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />

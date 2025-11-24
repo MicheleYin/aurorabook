@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "../../lib/utils";
+import { anim, animPatterns } from "../../lib/animations";
 import { findCurrentAudioSegment } from "../../lib/epub";
 import {
   contentPaddingConfigMap,
@@ -67,9 +68,12 @@ export function ReaderViewport({
   const scrollActivityTimeoutRef = useRef<number | null>(null);
   const [isScrolling, setIsScrolling] = useState(false);
   const [highlightedElementId, setHighlightedElementId] = useState<string | null>(null);
+  const [chapterTransitionDirection, setChapterTransitionDirection] = useState<"left" | "right" | "fade" | null>(null);
   const showAudioPlayer = audioPlayerVisible;
   const lastHighlightedElementRef = useRef<string | null>(null);
   const lastScrolledElementRef = useRef<string | null>(null);
+  const previousChapterIdRef = useRef<string | undefined>(activeChapter?.id);
+  const highlightEnterTimeoutRef = useRef<number | null>(null);
 
   const computeScrollMetrics = useCallback(() => {
     const node = contentRef.current;
@@ -363,6 +367,43 @@ export function ReaderViewport({
     lastScrolledElementRef.current = null;
   }, [activeChapter?.id]);
 
+  // Handle chapter transitions
+  useEffect(() => {
+    if (!activeChapter?.id || !previousChapterIdRef.current) {
+      previousChapterIdRef.current = activeChapter?.id;
+      return;
+    }
+
+    if (previousChapterIdRef.current !== activeChapter.id) {
+      // Determine transition direction based on chapter order
+      if (activeBook) {
+        const prevIndex = activeBook.chapters.findIndex(ch => ch.id === previousChapterIdRef.current);
+        const currentIndex = activeBook.chapters.findIndex(ch => ch.id === activeChapter.id);
+        
+        if (prevIndex !== -1 && currentIndex !== -1) {
+          if (currentIndex > prevIndex) {
+            // Moving forward - slide left
+            setChapterTransitionDirection("left");
+          } else {
+            // Moving backward - slide right
+            setChapterTransitionDirection("right");
+          }
+        } else {
+          setChapterTransitionDirection("fade");
+        }
+      } else {
+        setChapterTransitionDirection("fade");
+      }
+
+      const timer = setTimeout(() => {
+        setChapterTransitionDirection(null);
+      }, 300); // Match animation duration
+
+      previousChapterIdRef.current = activeChapter.id;
+      return () => clearTimeout(timer);
+    }
+  }, [activeChapter?.id, activeBook]);
+
   // Save scroll position when audio player closes
   const previousAudioPlayerVisibleRef = useRef(audioPlayerVisible);
   useEffect(() => {
@@ -387,6 +428,7 @@ export function ReaderViewport({
       hasActiveChapter: !!activeChapter,
       activeChapterHref: activeChapter?.href,
       isAudioRestoring,
+      showAudioPlayer,
     });
 
     // Wait for audio restoration to complete before syncing scroll
@@ -617,30 +659,100 @@ export function ReaderViewport({
     activeChapter?.href,
     autoScrollEnabled,
     isAudioRestoring,
+    showAudioPlayer, // Re-run when audio player becomes visible to ensure sync on first load
   ]);
 
-  // Apply highlighting styles to elements
+  // Apply highlighting styles to elements with smooth transitions
   useEffect(() => {
     const root = contentRef.current;
     if (!root) return;
 
-    // Remove previous highlighting
-    const previousHighlighted = root.querySelectorAll(".audio-highlight");
-    previousHighlighted.forEach((el) => {
-      el.classList.remove("audio-highlight");
+    // Clear any pending enter timeout
+    if (highlightEnterTimeoutRef.current !== null) {
+      clearTimeout(highlightEnterTimeoutRef.current);
+      highlightEnterTimeoutRef.current = null;
+    }
+
+    const previousHighlightedId = lastHighlightedElementRef.current;
+    const isNewHighlight = highlightedElementId !== previousHighlightedId;
+    const exitTimeouts: number[] = [];
+
+    // First, remove ALL existing highlights (in case multiple are somehow highlighted)
+    const allHighlighted = root.querySelectorAll(".audio-highlight, .audio-highlight-enter, .audio-highlight-active");
+    allHighlighted.forEach((el) => {
+      const element = el as HTMLElement;
+      // Skip if this is the element we're about to highlight
+      if (highlightedElementId && element.id === highlightedElementId) {
+        return;
+      }
+      
+      // Remove modifier classes but keep base class for exit animation
+      element.classList.remove("audio-highlight-enter", "audio-highlight-active");
+      
+      // Ensure base class exists for exit animation
+      if (!element.classList.contains("audio-highlight")) {
+        element.classList.add("audio-highlight");
+      }
+      
+      // Add exit animation class
+      element.classList.add("audio-highlight-exit");
+      
+      // Remove all highlight classes after exit animation completes
+      const exitTimeout = window.setTimeout(() => {
+        element.classList.remove("audio-highlight", "audio-highlight-exit");
+      }, 200); // Match animation duration
+      
+      exitTimeouts.push(exitTimeout);
     });
 
-    // Apply new highlighting
+    // Apply new highlighting with animations
     if (highlightedElementId) {
       const selector =
         typeof CSS !== "undefined" && CSS.escape
           ? `#${CSS.escape(highlightedElementId)}`
           : `#${highlightedElementId}`;
       const element = root.querySelector<HTMLElement>(selector);
+      
       if (element) {
+        // Remove any existing exit animation first
+        element.classList.remove("audio-highlight-exit");
+        
+        // Remove any existing modifier classes
+        element.classList.remove("audio-highlight-enter", "audio-highlight-active");
+        
+        // Add base highlight class
         element.classList.add("audio-highlight");
+        
+        // If this is a new highlight (different from previous), add enter animation
+        if (isNewHighlight) {
+          // Small delay to ensure DOM is ready and exit animation can start first
+          requestAnimationFrame(() => {
+            element.classList.add("audio-highlight-enter");
+            
+            // After enter animation completes, switch to active state
+            highlightEnterTimeoutRef.current = window.setTimeout(() => {
+              element.classList.remove("audio-highlight-enter");
+              element.classList.add("audio-highlight-active");
+            }, 200); // Match fade-in animation duration
+          });
+        } else {
+          // If same element, just ensure active state
+          element.classList.add("audio-highlight-active");
+        }
       }
     }
+
+    // Update ref for next comparison
+    lastHighlightedElementRef.current = highlightedElementId;
+
+    // Cleanup function
+    return () => {
+      if (highlightEnterTimeoutRef.current !== null) {
+        clearTimeout(highlightEnterTimeoutRef.current);
+        highlightEnterTimeoutRef.current = null;
+      }
+      exitTimeouts.forEach(timeout => clearTimeout(timeout));
+    };
   }, [highlightedElementId]);
 
   const { previousChapter, nextChapter } = useMemo(() => {
@@ -799,7 +911,8 @@ export function ReaderViewport({
       <div className="flex flex-1 flex-col overflow-hidden">
         <div
           className={cn(
-            "flex-1 overflow-y-auto transition-colors",
+            "flex-1 overflow-y-auto",
+            anim("normal", "colors"),
             themeClasses[resolvedTheme],
             fontSizeClass,
             lineHeightClass,
@@ -820,14 +933,18 @@ export function ReaderViewport({
       <div
         ref={contentRef}
         className={cn(
-          "flex-1 min-h-0 overflow-y-auto transition-colors",
+          "flex-1 min-h-0 overflow-y-auto",
+          anim("normal", "colors"),
           themeClasses[resolvedTheme],
           fontSizeClass,
           lineHeightClass,
           fontClassMap[preferences.fontFamily],
           paddingConfig.outer,
+          // Visual indicator when auto-scroll is active
+          autoScrollEnabled && "auto-scroll-active",
         )}
         data-reader-scrolling={isScrolling ? "true" : "false"}
+        data-auto-scroll-enabled={autoScrollEnabled ? "true" : "false"}
         onClick={(event: ReactMouseEvent<HTMLDivElement>) => {
           if ((event.target as HTMLElement)?.closest("a,button")) {
             return;
@@ -837,7 +954,8 @@ export function ReaderViewport({
       >
         <div
           className={cn(
-            "mx-auto flex w-full max-w-3xl flex-col gap-8 transition-[padding]",
+            "mx-auto flex w-full max-w-3xl flex-col gap-8",
+            anim("normal", "padding"),
             paddingConfig.innerBase,
             innerVerticalPaddingClass,
             showAudioPlayer && "pb-32",
@@ -848,12 +966,18 @@ export function ReaderViewport({
             id={activeChapter.id}
             data-chapter-id={activeChapter.id}
             data-reader-chapter-root="true"
+            key={activeChapter.id}
             className={cn(
-              "prose reader-prose max-w-none space-y-4 transition-colors",
+              "prose reader-prose max-w-none space-y-4",
+              anim("normal", "colors"),
               proseColorClass,
               fontSizeClass,
               lineHeightClass,
               fontSizeTokenClass,
+              // Chapter transition animation
+              chapterTransitionDirection === "left" && animPatterns.chapterSlideLeft,
+              chapterTransitionDirection === "right" && animPatterns.chapterSlideRight,
+              chapterTransitionDirection === "fade" && animPatterns.chapterCrossFade,
             )}
           >
             <h2 className="text-2xl font-semibold">{activeChapter.title}</h2>

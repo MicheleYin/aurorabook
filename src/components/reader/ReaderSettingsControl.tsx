@@ -3,6 +3,7 @@ import { Settings2, X } from "lucide-react";
 
 import type { ReaderPreferences } from "../../types/reader";
 import { cn } from "../../lib/utils";
+import { anim } from "../../lib/animations";
 import {
   Drawer,
   DrawerClose,
@@ -247,9 +248,28 @@ export function ReaderSettingsControl({
   return (
     <Drawer open={isOpen} onOpenChange={onOpenChange} >
       <DrawerTrigger asChild>
-        <Button variant="outline" size="sm">
-          <Settings2 className="sm:mr-2 h-4 w-4" />
-          <span className="hidden sm:block">Reader settings</span>
+        <Button 
+          variant="outline" 
+          size="sm"
+          className={cn(
+            anim("medium", "all"),
+            "ease-in-out"
+          )}
+        >
+          <Settings2 className={cn(
+            "h-4 w-4 shrink-0",
+            anim("medium", "all"),
+            "sm:mr-2 transition-[margin] duration-300 ease-in-out"
+          )} />
+          <span 
+            className={cn(
+              "hidden sm:inline-block whitespace-nowrap",
+              anim("medium", "opacity"),
+              "transition-opacity duration-300 ease-in-out"
+            )}
+          >
+            Reader settings
+          </span>
         </Button>
       </DrawerTrigger>
       <DrawerContent backdropBlur={false}>

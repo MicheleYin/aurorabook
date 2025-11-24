@@ -26,6 +26,7 @@ tauri-plugin-store = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
+lame = "0.1"
 # GPU acceleration configuration:
 # - CUDA: For NVIDIA GPUs (Linux/Windows) - enables GPU acceleration
 # - CoreML: For Apple devices (macOS/iOS/iPadOS) - ONNX Runtime uses CoreML Execution Provider

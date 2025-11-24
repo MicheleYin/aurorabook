@@ -346,6 +346,112 @@ async fn generate_tts_batch(
     Ok(results)
 }
 
+/// Convert PCM audio data (16-bit samples) to MP3
+/// 
+/// # Arguments
+/// * `pcm_data` - Raw PCM audio data as 16-bit little-endian samples
+/// * `sample_rate` - Sample rate in Hz (e.g., 24000)
+/// * `channels` - Number of channels (1 for mono, 2 for stereo)
+/// * `bitrate` - MP3 bitrate in kbps (default: 128)
+#[tauri::command]
+fn convert_pcm_to_mp3(
+    pcm_data: Vec<u8>,
+    sample_rate: u32,
+    channels: u32,
+    bitrate: Option<u32>,
+) -> Result<Vec<u8>, String> {
+    let bitrate_kbps = bitrate.unwrap_or(128);
+    
+    // Validate inputs
+    if pcm_data.is_empty() {
+        return Err("PCM data is empty".to_string());
+    }
+    if sample_rate == 0 {
+        return Err("Sample rate must be greater than 0".to_string());
+    }
+    if channels != 1 && channels != 2 {
+        return Err("Channels must be 1 (mono) or 2 (stereo)".to_string());
+    }
+    if pcm_data.len() % (channels as usize * 2) != 0 {
+        return Err(format!(
+            "PCM data length ({}) must be divisible by {} (channels * 2 bytes per sample)",
+            pcm_data.len(),
+            channels * 2
+        ));
+    }
+    
+    // Convert bytes to i16 samples (little-endian)
+    let num_samples = pcm_data.len() / 2;
+    let mut pcm_samples = Vec::with_capacity(num_samples);
+    for chunk in pcm_data.chunks_exact(2) {
+        let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
+        pcm_samples.push(sample);
+    }
+    
+    // Initialize LAME encoder
+    let mut encoder = lame::Lame::new()
+        .ok_or_else(|| "Failed to initialize LAME encoder".to_string())?;
+    
+    encoder.set_sample_rate(sample_rate)
+        .map_err(|e| format!("Failed to set sample rate: {:?}", e))?;
+    
+    encoder.set_channels(channels as u8)
+        .map_err(|e| format!("Failed to set channels: {:?}", e))?;
+    
+    encoder.set_quality(2) // Quality level 0-9 (2 is good balance)
+        .map_err(|e| format!("Failed to set quality: {:?}", e))?;
+    
+    encoder.set_kilobitrate(bitrate_kbps as i32)
+        .map_err(|e| format!("Failed to set bitrate: {:?}", e))?;
+    
+    // Initialize encoder parameters
+    encoder.init_params()
+        .map_err(|e| format!("Failed to initialize encoder parameters: {:?}", e))?;
+    
+    // Encode PCM to MP3
+    let mut mp3_output = Vec::new();
+    
+    // Calculate buffer size (LAME recommends: 1.25 * num_samples + 7200)
+    let buffer_size = (pcm_samples.len() as f64 * 1.25) as usize + 7200;
+    let mut mp3_buffer = vec![0u8; buffer_size];
+    
+    if channels == 1 {
+        // Mono encoding - use same data for left and right
+        let encoded_size = encoder.encode(&pcm_samples, &pcm_samples, &mut mp3_buffer)
+            .map_err(|e| format!("Failed to encode audio: {:?}", e))?;
+        
+        mp3_output.extend_from_slice(&mp3_buffer[..encoded_size]);
+    } else {
+        // Stereo encoding - split into left and right channels
+        let mut pcm_left = Vec::with_capacity(num_samples / 2);
+        let mut pcm_right = Vec::with_capacity(num_samples / 2);
+        
+        for i in 0..(num_samples / 2) {
+            pcm_left.push(pcm_samples[i * 2]);
+            pcm_right.push(pcm_samples[i * 2 + 1]);
+        }
+        
+        let encoded_size = encoder.encode(&pcm_left, &pcm_right, &mut mp3_buffer)
+            .map_err(|e| format!("Failed to encode audio: {:?}", e))?;
+        
+        mp3_output.extend_from_slice(&mp3_buffer[..encoded_size]);
+    }
+    
+    // Flush remaining data (encode empty buffers to flush)
+    let flush_size = encoder.encode(&[], &[], &mut mp3_buffer)
+        .map_err(|e| format!("Failed to flush encoder: {:?}", e))?;
+    
+    if flush_size > 0 {
+        mp3_output.extend_from_slice(&mp3_buffer[..flush_size]);
+    }
+    
+    if mp3_output.is_empty() {
+        return Err("MP3 encoding produced no output".to_string());
+    }
+    
+    Ok(mp3_output)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -359,7 +465,8 @@ pub fn run() {
             generate_tts_cached,
             generate_tts_batch,
             copy_resource_file,
-            copy_directory
+            copy_directory,
+            convert_pcm_to_mp3
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

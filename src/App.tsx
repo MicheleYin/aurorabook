@@ -26,6 +26,7 @@ import type {
   ChapterSelectionOptions,
 } from "./components/reader/types";
 import { cn, getLibraryBookStatus } from "./lib/utils";
+import { animPatterns, viewTransition } from "./lib/animations";
 import { findChaptersForAudioTrack } from "./lib/epub";
 import { convertEpubToAudiobook } from "./lib/audiobook-converter";
 import type { VoiceId } from "./types/reader";
@@ -339,6 +340,7 @@ function App() {
   const explicitlyDisabledRef = useRef<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastAudioBookIdRef = useRef<string | null>(null);
+  const rebuildingSyncMapRef = useRef<Set<string>>(new Set());
   const previousViewRef = useRef<AppView>(activeView);
   const {
     settings,
@@ -424,15 +426,83 @@ function App() {
       return;
     }
 
+    // Update lastAudioBookIdRef but don't automatically open audio player
     if (lastAudioBookIdRef.current !== activeBook.id) {
       lastAudioBookIdRef.current = activeBook.id;
-      setIsAudioPlayerOpen(true);
+      // Don't automatically open audio player - let user open it manually
     }
   }, [activeBook?.id, audioTrackCount]);
+
+  // Rebuild audio sync map if missing when audio player opens
+  useEffect(() => {
+    if (!activeBook || !hasAudioTracks || activeBook.audioSyncMap) {
+      // Clear rebuild flag if sync map is now present
+      if (activeBook?.audioSyncMap && rebuildingSyncMapRef.current.has(activeBook.id)) {
+        rebuildingSyncMapRef.current.delete(activeBook.id);
+      }
+      return;
+    }
+
+    // Prevent multiple rebuilds for the same book
+    if (rebuildingSyncMapRef.current.has(activeBook.id)) {
+      return;
+    }
+
+    // Book has audio tracks but no sync map - rebuild it
+    const rebuildSyncMap = async () => {
+      rebuildingSyncMapRef.current.add(activeBook.id);
+      try {
+        console.log("[App] Rebuilding missing audio sync map for book:", activeBook.id);
+        // Get the EPUB buffer
+        let buffer: ArrayBuffer | null = null;
+        
+        // Try to get from store first (for converted audiobooks)
+        if (activeBook.audioState) {
+          const { getConvertedEpub } = await import("./lib/epub-store");
+          buffer = await getConvertedEpub(activeBook.sourcePath);
+        }
+        
+        // If not found, try to read from file system
+        if (!buffer) {
+          const { readFile } = await import("@tauri-apps/plugin-fs");
+          try {
+            const binary = await readFile(activeBook.sourcePath);
+            buffer = binary.buffer.slice(
+              binary.byteOffset,
+              binary.byteOffset + binary.byteLength,
+            );
+          } catch (fileError) {
+            console.warn("[App] Failed to read EPUB file for sync map rebuild:", fileError);
+            rebuildingSyncMapRef.current.delete(activeBook.id);
+            return;
+          }
+        }
+
+        // Re-ingest to rebuild sync map
+        await ingestEpub({
+          buffer,
+          sourcePath: activeBook.sourcePath,
+          fallbackTitle: activeBook.title,
+          progress: activeBook.progress,
+          pageCountHint: activeBook.pageCount,
+          audioState: activeBook.audioState,
+        });
+        
+        console.log("[App] Successfully rebuilt audio sync map");
+        // Don't delete from ref here - let the effect cleanup handle it when sync map is detected
+      } catch (error) {
+        console.error("[App] Failed to rebuild audio sync map:", error);
+        rebuildingSyncMapRef.current.delete(activeBook.id);
+      }
+    };
+
+    rebuildSyncMap();
+  }, [activeBook?.id, hasAudioTracks, activeBook?.audioSyncMap, ingestEpub]);
 
 
   useEffect(() => {
     const previousView = previousViewRef.current;
+    // Auto-open audio player when switching to reader view if book has audio tracks
     if (activeView === "reader" && previousView !== "reader" && hasAudioTracks) {
       setIsAudioPlayerOpen(true);
     }
@@ -1234,7 +1304,15 @@ function App() {
         }}
       />
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-6 pb-28 sm:px-6 lg:px-8">
-        <div className="flex flex-1 min-h-0 flex-col">{currentView}</div>
+        <div 
+          className={cn(
+            "flex flex-1 min-h-0 flex-col",
+            viewTransition(previousViewRef.current, activeView)
+          )}
+          key={activeView}
+        >
+          {currentView}
+        </div>
       </div>
       {showAudioPlayer && activeBook ? (
         <ReaderAudioPlayer
@@ -1256,7 +1334,8 @@ function App() {
       ) : null}
       <div
         className={cn(
-          "pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-6 sm:px-6 transition-all duration-200",
+          "pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-6 sm:px-6",
+          animPatterns.navBar,
           hideNavigation && "translate-y-4 opacity-0",
         )}
       >
@@ -1279,7 +1358,8 @@ function App() {
                   setActiveView(item.id);
                 }}
                 className={cn(
-                  "rounded-full px-4 py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  "rounded-full px-4 py-1.5 text-sm font-medium",
+                  animPatterns.buttonHover,
                   isActive
                     ? "bg-primary text-primary-foreground shadow-sm"
                     : "text-muted-foreground hover:bg-muted",

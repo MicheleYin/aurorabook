@@ -6,6 +6,7 @@ import { ReaderSettingsControl } from "./reader/ReaderSettingsControl";
 import { ReaderTocDrawer } from "./reader/ReaderTocDrawer";
 import { ReaderViewport } from "./reader/ReaderViewport";
 import { cn } from "../lib/utils";
+import { animPatterns, enterExit, anim } from "../lib/animations";
 import { Button } from "./ui/button";
 
 type ReaderPanelProps = ReaderPanelBaseProps & {
@@ -135,9 +136,12 @@ export function ReaderPanel({
       <div
         data-reader-header
         className={cn(
-          "sticky top-0 z-20 flex flex-col gap-3 border-b border-border bg-background/95 px-4 py-4 backdrop-blur transition-all duration-300",
-          isImmersive &&
-            "pointer-events-none -translate-y-full opacity-0 h-0 overflow-hidden border-transparent py-0",
+          "sticky top-0 z-20 flex flex-col gap-3 border-b border-border bg-background/95 px-4 py-4 backdrop-blur",
+          animPatterns.readerChrome,
+          "transition-all duration-300 ease-in-out",
+          isImmersive
+            ? "pointer-events-none -translate-y-full opacity-0 h-0 overflow-hidden border-transparent py-0"
+            : "translate-y-0 opacity-100",
         )}
       >
         <div className="flex items-center justify-between gap-2">
@@ -158,12 +162,7 @@ export function ReaderPanel({
                 type="button"
                 variant="outline"
                 size="icon"
-                className={cn(
-                  "transition-all duration-300 ease-out",
-                  isAudioReopenVisible
-                    ? "opacity-100 scale-100 translate-y-0"
-                    : "opacity-0 scale-95 -translate-y-2"
-                )}
+                className={enterExit(isAudioReopenVisible, "scaleFade")}
                 onClick={onOpenAudioPlayer}
                 aria-label="Open audio player"
               >
@@ -195,10 +194,24 @@ export function ReaderPanel({
           </div>
         </div>
         <div className="flex flex-col gap-1">
-          <h2 className="text-lg font-semibold">
+          <h2 
+            key={activeChapter?.id}
+            className={cn(
+              "text-lg font-semibold",
+              anim("normal", "all"),
+              "transition-all duration-200 ease-in-out"
+            )}
+          >
             {activeChapter?.title ?? "Select a chapter"}
           </h2>
-          <p className="text-sm text-muted-foreground">
+          <p 
+            key={`${activeBook?.id}-${activeChapter?.id}`}
+            className={cn(
+              "text-sm text-muted-foreground",
+              anim("normal", "all"),
+              "transition-all duration-200 ease-in-out"
+            )}
+          >
             {activeBook
               ? `${activeBook.title} · ${activeBook.author}`
               : "Once you import an EPUB, choose a chapter to begin."}

@@ -359,6 +359,13 @@ export function useAudioStateSync({
           setIsRestoring(false);
           setRestoreTime(null);
         }
+      } else if (shouldRestore && timeToRestore === null) {
+        // We were trying to restore but there's no restore time (first time opening)
+        // Clear the restoration state so sync can proceed
+        console.log("[Audio State Sync] No restore time needed, clearing restoration state");
+        setIsRestoring(false);
+        setRestoreTime(null);
+        restorationAppliedRef.current = currentTrackId;
       } else if (!shouldRestore && timeToRestore === null && !alreadyApplied) {
         // Normal track load (not restoring) - ensure we start at 0
         if (previousTrackIdRef.current !== null) {

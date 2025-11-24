@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { generateTTS, generateTTSBatch, initKokorosEngine, resetEngineInitialization } from "./kokoro-rust";
+import { invoke } from "@tauri-apps/api/core";
 import type { VoiceId } from "../types/reader";
 import type { Chapter } from "../types/reader";
 
@@ -111,6 +112,60 @@ ${segments.map((seg, idx) => `   <par id="p${String(idx + 1).padStart(6, "0")}">
  </body>
 </smil>`;
   return smilContent;
+}
+
+/**
+ * Extract PCM data from WAV file (removes WAV header)
+ */
+function extractPcmFromWav(wavBuffer: ArrayBuffer): { pcmData: Uint8Array; sampleRate: number; channels: number } {
+  const view = new DataView(wavBuffer);
+  
+  // Check WAV header
+  if (wavBuffer.byteLength < 44) {
+    throw new Error("WAV file too small to contain valid header");
+  }
+  
+  // Read WAV header
+  const sampleRate = view.getUint32(24, true);
+  const channels = view.getUint16(22, true);
+  const bitsPerSample = view.getUint16(34, true);
+  const dataOffset = 44; // Standard WAV header size
+  
+  // Verify it's a valid WAV file
+  const riff = String.fromCharCode(...new Uint8Array(wavBuffer, 0, 4));
+  const wave = String.fromCharCode(...new Uint8Array(wavBuffer, 8, 4));
+  if (riff !== "RIFF" || wave !== "WAVE") {
+    throw new Error("Invalid WAV file format");
+  }
+  
+  if (bitsPerSample !== 16) {
+    throw new Error(`Unsupported bits per sample: ${bitsPerSample} (only 16-bit supported)`);
+  }
+  
+  // Extract PCM data (everything after the header)
+  const pcmData = new Uint8Array(wavBuffer, dataOffset);
+  
+  return { pcmData, sampleRate, channels };
+}
+
+/**
+ * Convert WAV buffer to MP3 using Rust binding
+ */
+async function convertWavToMp3(
+  wavBuffer: ArrayBuffer,
+  bitrate: number = 128
+): Promise<ArrayBuffer> {
+  const { pcmData, sampleRate, channels } = extractPcmFromWav(wavBuffer);
+  
+  // Convert to MP3 using Rust function
+  const mp3Bytes = await invoke<number[]>("convert_pcm_to_mp3", {
+    pcmData: Array.from(pcmData),
+    sampleRate,
+    channels,
+    bitrate,
+  });
+  
+  return new Uint8Array(mp3Bytes).buffer;
 }
 
 /**
@@ -383,13 +438,12 @@ export async function convertEpubToAudiobook(
     // Clear audio data arrays to free memory
     audioDataArrays.length = 0;
     
-    // Determine audio file path (using WAV for now, can be converted to MP3 later)
+    // Determine audio file path (using MP3 for smaller file size)
     const chapterHrefBase = chapter.href.split("/").pop()?.replace(/\.(xhtml|html)$/, "") || `chapter${chapterIndex + 1}`;
     // Store in ZIP with OEBPS/ prefix
-    const audioHrefZip = `OEBPS/Audio/${chapterHrefBase}.wav`;
-    // Use relative path (without OEBPS/) in manifest and SMIL files to avoid path duplication
-    const audioHrefManifest = `Audio/${chapterHrefBase}.wav`;
-    const audioHrefForSmil = audioHrefManifest; // Use relative path in SMIL
+    const audioHrefZip = `OEBPS/Audio/${chapterHrefBase}.mp3`;
+    // Use relative path (without OEBPS/) in manifest
+    const audioHrefManifest = `Audio/${chapterHrefBase}.mp3`;
     
     // Verify audio data is not empty (should have at least WAV header = 44 bytes)
     if (mergedWav.byteLength < 44) {
@@ -414,26 +468,61 @@ export async function convertEpubToAudiobook(
       // Sample value = 0 (silence)
       view.setInt16(44, 0, true);
       
-      // Convert ArrayBuffer to Uint8Array for JSZip
-      zip.file(audioHrefZip, new Uint8Array(minimalWav));
-      console.debug(`Added minimal audio file to ZIP: ${audioHrefZip} (${minimalWav.byteLength} bytes)`);
-      audioFiles.push({
-        chapterIndex,
-        href: audioHrefManifest, // Store relative path for manifest
-        buffer: minimalWav,
-      });
+      // Convert minimal WAV to MP3
+      try {
+        const minimalMp3 = await convertWavToMp3(minimalWav, 128);
+        zip.file(audioHrefZip, new Uint8Array(minimalMp3));
+        console.debug(`Added minimal MP3 file to ZIP: ${audioHrefZip} (${minimalMp3.byteLength} bytes)`);
+        audioFiles.push({
+          chapterIndex,
+          href: audioHrefManifest,
+          buffer: minimalMp3,
+        });
+      } catch (error) {
+        console.error(`Failed to convert minimal WAV to MP3:`, error);
+        // Fallback to WAV if MP3 conversion fails
+        zip.file(audioHrefZip.replace('.mp3', '.wav'), new Uint8Array(minimalWav));
+        audioFiles.push({
+          chapterIndex,
+          href: audioHrefManifest.replace('.mp3', '.wav'),
+          buffer: minimalWav,
+        });
+      }
     } else {
-      // Add audio file to ZIP immediately to free memory
-      // Convert ArrayBuffer to Uint8Array for JSZip compatibility
-      zip.file(audioHrefZip, new Uint8Array(mergedWav));
-      console.debug(`Added audio file to ZIP: ${audioHrefZip} (${mergedWav.byteLength} bytes)`);
-      
-      // Store reference for manifest update (use relative path)
-      audioFiles.push({
-        chapterIndex,
-        href: audioHrefManifest, // Store relative path for manifest
-        buffer: mergedWav, // Keep reference for manifest update, will be cleared later
+      // Convert WAV to MP3 for smaller file size
+      onProgress?.({
+        currentChapter: chapterIndex + 1,
+        totalChapters: chapters.length,
+        currentStep: "merging-audio",
+        message: `Converting audio to MP3 for chapter ${chapterIndex + 1}...`,
       });
+      
+      try {
+        const mp3Buffer = await convertWavToMp3(mergedWav, 128);
+        
+        // Add MP3 file to ZIP immediately to free memory
+        zip.file(audioHrefZip, new Uint8Array(mp3Buffer));
+        console.debug(`Added MP3 file to ZIP: ${audioHrefZip} (${mp3Buffer.byteLength} bytes, was ${mergedWav.byteLength} bytes WAV)`);
+        
+        // Store reference for manifest update (use relative path)
+        audioFiles.push({
+          chapterIndex,
+          href: audioHrefManifest, // Store relative path for manifest
+          buffer: mp3Buffer, // Keep reference for manifest update, will be cleared later
+        });
+      } catch (error) {
+        console.error(`Failed to convert WAV to MP3 for chapter ${chapterIndex + 1}:`, error);
+        // Fallback to WAV if MP3 conversion fails
+        const fallbackWavPath = audioHrefZip.replace('.mp3', '.wav');
+        const fallbackManifest = audioHrefManifest.replace('.mp3', '.wav');
+        zip.file(fallbackWavPath, new Uint8Array(mergedWav));
+        console.debug(`Added WAV file to ZIP (fallback): ${fallbackWavPath} (${mergedWav.byteLength} bytes)`);
+        audioFiles.push({
+          chapterIndex,
+          href: fallbackManifest,
+          buffer: mergedWav,
+        });
+      }
     }
 
     // Update chapter file in ZIP with updated HTML (already has chunk IDs)
@@ -448,6 +537,23 @@ export async function convertEpubToAudiobook(
     let chapterHrefForSmil = chapter.href;
     if (chapterHrefForSmil.startsWith("OEBPS/")) {
       chapterHrefForSmil = chapterHrefForSmil.substring(6);
+    }
+    
+    // Calculate relative path from SMIL file location to audio file
+    // SMIL files are stored in the same directory as chapters (e.g., OEBPS/chapter1.smil or OEBPS/Text/chapter1.smil)
+    // Audio files are in OEBPS/Audio/ (e.g., OEBPS/Audio/chapter1.mp3)
+    // So from OEBPS/chapter1.smil to OEBPS/Audio/chapter1.mp3, the relative path is Audio/chapter1.mp3
+    // But if chapters are in a subdirectory (e.g., OEBPS/Text/chapter1.smil), we'd need ../Audio/chapter1.mp3
+    let audioHrefForSmil = audioHrefManifest;
+    if (chapterHrefForSmil.includes("/")) {
+      // Chapter is in a subdirectory (e.g., Text/chapter1.xhtml)
+      // Calculate relative path: go up from Text/ to OEBPS/, then into Audio/
+      const depth = chapterHrefForSmil.split("/").length - 1;
+      audioHrefForSmil = "../".repeat(depth) + audioHrefManifest;
+    } else {
+      // Chapter is directly in OEBPS/ (e.g., chapter1.xhtml)
+      // Audio is in Audio/ subdirectory, so path is Audio/chapter1.mp3
+      audioHrefForSmil = audioHrefManifest;
     }
     
     // Clear merged WAV from memory after adding to ZIP
@@ -675,8 +781,42 @@ function updateContentOpf(
     throw new Error("No manifest found in content.opf");
   }
 
-  // Add audio files to manifest
+  // Remove existing audio entries (both WAV and MP3) to avoid stale references
+  const existingAudioItems = Array.from(manifest.querySelectorAll("item")).filter((item) => {
+    const mediaType = item.getAttribute("media-type");
+    return mediaType?.startsWith("audio/");
+  });
+  existingAudioItems.forEach((item) => {
+    item.remove();
+  });
+
+  // Remove existing SMIL entries
+  const existingSmilItems = Array.from(manifest.querySelectorAll("item")).filter((item) => {
+    const mediaType = item.getAttribute("media-type");
+    return mediaType === "application/smil+xml";
+  });
+  existingSmilItems.forEach((item) => {
+    item.remove();
+  });
+
+  // Remove media-overlay attributes from all chapter items
+  const allItems = Array.from(doc.querySelectorAll("item"));
+  allItems.forEach((item) => {
+    if (item.hasAttribute("media-overlay")) {
+      item.removeAttribute("media-overlay");
+    }
+  });
+
+  // Add audio files to manifest (avoid duplicates)
+  const addedHrefs = new Set<string>();
   audioFiles.forEach((audioFile, idx) => {
+    // Skip if this href was already added
+    if (addedHrefs.has(audioFile.href)) {
+      console.warn(`Skipping duplicate audio file href: ${audioFile.href}`);
+      return;
+    }
+    addedHrefs.add(audioFile.href);
+    
     const itemId = `m${String(idx + 1).padStart(3, "0")}`;
     const item = doc.createElement("item");
     item.setAttribute("id", itemId);
@@ -687,10 +827,21 @@ function updateContentOpf(
     manifest.appendChild(item);
   });
 
-  // Add SMIL files to manifest and link to chapters
+  // Add SMIL files to manifest and link to chapters (avoid duplicates)
+  const addedSmilHrefs = new Set<string>();
   smilFiles.forEach((smilFile, idx) => {
     const chapter = chapters[smilFile.chapterIndex];
     const smilItemId = `s${String(idx + 1).padStart(3, "0")}`;
+    
+    // SMIL href is already relative (without OEBPS/ prefix)
+    const smilHref = smilFile.href;
+    
+    // Skip if this SMIL href was already added
+    if (addedSmilHrefs.has(smilHref)) {
+      console.warn(`Skipping duplicate SMIL file href: ${smilHref}`);
+      return;
+    }
+    addedSmilHrefs.add(smilHref);
     
     // Normalize chapter href for lookup - try both with and without OEBPS/ prefix
     // Chapter hrefs in manifest are typically relative (without OEBPS/)
@@ -708,9 +859,6 @@ function updateContentOpf(
     if (chapterItem) {
       chapterItem.setAttribute("media-overlay", smilItemId);
     }
-    
-    // SMIL href is already relative (without OEBPS/ prefix)
-    const smilHref = smilFile.href;
     
     // Add SMIL item
     const smilItem = doc.createElement("item");

@@ -1,7 +1,8 @@
-import { BookOpen, LayoutGrid, List } from "lucide-react";
+import { LayoutGrid, List } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
+import { anim } from "../../lib/animations";
 import {
   LIBRARY_FILTER_OPTIONS,
   LIBRARY_VIEW_MODES,
@@ -50,7 +51,8 @@ export function LibraryHeader({
               type="button"
               onClick={() => onFilterChange(option)}
               className={cn(
-                "rounded-full border px-3 py-1 transition",
+                "rounded-full border px-3 py-1",
+                anim("normal", "colors"),
                 isActive
                 ? "border-primary bg-primary/5 text-primary"
                 : "border-border hover:bg-muted",
@@ -75,7 +77,8 @@ export function LibraryHeader({
                   type="button"
                   onClick={() => onViewModeChange(mode)}
                   className={cn(
-                    "flex items-center justify-center rounded-md border px-2 py-1 text-muted-foreground transition",
+                    "flex items-center justify-center rounded-md border px-2 py-1 text-muted-foreground",
+                    anim("normal", "colors"),
                     isActive
                       ? "border-primary bg-primary/5 text-primary"
                       : "border-border hover:bg-muted",

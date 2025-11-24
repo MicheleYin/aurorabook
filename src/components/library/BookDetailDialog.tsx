@@ -20,6 +20,8 @@ import {
 } from "../ui/drawer";
 import { useMediaQuery } from "../../hooks/use-media-query";
 import { cn, formatDurationShort, getBookProgressSummary } from "../../lib/utils";
+import { dialogSectionStagger } from "../../lib/animations";
+import { useAnimatedNumber } from "../../hooks/use-animated-number";
 
 type BookDetailDialogProps = {
   book: Book;
@@ -303,6 +305,17 @@ export function BookDetailDialog({
       : undefined;
   const audioProgressPercentDisplay =
     typeof audioProgressPercent === "number" ? Math.round(audioProgressPercent * 100) : undefined;
+  
+  // Animate conversion progress percentage
+  const targetConversionPercent = conversionProgress
+    ? Math.round((conversionProgress.currentChapter / conversionProgress.totalChapters) * 100)
+    : 0;
+  const animatedConversionPercent = useAnimatedNumber(targetConversionPercent, 500);
+  
+  // Animate audio progress percentage
+  const targetAudioPercent = audioProgressPercentDisplay ?? 0;
+  const animatedAudioPercent = useAnimatedNumber(targetAudioPercent, 500);
+  
   const progressSummary = getBookProgressSummary(book);
   const progressPrimaryText = book.chapters.length
     ? progressSummary.label
@@ -316,7 +329,7 @@ export function BookDetailDialog({
 
   const detailFields = (
     <div className="grid gap-6 text-sm text-foreground sm:grid-cols-[auto,1fr] sm:items-start">
-      <div className="grid gap-2">
+      <div className={cn("grid gap-2", dialogSectionStagger(0))}>
         <span className="text-xs uppercase text-muted-foreground">Cover</span>
         <div className="relative mx-auto aspect-[3/4] w-36 overflow-hidden rounded-lg border bg-muted shadow-sm sm:mx-0 sm:w-40">
           {book.coverUrl ? (
@@ -337,16 +350,16 @@ export function BookDetailDialog({
       </div>
       <div className="grid gap-4">
         {conversionProgress ? (
-          <div className="grid gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
+          <div className={cn("grid gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3", dialogSectionStagger(1))}>
             <div className="flex items-center justify-between">
               <span className="text-xs uppercase text-muted-foreground">Converting to Audiobook</span>
-              <span className="text-xs font-medium">
-                {Math.round((conversionProgress.currentChapter / conversionProgress.totalChapters) * 100)}%
-              </span>
+              <span className="text-xs font-medium">{animatedConversionPercent}%</span>
             </div>
             <Progress
-              value={(conversionProgress.currentChapter / conversionProgress.totalChapters) * 100}
+              value={animatedConversionPercent}
               className="h-2"
+              showPulse={true}
+              showWave={true}
             />
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -356,7 +369,7 @@ export function BookDetailDialog({
             </div>
           </div>
         ) : (
-          <div className="grid gap-1">
+          <div className={cn("grid gap-1", dialogSectionStagger(1))}>
             <span className="text-xs uppercase text-muted-foreground">Reading progress</span>
             <span>{progressPrimaryText}</span>
             {progressSecondaryText ? (
@@ -365,19 +378,19 @@ export function BookDetailDialog({
           </div>
         )}
        
-        <div className="grid gap-1">
+        <div className={cn("grid gap-1", dialogSectionStagger(2))}>
           <span className="text-xs uppercase text-muted-foreground">Author</span>
           <span>{book.author || "Unknown author"}</span>
         </div>
-        <div className="grid gap-1">
+        <div className={cn("grid gap-1", dialogSectionStagger(3))}>
           <span className="text-xs uppercase text-muted-foreground">Publisher</span>
           <span>{book.publisher || "Unknown publisher"}</span>
         </div>
-        <div className="grid gap-1">
+        <div className={cn("grid gap-1", dialogSectionStagger(4))}>
           <span className="text-xs uppercase text-muted-foreground">Publication year</span>
           <span>{book.publishedYear || "Unknown year"}</span>
         </div>
-        <div className="grid gap-1">
+        <div className={cn("grid gap-1", dialogSectionStagger(5))}>
           <span className="text-xs uppercase text-muted-foreground">Genres / subjects</span>
           {genres.length ? (
             <div className="flex flex-wrap gap-2">
@@ -394,11 +407,11 @@ export function BookDetailDialog({
             <span>Not available</span>
           )}
         </div>
-        <div className="grid gap-1">
+        <div className={cn("grid gap-1", dialogSectionStagger(6))}>
           <span className="text-xs uppercase text-muted-foreground">File size</span>
           <span>{formatFileSize(book.fileSizeBytes)}</span>
         </div>
-        <div className="grid gap-1">
+        <div className={cn("grid gap-1", dialogSectionStagger(7))}>
           <span className="text-xs uppercase text-muted-foreground">Audiobook</span>
           {hasAudio ? (
             <div className="flex flex-col gap-3">
@@ -427,15 +440,13 @@ export function BookDetailDialog({
               {audioProgressPercentDisplay !== undefined ? (
                 <div className="flex flex-col gap-1 text-xs text-muted-foreground">
                   <span>
-                    {`Listened ${formatDurationShort(listenedAudioSeconds ?? 0)} · ${audioProgressPercentDisplay}%`}
+                    {`Listened ${formatDurationShort(listenedAudioSeconds ?? 0)} · ${animatedAudioPercent}%`}
                   </span>
-                  <progress
-                    className="h-1.5 w-full overflow-hidden rounded-full bg-muted accent-primary"
-                    value={audioProgressPercentDisplay}
-                    max={100}
-                  >
-                    {audioProgressPercentDisplay}%
-                  </progress>
+                  <Progress
+                    value={animatedAudioPercent}
+                    className="h-1.5"
+                    showShimmer={true}
+                  />
                 </div>
               ) : null}
             </div>

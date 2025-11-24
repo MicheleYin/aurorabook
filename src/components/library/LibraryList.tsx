@@ -8,6 +8,7 @@ import {
   getBookProgressSummary,
   getLibraryBookStatusFromSummary,
 } from "../../lib/utils";
+import { anim, staggerDelay } from "../../lib/animations";
 import { Button } from "../ui/button";
 import { Progress } from "../ui/progress";
 import { LibraryStatusBadge } from "./LibraryStatusBadge";
@@ -36,7 +37,7 @@ export function LibraryList({
 
   return (
     <div className="flex flex-col divide-y divide-border overflow-hidden rounded-xl border">
-      {books.map((book) => {
+      {books.map((book, index) => {
         const isActive = book.id === activeBookId;
         const progressSummary = getBookProgressSummary(book);
         const status = getLibraryBookStatusFromSummary(progressSummary);
@@ -61,8 +62,11 @@ export function LibraryList({
             onClick={() => onOpenBook(book.id)}
             onKeyDown={(event) => handleKeyDown(event, book.id)}
             className={cn(
-              "flex w-full items-center gap-4 px-4 py-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+              "flex w-full items-center gap-4 px-4 py-3 text-left library-item-enter",
+              anim("normal", "colors"),
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
               isActive && "bg-primary/5",
+              staggerDelay(index, 20),
             )}
           >
             <div className="relative h-16 w-12 overflow-hidden rounded-md bg-muted">

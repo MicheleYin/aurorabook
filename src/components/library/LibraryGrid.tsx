@@ -8,6 +8,7 @@ import {
   getBookProgressSummary,
   getLibraryBookStatusFromSummary,
 } from "../../lib/utils";
+import { animPatterns, staggerDelay } from "../../lib/animations";
 import { Button } from "../ui/button";
 import { Progress } from "../ui/progress";
 import { LibraryStatusBadge } from "./LibraryStatusBadge";
@@ -35,8 +36,8 @@ export function LibraryGrid({
   };
 
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
-      {books.map((book) => {
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 library-grid-transition">
+      {books.map((book, index) => {
         const isActive = book.id === activeBookId;
         const progressSummary = getBookProgressSummary(book);
         const status = getLibraryBookStatusFromSummary(progressSummary);
@@ -61,18 +62,33 @@ export function LibraryGrid({
             onClick={() => onOpenBook(book.id)}
             onKeyDown={(event) => handleKeyDown(event, book.id)}
             className={cn(
-              "group flex h-full flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+              "group flex h-full flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm library-item-enter",
+              animPatterns.cardHover,
               isActive && "border-primary shadow-md ring-1 ring-primary/40",
+              isActive && animPatterns.cardActive,
+              staggerDelay(index, 30),
             )}
           >
             <div className="relative aspect-[3/4] w-full overflow-hidden bg-muted">
-              <LibraryStatusBadge status={status} className="absolute left-2 top-2" />
+              <LibraryStatusBadge status={status} className="absolute left-2 top-2 z-10" />
               {book.coverUrl ? (
-                <img
-                  src={book.coverUrl}
-                  alt={`${book.title} cover`}
-                  className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-                />
+                <>
+                  <img
+                    src={book.coverUrl}
+                    alt={`${book.title} cover`}
+                    className={cn("h-full w-full object-cover", animPatterns.imageZoom)}
+                    onLoad={(e) => {
+                      // Remove shimmer when image loads
+                      e.currentTarget.classList.remove(animPatterns.coverShimmer.split(" ")[0]);
+                    }}
+                    onError={(e) => {
+                      // Remove shimmer on error
+                      e.currentTarget.classList.remove(animPatterns.coverShimmer.split(" ")[0]);
+                    }}
+                  />
+                  {/* Shimmer overlay while loading */}
+                  <div className={cn("absolute inset-0 pointer-events-none", animPatterns.coverShimmer)} />
+                </>
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-muted-foreground">
                   <ImageOff className="h-10 w-10" />

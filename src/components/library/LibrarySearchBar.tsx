@@ -1,5 +1,6 @@
 import { ChangeEvent, ReactNode } from "react";
 import { Search, X } from "lucide-react";
+import { anim } from "../../lib/animations";
 
 interface LibrarySearchBarProps {
   value: string;
@@ -30,13 +31,13 @@ export function LibrarySearchBar({
           onChange={handleInputChange}
           disabled={disabled}
           placeholder={placeholder}
-          className="w-full rounded-lg border border-border bg-card py-2 pl-10 pr-10 text-sm outline-none ring-offset-background transition focus:border-primary focus:ring-2 focus:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
+          className={anim("normal", "all", "w-full rounded-lg border border-border bg-card py-2 pl-10 pr-10 text-sm outline-none ring-offset-background focus:border-primary focus:ring-2 focus:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50")}
         />
         {value ? (
           <button
             type="button"
             onClick={() => onChange("")}
-            className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted"
+            className={anim("normal", "colors", "absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-muted")}
             aria-label="Clear search"
           >
             <X className="h-4 w-4" />

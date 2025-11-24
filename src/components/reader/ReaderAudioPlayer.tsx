@@ -14,6 +14,7 @@ import {
 import { Slider } from "../ui/slider";
 import { cn } from "../../lib/utils";
 import { useAudioStateSync } from "../../hooks/useAudioStateSync";
+import { animPatterns, enterExit } from "../../lib/animations";
 
 const formatTime = (value: number) => {
   if (!Number.isFinite(value) || value < 0) {
@@ -97,15 +98,31 @@ export function ReaderAudioPlayer({
   const lastEmitTimestampRef = useRef(0);
   const lastEmittedSecondsRef = useRef(0);
   const isRestoringRef = useRef(false);
+  const hasBeenDismissedRef = useRef(false);
 
-  // Handle enter animation
+  // Handle enter animation - only run if not dismissing and not previously dismissed
   useEffect(() => {
+    // Don't run enter animation if we're dismissing or have been dismissed
+    if (isDismissing || hasBeenDismissedRef.current) {
+      return;
+    }
+    
     setIsDismissing(false);
     // Small delay to trigger CSS animation
     const timer = setTimeout(() => {
-      setIsVisible(true);
+      // Double-check we're still not dismissing before showing
+      if (!isDismissing && !hasBeenDismissedRef.current) {
+        setIsVisible(true);
+      }
     }, 10);
     return () => clearTimeout(timer);
+  }, [bookId, tracks.length, isDismissing]);
+  
+  // Reset dismissed state when book/tracks change (new player instance)
+  useEffect(() => {
+    hasBeenDismissedRef.current = false;
+    setIsDismissing(false);
+    setIsVisible(false);
   }, [bookId, tracks.length]);
 
   const commitSeek = useCallback(
@@ -445,10 +462,16 @@ export function ReaderAudioPlayer({
       // Even if audio isn't ready, emit current time from ref
       emitProgress(currentTimeRef.current);
     }
+    // Mark as dismissed to prevent re-animation
+    hasBeenDismissedRef.current = true;
+    // Start exit animation - set both states immediately
     setIsDismissing(true);
     setIsVisible(false);
-    // Parent component will handle keeping component mounted during exit animation
-    onClose?.();
+    // Wait for exit animation to complete before notifying parent
+    setTimeout(() => {
+      // Parent component will handle unmounting after animation
+      onClose?.();
+    }, 300); // Match animation duration
   }, [emitProgress, onClose]);
 
   // Save progress when component becomes hidden (not just on unmount)
@@ -475,17 +498,25 @@ export function ReaderAudioPlayer({
   return (
     <div
       className={cn(
-        "pointer-events-none fixed inset-x-0 bottom-14 z-50 flex justify-center px-4 pb-6 sm:px-6 transition-all duration-200",
+        "fixed inset-x-0 bottom-14 z-50 flex justify-center px-4 pb-6 sm:px-6",
+        animPatterns.navBar,
         !chromeVisible && "translate-y-12 ",
+        // Only disable pointer events on outer container when dismissing, chrome not visible, or dismissed
+        (isDismissing || !chromeVisible || hasBeenDismissedRef.current) && "pointer-events-none",
+        // Keep hidden after dismissal
+        hasBeenDismissedRef.current && "opacity-0",
       )}
     >
       <div
         className={cn(
-          "pointer-events-auto flex w-full max-w-xl flex-col gap-3 rounded-2xl border border-border bg-background/90 p-4 shadow-lg ring-1 ring-black/5 backdrop-blur transition-all duration-300 ease-out",
-          !chromeVisible && "pointer-events-none",
-          isVisible && !isDismissing
-            ? "translate-y-0 opacity-100 scale-100"
-            : "translate-y-full opacity-0 scale-95",
+          "pointer-events-auto flex w-full max-w-xl flex-col gap-3 rounded-2xl border border-border bg-background/90 p-4 shadow-lg ring-1 ring-black/5 backdrop-blur",
+          animPatterns.audioPlayer,
+          // Apply exit animation when dismissing, otherwise apply enter animation when visible
+          isDismissing || hasBeenDismissedRef.current
+            ? enterExit(false, "slideUpFade")
+            : enterExit(isVisible, "slideUpFade"),
+          // Ensure it stays hidden after dismissal
+          hasBeenDismissedRef.current && "opacity-0 pointer-events-none",
         )}
       >
         <div className="flex flex-row justify-between items-start gap-3">
@@ -548,12 +579,18 @@ export function ReaderAudioPlayer({
                 <Button
                   variant={autoScrollEnabled ? "secondary" : "ghost"}
                   size="icon"
-                  className="rounded-full"
+                  className={cn(
+                    "rounded-full auto-scroll-button-transition",
+                    autoScrollEnabled && "ring-1 ring-primary/20"
+                  )}
                   onClick={() => onAutoScrollToggle(!autoScrollEnabled)}
                   aria-label={autoScrollEnabled ? "Disable auto-scroll" : "Enable auto-scroll"}
                   title={autoScrollEnabled ? "Auto-scroll enabled" : "Auto-scroll disabled"}
                 >
-                  <MoveVertical className="h-4 w-4" />
+                  <MoveVertical className={cn(
+                    "h-4 w-4 transition-transform duration-200",
+                    autoScrollEnabled && "scale-110"
+                  )} />
                 </Button>
               ) : null}
             </div>
