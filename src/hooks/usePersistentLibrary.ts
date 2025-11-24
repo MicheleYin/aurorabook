@@ -1,8 +1,8 @@
 import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
-import ePub from "epubjs";
 import { toast } from "sonner";
+import { parseEpub } from "../lib/epub-parser";
 
 import type {
   AudioTrack,
@@ -290,61 +290,217 @@ export function usePersistentLibrary(): PersistentLibrary {
     }: IngestParams) => {
       ensureEpubSignature(buffer);
 
-      const epubBook = ePub(buffer) as any;
-      await epubBook.opened;
+      const epubBook = await parseEpub(buffer);
 
-      const [metadata, navigation, spine, coverUrl] = await Promise.all([
-        epubBook.loaded.metadata,
-        epubBook.loaded.navigation.catch(() => undefined),
-        epubBook.loaded.spine,
-        epubBook
-          .coverUrl()
-          .catch(() => undefined)
-          .then((url: string | null | undefined) => url || undefined),
-      ]);
-
-      const navMap = buildNavigationMap(navigation?.toc as NavItem[] | undefined);
+      const navMap = buildNavigationMap(epubBook.navigation?.toc as NavItem[] | undefined);
       const newBookId = createId();
 
-      const spineItems = (spine?.items ?? []) as any[];
-      const manifestItems = (epubBook.packaging?.manifest ?? {}) as Record<
-        string,
-        { href: string; type?: string }
-      >;
+      const spineItems = epubBook.spine.items;
+      const manifestItems = epubBook.manifest;
+
+      // Find cover image
+      let coverUrl: string | undefined;
+      try {
+        const coverItem = Object.values(manifestItems).find(
+          (item) => item.id === "cover" || item.href.includes("cover"),
+        );
+        if (coverItem) {
+          coverUrl = await epubBook.createUrl(coverItem.href);
+        }
+      } catch (error) {
+        console.debug("Could not load cover image", error);
+      }
 
       const chapters = await Promise.all(
-        spineItems.map(async (item: any, index: number) => {
+        spineItems.map(async (item, index: number) => {
           try {
-            const section = epubBook.spine.get(item?.href ?? index);
-            const rawHtml = await (section
-              ? section.render(epubBook.load.bind(epubBook))
-              : epubBook.load(item.href));
+            const rawHtml = await epubBook.load(item.href);
             const normalizedHtml = await normalizeChapterContent(rawHtml);
             if (!normalizedHtml) {
               return null;
             }
 
-            const substitutedHtml = section
-              ? normalizedHtml
-              : epubBook.resources?.substitute(
-                  normalizedHtml,
-                  section?.url ?? epubBook.resolve(item.href),
-                ) ?? normalizedHtml;
+            // Get chapter href first (needed for image resolution)
+            const manifestItem = manifestItems[item.id || ""] || 
+              Object.values(manifestItems).find((entry) => entry.href === item.href);
+            const chapterHref = manifestItem?.href ?? item.href ?? "";
+            if (!chapterHref) {
+              return null;
+            }
 
+            // Basic HTML substitution for relative links/images
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(normalizedHtml, "text/html");
+            
+            // Resolve image URLs - convert relative paths to blob URLs
+            const images = doc.querySelectorAll("img[src]");
+            await Promise.all(
+              Array.from(images).map(async (img) => {
+                const src = img.getAttribute("src");
+                if (!src) return;
+                
+                // Skip data URLs and absolute URLs
+                if (src.startsWith("data:") || src.startsWith("http://") || src.startsWith("https://")) {
+                  return;
+                }
+                
+                try {
+                  // Resolve relative image path
+                  // Images are relative to the chapter file location
+                  const imagePath = src;
+                  
+                  // Normalize chapter href - remove leading OEBPS/ if present for path resolution
+                  let normalizedChapterHref = chapterHref;
+                  if (normalizedChapterHref.startsWith("OEBPS/")) {
+                    normalizedChapterHref = normalizedChapterHref.substring(6);
+                  }
+                  
+                  // First, try to resolve relative to chapter directory
+                  let resolvedPath: string;
+                  
+                  // If it's a relative path (not starting with / or OEBPS/), resolve it relative to chapter
+                  if (!imagePath.startsWith("/") && !imagePath.startsWith("OEBPS/") && !imagePath.startsWith("http://") && !imagePath.startsWith("https://")) {
+                    // Build path relative to chapter
+                    const chapterParts = normalizedChapterHref.split("/");
+                    const imageParts = imagePath.split("/");
+                    const chapterDirParts = chapterParts.slice(0, -1);
+                    
+                    const resolvedParts = [...chapterDirParts];
+                    for (const part of imageParts) {
+                      if (part === "..") {
+                        if (resolvedParts.length > 0) {
+                          resolvedParts.pop();
+                        }
+                      } else if (part !== "." && part !== "") {
+                        resolvedParts.push(part);
+                      }
+                    }
+                    
+                    resolvedPath = resolvedParts.join("/");
+                  } else {
+                    // Already absolute or OEBPS/ path
+                    resolvedPath = imagePath;
+                  }
+                  
+                  // Use epubBook.resolve() to add OEBPS/ prefix if needed
+                  resolvedPath = epubBook.resolve(resolvedPath);
+                  console.debug(`Resolving image: ${src} -> ${resolvedPath} (chapter: ${chapterHref})`);
+                  
+                  // Create blob URL for the image
+                  // createUrl will handle the path correctly via getFile
+                  const imageUrl = await epubBook.createUrl(resolvedPath);
+                  console.debug(`Successfully created blob URL for image: ${src}`);
+                  img.setAttribute("src", imageUrl);
+                } catch (error) {
+                  console.error(`Could not resolve image ${src} in chapter ${chapterHref}:`, error);
+                  // Mark it so we know it failed - browser might still try to load it
+                  img.setAttribute("data-image-error", "true");
+                }
+              }),
+            );
+            
+            // Also handle CSS background images
+            const elementsWithBackground = doc.querySelectorAll("[style*='background']");
+            await Promise.all(
+              Array.from(elementsWithBackground).map(async (el) => {
+                const style = el.getAttribute("style");
+                if (!style) return;
+                
+                // Match url(...) patterns in CSS
+                const urlMatches = style.match(/url\(['"]?([^'")]+)['"]?\)/gi);
+                if (!urlMatches) return;
+                
+                let updatedStyle = style;
+                for (const urlMatch of urlMatches) {
+                  const urlMatchContent = urlMatch.match(/url\(['"]?([^'")]+)['"]?\)/i);
+                  if (!urlMatchContent || !urlMatchContent[1]) continue;
+                  
+                  const imageSrc = urlMatchContent[1];
+                  
+                  // Skip data URLs and absolute URLs
+                  if (imageSrc.startsWith("data:") || imageSrc.startsWith("http://") || imageSrc.startsWith("https://")) {
+                    continue;
+                  }
+                  
+                  try {
+                    // Resolve relative image path
+                    let imagePath = imageSrc;
+                    
+                    // Normalize chapter href - remove leading OEBPS/ if present for path resolution
+                    let normalizedChapterHref = chapterHref;
+                    if (normalizedChapterHref.startsWith("OEBPS/")) {
+                      normalizedChapterHref = normalizedChapterHref.substring(6);
+                    }
+                    
+                    // Resolve relative paths properly
+                    if (!imagePath.startsWith("/") && !imagePath.startsWith("OEBPS/") && !imagePath.startsWith("http://") && !imagePath.startsWith("https://")) {
+                      // Build full path by resolving relative to chapter
+                      const chapterParts = normalizedChapterHref.split("/");
+                      const imageParts = imagePath.split("/");
+                      
+                      // Remove filename from chapter parts to get directory
+                      const chapterDirParts = chapterParts.slice(0, -1);
+                      
+                      // Resolve .. and . in image path
+                      const resolvedParts = [...chapterDirParts];
+                      for (const part of imageParts) {
+                        if (part === "..") {
+                          resolvedParts.pop(); // Go up one directory
+                        } else if (part !== "." && part !== "") {
+                          resolvedParts.push(part); // Add directory/file
+                        }
+                      }
+                      
+                      imagePath = resolvedParts.join("/");
+                    }
+                    
+                    // epubBook.createUrl will handle OEBPS/ prefix internally
+                    const imageUrl = await epubBook.createUrl(imagePath);
+                    updatedStyle = updatedStyle.replace(urlMatch, `url('${imageUrl}')`);
+                  } catch (error) {
+                    console.warn(`Could not resolve background image ${imageSrc} in chapter ${chapterHref}:`, error);
+                  }
+                }
+                
+                if (updatedStyle !== style) {
+                  el.setAttribute("style", updatedStyle);
+                }
+              }),
+            );
+
+            const substitutedHtml = new XMLSerializer().serializeToString(doc);
+            
+            // Debug: Check if images have blob URLs before sanitization
+            const tempDoc = new DOMParser().parseFromString(substitutedHtml, "text/html");
+            const tempImages = tempDoc.querySelectorAll("img[src]");
+            tempImages.forEach((img) => {
+              const src = img.getAttribute("src");
+              if (src && src.startsWith("blob:")) {
+                console.debug(`Image has blob URL before sanitization: ${src.substring(0, 50)}...`);
+              }
+            });
+            
             const sanitized = sanitizeChapterHtml(substitutedHtml);
+            
+            // Debug: Check if images still have blob URLs after sanitization
+            const sanitizedDoc = new DOMParser().parseFromString(sanitized, "text/html");
+            const sanitizedImages = sanitizedDoc.querySelectorAll("img[src]");
+            sanitizedImages.forEach((img) => {
+              const src = img.getAttribute("src");
+              if (src && src.startsWith("blob:")) {
+                console.debug(`Image still has blob URL after sanitization: ${src.substring(0, 50)}...`);
+              } else if (src) {
+                console.warn(`Image src changed after sanitization: ${src.substring(0, 50)}...`);
+              } else {
+                console.error(`Image src was removed by sanitization!`);
+              }
+            });
+            
             if (!sanitized.trim()) {
               return null;
             }
 
             const plainText = extractPlainText(sanitized);
-            const manifestItem =
-              (item?.idref && manifestItems[item.idref]) ||
-              Object.values(manifestItems).find((entry) => entry.href === item?.href);
-
-            const chapterHref = manifestItem?.href ?? item?.href ?? item?.url ?? "";
-            if (!chapterHref) {
-              return null;
-            }
 
             const lookupKey = chapterHref.split("#")[0];
             const title =
@@ -354,7 +510,7 @@ export function usePersistentLibrary(): PersistentLibrary {
             const estimatedChapterPages = estimatePagesFromWords(wordCount);
 
             return {
-              id: `${newBookId}-${item?.idref ?? item?.id ?? index}`,
+              id: `${newBookId}-${item.id ?? index}`,
               title,
               contentHtml: sanitized,
               plainText,
@@ -503,19 +659,7 @@ export function usePersistentLibrary(): PersistentLibrary {
             .map(async ([id, entry], trackIndex) => {
               if (!entry.href) return null;
               try {
-                const resolvedHref =
-                  typeof epubBook?.resolve === "function"
-                    ? epubBook.resolve(entry.href, false)
-                    : entry.href;
-                const normalizedHref =
-                  typeof resolvedHref === "string" && resolvedHref.length > 0
-                    ? resolvedHref
-                    : entry.href;
-                const archiveHref =
-                  /^[a-z]+:/i.test(normalizedHref) || normalizedHref.startsWith("/")
-                    ? normalizedHref
-                    : `/${normalizedHref}`;
-                const url = await epubBook.resources.createUrl(archiveHref);
+                const url = await epubBook.createUrl(entry.href);
                 if (typeof url !== "string") {
                   return null;
                 }
@@ -568,16 +712,26 @@ export function usePersistentLibrary(): PersistentLibrary {
       const fallbackTitleResolved =
         fallbackTitle ?? deriveTitleFromPath(sourcePath);
 
-      const subjects = ensureStringArray(metadata.subject);
-      const publisher = metadata.publisher?.trim() || undefined;
+      const subjects = ensureStringArray(epubBook.metadata.subject);
+      const publisher = epubBook.metadata.publisher?.trim() || undefined;
       const publishedYear =
-        extractYear(metadata.pubdate) ?? extractYear(metadata.modified_date);
+        extractYear(epubBook.metadata.pubdate) ?? extractYear(epubBook.metadata.modified_date);
+      
+      // Calculate file size from buffer (this will be the converted EPUB size if re-ingesting after conversion)
       const fileSizeBytes = buffer.byteLength;
+      const fileSizeMB = (fileSizeBytes / (1024 * 1024)).toFixed(2);
+      
+      console.debug(`${LIBRARY_LOG_PREFIX} computed file size`, {
+        sourcePath,
+        fileSizeBytes,
+        fileSizeMB,
+        hasAudioTracks: audioTracks.length > 0,
+      });
 
       const newBook: Book = {
         id: newBookId,
-        title: metadata.title?.trim() || fallbackTitleResolved,
-        author: metadata.creator?.trim() || "Unknown author",
+        title: epubBook.metadata.title?.trim() || fallbackTitleResolved,
+        author: epubBook.metadata.creator?.trim() || "Unknown author",
         chapters: filteredChapters,
         coverUrl,
         sourcePath,
@@ -595,9 +749,23 @@ export function usePersistentLibrary(): PersistentLibrary {
       const normalizedBook = normalizeBookProgressShape(applyDerivedFields(newBook));
 
       setLibrary((prev) => {
-        if (prev.some((book) => book.sourcePath === sourcePath)) {
-          console.debug(`${LIBRARY_LOG_PREFIX} skipped duplicate import`, { sourcePath });
-          return prev;
+        // Check if book with same sourcePath already exists
+        const existingIndex = prev.findIndex((book) => book.sourcePath === sourcePath);
+        if (existingIndex !== -1) {
+          // Replace existing book (for in-place conversion)
+          const oldBook = prev[existingIndex];
+          console.debug(`${LIBRARY_LOG_PREFIX} replacing existing book`, {
+            bookId: normalizedBook.id,
+            title: normalizedBook.title,
+            sourcePath,
+            oldFileSizeBytes: oldBook.fileSizeBytes,
+            newFileSizeBytes: normalizedBook.fileSizeBytes,
+            oldFileSizeMB: oldBook.fileSizeBytes ? (oldBook.fileSizeBytes / (1024 * 1024)).toFixed(2) : "N/A",
+            newFileSizeMB: normalizedBook.fileSizeBytes ? (normalizedBook.fileSizeBytes / (1024 * 1024)).toFixed(2) : "N/A",
+          });
+          const updated = [...prev];
+          updated[existingIndex] = normalizedBook;
+          return updated;
         }
         console.debug(`${LIBRARY_LOG_PREFIX} adding book to library`, {
           bookId: normalizedBook.id,
@@ -688,12 +856,40 @@ export function usePersistentLibrary(): PersistentLibrary {
 
               try {
                 const entryWithMeta = entry as PersistedLibraryEntry & Partial<Book>;
-                const binary = await readFile(entry.sourcePath);
-                const arrayBuffer = binary.buffer.slice(
-                  binary.byteOffset,
-                  binary.byteOffset + binary.byteLength,
-                );
-                await ingestEpub({
+                // Try to get EPUB buffer - first from store (for converted audiobooks), then from file
+                let arrayBuffer: ArrayBuffer | null = null;
+                
+                // If it's a converted audiobook (has audioState), try to get from store first
+                if (entryWithMeta.audioState) {
+                  const { getConvertedEpub } = await import("../lib/epub-store");
+                  arrayBuffer = await getConvertedEpub(entry.sourcePath);
+                }
+                
+                // If not found in store, try to read from file system
+                if (!arrayBuffer) {
+                  try {
+                    const binary = await readFile(entry.sourcePath);
+                    arrayBuffer = binary.buffer.slice(
+                      binary.byteOffset,
+                      binary.byteOffset + binary.byteLength,
+                    );
+                  } catch (fileError) {
+                    // File doesn't exist - if it's a converted audiobook, we already tried store
+                    if (entryWithMeta.audioState && !arrayBuffer) {
+                      console.warn(
+                        `${LIBRARY_LOG_PREFIX} converted audiobook not found in store or file system`,
+                        { sourcePath: entry.sourcePath },
+                      );
+                      toast.error(
+                        `Couldn't restore ${entry.title ?? deriveTitleFromPath(entry.sourcePath)}. The converted audiobook is missing.`,
+                      );
+                      continue;
+                    }
+                    throw fileError;
+                  }
+                }
+                
+                const book = await ingestEpub({
                   buffer: arrayBuffer,
                   sourcePath: entry.sourcePath,
                   fallbackTitle: entry.title,
@@ -701,8 +897,10 @@ export function usePersistentLibrary(): PersistentLibrary {
                   pageCountHint: entryWithMeta.pageCount,
                   audioState: entryWithMeta.audioState,
                 });
+                
                 console.debug(`${LIBRARY_LOG_PREFIX} restored book from store`, {
                   sourcePath: entry.sourcePath,
+                  bookId: book?.id,
                 });
               } catch (restoreError) {
                 console.warn(
@@ -889,4 +1087,5 @@ export function usePersistentLibrary(): PersistentLibrary {
     ingestEpub,
   };
 }
+
 

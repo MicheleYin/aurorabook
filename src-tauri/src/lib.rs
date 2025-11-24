@@ -1,6 +1,13 @@
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
 use kokoros::tts::koko::TTSKokoParallel;
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod kokoro_coreml;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use kokoro_coreml::KokoroCoreMLParallel;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -68,9 +75,100 @@ async fn copy_resource_file(
     Ok(())
 }
 
+// Copy directory recursively (for .mlpackage files which are directories)
+#[tauri::command]
+async fn copy_directory(
+    source_path: String,
+    target_path: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    use std::fs;
+    use std::path::Path;
+    
+    fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
+        fs::create_dir_all(dst)
+            .map_err(|e| format!("Failed to create directory {:?}: {}", dst, e))?;
+        
+        for entry in fs::read_dir(src)
+            .map_err(|e| format!("Failed to read directory {:?}: {}", src, e))? {
+            let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+            let path = entry.path();
+            let file_name = entry.file_name();
+            let target = dst.join(&file_name);
+            
+            if path.is_dir() {
+                copy_dir_all(&path, &target)?;
+            } else {
+                fs::copy(&path, &target)
+                    .map_err(|e| format!("Failed to copy {:?} to {:?}: {}", path, target, e))?;
+            }
+        }
+        Ok(())
+    }
+    
+    // Try to resolve source path from bundled resources if it starts with "resources/"
+    let source = if source_path.starts_with("resources/") {
+        let resource_dir = app
+            .path()
+            .resource_dir()
+            .map_err(|e| format!("Failed to get resource dir: {}", e))?;
+        
+        // Try multiple possible resource locations (dev vs production)
+        let mut possible_paths = vec![
+            resource_dir.join(&source_path),
+            resource_dir.join(&source_path.strip_prefix("resources/").unwrap_or(&source_path)),
+        ];
+        
+        // Add dev mode path if available
+        if let Ok(current_dir) = std::env::current_dir() {
+            possible_paths.push(current_dir.join("src-tauri").join(&source_path));
+        }
+        
+        let mut found_path = None;
+        for path in &possible_paths {
+            if path.exists() {
+                found_path = Some(path.clone());
+                break;
+            }
+        }
+        
+        found_path.ok_or_else(|| {
+            format!(
+                "Resource directory {} not found in any expected location. Checked: {:?}",
+                source_path, possible_paths
+            )
+        })?
+    } else {
+        Path::new(&source_path).to_path_buf()
+    };
+    
+    let target = Path::new(&target_path);
+    
+    if !source.exists() {
+        return Err(format!("Source path does not exist: {}", source.display()));
+    }
+    
+    if source.is_dir() {
+        copy_dir_all(&source, target)
+    } else {
+        // If it's a file, just copy it
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+        }
+        fs::copy(&source, target)
+            .map_err(|e| format!("Failed to copy file: {}", e))?;
+        Ok(())
+    }
+}
+
 // Initialize kokoros engine (cache the instance)
 // Use parallel version for better performance
-type KokorosEngine = Arc<Mutex<Option<TTSKokoParallel>>>;
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+type KokorosEngine = Arc<Mutex<Option<kokoros::tts::koko::TTSKokoParallel>>>;
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+type KokorosEngine = Arc<Mutex<Option<KokoroCoreMLParallel>>>;
 
 #[tauri::command]
 async fn init_kokoros_engine(
@@ -79,33 +177,28 @@ async fn init_kokoros_engine(
     num_instances: Option<usize>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    // Use parallel version with multiple instances for better throughput
-    // Default to 4 instances (best total processing time as per kokoros benchmarks)
-    // With GPU, can handle even more instances efficiently
     let instances = num_instances.unwrap_or(4);
     
-    // On macOS, try to enable CoreML execution provider for GPU/ANE acceleration
-    // Note: kokoros might not expose this configuration, so we rely on ONNX Runtime defaults
-    // If GPU/ANE aren't being used, kokoros may need to be updated to support CoreML EP configuration
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
-        // Set environment variable to hint ONNX Runtime to use CoreML if available
-        // This is a workaround - ideally kokoros would expose CoreML EP configuration
-        std::env::set_var("ORT_ENABLE_COREML", "1");
+        // Use CoreML models directly for optimal ANE/GPU utilization
+        // model_path should point to directory containing .mlpackage files
+        let kokoros = KokoroCoreMLParallel::new_with_instances(&model_path, &voices_path, instances)
+            .await
+            .map_err(|e| format!("Failed to initialize CoreML engine: {}", e))?;
+        
+        app.manage(Arc::new(Mutex::new(Some(kokoros))));
+        
+        Ok(format!("Initialized CoreML engine with {} instances. Using direct CoreML for optimal ANE/GPU acceleration.", instances))
     }
     
-    let kokoros = TTSKokoParallel::new_with_instances(&model_path, &voices_path, instances).await;
-    
-    // Store in app state
-    app.manage(Arc::new(Mutex::new(Some(kokoros))));
-    
-    // Return diagnostic info about execution providers
-    #[cfg(target_os = "macos")]
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     {
-        Ok(format!("Initialized kokoros with {} instances. Note: CoreML EP configuration may not be exposed by kokoros. GPU/ANE usage depends on ONNX Runtime build and kokoros implementation.", instances))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
+        // Use ONNX Runtime with CUDA for non-Apple platforms
+        let kokoros = kokoros::tts::koko::TTSKokoParallel::new_with_instances(&model_path, &voices_path, instances).await;
+        
+        app.manage(Arc::new(Mutex::new(Some(kokoros))));
+        
         Ok(format!("Initialized kokoros with {} instances", instances))
     }
 }
@@ -120,105 +213,33 @@ async fn generate_tts_cached(
     app: tauri::AppHandle,
 ) -> Result<Vec<u8>, String> {
     let engine: tauri::State<'_, KokorosEngine> = app.state();
-    let kokoros_guard = engine.lock().map_err(|e| format!("Lock error: {}", e))?;
+    // Handle poisoned locks gracefully
+    let kokoros_guard = engine.lock().unwrap_or_else(|e| e.into_inner());
     
-    let kokoros = kokoros_guard.as_ref()
-        .ok_or_else(|| "Kokoros engine not initialized".to_string())?;
-    
-    // Use worker_id to distribute load across instances (round-robin if not specified)
-    let worker = worker_id.unwrap_or(0);
-    let model_instance = kokoros.get_model_instance(worker);
-    
-    // Generate audio using cached engine with specific instance
-    // tts_raw_audio_with_instance returns Vec<f32> (24kHz sample rate)
-    let audio_samples = kokoros
-        .tts_raw_audio_with_instance(
-            &text,
-            language.as_deref().unwrap_or("en"),
-            &voice_id,
-            speed.unwrap_or(1.0),
-            None, // initial_silence
-            None, // request_id
-            None, // instance_id
-            None, // chunk_number
-            model_instance,
-        )
-        .map_err(|e| format!("Failed to generate audio: {}", e))?;
-    
-    // Convert Vec<f32> to 16-bit PCM bytes
-    // Kokoros outputs f32 samples in range [-1.0, 1.0]
-    let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
-    for sample in audio_samples {
-        let clamped = sample.max(-1.0).min(1.0);
-        let pcm_value = if clamped < 0.0 {
-            (clamped * 32768.0) as i16
-        } else {
-            (clamped * 32767.0) as i16
-        };
-        pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
-    }
-    
-    Ok(pcm_bytes)
-}
-
-// Generate TTS for multiple texts in parallel
-#[tauri::command]
-async fn generate_tts_batch(
-    texts: Vec<String>,
-    voice_id: String,
-    language: Option<String>,
-    speed: Option<f32>,
-    app: tauri::AppHandle,
-) -> Result<Vec<Vec<u8>>, String> {
-    let engine: tauri::State<'_, KokorosEngine> = app.state();
-    
-    // Clone kokoros before releasing the lock so we can move it into async tasks
-    let kokoros = {
-        let kokoros_guard = engine.lock().map_err(|e| format!("Lock error: {}", e))?;
-        kokoros_guard.as_ref()
-            .ok_or_else(|| "Kokoros engine not initialized".to_string())?
-            .clone()
-    };
-    
-    // Process texts in parallel using different instances
-    let mut handles = Vec::new();
-    for (idx, text) in texts.iter().enumerate() {
-        let kokoros_clone = kokoros.clone();
-        let text_clone = text.clone();
-        let voice_id_clone = voice_id.clone();
-        let language_clone = language.clone();
-        let speed_val = speed.unwrap_or(1.0);
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    {
+        let kokoros = kokoros_guard.as_ref()
+            .ok_or_else(|| "Kokoros engine not initialized".to_string())?;
         
-        let handle = tokio::spawn(async move {
-            // Round-robin across available instances
-            // Use modulo 4 to distribute evenly (we initialize with 4 instances)
-            // This ensures even distribution across all parallel instances
-            let worker = idx % 4; // Distribute across 4 instances
-            let model_instance = kokoros_clone.get_model_instance(worker);
-            
-            kokoros_clone
-                .tts_raw_audio_with_instance(
-                    &text_clone,
-                    language_clone.as_deref().unwrap_or("en"),
-                    &voice_id_clone,
-                    speed_val,
-                    None,
-                    None,
-                    None,
-                    None,
-                    model_instance,
-                )
-                .map_err(|e| format!("Failed to generate audio: {}", e))
-        });
-        handles.push(handle);
-    }
-    
-    // Collect results
-    let mut results = Vec::new();
-    for handle in handles {
-        let audio_samples = handle.await
-            .map_err(|e| format!("Task error: {}", e))?
-            .map_err(|e| e.to_string())?;
+        // Use worker_id to distribute load across instances (round-robin if not specified)
+        let worker = worker_id.unwrap_or(0);
+        let model_instance = kokoros.get_model_instance(worker);
+        
+        // Generate audio using cached engine with specific instance
+        // tts_raw_audio_with_instance returns Vec<f32> (24kHz sample rate)
+        let audio_samples = kokoros
+            .tts_raw_audio_with_instance(
+                &text,
+                language.as_deref().unwrap_or("en"),
+                &voice_id,
+                speed.unwrap_or(1.0),
+                None, // initial_silence
+                None, // request_id
+                None, // instance_id
+                None, // chunk_number
+                model_instance,
+            )
+            .map_err(|e| format!("Failed to generate audio: {}", e))?;
         
         // Convert Vec<f32> to 16-bit PCM bytes
         let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
@@ -231,10 +252,210 @@ async fn generate_tts_batch(
             };
             pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
         }
-        results.push(pcm_bytes);
+        
+        Ok(pcm_bytes)
     }
     
-    Ok(results)
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        // Extract the instance Arc before dropping the guard
+        let model_instance_arc = {
+            let kokoros = kokoros_guard.as_ref()
+                .ok_or_else(|| "Kokoros engine not initialized".to_string())?;
+            
+            // Use worker_id to distribute load across instances
+            let worker = worker_id.unwrap_or(0);
+            kokoros.get_model_instance(worker)
+        };
+        // Guard is dropped here
+        
+        // Generate audio using CoreML - use the sync trait method
+        use kokoro_coreml::TTSInstance;
+        let audio_samples = {
+            let instance_guard = model_instance_arc.lock().unwrap_or_else(|e| e.into_inner());
+            instance_guard.tts_raw_audio_with_instance(
+                &text,
+                language.as_deref().unwrap_or("en"),
+                &voice_id,
+                speed.unwrap_or(1.0),
+                None,
+                None,
+                None,
+                None,
+                &*instance_guard,
+            )
+        }
+        .map_err(|e| format!("Failed to generate audio: {}", e))?;
+        
+        // Convert Vec<f32> to 16-bit PCM bytes
+        let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
+        for sample in audio_samples {
+            let clamped = sample.max(-1.0).min(1.0);
+            let pcm_value = if clamped < 0.0 {
+                (clamped * 32768.0) as i16
+            } else {
+                (clamped * 32767.0) as i16
+            };
+            pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
+        }
+        
+        Ok(pcm_bytes)
+    }
+}
+
+// Generate TTS for multiple texts in parallel
+#[tauri::command]
+async fn generate_tts_batch(
+    texts: Vec<String>,
+    voice_id: String,
+    language: Option<String>,
+    speed: Option<f32>,
+    app: tauri::AppHandle,
+) -> Result<Vec<Vec<u8>>, String> {
+    // Verify engine is initialized before spawning tasks
+    {
+        let engine: tauri::State<'_, KokorosEngine> = app.state();
+        // Handle poisoned locks gracefully
+        let kokoros_guard = engine.lock().unwrap_or_else(|e| e.into_inner());
+        kokoros_guard.as_ref()
+            .ok_or_else(|| "Kokoros engine not initialized".to_string())?;
+    }
+    
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    {
+        // Process texts in parallel using different instances
+        let mut handles = Vec::new();
+        for (idx, text) in texts.iter().enumerate() {
+            let app_clone = app.clone();
+            let text_clone = text.clone();
+            let voice_id_clone = voice_id.clone();
+            let language_clone = language.clone();
+            let speed_val = speed.unwrap_or(1.0);
+            
+            let handle = tokio::spawn(async move {
+                let engine: tauri::State<'_, KokorosEngine> = app_clone.state();
+                // Handle poisoned locks gracefully
+                let kokoros_guard = engine.lock().unwrap_or_else(|e| e.into_inner());
+                let kokoros = kokoros_guard.as_ref()
+                    .ok_or_else(|| "Kokoros engine not initialized".to_string())?;
+                
+                let worker = idx % 4;
+                let model_instance = kokoros.get_model_instance(worker);
+                
+                kokoros
+                    .tts_raw_audio_with_instance(
+                        &text_clone,
+                        language_clone.as_deref().unwrap_or("en"),
+                        &voice_id_clone,
+                        speed_val,
+                        None,
+                        None,
+                        None,
+                        None,
+                        model_instance,
+                    )
+                    .map_err(|e| format!("Failed to generate audio: {}", e))
+            });
+            handles.push(handle);
+        }
+        
+        // Collect results
+        let mut results = Vec::new();
+        for handle in handles {
+            let audio_samples: Vec<f32> = handle.await
+                .map_err(|e: tokio::task::JoinError| format!("Task error: {}", e))?
+                .map_err(|e: String| e)?;
+            
+            // Convert Vec<f32> to 16-bit PCM bytes
+            let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
+            for sample in audio_samples {
+                let clamped = sample.max(-1.0).min(1.0);
+                let pcm_value = if clamped < 0.0 {
+                    (clamped * 32768.0) as i16
+                } else {
+                    (clamped * 32767.0) as i16
+                };
+                pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
+            }
+            results.push(pcm_bytes);
+        }
+        
+        Ok(results)
+    }
+    
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        use kokoro_coreml::TTSInstance;
+        
+        // Process texts in parallel using different instances
+        let mut handles = Vec::new();
+        for (idx, text) in texts.iter().enumerate() {
+            let app_clone = app.clone();
+            let text_clone = text.clone();
+            let voice_id_clone = voice_id.clone();
+            let language_clone = language.clone();
+            let speed_val = speed.unwrap_or(1.0);
+            
+            let handle = tokio::spawn(async move {
+                // Extract the instance Arc before dropping the guard
+                let instance_arc = {
+                    let engine: tauri::State<'_, KokorosEngine> = app_clone.state();
+                    // Handle poisoned locks gracefully
+                    let kokoros_guard = engine.lock().unwrap_or_else(|e| e.into_inner());
+                    let kokoros = kokoros_guard.as_ref()
+                        .ok_or_else(|| "Kokoros engine not initialized".to_string())?;
+                    
+                    let worker = idx % 4;
+                    kokoros.get_instance(worker)
+                };
+                // Guard is dropped here
+                
+                // Use the sync trait method to avoid Send issues
+                use kokoro_coreml::TTSInstance;
+                let audio_samples: Vec<f32> = {
+                    let instance_guard = instance_arc.lock().unwrap_or_else(|e| e.into_inner());
+                    instance_guard.tts_raw_audio_with_instance(
+                        &text_clone,
+                        language_clone.as_deref().unwrap_or("en"),
+                        &voice_id_clone,
+                        speed_val,
+                        None,
+                        None,
+                        None,
+                        None,
+                        &*instance_guard,
+                    )
+                }
+                .map_err(|e: String| e)?;
+                
+                Ok::<Vec<f32>, String>(audio_samples)
+            });
+            handles.push(handle);
+        }
+        
+        // Collect results
+        let mut results = Vec::new();
+        for handle in handles {
+            let audio_samples: Vec<f32> = handle.await
+                .map_err(|e: tokio::task::JoinError| format!("Task error: {}", e))?
+                .map_err(|e: String| e)?;
+            
+            // Convert Vec<f32> to 16-bit PCM bytes
+            let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
+            for sample in audio_samples {
+                let clamped = sample.max(-1.0).min(1.0);
+                let pcm_value = if clamped < 0.0 {
+                    (clamped * 32768.0) as i16
+                } else {
+                    (clamped * 32767.0) as i16
+                };
+                pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
+            }
+            results.push(pcm_bytes);
+        }
+        
+        Ok(results)
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -249,7 +470,8 @@ pub fn run() {
             init_kokoros_engine,
             generate_tts_cached,
             generate_tts_batch,
-            copy_resource_file
+            copy_resource_file,
+            copy_directory
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

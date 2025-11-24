@@ -11,8 +11,11 @@
     { "identifier": "fs:allow-read", "allow": [{ "path": "$APPDATA/**" }, { "path": "$APPLOCALDATA/**" }, { "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
     { "identifier": "fs:allow-read-file", "allow": [{ "path": "$APPDATA/**" }, { "path": "$APPLOCALDATA/**" }, { "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
     { "identifier": "fs:allow-read-text-file", "allow": [{ "path": "$APPDATA/**" }, { "path": "$APPLOCALDATA/**" }, { "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
+    { "identifier": "fs:allow-read-dir", "allow": [{ "path": "$APPDATA/**" }, { "path": "$APPLOCALDATA/**" }, { "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
     { "identifier": "fs:allow-write-file", "allow": [{ "path": "$APPDATA/**" }, { "path": "$APPLOCALDATA/**" }, { "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
     { "identifier": "fs:allow-write", "allow": [{ "path": "$APPDATA/**" }, { "path": "$APPLOCALDATA/**" }, { "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
+    { "identifier": "fs:allow-mkdir", "allow": [{ "path": "$APPDATA/**" }, { "path": "$APPLOCALDATA/**" }, { "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
+    { "identifier": "fs:allow-appdata-write-recursive", "allow": [{ "path": "$APPDATA/**" }] },
     "store:default",
     "opener:default"
   ]

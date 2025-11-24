@@ -93,13 +93,44 @@ function App() {
         },
       });
       
+      if (!convertedBuffer || convertedBuffer.byteLength === 0) {
+        throw new Error("Conversion produced an empty buffer");
+      }
+      
+      // Determine the new sourcePath for the converted audiobook
+      const newSourcePath = book.sourcePath.replace(/\.epub$/, "-audiobook.epub");
+      
+      // Store converted EPUB buffer in Tauri store (using the new sourcePath)
+      try {
+        const { storeConvertedEpub } = await import("./lib/epub-store");
+        console.debug("Storing converted EPUB", {
+          sourcePath: newSourcePath,
+          bufferSize: convertedBuffer.byteLength,
+        });
+        await storeConvertedEpub(newSourcePath, convertedBuffer);
+        console.debug("Successfully stored converted EPUB to cache");
+      } catch (storeError) {
+        console.error("Failed to store converted EPUB to cache", {
+          error: storeError,
+          sourcePath: newSourcePath,
+          bufferSize: convertedBuffer.byteLength,
+        });
+        // Don't fail the conversion if storage fails - the EPUB is still valid
+        // But warn the user that export might not work
+        toast.warning("Conversion complete, but caching failed", {
+          description: storeError instanceof Error 
+            ? `The audiobook was created but caching failed: ${storeError.message}. Export may not work.`
+            : "The audiobook was created but may not be exportable. The conversion completed successfully.",
+        });
+      }
+      
       // Remove the original book from library
       setLibrary((prev) => prev.filter((b) => b.id !== book.id));
       
       // Re-ingest the converted EPUB
       await ingestEpub({
         buffer: convertedBuffer,
-        sourcePath: book.sourcePath.replace(/\.epub$/, "-audiobook.epub"),
+        sourcePath: newSourcePath,
         fallbackTitle: book.title,
         progress: book.progress,
         pageCountHint: book.pageCount,
@@ -174,29 +205,83 @@ function App() {
       );
       
       // Convert EPUB to audiobook
-      const convertedBuffer = await convertEpubToAudiobook(buffer, book.chapters, {
+      console.debug("Starting EPUB conversion", {
+        sourcePath: book.sourcePath,
+        chaptersCount: book.chapters.length,
         voiceId,
-        signal: abortController.signal,
-        onProgress: (progress) => {
-          setConversionProgress(progress);
-          setBookConversionProgress((prev) => ({
-            ...prev,
-            [bookId]: progress,
-          }));
-        },
       });
       
-      // Remove the original book from library
-      setLibrary((prev) => prev.filter((b) => b.id !== book.id));
+      let convertedBuffer: ArrayBuffer;
+      try {
+        convertedBuffer = await convertEpubToAudiobook(buffer, book.chapters, {
+          voiceId,
+          signal: abortController.signal,
+          onProgress: (progress) => {
+            setConversionProgress(progress);
+            setBookConversionProgress((prev) => ({
+              ...prev,
+              [bookId]: progress,
+            }));
+          },
+        });
+      } catch (conversionError) {
+        console.error("EPUB conversion failed", conversionError);
+        throw conversionError; // Re-throw to be caught by outer catch
+      }
       
-      // Re-ingest the converted EPUB
+      console.debug("Conversion completed, buffer received", {
+        sourcePath: book.sourcePath,
+        bufferSize: convertedBuffer.byteLength,
+        bufferSizeMB: (convertedBuffer.byteLength / (1024 * 1024)).toFixed(2),
+        bufferIsValid: convertedBuffer && convertedBuffer.byteLength > 0,
+      });
+      
+      if (!convertedBuffer || convertedBuffer.byteLength === 0) {
+        throw new Error("Conversion produced an empty buffer");
+      }
+      
+      // Store converted EPUB buffer in Tauri store (keyed by sourcePath for stability)
+      console.debug("About to store converted EPUB", {
+        sourcePath: book.sourcePath,
+        bufferSize: convertedBuffer.byteLength,
+        bufferSizeMB: (convertedBuffer.byteLength / (1024 * 1024)).toFixed(2),
+      });
+      
+      try {
+        const { storeConvertedEpub } = await import("./lib/epub-store");
+        console.debug("Import successful, calling storeConvertedEpub", {
+          sourcePath: book.sourcePath,
+        });
+        await storeConvertedEpub(book.sourcePath, convertedBuffer);
+        console.debug("Successfully stored converted EPUB to cache");
+      } catch (storeError) {
+        console.error("Failed to store converted EPUB to cache", {
+          error: storeError,
+          sourcePath: book.sourcePath,
+          bufferSize: convertedBuffer.byteLength,
+          errorMessage: storeError instanceof Error ? storeError.message : String(storeError),
+          errorStack: storeError instanceof Error ? storeError.stack : undefined,
+        });
+        // Don't fail the conversion if storage fails - the EPUB is still valid
+        // But warn the user that export might not work
+        toast.warning("Conversion complete, but caching failed", {
+          description: storeError instanceof Error 
+            ? `The audiobook was created but caching failed: ${storeError.message}. Export may not work.`
+            : "The audiobook was created but may not be exportable. The conversion completed successfully.",
+        });
+      }
+      
+      // Update the book in place instead of removing and re-adding
+      // Re-ingest to update audio tracks and other metadata
       await ingestEpub({
         buffer: convertedBuffer,
-        sourcePath: book.sourcePath.replace(/\.epub$/, "-audiobook.epub"),
+        sourcePath: book.sourcePath, // Keep same path - convert in place
         fallbackTitle: book.title,
         progress: book.progress,
         pageCountHint: book.pageCount,
       });
+      
+      // The book will be updated in the library by ingestEpub
       
       setConversionProgress(null);
       setBookConversionProgress((prev) => {
@@ -964,8 +1049,7 @@ function App() {
     }
   }, [importFromDialog, isImporting]);
 
-  const handleDeleteBook = useCallback(
-    (bookId: string) => {
+  const handleDeleteBook = useCallback(async (bookId: string) => {
       // If this book is currently being converted, cancel the conversion
       if (convertingBookIdRef.current === bookId && conversionAbortControllerRef.current) {
         conversionAbortControllerRef.current.abort();
@@ -990,6 +1074,18 @@ function App() {
       
       setLibrary((prev) => prev.filter((book) => book.id !== bookId));
       setDetailBookId(null);
+
+      // Clean up stored converted EPUB if it exists
+      // Find the book first to get its sourcePath
+      const bookToDelete = library.find((book) => book.id === bookId);
+      if (bookToDelete) {
+        try {
+          const { removeConvertedEpub } = await import("./lib/epub-store");
+          await removeConvertedEpub(bookToDelete.sourcePath);
+        } catch (error) {
+          console.warn("Failed to remove stored EPUB:", error);
+        }
+      }
 
       if (activeBookId === bookId) {
         setActiveBookId(undefined);

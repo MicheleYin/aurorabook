@@ -99,12 +99,60 @@ export function BookDetailDialog({
           return;
         }
 
-        // Read the original file
-        const binary = await readFile(book.sourcePath);
-        const arrayBuffer = binary.buffer.slice(
-          binary.byteOffset,
-          binary.byteOffset + binary.byteLength,
-        );
+        // Try to get EPUB buffer - first from store (for converted audiobooks), then from file
+        let arrayBuffer: ArrayBuffer | null = null;
+        
+        // If it's a converted audiobook, try to get from store first
+        if (book.audioTracks.length > 0) {
+          const { getConvertedEpub } = await import("../../lib/epub-store");
+          console.debug("Attempting to retrieve converted EPUB from store", {
+            sourcePath: book.sourcePath,
+            audioTracksCount: book.audioTracks.length,
+          });
+          arrayBuffer = await getConvertedEpub(book.sourcePath);
+          
+          if (arrayBuffer) {
+            console.debug("Successfully retrieved converted EPUB from store", {
+              sizeBytes: arrayBuffer.byteLength,
+            });
+          } else {
+            console.warn("Converted EPUB not found in store, falling back to file system", {
+              sourcePath: book.sourcePath,
+            });
+          }
+        }
+        
+        // If not found in store, try to read from file
+        if (!arrayBuffer) {
+          try {
+            console.debug("Reading EPUB from file system", {
+              sourcePath: book.sourcePath,
+            });
+            const binary = await readFile(book.sourcePath);
+            arrayBuffer = binary.buffer.slice(
+              binary.byteOffset,
+              binary.byteOffset + binary.byteLength,
+            );
+            console.debug("Successfully read EPUB from file system", {
+              sizeBytes: arrayBuffer.byteLength,
+            });
+          } catch (error) {
+            console.error("Failed to read EPUB from file system", error);
+            toast.error("Cannot export EPUB", {
+              description: book.audioTracks.length > 0
+                ? "The converted EPUB file is not available. The conversion may have failed or the file was removed."
+                : "The EPUB file is not available. Please re-import the book.",
+            });
+            return;
+          }
+        }
+        
+        if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+          toast.error("Cannot export EPUB", {
+            description: "The EPUB buffer is empty or invalid.",
+          });
+          return;
+        }
 
         // Show save dialog
         const filePath = await save({

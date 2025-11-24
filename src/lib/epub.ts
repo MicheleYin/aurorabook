@@ -117,10 +117,18 @@ export const sanitizeChapterHtml = (html: string) => {
     .replace(/<\?xml[^>]*\?>/gi, "");
 
   try {
+    // Configure DOMPurify to allow blob URLs in img src attributes
+    // This is necessary because we convert relative image paths to blob URLs
     return DOMPurify.sanitize(stripped, {
       USE_PROFILES: { html: true },
       ADD_TAGS: ["svg", "math", "path", "g"],
       ADD_ATTR: ["xmlns", "viewBox", "xlink:href", "xml:lang"],
+      // Explicitly allow blob: and data: URLs
+      ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|blob|data):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+      // Keep all content
+      KEEP_CONTENT: true,
+      // Allow all standard HTML attributes on img tags including src with blob URLs
+      ALLOW_DATA_ATTR: true,
     });
   } catch (error) {
     console.warn("DOMPurify failed to sanitize chapter, falling back.", error);
@@ -291,8 +299,14 @@ export const parseSmilFile = async (
     const beginSeconds = parseSmilTime(clipBegin);
     const endSeconds = parseSmilTime(clipEnd);
 
-    // Normalize audio src (remove ../ if present, keep relative path)
-    const normalizedAudioSrc = audioSrc.replace(/^\.\.\//, "");
+    // Normalize audio src - keep the path as-is if it matches manifest format
+    // Paths in SMIL files should match manifest entries exactly
+    // epubjs will resolve them correctly if they match
+    let normalizedAudioSrc = audioSrc.replace(/^\.\.\//, "");
+    // Remove leading slash if present (epubjs handles paths without leading slash)
+    if (normalizedAudioSrc.startsWith("/")) {
+      normalizedAudioSrc = normalizedAudioSrc.substring(1);
+    }
 
     segments.push({
       textElementId,
@@ -311,8 +325,9 @@ export const parseSmilFile = async (
  */
 export const buildAudioSyncMap = async (
   epubBook: {
-    resources: { get: (href: string) => Promise<unknown> };
+    resources?: { get: (href: string) => Promise<unknown> };
     load?: (href: string) => Promise<unknown>;
+    getFile?: (href: string) => Promise<ArrayBuffer | null>;
   },
   chapters: Array<{ href: string }>,
 ): Promise<AudioSyncMap | undefined> => {
@@ -320,41 +335,85 @@ export const buildAudioSyncMap = async (
 
   // Find and parse all SMIL files
   for (const chapter of chapters) {
-    const chapterHref = chapter.href.split("#")[0];
+    let chapterHref = chapter.href.split("#")[0];
+    // Normalize chapterHref - remove leading OEBPS/ if present to avoid double prefix
+    // epubjs may prepend OEBPS/ internally, so we need to handle paths consistently
+    if (chapterHref.startsWith("OEBPS/")) {
+      chapterHref = chapterHref.substring(6); // Remove "OEBPS/"
+    }
+    // Also handle absolute paths
+    if (chapterHref.startsWith("/OEBPS/")) {
+      chapterHref = chapterHref.substring(7); // Remove "/OEBPS/"
+    }
+    
     // Try both with and without .smil extension, and handle different path formats
+    // Try relative paths first (without OEBPS/), then with OEBPS/ prefix
     const smilHrefs = [
-      `${chapterHref}.smil`,
+      `${chapterHref}.smil`, // Try relative path first
       chapterHref.replace(/\.xhtml$/, ".smil"),
       chapterHref.replace(/\.html$/, ".smil"),
+      `OEBPS/${chapterHref}.smil`, // Try with OEBPS/ prefix
+      `OEBPS/${chapterHref.replace(/\.xhtml$/, ".smil")}`,
+      `OEBPS/${chapterHref.replace(/\.html$/, ".smil")}`,
     ];
 
     let parsed = false;
     for (const smilHref of smilHrefs) {
       try {
-        // Use load() method (same as chapters) - it returns a string directly
+        // Use load() method (preferred) - it returns a string directly
         let smilContent: unknown;
         if (epubBook.load) {
           try {
             smilContent = await epubBook.load(smilHref);
           } catch (loadError) {
-            // If load() fails, try resources.get() as fallback
-            try {
-              smilContent = await epubBook.resources.get(smilHref);
-            } catch (resourcesError) {
-              console.debug("Failed to load SMIL via both methods:", smilHref, {
-                loadError,
-                resourcesError,
-              });
+            // If load() fails, try getFile() as fallback
+            if (epubBook.getFile) {
+              try {
+                const buffer = await epubBook.getFile(smilHref);
+                if (buffer) {
+                  smilContent = decodeBufferToString(buffer);
+                } else {
+                  continue;
+                }
+              } catch (fileError) {
+                console.debug("Failed to load SMIL via getFile:", smilHref, fileError);
+                continue;
+              }
+            } else if (epubBook.resources?.get) {
+              // Fallback to resources.get() for epubjs compatibility
+              try {
+                smilContent = await epubBook.resources.get(smilHref);
+              } catch (resourcesError) {
+                console.debug("Failed to load SMIL via resources.get:", smilHref, resourcesError);
+                continue;
+              }
+            } else {
+              console.debug("No available method to load SMIL:", smilHref);
               continue;
             }
           }
-        } else {
+        } else if (epubBook.getFile) {
+          try {
+            const buffer = await epubBook.getFile(smilHref);
+            if (buffer) {
+              smilContent = decodeBufferToString(buffer);
+            } else {
+              continue;
+            }
+          } catch (fileError) {
+            console.debug("Failed to load SMIL file:", smilHref, fileError);
+            continue;
+          }
+        } else if (epubBook.resources?.get) {
           try {
             smilContent = await epubBook.resources.get(smilHref);
           } catch (resourcesError) {
             console.debug("Failed to load SMIL file:", smilHref, resourcesError);
             continue;
           }
+        } else {
+          console.debug("No available method to load SMIL:", smilHref);
+          continue;
         }
 
         if (smilContent) {

@@ -37,7 +37,13 @@ tokio = { version = "1", features = ["full"] }
 kokoros = { git = "https://github.com/lucasjinreal/Kokoros", package = "kokoros", features = ["cuda"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
-# Use default features on Apple platforms - ONNX Runtime should auto-detect CoreML
-# CoreML Execution Provider will use GPU/Neural Engine automatically if available
+# CoreML direct integration for optimal ANE/GPU utilization
+# Using objc2_core_ml for CoreML framework bindings
+objc2 = "0.4"
+objc2-core-ml = "0.3"
+objc2-foundation = "0.3"
+# ZIP file support for voices archive
+zip = "0.6"
+# Keep kokoros as fallback for non-CoreML paths
 kokoros = { git = "https://github.com/lucasjinreal/Kokoros", package = "kokoros", default-features = true }
 
