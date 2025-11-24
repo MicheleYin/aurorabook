@@ -298,14 +298,55 @@ export function usePersistentLibrary(): PersistentLibrary {
       const spineItems = epubBook.spine.items;
       const manifestItems = epubBook.manifest;
 
-      // Find cover image
+      // Find cover image using multiple methods (in order of preference)
       let coverUrl: string | undefined;
       try {
-        const coverItem = Object.values(manifestItems).find(
-          (item) => item.id === "cover" || item.href.includes("cover"),
-        );
+        let coverItem: typeof manifestItems[string] | undefined;
+        
+        // Method 1: Check metadata for cover reference (<meta name="cover" content="..."/>)
+        if (epubBook.metadata.coverId) {
+          coverItem = manifestItems[epubBook.metadata.coverId];
+          if (coverItem) {
+            console.debug("[EPUB] Found cover via metadata coverId:", epubBook.metadata.coverId);
+          }
+        }
+        
+        // Method 2: Check for items with properties="cover-image"
+        if (!coverItem) {
+          coverItem = Object.values(manifestItems).find(
+            (item) => item.properties === "cover-image" || item.properties?.includes("cover-image"),
+          );
+          if (coverItem) {
+            console.debug("[EPUB] Found cover via cover-image property:", coverItem.id);
+          }
+        }
+        
+        // Method 3: Check for items with id="cover"
+        if (!coverItem) {
+          coverItem = manifestItems["cover"];
+          if (coverItem) {
+            console.debug("[EPUB] Found cover via id='cover':", coverItem.id);
+          }
+        }
+        
+        // Method 4: Check for items with "cover" in href (but only if it's an image)
+        if (!coverItem) {
+          coverItem = Object.values(manifestItems).find(
+            (item) => {
+              const isImage = item.type?.startsWith("image/");
+              return isImage && (item.href.includes("cover") || item.id.includes("cover"));
+            },
+          );
+          if (coverItem) {
+            console.debug("[EPUB] Found cover via href/id containing 'cover':", coverItem.id);
+          }
+        }
+        
         if (coverItem) {
           coverUrl = await epubBook.createUrl(coverItem.href);
+          console.debug("[EPUB] Successfully created cover URL for:", coverItem.href);
+        } else {
+          console.debug("[EPUB] No cover image found in EPUB");
         }
       } catch (error) {
         console.debug("Could not load cover image", error);

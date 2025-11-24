@@ -28,18 +28,15 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 lame = "0.1"
 # GPU acceleration configuration:
-# - CUDA: For NVIDIA GPUs (Linux/Windows) - enables GPU acceleration
+# - CUDA: For NVIDIA GPUs (Linux/Windows) - enables GPU acceleration via kokoros cuda feature
 # - CoreML: For Apple devices (macOS/iOS/iPadOS) - ONNX Runtime uses CoreML Execution Provider
 #   CoreML automatically leverages GPU and Neural Engine when available on Apple devices
-#   Note: ONNX Runtime doesn't support Metal directly, but CoreML uses Metal under the hood
-#   On Apple platforms, kokoros will use default features which should include CoreML if available
-#   If kokoros doesn't expose CoreML feature, ONNX Runtime may auto-detect and use CoreML
-[target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
-kokoros = { git = "https://github.com/lucasjinreal/Kokoros", package = "kokoros", features = ["cuda"] }
+#   Note: Using local kokoros crate with CoreML EP support built-in for macOS/iOS
+# Use local kokoros crate (modified to support CoreML EP on macOS/iOS)
+# CoreML EP is automatically used on macOS/iOS via code changes in ort_base.rs
+kokoros = { path = "../Kokoros/kokoros", package = "kokoros", default-features = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
-# Use kokoros crate - it uses ONNX Runtime with CoreML Execution Provider automatically on macOS/iOS
-kokoros = { git = "https://github.com/lucasjinreal/Kokoros", package = "kokoros", default-features = true }
 # ONNX Runtime with CoreML EP support for explicit CoreML EP configuration
 ort = { version = "2.0.0-rc.10", default-features = true }
 ndarray = "0.16"

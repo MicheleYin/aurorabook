@@ -12,6 +12,7 @@ export interface EpubMetadata {
   subject?: string | string[];
   pubdate?: string;
   modified_date?: string;
+  coverId?: string; // ID of cover image from <meta name="cover" content="..."/>
 }
 
 export interface TocItem {
@@ -39,6 +40,7 @@ export interface ManifestItem {
   id: string;
   href: string;
   type?: string;
+  properties?: string; // e.g., "cover-image"
 }
 
 export interface EpubBook {
@@ -111,6 +113,15 @@ function parseContentOpf(opfXml: string): {
     
     const modifiedEl = metadataEl.querySelector("meta[property='dcterms:modified']");
     if (modifiedEl) metadata.modified_date = modifiedEl.textContent?.trim();
+    
+    // Extract cover reference from metadata
+    const coverMetaEl = metadataEl.querySelector("meta[name='cover']");
+    if (coverMetaEl) {
+      const coverContent = coverMetaEl.getAttribute("content");
+      if (coverContent) {
+        metadata.coverId = coverContent.trim();
+      }
+    }
   }
   
   // Extract manifest
@@ -122,11 +133,13 @@ function parseContentOpf(opfXml: string): {
       const id = item.getAttribute("id");
       const href = item.getAttribute("href");
       const type = item.getAttribute("media-type");
+      const properties = item.getAttribute("properties");
       if (id && href) {
         manifest[id] = {
           id,
           href,
           type: type || undefined,
+          properties: properties || undefined,
         };
       }
     });
@@ -440,13 +453,30 @@ export async function parseEpub(buffer: ArrayBuffer): Promise<EpubBook> {
       }
       
       // Determine MIME type based on file extension
+      // First try to find it in manifest
       let mimeType: string | undefined;
-      if (href.endsWith(".mp3")) {
-        mimeType = "audio/mpeg";
-      } else if (href.endsWith(".wav")) {
-        mimeType = "audio/wav";
-      } else if (href.endsWith(".m4a")) {
-        mimeType = "audio/mp4";
+      const manifestItem = Object.values(this.manifest).find(item => item.href === href);
+      if (manifestItem?.type) {
+        mimeType = manifestItem.type;
+      } else {
+        // Fallback to extension-based detection
+        if (href.endsWith(".mp3")) {
+          mimeType = "audio/mpeg";
+        } else if (href.endsWith(".wav")) {
+          mimeType = "audio/wav";
+        } else if (href.endsWith(".m4a")) {
+          mimeType = "audio/mp4";
+        } else if (href.endsWith(".png")) {
+          mimeType = "image/png";
+        } else if (href.endsWith(".jpg") || href.endsWith(".jpeg")) {
+          mimeType = "image/jpeg";
+        } else if (href.endsWith(".gif")) {
+          mimeType = "image/gif";
+        } else if (href.endsWith(".webp")) {
+          mimeType = "image/webp";
+        } else if (href.endsWith(".svg")) {
+          mimeType = "image/svg+xml";
+        }
       }
       
       const blob = new Blob([buffer], { type: mimeType });

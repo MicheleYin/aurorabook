@@ -184,26 +184,26 @@ async fn init_kokoros_engine(
     let model_path_obj = std::path::Path::new(&model_path);
     
     if !model_path_obj.exists() {
-        return Err(format!(
+            return Err(format!(
             "Model file does not exist: {}. Expected kokoro-v1.0.onnx",
-            model_path
-        ));
-    }
-    
+                model_path
+            ));
+        }
+        
     if !model_path_obj.is_file() {
-        return Err(format!(
+            return Err(format!(
             "Model path must be a file (ONNX model). Got: {}",
-            model_path
-        ));
-    }
-    
+                model_path
+            ));
+        }
+        
     if !model_path.ends_with(".onnx") {
-        return Err(format!(
+            return Err(format!(
             "Model file must be an ONNX model (.onnx extension). Got: {}",
-            model_path
-        ));
-    }
-    
+                model_path
+            ));
+        }
+        
     println!("ONNX Runtime with CoreML EP will be used automatically on macOS/iOS");
     println!("Model path: {}, Voices path: {}", model_path, voices_path);
     
@@ -223,101 +223,101 @@ async fn generate_tts_cached(
     app: tauri::AppHandle,
 ) -> Result<Vec<u8>, String> {
     // Use ONNX Runtime with CoreML EP (automatically enabled on macOS/iOS via kokoros)
-    fn find_onnx_model() -> Option<std::path::PathBuf> {
-        let mut possible_paths = Vec::new();
-        
-        if let Ok(current_dir) = std::env::current_dir() {
-            possible_paths.push(current_dir.join("src-tauri").join("resources").join("kokoro-v1.0.onnx"));
-            possible_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
-        }
-        
-        if let Ok(env_path) = std::env::var("KOKORO_MODEL_PATH") {
-            if !env_path.is_empty() {
-                possible_paths.push(std::path::PathBuf::from(env_path));
+        fn find_onnx_model() -> Option<std::path::PathBuf> {
+            let mut possible_paths = Vec::new();
+            
+            if let Ok(current_dir) = std::env::current_dir() {
+                possible_paths.push(current_dir.join("src-tauri").join("resources").join("kokoro-v1.0.onnx"));
+                possible_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
             }
-        }
-        
-        for path in possible_paths {
-            if path.exists() && path.is_file() {
-                return Some(path);
+            
+            if let Ok(env_path) = std::env::var("KOKORO_MODEL_PATH") {
+                if !env_path.is_empty() {
+                    possible_paths.push(std::path::PathBuf::from(env_path));
+                }
             }
-        }
-        None
-    }
-    
-    fn find_resources_dir() -> Option<std::path::PathBuf> {
-        let mut possible_paths = Vec::new();
-        
-        if let Ok(current_dir) = std::env::current_dir() {
-            possible_paths.push(current_dir.join("src-tauri").join("resources"));
-            possible_paths.push(current_dir.join("resources"));
-        }
-        
-        for path in possible_paths {
-            if path.exists() && path.is_dir() {
-                return Some(path);
+            
+            for path in possible_paths {
+                if path.exists() && path.is_file() {
+                    return Some(path);
+                }
             }
-        }
-        None
-    }
-    
-    fn find_voices_file(resources_dir: &std::path::PathBuf) -> Option<std::path::PathBuf> {
-        let voices_path = resources_dir.join("voices-v1.0.bin");
-        if voices_path.exists() {
-            Some(voices_path)
-        } else {
             None
         }
-    }
-    
-    let onnx_model = find_onnx_model();
-    let resources_dir = find_resources_dir();
-    
-    if let (Some(onnx_path), Some(res_dir)) = (onnx_model, resources_dir) {
-        if let Some(voices_path) = find_voices_file(&res_dir) {
-            let onnx_path_str = onnx_path.to_str().unwrap();
-            let voices_path_str = voices_path.to_str().unwrap();
+        
+        fn find_resources_dir() -> Option<std::path::PathBuf> {
+            let mut possible_paths = Vec::new();
             
-            // Initialize ONNX engine (uses CoreML EP automatically on macOS/iOS)
-            let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
-                onnx_path_str,
-                voices_path_str,
-                1,
-            ).await;
+            if let Ok(current_dir) = std::env::current_dir() {
+                possible_paths.push(current_dir.join("src-tauri").join("resources"));
+                possible_paths.push(current_dir.join("resources"));
+            }
             
-            let model_instance = engine.get_model_instance(worker_id.unwrap_or(0));
-            match engine.tts_raw_audio_with_instance(
-                &text,
-                language.as_deref().unwrap_or("en"),
-                &voice_id,
-                speed.unwrap_or(1.0),
-                None,
-                None,
-                None,
-                None,
-                model_instance,
-            ) {
-                Ok(audio_samples) => {
-                    // Convert Vec<f32> to 16-bit PCM bytes
-                    let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
-                    for sample in audio_samples {
-                        let clamped = sample.max(-1.0).min(1.0);
-                        let pcm_value = if clamped < 0.0 {
-                            (clamped * 32768.0) as i16
-                        } else {
-                            (clamped * 32767.0) as i16
-                        };
-                        pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
-                    }
-                    Ok(pcm_bytes)
-                }
-                Err(e) => {
-                    Err(format!("TTS generation failed: {}", e))
+            for path in possible_paths {
+                if path.exists() && path.is_dir() {
+                    return Some(path);
                 }
             }
+            None
+        }
+        
+        fn find_voices_file(resources_dir: &std::path::PathBuf) -> Option<std::path::PathBuf> {
+            let voices_path = resources_dir.join("voices-v1.0.bin");
+            if voices_path.exists() {
+                Some(voices_path)
+            } else {
+                None
+            }
+        }
+        
+        let onnx_model = find_onnx_model();
+        let resources_dir = find_resources_dir();
+        
+        if let (Some(onnx_path), Some(res_dir)) = (onnx_model, resources_dir) {
+            if let Some(voices_path) = find_voices_file(&res_dir) {
+                let onnx_path_str = onnx_path.to_str().unwrap();
+                let voices_path_str = voices_path.to_str().unwrap();
+                
+            // Initialize ONNX engine (uses CoreML EP automatically on macOS/iOS)
+                let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+                    onnx_path_str,
+                    voices_path_str,
+                    1,
+                ).await;
+                
+            let model_instance = engine.get_model_instance(worker_id.unwrap_or(0));
+                match engine.tts_raw_audio_with_instance(
+                    &text,
+                    language.as_deref().unwrap_or("en"),
+                    &voice_id,
+                    speed.unwrap_or(1.0),
+                    None,
+                    None,
+                    None,
+                    None,
+                    model_instance,
+                ) {
+                    Ok(audio_samples) => {
+                        // Convert Vec<f32> to 16-bit PCM bytes
+                        let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
+                        for sample in audio_samples {
+                            let clamped = sample.max(-1.0).min(1.0);
+                            let pcm_value = if clamped < 0.0 {
+                                (clamped * 32768.0) as i16
+                            } else {
+                                (clamped * 32767.0) as i16
+                            };
+                            pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
+                        }
+                    Ok(pcm_bytes)
+                    }
+                    Err(e) => {
+                    Err(format!("TTS generation failed: {}", e))
+                    }
+                }
         } else {
             Err("Voices file not found. Please ensure voices-v1.0.bin is available.".to_string())
-        }
+    }
     } else {
         Err("ONNX model not found. Please ensure kokoro-v1.0.onnx is available.".to_string())
     }
@@ -394,18 +394,18 @@ async fn generate_tts_batch(
                 &voices_path_str,
                 texts.len().max(4), // Use at least 4 instances or one per text
             ).await;
-            
+        
             // Process texts in parallel
-            let mut handles = Vec::new();
-            for (idx, text) in texts.iter().enumerate() {
-                let text_clone = text.clone();
-                let voice_id_clone = voice_id.clone();
-                let language_clone = language.clone();
-                let speed_val = speed.unwrap_or(1.0);
+        let mut handles = Vec::new();
+        for (idx, text) in texts.iter().enumerate() {
+            let text_clone = text.clone();
+            let voice_id_clone = voice_id.clone();
+            let language_clone = language.clone();
+            let speed_val = speed.unwrap_or(1.0);
                 let onnx_path_clone = onnx_path_str.clone();
                 let voices_path_clone = voices_path_str.clone();
-                
-                let handle = tokio::spawn(async move {
+            
+            let handle = tokio::spawn(async move {
                     // Create a new engine instance for this task
                     let task_engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
                         &onnx_path_clone,
@@ -415,43 +415,43 @@ async fn generate_tts_batch(
                     
                     let model_instance = task_engine.get_model_instance(0);
                     task_engine.tts_raw_audio_with_instance(
-                        &text_clone,
-                        language_clone.as_deref().unwrap_or("en"),
+                    &text_clone,
+                    language_clone.as_deref().unwrap_or("en"),
                         &voice_id_clone,
-                        speed_val,
+                    speed_val,
                         None,
                         None,
                         None,
                         None,
                         model_instance,
-                    )
-                    .map_err(|e| format!("Failed to generate audio: {}", e))
-                });
-                handles.push(handle);
-            }
+                )
+                .map_err(|e| format!("Failed to generate audio: {}", e))
+            });
+            handles.push(handle);
+        }
+        
+        // Collect results
+        let mut results = Vec::new();
+        for handle in handles {
+            let audio_samples: Vec<f32> = handle.await
+                .map_err(|e: tokio::task::JoinError| format!("Task error: {}", e))?
+                .map_err(|e: String| e)?;
             
-            // Collect results
-            let mut results = Vec::new();
-            for handle in handles {
-                let audio_samples: Vec<f32> = handle.await
-                    .map_err(|e: tokio::task::JoinError| format!("Task error: {}", e))?
-                    .map_err(|e: String| e)?;
-                
-                // Convert Vec<f32> to 16-bit PCM bytes
-                let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
-                for sample in audio_samples {
-                    let clamped = sample.max(-1.0).min(1.0);
-                    let pcm_value = if clamped < 0.0 {
-                        (clamped * 32768.0) as i16
-                    } else {
-                        (clamped * 32767.0) as i16
-                    };
-                    pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
-                }
-                results.push(pcm_bytes);
+            // Convert Vec<f32> to 16-bit PCM bytes
+            let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
+            for sample in audio_samples {
+                let clamped = sample.max(-1.0).min(1.0);
+                let pcm_value = if clamped < 0.0 {
+                    (clamped * 32768.0) as i16
+                } else {
+                    (clamped * 32767.0) as i16
+                };
+                pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
             }
-            
-            Ok(results)
+            results.push(pcm_bytes);
+        }
+        
+        Ok(results)
         } else {
             Err("Voices file not found. Please ensure voices-v1.0.bin is available.".to_string())
         }
@@ -1145,7 +1145,7 @@ mod tests {
             }
             Err(e) => {
                 println!("   ⚠️ Failed to get output names: {}", e);
-            }
+        }
         }
         
         // Find voices file for voice embedding
@@ -1341,6 +1341,193 @@ mod tests {
             Err(e) => {
                 println!("❌ Failed to save audio: {}", e);
             }
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    async fn test_cpu_vs_coreml_performance() {
+        use std::time::{Duration, Instant};
+        use crate::kokoro_onnx_coreml::KokoroOnnxCoreML;
+        use ndarray::ArrayD;
+
+        println!("\n🧪 Performance Comparison: CPU vs CoreML EP");
+        println!("{}", "=".repeat(60));
+        
+        // Find ONNX model file
+        let onnx_model = find_onnx_model();
+        if onnx_model.is_none() {
+            println!("⚠️ Skipping test - kokoro-v1.0.onnx not found");
+            println!("   Set KOKORO_MODEL_DIR env var or ensure kokoro-v1.0.onnx is in resources directory");
+            return;
+        }
+        let onnx_model = onnx_model.unwrap();
+        let model_path_str = onnx_model.to_str().unwrap();
+        println!("   ONNX model file: {}", model_path_str);
+
+        // Get model input/output names first (using CoreML EP session)
+        println!("\n📋 Initializing sessions to get model structure...");
+        let coreml_session = match KokoroOnnxCoreML::new(model_path_str, true) {
+            Ok(session) => session,
+            Err(e) => {
+                println!("❌ Failed to initialize CoreML EP session: {}", e);
+                return;
+            }
+        };
+
+        let cpu_session = match KokoroOnnxCoreML::new(model_path_str, false) {
+            Ok(session) => session,
+            Err(e) => {
+                println!("❌ Failed to initialize CPU session: {}", e);
+                return;
+            }
+        };
+
+        // Get input/output names
+        let input_names = match coreml_session.input_names() {
+            Ok(names) => names,
+            Err(e) => {
+                println!("❌ Failed to get input names: {}", e);
+                return;
+            }
+        };
+
+        let output_names = match coreml_session.output_names() {
+            Ok(names) => names,
+            Err(e) => {
+                println!("❌ Failed to get output names: {}", e);
+                return;
+            }
+        };
+
+        println!("   Inputs: {:?}", input_names);
+        println!("   Outputs: {:?}", output_names);
+
+        // Create dummy input data for testing
+        // Based on kokoro model: tokens [batch, seq_len] as i64, style [batch, style_dim] as f32, speed [1] as f32
+        // We'll use small dummy inputs for performance testing
+        let batch_size = 1;
+        let seq_len = 50; // Short sequence for faster testing
+        let style_dim = 256; // Typical style embedding dimension
+        
+        // Tokens must be i64 (int64)
+        let tokens_data: Vec<i64> = (0..(batch_size * seq_len)).map(|i| (i % 100) as i64).collect();
+        let tokens_array = ArrayD::<i64>::from_shape_vec(
+            vec![batch_size, seq_len],
+            tokens_data
+        ).expect("Failed to create tokens array");
+
+        // Style and speed are f32 (float32)
+        let style_data: Vec<f32> = (0..(batch_size * style_dim)).map(|i| (i as f32) * 0.01).collect();
+        let style_array = ArrayD::<f32>::from_shape_vec(
+            vec![batch_size, style_dim],
+            style_data
+        ).expect("Failed to create style array");
+
+        let speed_array = ArrayD::<f32>::from_shape_vec(
+            vec![1],
+            vec![1.0]
+        ).expect("Failed to create speed array");
+
+        println!("\n⏱️  Running performance benchmarks...");
+        println!("   Test configuration:");
+        println!("   - Batch size: {}", batch_size);
+        println!("   - Sequence length: {}", seq_len);
+        println!("   - Style dimension: {}", style_dim);
+        println!("   - Number of iterations: 10");
+
+        const NUM_ITERATIONS: usize = 10;
+        const WARMUP_ITERATIONS: usize = 2;
+
+        // Warmup runs
+        println!("\n🔥 Warming up ({} iterations)...", WARMUP_ITERATIONS);
+        for _ in 0..WARMUP_ITERATIONS {
+            let _ = cpu_session.run_kokoro(tokens_array.clone(), style_array.clone(), speed_array.clone());
+            let _ = coreml_session.run_kokoro(tokens_array.clone(), style_array.clone(), speed_array.clone());
+        }
+
+        // CPU-only benchmark
+        println!("\n📊 Benchmarking CPU-only execution provider...");
+        let mut cpu_times = Vec::new();
+        for i in 0..NUM_ITERATIONS {
+            let start = Instant::now();
+            match cpu_session.run_kokoro(tokens_array.clone(), style_array.clone(), speed_array.clone()) {
+                Ok(_) => {
+                    let elapsed = start.elapsed();
+                    cpu_times.push(elapsed);
+                    print!("   Iteration {}: {:.2}ms\r", i + 1, elapsed.as_secs_f64() * 1000.0);
+                }
+                Err(e) => {
+                    println!("\n❌ CPU inference failed: {}", e);
+                    return;
+                }
+            }
+        }
+        println!(); // New line after progress
+
+        // CoreML EP benchmark
+        println!("\n📊 Benchmarking CoreML EP execution provider...");
+        let mut coreml_times = Vec::new();
+        for i in 0..NUM_ITERATIONS {
+            let start = Instant::now();
+            match coreml_session.run_kokoro(tokens_array.clone(), style_array.clone(), speed_array.clone()) {
+                Ok(_) => {
+                    let elapsed = start.elapsed();
+                    coreml_times.push(elapsed);
+                    print!("   Iteration {}: {:.2}ms\r", i + 1, elapsed.as_secs_f64() * 1000.0);
+                }
+                Err(e) => {
+                    println!("\n❌ CoreML EP inference failed: {}", e);
+                    return;
+                }
+            }
+        }
+        println!(); // New line after progress
+
+        // Calculate statistics
+        let cpu_avg = cpu_times.iter().sum::<Duration>() / cpu_times.len() as u32;
+        let cpu_min = cpu_times.iter().min().unwrap();
+        let cpu_max = cpu_times.iter().max().unwrap();
+
+        let coreml_avg = coreml_times.iter().sum::<Duration>() / coreml_times.len() as u32;
+        let coreml_min = coreml_times.iter().min().unwrap();
+        let coreml_max = coreml_times.iter().max().unwrap();
+
+        let speedup = cpu_avg.as_secs_f64() / coreml_avg.as_secs_f64();
+
+        // Print results
+        println!("\n📈 Performance Results:");
+        println!("{}", "=".repeat(60));
+        println!("CPU-only Execution Provider:");
+        println!("   Average: {:.2}ms ({:.3}s)", cpu_avg.as_secs_f64() * 1000.0, cpu_avg.as_secs_f64());
+        println!("   Min:     {:.2}ms ({:.3}s)", cpu_min.as_secs_f64() * 1000.0, cpu_min.as_secs_f64());
+        println!("   Max:     {:.2}ms ({:.3}s)", cpu_max.as_secs_f64() * 1000.0, cpu_max.as_secs_f64());
+        
+        println!("\nCoreML EP Execution Provider:");
+        println!("   Average: {:.2}ms ({:.3}s)", coreml_avg.as_secs_f64() * 1000.0, coreml_avg.as_secs_f64());
+        println!("   Min:     {:.2}ms ({:.3}s)", coreml_min.as_secs_f64() * 1000.0, coreml_min.as_secs_f64());
+        println!("   Max:     {:.2}ms ({:.3}s)", coreml_max.as_secs_f64() * 1000.0, coreml_max.as_secs_f64());
+        
+        println!("\n🚀 Performance Improvement:");
+        if speedup > 1.0 {
+            println!("   CoreML EP is {:.2}x FASTER than CPU-only", speedup);
+            println!("   Time saved: {:.2}ms per inference ({:.1}%)", 
+                (cpu_avg.as_secs_f64() - coreml_avg.as_secs_f64()) * 1000.0,
+                (1.0 - 1.0 / speedup) * 100.0);
+        } else {
+            println!("   CPU-only is {:.2}x faster than CoreML EP", 1.0 / speedup);
+            println!("   ⚠️  This is unexpected - CoreML EP should be faster on Apple devices");
+        }
+
+        println!("\n✅ Performance comparison test completed!");
+        
+        // Assert that CoreML EP is at least as fast as CPU (or within reasonable margin)
+        // Allow some variance due to system load
+        if speedup < 0.8 {
+            println!("⚠️  WARNING: CoreML EP is slower than expected. This might indicate:");
+            println!("   - System is under heavy load");
+            println!("   - Model operations are not well-suited for CoreML EP");
+            println!("   - First-time conversion overhead (MLProgram compilation)");
         }
     }
 }

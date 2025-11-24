@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import { generateTTS, generateTTSBatch, initKokorosEngine, resetEngineInitialization } from "./kokoro-rust";
+import { generateTTS, generateTTSBatch, initKokorosEngine, resetEngineInitialization } from "./kokoro-js";
 import { invoke } from "@tauri-apps/api/core";
 import type { VoiceId } from "../types/reader";
 import type { Chapter } from "../types/reader";

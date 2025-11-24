@@ -1,6 +1,6 @@
 import { KOKORO_VOICE_GROUPS } from "../constants/kokoro";
 import type { VoiceId } from "../types/reader";
-import { initKokorosEngine } from "./kokoro-rust";
+import { initKokorosEngine } from "./kokoro-js";
 
 export type VoicePrefetchProgress = {
   completed: number;

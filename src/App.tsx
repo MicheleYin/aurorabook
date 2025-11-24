@@ -171,7 +171,15 @@ function App() {
   }, [pendingBookForConversion, isConverting, setLibrary, ingestEpub]);
 
   const handleConvertBookFromDetail = useCallback(async (book: Book, voiceId: VoiceId) => {
-    if (isConverting || book.audioTracks.length > 0) return;
+    if (book.audioTracks.length > 0) return;
+    
+    // Show warning if already converting
+    if (isConverting) {
+      toast.warning("Conversion in progress", {
+        description: "Please wait for the current conversion to complete before starting another one.",
+      });
+      return;
+    }
     
     // Create abort controller for this conversion
     const abortController = new AbortController();
@@ -1102,6 +1110,7 @@ function App() {
 
   const handleAddEbook = useCallback(async () => {
     if (isImporting) return;
+    
     const result = await importFromDialog();
     if (!result) {
       fileInputRef.current?.click();
@@ -1113,11 +1122,19 @@ function App() {
       const { book, buffer } = result;
       // Check if book needs conversion (no audio tracks)
       if (book.audioTracks.length === 0) {
-        setPendingBookForConversion({ book, buffer });
-        setShowConvertDialog(true);
+        // Only show conversion dialog if not already converting
+        if (!isConverting) {
+          setPendingBookForConversion({ book, buffer });
+          setShowConvertDialog(true);
+        } else {
+          // Book is imported, but conversion dialog is skipped while another conversion is in progress
+          toast.info("Ebook imported", {
+            description: "You can convert it to an audiobook after the current conversion completes.",
+          });
+        }
       }
     }
-  }, [importFromDialog, isImporting]);
+  }, [importFromDialog, isImporting, isConverting]);
 
   const handleDeleteBook = useCallback(async (bookId: string) => {
       // If this book is currently being converted, cancel the conversion
@@ -1407,7 +1424,7 @@ function App() {
             bookTitle={pendingBookForConversion.book.title}
           />
           <ConversionProgressDialog
-            open={isConverting}
+            open={isConverting && convertingBookIdRef.current === pendingBookForConversion.book.id}
             progress={conversionProgress}
             bookTitle={pendingBookForConversion.book.title}
           />

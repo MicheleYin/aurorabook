@@ -19,11 +19,13 @@ use ndarray::ArrayD;
 
 /// ONNX Runtime session with CoreML EP for Kokoro TTS models
 #[cfg(any(target_os = "macos", target_os = "ios"))]
+#[allow(dead_code)] // Used in tests and may be used by library consumers
 pub struct KokoroOnnxCoreML {
     session: Arc<Mutex<Session>>,
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
+#[allow(dead_code)] // Methods are used in tests and may be used by library consumers
 impl KokoroOnnxCoreML {
     /// Create a new ONNX Runtime session with CoreML EP
     /// 
@@ -41,7 +43,8 @@ impl KokoroOnnxCoreML {
                 .with_model_format(ort::execution_providers::coreml::CoreMLModelFormat::MLProgram)
                 .with_compute_units(ort::execution_providers::coreml::CoreMLComputeUnits::All)
                 .with_static_input_shapes(false)
-                .with_subgraphs(false);
+                .with_subgraphs(false)
+                .with_profile_compute_plan(true); // Enable profiling to verify GPU/ANE usage
 
             // Use CoreML EP first, fallback to CPU
             builder = builder
@@ -49,6 +52,7 @@ impl KokoroOnnxCoreML {
                 .map_err(|e| format!("Failed to set CoreML execution provider: {}", e))?;
             
             println!("✅ Configured ONNX Runtime with CoreML EP (MLProgram format, ALL compute units)");
+            println!("   Profiling enabled - check logs for hardware dispatch information");
         } else {
             // CPU only
             builder = builder
@@ -98,6 +102,66 @@ impl KokoroOnnxCoreML {
             let value: SessionInputValue = SessionInputValue::Owned(Value::from(tensor));
             ort_inputs.push((Cow::Owned(name), value));
         }
+
+        // Run inference
+        let outputs: SessionOutputs = session
+            .run(SessionInputs::from(ort_inputs))
+            .map_err(|e| format!("ONNX Runtime inference failed: {}", e))?;
+
+        // Convert outputs back to ndarray
+        let mut result = HashMap::new();
+        for (name, value) in outputs.iter() {
+            let (shape, data) = value
+                .try_extract_tensor::<f32>()
+                .map_err(|e| format!("Failed to extract tensor for output {}: {}", name, e))?;
+            
+            let shape_vec: Vec<usize> = shape.iter().map(|&i| i as usize).collect();
+            let array = ArrayD::from_shape_vec(shape_vec, data.to_vec())
+                .map_err(|e| format!("Failed to create array for output {}: {}", name, e))?;
+            result.insert(name.to_string(), array);
+        }
+
+        Ok(result)
+    }
+
+    /// Run inference with correct types for Kokoro model (tokens as i64, style/speed as f32)
+    /// 
+    /// # Arguments
+    /// * `tokens` - Token array as i64 (shape: [batch, seq_len])
+    /// * `style` - Style embedding array as f32 (shape: [batch, style_dim])
+    /// * `speed` - Speed scalar as f32 (shape: [1])
+    /// 
+    /// # Returns
+    /// HashMap of output names to tensors (as ndarray ArrayD<f32>)
+    pub fn run_kokoro(&self, tokens: ArrayD<i64>, style: ArrayD<f32>, speed: ArrayD<f32>) -> Result<HashMap<String, ArrayD<f32>>, String> {
+        use ndarray::ArrayD;
+        
+        let mut session = self.session.lock()
+            .map_err(|e| format!("Failed to lock session: {}", e))?;
+
+        // Convert inputs to ONNX Runtime format
+        let mut ort_inputs = Vec::new();
+        
+        // Tokens as i64 - use array for shape like kokoros does
+        let tokens_shape = [tokens.shape()[0], tokens.shape()[1]];
+        let tokens_data: Vec<i64> = tokens.iter().cloned().collect();
+        let tokens_tensor = Tensor::from_array((tokens_shape, tokens_data))
+            .map_err(|e| format!("Failed to create tokens tensor: {}", e))?;
+        ort_inputs.push((Cow::Borrowed("tokens"), SessionInputValue::Owned(Value::from(tokens_tensor))));
+        
+        // Style as f32 - use array for shape
+        let style_shape = [style.shape()[0], style.shape()[1]];
+        let style_data: Vec<f32> = style.iter().cloned().collect();
+        let style_tensor = Tensor::from_array((style_shape, style_data))
+            .map_err(|e| format!("Failed to create style tensor: {}", e))?;
+        ort_inputs.push((Cow::Borrowed("style"), SessionInputValue::Owned(Value::from(style_tensor))));
+        
+        // Speed as f32 - use array for shape
+        let speed_shape = [1];
+        let speed_data: Vec<f32> = speed.iter().cloned().collect();
+        let speed_tensor = Tensor::from_array((speed_shape, speed_data))
+            .map_err(|e| format!("Failed to create speed tensor: {}", e))?;
+        ort_inputs.push((Cow::Borrowed("speed"), SessionInputValue::Owned(Value::from(speed_tensor))));
 
         // Run inference
         let outputs: SessionOutputs = session
