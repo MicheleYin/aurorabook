@@ -596,6 +596,12 @@ function App() {
       return;
     }
 
+    // Don't auto-switch if auto-scroll is disabled
+    if (!autoScrollEnabled) {
+      console.log("[Auto-Chapter] Skipping auto-switch because auto-scroll is disabled");
+      return;
+    }
+
     // Don't auto-switch if there was a recent manual chapter selection
     if (manualChapterSelectionRef.current) {
       const timeSinceManualSelection = Date.now() - manualChapterSelectionRef.current.timestamp;
@@ -652,7 +658,7 @@ function App() {
         scrollPosition: "top",
       });
     }
-  }, [activeBook, currentAudioTrackHref, activeChapterId, handleSelectChapter]);
+  }, [activeBook, currentAudioTrackHref, activeChapterId, autoScrollEnabled, handleSelectChapter]);
 
   // Helper function to find and switch to chapter matching current audio track
   const switchToMatchingChapter = useCallback(() => {
