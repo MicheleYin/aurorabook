@@ -58,6 +58,8 @@ function App() {
   const [isReaderChromeVisible, setIsReaderChromeVisible] = useState(true);
   const [isAudioPlayerOpen, setIsAudioPlayerOpen] = useState(false);
   const [isAudioPlayerDismissing, setIsAudioPlayerDismissing] = useState(false);
+  const [currentAudioTime, setCurrentAudioTime] = useState<number | undefined>(undefined);
+  const [currentAudioTrackHref, setCurrentAudioTrackHref] = useState<string | undefined>(undefined);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastAudioBookIdRef = useRef<string | null>(null);
   const previousViewRef = useRef<AppView>(activeView);
@@ -132,6 +134,8 @@ function App() {
   useEffect(() => {
     if (!activeBook?.id || audioTrackCount === 0) {
       setIsAudioPlayerOpen(false);
+      setCurrentAudioTime(undefined);
+      setCurrentAudioTrackHref(undefined);
       lastAudioBookIdRef.current = null;
       return;
     }
@@ -645,6 +649,8 @@ function App() {
       onChromeVisibilityChange={setIsReaderChromeVisible}
       audioPlayerVisible={Boolean(activeBook?.audioTracks?.length) && isAudioPlayerOpen}
       onOpenAudioPlayer={() => setIsAudioPlayerOpen(true)}
+      currentAudioTime={currentAudioTime}
+      currentAudioTrackHref={currentAudioTrackHref}
     />
   );
 
@@ -693,6 +699,8 @@ function App() {
           initialAudioState={activeBook.audioState}
           onProgress={(snapshot) => {
             updateBookAudioState(activeBook.id, snapshot);
+            setCurrentAudioTime(snapshot.currentTimeSeconds);
+            setCurrentAudioTrackHref(snapshot.trackHref);
           }}
           chromeVisible={audioPlayerChromeVisible}
           onClose={handleAudioPlayerClose}

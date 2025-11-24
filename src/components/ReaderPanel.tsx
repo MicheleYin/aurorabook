@@ -13,6 +13,8 @@ type ReaderPanelProps = ReaderPanelBaseProps & {
   onChromeVisibilityChange?: (visible: boolean) => void;
   audioPlayerVisible?: boolean;
   onOpenAudioPlayer?: () => void;
+  currentAudioTime?: number;
+  currentAudioTrackHref?: string;
 };
 
 export function ReaderPanel({
@@ -29,6 +31,8 @@ export function ReaderPanel({
   onChromeVisibilityChange,
   audioPlayerVisible,
   onOpenAudioPlayer,
+  currentAudioTime,
+  currentAudioTrackHref,
 }: ReaderPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
@@ -213,6 +217,8 @@ export function ReaderPanel({
             scrollIntentRef.current = null;
           }}
           onChapterProgress={handleChapterProgress}
+          currentAudioTime={currentAudioTime}
+          currentAudioTrackHref={currentAudioTrackHref}
         />
       </div>
     </section>

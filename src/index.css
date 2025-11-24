@@ -142,5 +142,12 @@
     font-size: inherit !important;
     line-height: inherit !important;
   }
+
+  .audio-highlight {
+    @apply bg-yellow-200/60 dark:bg-yellow-900/40;
+    transition: background-color 0.2s ease-in-out;
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
 }
 

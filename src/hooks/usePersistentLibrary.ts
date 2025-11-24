@@ -13,6 +13,7 @@ import type {
   NavItem,
 } from "../types/reader";
 import {
+  buildAudioSyncMap,
   buildNavigationMap,
   createId,
   deriveTitleFromPath,
@@ -537,6 +538,9 @@ export function usePersistentLibrary(): PersistentLibrary {
         )
       ).filter((track): track is AudioTrack => Boolean(track));
 
+      // Build audio sync map from SMIL files if available
+      const audioSyncMap = await buildAudioSyncMap(epubBook, filteredChapters);
+
       let restoredAudioState: BookAudioState | undefined;
       if (savedAudioState && audioTracks.length) {
         const resolvedTrack =
@@ -582,6 +586,7 @@ export function usePersistentLibrary(): PersistentLibrary {
         fileSizeBytes,
         audioTracks,
         audioState: restoredAudioState,
+        audioSyncMap,
         progress: appliedProgress,
         pageCount: estimatedPageCount,
       };

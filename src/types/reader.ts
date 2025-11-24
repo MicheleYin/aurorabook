@@ -12,6 +12,20 @@ export type AudioTrack = {
   duration?: number;
 };
 
+export type AudioSyncSegment = {
+  textElementId: string;
+  chapterHref: string;
+  audioTrackHref: string;
+  clipBegin: number; // seconds
+  clipEnd: number; // seconds
+};
+
+export type AudioSyncMap = {
+  segments: AudioSyncSegment[];
+  // Map from audioTrackHref + time to segment index for quick lookup
+  lookup: Map<string, number>;
+};
+
 export type BookAudioState = {
   currentTrackId: string;
   currentTrackHref: string;
@@ -57,6 +71,7 @@ export type Book = {
   fileSizeBytes?: number;
   audioTracks: AudioTrack[];
   audioState?: BookAudioState;
+  audioSyncMap?: AudioSyncMap;
   progress?: BookProgress;
   pageCount?: number;
 };

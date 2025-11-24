@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "../../lib/utils";
+import { findCurrentAudioSegment } from "../../lib/epub";
 import {
   contentPaddingConfigMap,
   fontClassMap,
@@ -36,6 +37,8 @@ type ReaderViewportProps = Pick<
   scrollIntent?: "top" | "bottom" | null;
   onScrollIntentConsumed?: () => void;
   onChapterProgress?: (snapshot: ChapterProgressSnapshot) => void;
+  currentAudioTime?: number;
+  currentAudioTrackHref?: string;
 };
 
 export function ReaderViewport({
@@ -52,12 +55,16 @@ export function ReaderViewport({
   scrollIntent,
   onScrollIntentConsumed,
   onChapterProgress,
+  currentAudioTime,
+  currentAudioTrackHref,
 }: ReaderViewportProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const progressRafRef = useRef<number | null>(null);
   const scrollActivityTimeoutRef = useRef<number | null>(null);
   const [isScrolling, setIsScrolling] = useState(false);
+  const [highlightedElementId, setHighlightedElementId] = useState<string | null>(null);
   const showAudioPlayer = audioPlayerVisible;
+  const lastHighlightedElementRef = useRef<string | null>(null);
 
   const computeScrollMetrics = useCallback(() => {
     const node = contentRef.current;
@@ -345,6 +352,144 @@ export function ReaderViewport({
     audioPlayerVisible,
     scheduleProgressEmit,
   ]);
+
+  // Handle audio sync highlighting
+  useEffect(() => {
+    console.debug("[Audio Sync] Effect running:", {
+      hasSyncMap: !!activeBook?.audioSyncMap,
+      currentAudioTrackHref,
+      currentAudioTime,
+      hasActiveChapter: !!activeChapter,
+      activeChapterHref: activeChapter?.href,
+    });
+
+    if (
+      !activeBook?.audioSyncMap ||
+      !currentAudioTrackHref ||
+      typeof currentAudioTime !== "number" ||
+      !activeChapter
+    ) {
+      console.debug("[Audio Sync] Early return - missing prerequisites");
+      setHighlightedElementId(null);
+      lastHighlightedElementRef.current = null;
+      return;
+    }
+
+    const segment = findCurrentAudioSegment(
+      activeBook.audioSyncMap,
+      currentAudioTrackHref,
+      currentAudioTime,
+    );
+
+    console.debug("[Audio Sync] Segment lookup result:", {
+      found: !!segment,
+      currentTime: currentAudioTime,
+      trackHref: currentAudioTrackHref,
+      segment: segment ? {
+        elementId: segment.textElementId,
+        chapterHref: segment.chapterHref,
+        audioTrackHref: segment.audioTrackHref,
+        clipBegin: segment.clipBegin,
+        clipEnd: segment.clipEnd,
+      } : null,
+    });
+
+    if (!segment) {
+      console.debug("[Audio Sync] No segment found for current time");
+      setHighlightedElementId(null);
+      lastHighlightedElementRef.current = null;
+      return;
+    }
+
+    // Only highlight if the segment belongs to the current chapter
+    const chapterHref = activeChapter.href.split("#")[0];
+    console.debug("[Audio Sync] Chapter comparison:", {
+      segmentChapterHref: segment.chapterHref,
+      currentChapterHref: chapterHref,
+      matches: segment.chapterHref === chapterHref,
+    });
+
+    if (segment.chapterHref !== chapterHref) {
+      console.debug("[Audio Sync] Segment doesn't match current chapter");
+      setHighlightedElementId(null);
+      lastHighlightedElementRef.current = null;
+      return;
+    }
+
+    const elementId = segment.textElementId;
+    
+    // Log warning when highlighted SMIL segment changes
+    if (lastHighlightedElementRef.current !== elementId) {
+      console.warn("[Audio Sync] Highlighted SMIL segment changed:", {
+        previousElementId: lastHighlightedElementRef.current,
+        newElementId: elementId,
+        chapterHref: segment.chapterHref,
+        audioTrackHref: segment.audioTrackHref,
+        clipBegin: segment.clipBegin,
+        clipEnd: segment.clipEnd,
+        currentTime: currentAudioTime,
+        timeInSegment: (currentAudioTime - segment.clipBegin).toFixed(2),
+      });
+    } else {
+      console.debug("[Audio Sync] Same segment, no change:", elementId);
+    }
+    
+    setHighlightedElementId(elementId);
+    lastHighlightedElementRef.current = elementId;
+
+    // Scroll to highlighted element if it's not already visible
+    const root = contentRef.current;
+    if (!root) return;
+
+    const selector =
+      typeof CSS !== "undefined" && CSS.escape
+        ? `#${CSS.escape(elementId)}`
+        : `#${elementId}`;
+    const element = root.querySelector<HTMLElement>(selector);
+
+    if (element) {
+      const rect = element.getBoundingClientRect();
+      const isVisible =
+        rect.top >= 0 &&
+        rect.left >= 0 &&
+        rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+        rect.right <= (window.innerWidth || document.documentElement.clientWidth);
+
+      if (!isVisible) {
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+  }, [
+    activeBook?.audioSyncMap,
+    currentAudioTrackHref,
+    currentAudioTime,
+    activeChapter?.id,
+    activeChapter?.href,
+  ]);
+
+  // Apply highlighting styles to elements
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!root) return;
+
+    // Remove previous highlighting
+    const previousHighlighted = root.querySelectorAll(".audio-highlight");
+    previousHighlighted.forEach((el) => {
+      el.classList.remove("audio-highlight");
+    });
+
+    // Apply new highlighting
+    if (highlightedElementId) {
+      const selector =
+        typeof CSS !== "undefined" && CSS.escape
+          ? `#${CSS.escape(highlightedElementId)}`
+          : `#${highlightedElementId}`;
+      const element = root.querySelector<HTMLElement>(selector);
+      if (element) {
+        element.classList.add("audio-highlight");
+      }
+    }
+  }, [highlightedElementId]);
 
   const { previousChapter, nextChapter } = useMemo(() => {
     if (!activeBook || !activeChapter) {
