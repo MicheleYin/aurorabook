@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { Check } from "lucide-react";
 import { KOKORO_VOICE_GROUPS } from "../constants/kokoro";
 import type { AppSettings } from "../types/settings";
 import type { UITheme } from "../types/ui";
@@ -12,6 +14,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
+import { cn } from "../lib/utils";
+import { anim } from "../lib/animations";
 
 type SettingsPanelProps = {
   settings: AppSettings;
@@ -19,14 +23,42 @@ type SettingsPanelProps = {
 };
 
 export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps) {
+  const [showSaved, setShowSaved] = useState(false);
+  const [previousSettings, setPreviousSettings] = useState(settings);
+
+  useEffect(() => {
+    // Check if settings changed
+    if (JSON.stringify(previousSettings) !== JSON.stringify(settings)) {
+      setShowSaved(true);
+      const timer = setTimeout(() => {
+        setShowSaved(false);
+      }, 2000); // Show for 2 seconds
+      setPreviousSettings(settings);
+      return () => clearTimeout(timer);
+    }
+  }, [settings, previousSettings]);
+
   const handleThemeChange = (theme: UITheme) => onSettingsChange({ theme });
 
   return (
     <div className="flex h-full flex-col gap-6">
       <Card className="flex-1">
-        <CardHeader>
+        <CardHeader className="relative">
           <CardTitle className="text-xl">Preferences</CardTitle>
           <CardDescription>Control the Reader theme and voice settings from one place.</CardDescription>
+          {/* Saved confirmation animation */}
+          <div
+            className={cn(
+              "absolute right-4 top-4 flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-sm text-primary",
+              "transition-all duration-300 ease-in-out",
+              showSaved
+                ? "opacity-100 translate-y-0 scale-100"
+                : "opacity-0 translate-y-2 scale-95 pointer-events-none"
+            )}
+          >
+            <Check className={cn("h-4 w-4", anim("normal", "all"), showSaved && "animate-in zoom-in-95")} />
+            <span>Saved</span>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="space-y-6">

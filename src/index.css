@@ -275,6 +275,41 @@
     transform: scale(0.95);
   }
 
+  /* Navigation bar animations */
+  @keyframes nav-bar-enter {
+    0% {
+      opacity: 0;
+      transform: translateY(16px) scale(0.95);
+    }
+    60% {
+      opacity: 1;
+      transform: translateY(-2px) scale(1.01);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes nav-bar-exit {
+    0% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(16px) scale(0.95);
+    }
+  }
+
+  .nav-bar-enter {
+    animation: nav-bar-enter var(--anim-duration-medium) var(--anim-easing-spring) forwards;
+  }
+
+  .nav-bar-exit {
+    animation: nav-bar-exit var(--anim-duration-normal) var(--anim-easing-ease-in) forwards;
+  }
+
   /* Shared animation utilities */
   .anim-fast {
     transition-duration: var(--anim-duration-fast);
@@ -329,8 +364,23 @@
     }
   }
 
+  @keyframes library-item-exit {
+    from {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(-8px) scale(0.95);
+    }
+  }
+
   .library-item-enter {
     animation: library-item-enter var(--anim-duration-medium) var(--anim-easing-ease-out) both;
+  }
+
+  .library-item-exit {
+    animation: library-item-exit var(--anim-duration-normal) var(--anim-easing-ease-in) forwards;
   }
 
   /* Shimmer animation for loading covers */
@@ -345,6 +395,37 @@
 
   .animate-shimmer {
     animation: shimmer 2s linear infinite;
+  }
+
+  /* Book cover loading animations */
+  @keyframes cover-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes cover-zoom-in {
+    from {
+      opacity: 0;
+      transform: scale(1.05);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .cover-loading {
+    opacity: 0;
+  }
+
+  .cover-loaded {
+    animation: 
+      cover-fade-in var(--anim-duration-medium) var(--anim-easing-ease-out) forwards,
+      cover-zoom-in var(--anim-duration-medium) var(--anim-easing-ease-out) forwards;
   }
 
   /* Subtle pulse for active cards */
@@ -460,7 +541,7 @@
     animation: dialog-content-exit var(--anim-duration-normal) var(--anim-easing-ease-in) forwards;
   }
 
-  /* Drawer slide with spring physics */
+  /* Drawer slide with smooth easing (no bounce) */
   @keyframes drawer-slide-in-bottom {
     from {
       transform: translateY(100%);
@@ -498,7 +579,7 @@
   }
 
   .drawer-slide-in-bottom {
-    animation: drawer-slide-in-bottom var(--anim-duration-medium) var(--anim-easing-spring) forwards;
+    animation: drawer-slide-in-bottom var(--anim-duration-medium) var(--anim-easing-ease-out) forwards;
   }
 
   .drawer-slide-out-bottom {
@@ -506,7 +587,7 @@
   }
 
   .drawer-slide-in-left {
-    animation: drawer-slide-in-left var(--anim-duration-medium) var(--anim-easing-spring) forwards;
+    animation: drawer-slide-in-left var(--anim-duration-medium) var(--anim-easing-ease-out) forwards;
   }
 
   .drawer-slide-out-left {

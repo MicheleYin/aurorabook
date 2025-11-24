@@ -1,4 +1,5 @@
 import type { LibraryFilterOption } from "./types";
+import { cn } from "../../lib/utils";
 
 interface LibraryEmptyProps {
   isSearching: boolean;
@@ -41,8 +42,17 @@ export function LibraryEmpty({ isSearching, activeFilter }: LibraryEmptyProps) {
     }
   }
 
+  // Use key to trigger animation when content changes
+  const contentKey = `${isSearching}-${activeFilter}-${title}`;
+
   return (
-    <div className="rounded-md border border-dashed p-8 text-center">
+    <div 
+      key={contentKey}
+      className={cn(
+        "rounded-md border border-dashed p-8 text-center",
+        "animate-in fade-in-0 slide-in-from-bottom-4 duration-300 ease-out"
+      )}
+    >
       <p className="text-sm font-medium">{title}</p>
       <p className="mt-1 text-sm text-muted-foreground">{description}</p>
     </div>

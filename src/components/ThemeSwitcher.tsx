@@ -1,9 +1,11 @@
 import { Monitor, Moon, Sun } from "lucide-react";
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import type { UITheme } from "../types/ui";
+import { anim } from "../lib/animations";
 
 interface ThemeSwitcherProps {
   value: UITheme;
@@ -17,6 +19,20 @@ const options: Array<{ id: UITheme; icon: ReactNode; label: string }> = [
 ];
 
 export function ThemeSwitcher({ value, onChange }: ThemeSwitcherProps) {
+  const [previousValue, setPreviousValue] = useState<UITheme>(value);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+
+  useEffect(() => {
+    if (previousValue !== value) {
+      setIsTransitioning(true);
+      const timer = setTimeout(() => {
+        setIsTransitioning(false);
+        setPreviousValue(value);
+      }, 300); // Match animation duration
+      return () => clearTimeout(timer);
+    }
+  }, [value, previousValue]);
+
   return (
     <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card/60 p-1 backdrop-blur">
       {options.map((option) => {
@@ -30,11 +46,20 @@ export function ThemeSwitcher({ value, onChange }: ThemeSwitcherProps) {
             aria-pressed={isActive}
             onClick={() => onChange(option.id)}
             className={cn(
-              "h-8 w-8 px-0 text-muted-foreground",
+              "h-8 w-8 px-0 text-muted-foreground relative overflow-hidden",
+              anim("medium", "all"),
               isActive && "bg-primary/10 text-primary",
+              isTransitioning && isActive && "animate-pulse",
             )}
           >
-            {option.icon}
+            <span
+              className={cn(
+                "relative z-10 transition-opacity duration-300",
+                isActive ? "opacity-100" : "opacity-60"
+              )}
+            >
+              {option.icon}
+            </span>
             <span className="sr-only">{option.label}</span>
           </Button>
         );

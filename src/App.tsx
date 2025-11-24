@@ -1336,12 +1336,16 @@ function App() {
         className={cn(
           "pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-6 sm:px-6",
           animPatterns.navBar,
-          hideNavigation && "translate-y-4 opacity-0",
+          hideNavigation ? "nav-bar-exit" : "nav-bar-enter",
         )}
       >
         <div
           className={cn(
-            "pointer-events-auto inline-flex items-center gap-1 rounded-full border border-border bg-card/80 p-1 backdrop-blur-md shadow-lg ring-1 ring-black/5",
+            "pointer-events-auto inline-flex items-center gap-1 rounded-full border border-border bg-card/80 p-1 shadow-lg ring-1 ring-black/5",
+            // Enhanced backdrop blur when visible
+            hideNavigation ? "backdrop-blur-sm" : "backdrop-blur-xl",
+            // Smooth transition for backdrop blur
+            "transition-[backdrop-filter] duration-300 ease-in-out",
             hideNavigation && "pointer-events-none",
           )}
         >

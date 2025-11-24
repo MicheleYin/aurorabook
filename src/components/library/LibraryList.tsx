@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from "react";
+import { useState, useEffect, useRef, type KeyboardEvent } from "react";
 import { ImageOff, Loader2 } from "lucide-react";
 
 import type { Book } from "../../types/reader";
@@ -28,6 +28,36 @@ export function LibraryList({
   onViewDetails,
   bookConversionProgress = {},
 }: LibraryListProps) {
+  const [displayedBooks, setDisplayedBooks] = useState<Book[]>(books);
+  const [exitingBookIds, setExitingBookIds] = useState<Set<string>>(new Set());
+  const previousBooksRef = useRef<Book[]>(books);
+
+  useEffect(() => {
+    const currentBookIds = new Set(books.map(b => b.id));
+    const previousBookIds = new Set(previousBooksRef.current.map(b => b.id));
+    
+    // Find books that are leaving
+    const leavingIds = Array.from(previousBookIds).filter(id => !currentBookIds.has(id));
+    
+    if (leavingIds.length > 0) {
+      // Mark books as exiting
+      setExitingBookIds(new Set(leavingIds));
+      
+      // Remove them after animation completes
+      const timer = setTimeout(() => {
+        setDisplayedBooks(books);
+        setExitingBookIds(new Set());
+        previousBooksRef.current = books;
+      }, 200); // Match exit animation duration
+      
+      return () => clearTimeout(timer);
+    } else {
+      // Books are being added or reordered
+      setDisplayedBooks(books);
+      previousBooksRef.current = books;
+    }
+  }, [books]);
+
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>, bookId: string) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -35,9 +65,17 @@ export function LibraryList({
     }
   };
 
+  // Merge displayed books with exiting books to show exit animations
+  const allBooks = displayedBooks.filter(b => !exitingBookIds.has(b.id));
+  const exitingBooks = previousBooksRef.current.filter(b => exitingBookIds.has(b.id));
+  const booksToRender = [...allBooks, ...exitingBooks];
+
   return (
     <div className="flex flex-col divide-y divide-border overflow-hidden rounded-xl border">
-      {books.map((book, index) => {
+      {booksToRender.map((book, index) => {
+        const isExiting = exitingBookIds.has(book.id);
+        const isVisible = books.some(b => b.id === book.id);
+        const displayIndex = isVisible ? books.findIndex(b => b.id === book.id) : index;
         const isActive = book.id === activeBookId;
         const progressSummary = getBookProgressSummary(book);
         const status = getLibraryBookStatusFromSummary(progressSummary);
@@ -57,25 +95,26 @@ export function LibraryList({
         return (
           <div
             key={book.id}
-            role="button"
-            tabIndex={0}
-            onClick={() => onOpenBook(book.id)}
-            onKeyDown={(event) => handleKeyDown(event, book.id)}
             className={cn(
-              "flex w-full items-center gap-4 px-4 py-3 text-left library-item-enter",
-              anim("normal", "colors"),
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-              isActive && "bg-primary/5",
-              staggerDelay(index, 20),
+              isExiting ? "library-item-exit" : "library-item-enter",
+              staggerDelay(displayIndex, 20)
             )}
           >
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpenBook(book.id)}
+              onKeyDown={(event) => handleKeyDown(event, book.id)}
+              className={cn(
+                "flex w-full items-center gap-4 px-4 py-3 text-left",
+                anim("normal", "colors"),
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                isActive && "bg-primary/5",
+              )}
+            >
             <div className="relative h-16 w-12 overflow-hidden rounded-md bg-muted">
               {book.coverUrl ? (
-                <img
-                  src={book.coverUrl}
-                  alt={`${book.title} cover`}
-                  className="h-full w-full object-cover"
-                />
+                <BookCoverImage src={book.coverUrl} alt={`${book.title} cover`} />
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-muted-foreground">
                   <ImageOff className="h-6 w-6" />
@@ -125,9 +164,42 @@ export function LibraryList({
             >
               Details
             </Button>
+            </div>
           </div>
         );
       })}
     </div>
+  );
+}
+
+function BookCoverImage({ src, alt }: { src: string; alt: string }) {
+  const [isImageLoaded, setIsImageLoaded] = useState(false);
+  const [hasImageError, setHasImageError] = useState(false);
+
+  return (
+    <>
+      {/* Skeleton loader - shown while image is loading */}
+      {!isImageLoaded && !hasImageError && (
+        <div className={cn(
+          "absolute inset-0 animate-shimmer bg-gradient-to-r from-muted via-muted/50 to-muted bg-[length:200%_100%]"
+        )} />
+      )}
+      <img
+        src={src}
+        alt={alt}
+        className={cn(
+          "h-full w-full object-cover",
+          anim("normal", "all"),
+          isImageLoaded ? "cover-loaded" : "cover-loading"
+        )}
+        onLoad={() => {
+          setIsImageLoaded(true);
+        }}
+        onError={() => {
+          setHasImageError(true);
+          setIsImageLoaded(false);
+        }}
+      />
+    </>
   );
 }
