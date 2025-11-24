@@ -172,6 +172,7 @@ export function ReaderPanel({
               <ReaderTocDrawer
                 book={activeBook}
                 activeChapterId={activeChapter?.id}
+                currentAudioTrackHref={currentAudioTrackHref}
                 isOpen={isTocOpen}
                 onOpenChange={(open) => {
                   setIsImmersive(false);

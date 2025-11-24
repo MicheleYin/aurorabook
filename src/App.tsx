@@ -77,6 +77,13 @@ function App() {
   } = usePersistentSettings();
   const uiTheme = settings.theme;
 
+  // Load auto-scroll setting from persistent settings
+  useEffect(() => {
+    if (isSettingsHydrated && settings.autoScrollEnabled !== undefined) {
+      setAutoScrollEnabled(settings.autoScrollEnabled);
+    }
+  }, [isSettingsHydrated, settings.autoScrollEnabled]);
+
   useEffect(() => {
     if (activeView !== "reader") {
       setIsReaderChromeVisible(true);
@@ -682,6 +689,9 @@ function App() {
   const handleAutoScrollToggle = useCallback((enabled: boolean) => {
     setAutoScrollEnabled(enabled);
     
+    // Persist the setting
+    updateSettings({ autoScrollEnabled: enabled });
+    
     // Track if user explicitly disabled it
     if (!enabled) {
       explicitlyDisabledRef.current = true;
@@ -706,7 +716,7 @@ function App() {
         switchToMatchingChapter();
       }, 0);
     }
-  }, [switchToMatchingChapter]);
+  }, [switchToMatchingChapter, updateSettings]);
 
   // Show toast when auto-scroll state changes
   useEffect(() => {

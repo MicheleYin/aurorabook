@@ -6,6 +6,7 @@ import type { AppSettings } from "../types/settings";
 const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
   ttsVoiceId: DEFAULT_KOKORO_VOICE_ID,
+  autoScrollEnabled: true,
 };
 
 const WEB_SETTINGS_STORAGE_KEY = "tts-settings-cache-v1";

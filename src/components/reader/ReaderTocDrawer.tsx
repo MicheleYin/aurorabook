@@ -18,6 +18,7 @@ import { ChapterList } from "./ChapterList";
 type ReaderTocDrawerProps = {
   book: Book;
   activeChapterId?: string;
+  currentAudioTrackHref?: string;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   onSelectChapter: ReaderPanelBaseProps["onSelectChapter"];
@@ -26,6 +27,7 @@ type ReaderTocDrawerProps = {
 export function ReaderTocDrawer({
   book,
   activeChapterId,
+  currentAudioTrackHref,
   isOpen,
   onOpenChange,
   onSelectChapter,
@@ -57,6 +59,7 @@ export function ReaderTocDrawer({
             <ChapterList
               book={book}
               activeChapterId={activeChapterId}
+              currentAudioTrackHref={currentAudioTrackHref}
               onSelectChapter={onSelectChapter}
               onAfterSelect={() => onOpenChange(false)}
               className="gap-1"
