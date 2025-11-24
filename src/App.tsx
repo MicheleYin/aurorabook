@@ -532,6 +532,8 @@ function App() {
         if (autoScrollEnabled) {
           console.log("[Chapter Selection] Disabling auto-scroll due to manual selection");
           setAutoScrollEnabled(false);
+          // Persist the setting so it remains disabled
+          updateSettings({ autoScrollEnabled: false });
         }
         
         // Clear any existing timeout that would re-enable auto-scroll
@@ -569,7 +571,7 @@ function App() {
       setPendingFragment(fragment && fragment.length > 0 ? fragment.replace(/^#/, "") : null);
       setActiveView("reader");
     },
-    [activeBookId, updateBookProgress],
+    [activeBookId, updateBookProgress, autoScrollEnabled, updateSettings],
   );
 
   const handleChapterProgress = useCallback(
