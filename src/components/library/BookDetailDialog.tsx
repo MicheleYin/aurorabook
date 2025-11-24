@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ImageOff, X } from "lucide-react";
+import { ImageOff, X, Loader2, Headphones, Share2 } from "lucide-react";
+import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Button } from "../ui/button";
+import { Progress } from "../ui/progress";
 import type { Book } from "../../types/reader";
+import type { ConversionProgress } from "../../lib/audiobook-converter";
+import { ConvertToAudiobookDialog } from "./ConvertToAudiobookDialog";
+import type { VoiceId } from "../../types/reader";
 import {
   Drawer,
   DrawerClose,
@@ -22,6 +27,8 @@ type BookDetailDialogProps = {
   onClose: () => void;
   onOpenBook: () => void;
   onDeleteBook: () => void;
+  conversionProgress?: ConversionProgress;
+  onConvertToAudiobook?: (book: Book, voiceId: VoiceId) => Promise<void>;
 };
 
 const formatFileSize = (bytes?: number) => {
@@ -47,13 +54,92 @@ export function BookDetailDialog({
   onClose,
   onOpenBook,
   onDeleteBook,
+  conversionProgress,
+  onConvertToAudiobook,
 }: BookDetailDialogProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [showConvertDialog, setShowConvertDialog] = useState(false);
   const [durationMap, setDurationMap] = useState<Record<string, number>>({});
   const durationMapRef = useRef<Record<string, number>>({});
   const isDesktop = useMediaQuery("(min-width: 640px)");
   const genres = (book.subjects ?? []).filter(Boolean);
   const hasAudio = book.audioTracks.length > 0;
+  const isConverting = Boolean(conversionProgress);
+  
+  const handleConvertClick = useCallback(() => {
+    setShowConvertDialog(true);
+  }, []);
+  
+  const handleConvertConfirm = useCallback(async (voiceId: VoiceId) => {
+    setShowConvertDialog(false);
+    if (onConvertToAudiobook) {
+      await onConvertToAudiobook(book, voiceId);
+    }
+  }, [book, onConvertToAudiobook]);
+
+  const handleExportEpub = useCallback(async () => {
+    if (isConverting) return;
+
+    try {
+      // Check if we're in Tauri environment
+      const isTauri = typeof window !== "undefined" &&
+        typeof (window as typeof window & { __TAURI_INTERNALS__?: { invoke?: unknown } })
+          .__TAURI_INTERNALS__?.invoke === "function";
+
+      if (isTauri) {
+        // Tauri: Use save dialog and write file
+        const { save } = await import("@tauri-apps/plugin-dialog");
+        const { writeFile } = await import("@tauri-apps/plugin-fs");
+        const { readFile } = await import("@tauri-apps/plugin-fs");
+
+        if (book.sourcePath.startsWith("web://")) {
+          toast.error("Cannot export web files", {
+            description: "Web files cannot be exported. Please import from file system.",
+          });
+          return;
+        }
+
+        // Read the original file
+        const binary = await readFile(book.sourcePath);
+        const arrayBuffer = binary.buffer.slice(
+          binary.byteOffset,
+          binary.byteOffset + binary.byteLength,
+        );
+
+        // Show save dialog
+        const filePath = await save({
+          defaultPath: `${book.title.replace(/[^a-z0-9]/gi, "_")}.epub`,
+          filters: [{ name: "EPUB files", extensions: ["epub"] }],
+        });
+
+        if (filePath) {
+          await writeFile(filePath, new Uint8Array(arrayBuffer));
+          toast.success("EPUB exported!", {
+            description: `Saved to ${filePath.split("/").pop()}`,
+          });
+        }
+      } else {
+        // Web: Create download link
+        if (book.sourcePath.startsWith("web://")) {
+          toast.error("Cannot export web files", {
+            description: "Web files cannot be exported in browser mode.",
+          });
+          return;
+        }
+
+        // For web, we'd need the buffer - but we don't have it stored
+        // We could fetch it if it's a URL, but for now show an error
+        toast.error("Export not available", {
+          description: "File export is only available in the desktop app.",
+        });
+      }
+    } catch (error) {
+      console.error("Export error:", error);
+      toast.error("Export failed", {
+        description: error instanceof Error ? error.message : "Could not export the EPUB file.",
+      });
+    }
+  }, [book, isConverting]);
   useEffect(() => {
     durationMapRef.current = durationMap;
   }, [durationMap]);
@@ -202,13 +288,34 @@ export function BookDetailDialog({
         ) : null}
       </div>
       <div className="grid gap-4">
-        <div className="grid gap-1">
-          <span className="text-xs uppercase text-muted-foreground">Reading progress</span>
-          <span>{progressPrimaryText}</span>
-          {progressSecondaryText ? (
-            <span className="text-xs text-muted-foreground">{progressSecondaryText}</span>
-          ) : null}
-        </div>
+        {conversionProgress ? (
+          <div className="grid gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs uppercase text-muted-foreground">Converting to Audiobook</span>
+              <span className="text-xs font-medium">
+                {Math.round((conversionProgress.currentChapter / conversionProgress.totalChapters) * 100)}%
+              </span>
+            </div>
+            <Progress
+              value={(conversionProgress.currentChapter / conversionProgress.totalChapters) * 100}
+              className="h-2"
+            />
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>
+                Chapter {conversionProgress.currentChapter} of {conversionProgress.totalChapters}: {conversionProgress.message}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-1">
+            <span className="text-xs uppercase text-muted-foreground">Reading progress</span>
+            <span>{progressPrimaryText}</span>
+            {progressSecondaryText ? (
+              <span className="text-xs text-muted-foreground">{progressSecondaryText}</span>
+            ) : null}
+          </div>
+        )}
        
         <div className="grid gap-1">
           <span className="text-xs uppercase text-muted-foreground">Author</span>
@@ -294,8 +401,25 @@ export function BookDetailDialog({
 
   const Actions = ({ layout }: { layout: "dialog" | "drawer" }) => (
     <div className={cn("flex gap-2 pt-4", layout === "dialog" ? "justify-end" : "flex-col")}>
-
-
+      {!hasAudio && onConvertToAudiobook && !isConverting && (
+        <Button
+          variant="outline"
+          onClick={handleConvertClick}
+          className="gap-2"
+        >
+          <Headphones className="h-4 w-4" />
+          Convert to Audiobook
+        </Button>
+      )}
+      <Button
+        variant="outline"
+        onClick={handleExportEpub}
+        disabled={isConverting}
+        className="gap-2"
+      >
+        <Share2 className="h-4 w-4" />
+        {isConverting ? "Exporting..." : "Export EPUB"}
+      </Button>
       <Button onClick={onOpenBook}>Open book</Button>
       <Button variant="destructive" onClick={() => setConfirmOpen(true)}>
         Delete book
@@ -364,6 +488,18 @@ export function BookDetailDialog({
           </DrawerContent>
         </Drawer>
         {confirmDialog}
+        {onConvertToAudiobook && (
+          <ConvertToAudiobookDialog
+            open={showConvertDialog && !isConverting}
+            onOpenChange={(open) => {
+              if (!isConverting) {
+                setShowConvertDialog(open);
+              }
+            }}
+            onConfirm={handleConvertConfirm}
+            bookTitle={book.title}
+          />
+        )}
       </>
     );
   }
@@ -398,6 +534,18 @@ export function BookDetailDialog({
         </DialogContent>
       </Dialog>
       {confirmDialog}
+      {onConvertToAudiobook && (
+        <ConvertToAudiobookDialog
+          open={showConvertDialog && !isConverting}
+          onOpenChange={(open) => {
+            if (!isConverting) {
+              setShowConvertDialog(open);
+            }
+          }}
+          onConfirm={handleConvertConfirm}
+          bookTitle={book.title}
+        />
+      )}
     </>
   );
 }

@@ -25,4 +25,19 @@ tauri-plugin-opener = "2"
 tauri-plugin-store = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+# GPU acceleration configuration:
+# - CUDA: For NVIDIA GPUs (Linux/Windows) - enables GPU acceleration
+# - CoreML: For Apple devices (macOS/iOS/iPadOS) - ONNX Runtime uses CoreML Execution Provider
+#   CoreML automatically leverages GPU and Neural Engine when available on Apple devices
+#   Note: ONNX Runtime doesn't support Metal directly, but CoreML uses Metal under the hood
+#   On Apple platforms, kokoros will use default features which should include CoreML if available
+#   If kokoros doesn't expose CoreML feature, ONNX Runtime may auto-detect and use CoreML
+[target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
+kokoros = { git = "https://github.com/lucasjinreal/Kokoros", package = "kokoros", features = ["cuda"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+# Use default features on Apple platforms - ONNX Runtime should auto-detect CoreML
+# CoreML Execution Provider will use GPU/Neural Engine automatically if available
+kokoros = { git = "https://github.com/lucasjinreal/Kokoros", package = "kokoros", default-features = true }
 

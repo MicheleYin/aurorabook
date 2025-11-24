@@ -22,19 +22,19 @@ export const useKokoroPrefetch = () => {
 
   const handleModelPrefetch = useCallback(async () => {
     try {
-      setModelState({ status: "running", message: "Downloading Kokoro model…" });
+      setModelState({ status: "running", message: "Downloading model…" });
       await prefetchKokoroModel();
       setModelState({ status: "success", message: "Model cached locally." });
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Unable to cache Kokoro model.";
+        error instanceof Error ? error.message : "Unable to cache model.";
       setModelState({ status: "error", message });
     }
   }, []);
 
   const handleVoicePrefetch = useCallback(async () => {
     try {
-      setVoiceState({ status: "running", message: "Downloading Kokoro voices…" });
+      setVoiceState({ status: "running", message: "Downloading voices…" });
       await prefetchKokoroVoices({
         onProgress: ({ completed, total, skipped }) => {
           setVoiceState({ status: "running", message: formatVoiceMessage(completed, total, skipped) });
@@ -43,7 +43,7 @@ export const useKokoroPrefetch = () => {
       setVoiceState({ status: "success", message: "Voices cached locally." });
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Unable to cache Kokoro voices.";
+        error instanceof Error ? error.message : "Unable to cache voices.";
       setVoiceState({ status: "error", message });
     }
   }, []);

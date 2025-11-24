@@ -73,8 +73,9 @@ type PersistentLibrary = {
   setLibrary: React.Dispatch<React.SetStateAction<Book[]>>;
   isHydrated: boolean;
   isImporting: boolean;
-  importFromDialog: () => Promise<boolean>;
-  handleWebFileSelection: (event: ChangeEvent<HTMLInputElement>) => Promise<void>;
+  importFromDialog: () => Promise<boolean | { book: Book; buffer: ArrayBuffer }>;
+  handleWebFileSelection: (event: ChangeEvent<HTMLInputElement>) => Promise<void | { book: Book; buffer: ArrayBuffer }>;
+  ingestEpub: (params: IngestParams) => Promise<Book | null>;
 };
 
 const isTauriEnvironment = () =>
@@ -604,6 +605,8 @@ export function usePersistentLibrary(): PersistentLibrary {
         });
         return [...prev, normalizedBook];
       });
+      
+      return normalizedBook;
     },
     [],
   );
@@ -765,7 +768,7 @@ export function usePersistentLibrary(): PersistentLibrary {
     };
   }, [ensureLibraryStore, ingestEpub]);
 
-  const importFromDialog = useCallback(async (): Promise<boolean> => {
+  const importFromDialog = useCallback(async (): Promise<boolean | { book: Book; buffer: ArrayBuffer }> => {
     if (isImporting) return false;
 
     if (!isTauriEnvironment()) {
@@ -800,11 +803,17 @@ export function usePersistentLibrary(): PersistentLibrary {
         binary.byteOffset + binary.byteLength,
       );
 
-      await ingestEpub({
+      const book = await ingestEpub({
         buffer: arrayBuffer,
         sourcePath: filePath,
       });
-      return true;
+      
+      if (!book) {
+        return true;
+      }
+      
+      // Return book and buffer for potential conversion check
+      return { book, buffer: arrayBuffer };
     } catch (error) {
       console.error(error);
       const message =
@@ -848,11 +857,14 @@ export function usePersistentLibrary(): PersistentLibrary {
 
       try {
         const buffer = await file.arrayBuffer();
-        await ingestEpub({
+        const book = await ingestEpub({
           buffer,
           sourcePath: sourceKey,
           fallbackTitle: file.name,
         });
+        
+        // Return book and buffer for potential conversion check
+        return book ? { book, buffer } : undefined;
       } catch (error) {
         console.error(error);
         const message =
@@ -874,6 +886,7 @@ export function usePersistentLibrary(): PersistentLibrary {
     isImporting,
     importFromDialog,
     handleWebFileSelection,
+    ingestEpub,
   };
 }
 

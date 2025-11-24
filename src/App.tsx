@@ -10,6 +10,9 @@ import type {
 import { ReaderPanel } from "./components/ReaderPanel";
 import { ReaderAudioPlayer } from "./components/reader/ReaderAudioPlayer";
 import { BookDetailDialog } from "./components/library/BookDetailDialog";
+import { ConvertToAudiobookDialog } from "./components/library/ConvertToAudiobookDialog";
+import { ConversionProgressDialog } from "./components/library/ConversionProgressDialog";
+import type { ConversionProgress } from "./lib/audiobook-converter";
 import { Toaster } from "./components/ui/sonner";
 import { LoadingScreen } from "./components/app/LoadingScreen";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -24,6 +27,9 @@ import type {
 } from "./components/reader/types";
 import { cn, getLibraryBookStatus } from "./lib/utils";
 import { findChaptersForAudioTrack } from "./lib/epub";
+import { convertEpubToAudiobook } from "./lib/audiobook-converter";
+import type { VoiceId } from "./types/reader";
+import type { Book } from "./types/reader";
 
 const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   theme: "system",
@@ -44,7 +50,185 @@ function App() {
     isImporting,
     importFromDialog,
     handleWebFileSelection,
+    ingestEpub,
   } = usePersistentLibrary();
+
+  const [showConvertDialog, setShowConvertDialog] = useState(false);
+  const [pendingBookForConversion, setPendingBookForConversion] = useState<{
+    book: Book;
+    buffer: ArrayBuffer;
+  } | null>(null);
+  const [isConverting, setIsConverting] = useState(false);
+  const [conversionProgress, setConversionProgress] = useState<ConversionProgress | null>(null);
+  const [bookConversionProgress, setBookConversionProgress] = useState<Record<string, ConversionProgress>>({});
+  const conversionAbortControllerRef = useRef<AbortController | null>(null);
+  const convertingBookIdRef = useRef<string | null>(null);
+
+  const handleConvertToAudiobook = useCallback(async (voiceId: VoiceId) => {
+    if (!pendingBookForConversion || isConverting) return;
+    
+    // Create abort controller for this conversion
+    const abortController = new AbortController();
+    conversionAbortControllerRef.current = abortController;
+    convertingBookIdRef.current = pendingBookForConversion.book.id;
+    
+    setIsConverting(true);
+    setShowConvertDialog(false);
+    setConversionProgress(null);
+    const bookId = pendingBookForConversion.book.id;
+    
+    try {
+      const { book, buffer } = pendingBookForConversion;
+      
+      // Convert EPUB to audiobook
+      const convertedBuffer = await convertEpubToAudiobook(buffer, book.chapters, {
+        voiceId,
+        signal: abortController.signal,
+        onProgress: (progress) => {
+          setConversionProgress(progress);
+          setBookConversionProgress((prev) => ({
+            ...prev,
+            [bookId]: progress,
+          }));
+        },
+      });
+      
+      // Remove the original book from library
+      setLibrary((prev) => prev.filter((b) => b.id !== book.id));
+      
+      // Re-ingest the converted EPUB
+      await ingestEpub({
+        buffer: convertedBuffer,
+        sourcePath: book.sourcePath.replace(/\.epub$/, "-audiobook.epub"),
+        fallbackTitle: book.title,
+        progress: book.progress,
+        pageCountHint: book.pageCount,
+      });
+      
+      setPendingBookForConversion(null);
+      setConversionProgress(null);
+      setBookConversionProgress((prev) => {
+        const next = { ...prev };
+        delete next[bookId];
+        return next;
+      });
+      toast.success("Audiobook ready!", {
+        description: "Your ebook has been converted to an audiobook.",
+      });
+    } catch (error) {
+      // Don't show error toast if conversion was cancelled
+      if (error instanceof Error && error.message === "Conversion cancelled") {
+        console.log("Conversion cancelled by user");
+      } else {
+        console.error("Conversion error:", error);
+        toast.error("Conversion failed", {
+          description: error instanceof Error ? error.message : "An error occurred during conversion",
+        });
+      }
+      setConversionProgress(null);
+      setBookConversionProgress((prev) => {
+        const next = { ...prev };
+        delete next[bookId];
+        return next;
+      });
+    } finally {
+      setIsConverting(false);
+      conversionAbortControllerRef.current = null;
+      convertingBookIdRef.current = null;
+    }
+  }, [pendingBookForConversion, isConverting, setLibrary, ingestEpub]);
+
+  const handleConvertBookFromDetail = useCallback(async (book: Book, voiceId: VoiceId) => {
+    if (isConverting || book.audioTracks.length > 0) return;
+    
+    // Create abort controller for this conversion
+    const abortController = new AbortController();
+    conversionAbortControllerRef.current = abortController;
+    convertingBookIdRef.current = book.id;
+    
+    setIsConverting(true);
+    setConversionProgress(null);
+    const bookId = book.id;
+    
+    try {
+      // Load the EPUB file buffer
+      let buffer: ArrayBuffer;
+      
+      if (book.sourcePath.startsWith("web://")) {
+        // Web file - we can't reload it, show error
+        toast.error("Cannot convert web files", {
+          description: "Please re-import the file to convert it.",
+        });
+        setIsConverting(false);
+        conversionAbortControllerRef.current = null;
+        convertingBookIdRef.current = null;
+        return;
+      }
+      
+      // Tauri environment - read from file system
+      const { readFile } = await import("@tauri-apps/plugin-fs");
+      const binary = await readFile(book.sourcePath);
+      buffer = binary.buffer.slice(
+        binary.byteOffset,
+        binary.byteOffset + binary.byteLength,
+      );
+      
+      // Convert EPUB to audiobook
+      const convertedBuffer = await convertEpubToAudiobook(buffer, book.chapters, {
+        voiceId,
+        signal: abortController.signal,
+        onProgress: (progress) => {
+          setConversionProgress(progress);
+          setBookConversionProgress((prev) => ({
+            ...prev,
+            [bookId]: progress,
+          }));
+        },
+      });
+      
+      // Remove the original book from library
+      setLibrary((prev) => prev.filter((b) => b.id !== book.id));
+      
+      // Re-ingest the converted EPUB
+      await ingestEpub({
+        buffer: convertedBuffer,
+        sourcePath: book.sourcePath.replace(/\.epub$/, "-audiobook.epub"),
+        fallbackTitle: book.title,
+        progress: book.progress,
+        pageCountHint: book.pageCount,
+      });
+      
+      setConversionProgress(null);
+      setBookConversionProgress((prev) => {
+        const next = { ...prev };
+        delete next[bookId];
+        return next;
+      });
+      toast.success("Audiobook ready!", {
+        description: "Your ebook has been converted to an audiobook.",
+      });
+    } catch (error) {
+      // Don't show error toast if conversion was cancelled
+      if (error instanceof Error && error.message === "Conversion cancelled") {
+        console.log("Conversion cancelled by user");
+      } else {
+        console.error("Conversion error:", error);
+        toast.error("Conversion failed", {
+          description: error instanceof Error ? error.message : "An error occurred during conversion",
+        });
+      }
+      setConversionProgress(null);
+      setBookConversionProgress((prev) => {
+        const next = { ...prev };
+        delete next[bookId];
+        return next;
+      });
+    } finally {
+      setIsConverting(false);
+      conversionAbortControllerRef.current = null;
+      convertingBookIdRef.current = null;
+    }
+  }, [isConverting, setLibrary, ingestEpub]);
 
   const [activeBookId, setActiveBookId] = useState<string | undefined>();
   const [activeChapterId, setActiveChapterId] = useState<string | undefined>();
@@ -763,14 +947,47 @@ function App() {
 
   const handleAddEbook = useCallback(async () => {
     if (isImporting) return;
-    const handled = await importFromDialog();
-    if (!handled) {
+    const result = await importFromDialog();
+    if (!result) {
       fileInputRef.current?.click();
+      return;
+    }
+    
+    // Check if result contains book info (for conversion check)
+    if (typeof result === "object" && "book" in result && "buffer" in result) {
+      const { book, buffer } = result;
+      // Check if book needs conversion (no audio tracks)
+      if (book.audioTracks.length === 0) {
+        setPendingBookForConversion({ book, buffer });
+        setShowConvertDialog(true);
+      }
     }
   }, [importFromDialog, isImporting]);
 
   const handleDeleteBook = useCallback(
     (bookId: string) => {
+      // If this book is currently being converted, cancel the conversion
+      if (convertingBookIdRef.current === bookId && conversionAbortControllerRef.current) {
+        conversionAbortControllerRef.current.abort();
+        conversionAbortControllerRef.current = null;
+        convertingBookIdRef.current = null;
+        setIsConverting(false);
+        setConversionProgress(null);
+        setBookConversionProgress((prev) => {
+          const next = { ...prev };
+          delete next[bookId];
+          return next;
+        });
+        // If it was pending conversion, clear that too
+        if (pendingBookForConversion?.book.id === bookId) {
+          setPendingBookForConversion(null);
+          setShowConvertDialog(false);
+        }
+        toast.info("Conversion cancelled", {
+          description: "The conversion has been cancelled and the book has been removed.",
+        });
+      }
+      
       setLibrary((prev) => prev.filter((book) => book.id !== bookId));
       setDetailBookId(null);
 
@@ -781,7 +998,7 @@ function App() {
         setActiveView("library");
       }
     },
-    [activeBookId, setLibrary],
+    [activeBookId, setLibrary, pendingBookForConversion],
   );
 
   useEffect(() => {
@@ -850,6 +1067,7 @@ function App() {
       onAddEbook={handleAddEbook}
       onOpenBook={handleSelectBook}
       onViewDetails={(bookId) => setDetailBookId(bookId)}
+      bookConversionProgress={bookConversionProgress}
     />
   );
 
@@ -907,7 +1125,17 @@ function App() {
         aria-label="Select an EPUB file to import"
         aria-hidden="true"
         tabIndex={-1}
-        onChange={handleWebFileSelection}
+        onChange={async (e) => {
+          const result = await handleWebFileSelection(e);
+          if (result && "book" in result && "buffer" in result) {
+            const { book, buffer } = result;
+            // Check if book needs conversion (no audio tracks)
+            if (book.audioTracks.length === 0) {
+              setPendingBookForConversion({ book, buffer });
+              setShowConvertDialog(true);
+            }
+          }
+        }}
       />
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-6 pb-28 sm:px-6 lg:px-8">
         <div className="flex flex-1 min-h-0 flex-col">{currentView}</div>
@@ -979,7 +1207,31 @@ function App() {
             handleSelectBook(detailBook.id);
           }}
           onDeleteBook={() => handleDeleteBook(detailBook.id)}
+          conversionProgress={bookConversionProgress[detailBook.id]}
+          onConvertToAudiobook={handleConvertBookFromDetail}
         />
+      ) : null}
+      {pendingBookForConversion ? (
+        <>
+          <ConvertToAudiobookDialog
+            open={showConvertDialog && !isConverting}
+            onOpenChange={(open) => {
+              if (!isConverting) {
+                setShowConvertDialog(open);
+                if (!open) {
+                  setPendingBookForConversion(null);
+                }
+              }
+            }}
+            onConfirm={handleConvertToAudiobook}
+            bookTitle={pendingBookForConversion.book.title}
+          />
+          <ConversionProgressDialog
+            open={isConverting}
+            progress={conversionProgress}
+            bookTitle={pendingBookForConversion.book.title}
+          />
+        </>
       ) : null}
       <Toaster position="top-center" richColors />
     </div>

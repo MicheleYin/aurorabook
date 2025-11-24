@@ -1,14 +1,6 @@
-import { DEFAULT_KOKORO_MODEL_ID, KOKORO_VOICE_GROUPS } from "../constants/kokoro";
+import { KOKORO_VOICE_GROUPS } from "../constants/kokoro";
 import type { VoiceId } from "../types/reader";
-import { ensureKokoroAssetFetchCache, isAssetCached } from "./kokoro-cache";
-
-const MODEL_FETCH_OPTIONS = {
-  dtype: "q8" as const,
-  device: "wasm" as const,
-};
-
-const VOICE_BASE_URL =
-  "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/voices";
+import { initKokorosEngine } from "./kokoro-rust";
 
 export type VoicePrefetchProgress = {
   completed: number;
@@ -18,20 +10,19 @@ export type VoicePrefetchProgress = {
 };
 
 export const prefetchKokoroModel = async () => {
-  await ensureKokoroAssetFetchCache();
-
-  const { KokoroTTS } = await import("kokoro-js");
-  const tts = await KokoroTTS.from_pretrained(DEFAULT_KOKORO_MODEL_ID, MODEL_FETCH_OPTIONS);
-  // Dispose references so memory can be reclaimed.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  void tts;
+  // Initialize the Rust Kokoros engine
+  // This will download model and voices files if needed
+  await initKokorosEngine();
 };
 
 export const prefetchKokoroVoices = async (options?: {
   onProgress?: (progress: VoicePrefetchProgress) => void;
 }) => {
-  await ensureKokoroAssetFetchCache();
+  // Initialize engine (downloads voices file if needed)
+  await initKokorosEngine();
 
+  // All voices are included in the voices-v1.0.bin file
+  // So we just report completion for all voices
   const voiceIds = Array.from(
     new Set(KOKORO_VOICE_GROUPS.flatMap((group) => group.voices.map((voice) => voice.id))),
   );
@@ -39,23 +30,14 @@ export const prefetchKokoroVoices = async (options?: {
   const total = voiceIds.length;
   let completed = 0;
 
+  // Since all voices are in one file, we just report them as completed
   for (const voiceId of voiceIds) {
-    const voiceUrl = `${VOICE_BASE_URL}/${voiceId}.bin`;
-    const cached = await isAssetCached(voiceUrl);
-    let skipped = false;
-
-    if (!cached) {
-      const response = await fetch(voiceUrl);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch voice ${voiceId}`);
-      }
-      // Response is cached in ensureKokoroAssetFetchCache wrapper.
-      await response.arrayBuffer();
-    } else {
-      skipped = true;
-    }
-
     completed += 1;
-    options?.onProgress?.({ completed, total, voiceId, skipped });
+    options?.onProgress?.({ 
+      completed, 
+      total, 
+      voiceId, 
+      skipped: false // Voices file was downloaded/initialized
+    });
   }
 };

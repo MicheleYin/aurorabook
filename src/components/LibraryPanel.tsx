@@ -1,6 +1,7 @@
 import { Plus } from "lucide-react";
 
 import type { Book } from "../types/reader";
+import type { ConversionProgress } from "../lib/audiobook-converter";
 import { Button } from "./ui/button";
 import { LibraryEmpty } from "./library/LibraryEmpty";
 import { LibraryGrid } from "./library/LibraryGrid";
@@ -23,6 +24,7 @@ export type LibraryPanelProps = {
   onAddEbook: () => void;
   onOpenBook: (bookId: string) => void;
   onViewDetails: (bookId: string) => void;
+  bookConversionProgress?: Record<string, ConversionProgress>;
 };
 
 export function LibraryPanel({
@@ -39,6 +41,7 @@ export function LibraryPanel({
   onAddEbook,
   onOpenBook,
   onViewDetails,
+  bookConversionProgress = {},
 }: LibraryPanelProps) {
   const isSearching = searchTerm.trim().length > 0;
   const hasBooks = library.length > 0;
@@ -81,6 +84,7 @@ export function LibraryPanel({
               activeBookId={activeBookId}
               onOpenBook={onOpenBook}
               onViewDetails={onViewDetails}
+              bookConversionProgress={bookConversionProgress}
             />
           ) : (
             <LibraryList
@@ -88,6 +92,7 @@ export function LibraryPanel({
               activeBookId={activeBookId}
               onOpenBook={onOpenBook}
               onViewDetails={onViewDetails}
+              bookConversionProgress={bookConversionProgress}
             />
           )
         ) : (

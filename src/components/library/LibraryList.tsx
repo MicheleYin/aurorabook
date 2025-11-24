@@ -1,14 +1,15 @@
 import type { KeyboardEvent } from "react";
-import { ImageOff } from "lucide-react";
+import { ImageOff, Loader2 } from "lucide-react";
 
 import type { Book } from "../../types/reader";
+import type { ConversionProgress } from "../../lib/audiobook-converter";
 import {
   cn,
-  
   getBookProgressSummary,
   getLibraryBookStatusFromSummary,
 } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { Progress } from "../ui/progress";
 import { LibraryStatusBadge } from "./LibraryStatusBadge";
 
 interface LibraryListProps {
@@ -16,6 +17,7 @@ interface LibraryListProps {
   activeBookId?: string;
   onOpenBook: (bookId: string) => void;
   onViewDetails: (bookId: string) => void;
+  bookConversionProgress?: Record<string, ConversionProgress>;
 }
 
 export function LibraryList({
@@ -23,6 +25,7 @@ export function LibraryList({
   activeBookId,
   onOpenBook,
   onViewDetails,
+  bookConversionProgress = {},
 }: LibraryListProps) {
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>, bookId: string) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -44,6 +47,11 @@ export function LibraryList({
         const chapterSummary = hasChapters
           ? `Chapters: ${book.chapters.length}`
           : "Chapters: Not available";
+        const conversionProgress = bookConversionProgress[book.id];
+        const isConverting = Boolean(conversionProgress);
+        const conversionPercent = conversionProgress
+          ? Math.round((conversionProgress.currentChapter / conversionProgress.totalChapters) * 100)
+          : 0;
           
         return (
           <div
@@ -80,10 +88,28 @@ export function LibraryList({
               <span className="line-clamp-1 text-xs text-muted-foreground">
                 {book.author}
               </span>
-              <span className="line-clamp-1 text-xs text-muted-foreground">{progressText}</span>
-              <span className="line-clamp-1 text-xs text-muted-foreground">
-                {`${chapterSummary}`}
-              </span>
+              {isConverting ? (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">
+                      Converting: {conversionProgress.currentChapter}/{conversionProgress.totalChapters}
+                    </span>
+                    <span className="font-medium">{conversionPercent}%</span>
+                  </div>
+                  <Progress value={conversionPercent} className="h-1.5" />
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    <span className="line-clamp-1">{conversionProgress.message}</span>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <span className="line-clamp-1 text-xs text-muted-foreground">{progressText}</span>
+                  <span className="line-clamp-1 text-xs text-muted-foreground">
+                    {`${chapterSummary}`}
+                  </span>
+                </>
+              )}
             </div>
             <Button
               variant="ghost"

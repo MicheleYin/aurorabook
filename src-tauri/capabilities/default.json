@@ -6,11 +6,13 @@
   "permissions": [
     "core:default",
     "dialog:default",
-    { "identifier": "fs:scope", "allow": [{ "path": "$APPLOCALDATA/tts-tauri/**" }] },
-    { "identifier": "fs:allow-exists", "allow": [{ "path": "$APPLOCALDATA/tts-tauri/**" }] },
-    { "identifier": "fs:allow-read", "allow": [{ "path": "$APPLOCALDATA/tts-tauri/**" }] },
-    { "identifier": "fs:allow-read-file", "allow": [{ "path": "$APPLOCALDATA/tts-tauri/**" }] },
-    { "identifier": "fs:allow-read-text-file", "allow": [{ "path": "$APPLOCALDATA/tts-tauri/**" }] },
+    { "identifier": "fs:scope", "allow": [{ "path": "$APPDATA/**" }, { "path": "$APPLOCALDATA/**" }, { "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
+    { "identifier": "fs:allow-exists", "allow": [{ "path": "$APPDATA/**" }, { "path": "$APPLOCALDATA/**" }, { "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
+    { "identifier": "fs:allow-read", "allow": [{ "path": "$APPDATA/**" }, { "path": "$APPLOCALDATA/**" }, { "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
+    { "identifier": "fs:allow-read-file", "allow": [{ "path": "$APPDATA/**" }, { "path": "$APPLOCALDATA/**" }, { "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
+    { "identifier": "fs:allow-read-text-file", "allow": [{ "path": "$APPDATA/**" }, { "path": "$APPLOCALDATA/**" }, { "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
+    { "identifier": "fs:allow-write-file", "allow": [{ "path": "$APPDATA/**" }, { "path": "$APPLOCALDATA/**" }, { "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
+    { "identifier": "fs:allow-write", "allow": [{ "path": "$APPDATA/**" }, { "path": "$APPLOCALDATA/**" }, { "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
     "store:default",
     "opener:default"
   ]

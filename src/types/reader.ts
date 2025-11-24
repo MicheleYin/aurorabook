@@ -1,8 +1,7 @@
-import type { KokoroTTS } from "kokoro-js";
-
 export type PlaybackState = "idle" | "loading" | "playing" | "paused";
 
-export type VoiceId = keyof KokoroTTS["voices"];
+// VoiceId is a string identifier for Kokoro voices (e.g., "af_heart", "am_adam")
+export type VoiceId = string;
 
 export type AudioTrack = {
   id: string;

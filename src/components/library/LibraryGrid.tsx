@@ -1,14 +1,15 @@
 import type { KeyboardEvent } from "react";
-import { ImageOff } from "lucide-react";
+import { ImageOff, Loader2 } from "lucide-react";
 
 import type { Book } from "../../types/reader";
+import type { ConversionProgress } from "../../lib/audiobook-converter";
 import {
   cn,
-  formatPageCount,
   getBookProgressSummary,
   getLibraryBookStatusFromSummary,
 } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { Progress } from "../ui/progress";
 import { LibraryStatusBadge } from "./LibraryStatusBadge";
 
 interface LibraryGridProps {
@@ -16,6 +17,7 @@ interface LibraryGridProps {
   activeBookId?: string;
   onOpenBook: (bookId: string) => void;
   onViewDetails: (bookId: string) => void;
+  bookConversionProgress?: Record<string, ConversionProgress>;
 }
 
 export function LibraryGrid({
@@ -23,6 +25,7 @@ export function LibraryGrid({
   activeBookId,
   onOpenBook,
   onViewDetails,
+  bookConversionProgress = {},
 }: LibraryGridProps) {
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>, bookId: string) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -44,6 +47,12 @@ export function LibraryGrid({
         const chapterSummary = hasChapters
           ? `Chapters: ${book.chapters.length}`
           : "Chapters: Not available";
+        const conversionProgress = bookConversionProgress[book.id];
+        const isConverting = Boolean(conversionProgress);
+        const conversionPercent = conversionProgress
+          ? Math.round((conversionProgress.currentChapter / conversionProgress.totalChapters) * 100)
+          : 0;
+        
         return (
           <div
             key={book.id}
@@ -79,7 +88,23 @@ export function LibraryGrid({
                   {book.author}
                 </p>
               </div>
-              <p className="text-xs text-muted-foreground">{progressText}</p>
+              {isConverting ? (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">
+                      Converting: Chapter {conversionProgress.currentChapter} of {conversionProgress.totalChapters}
+                    </span>
+                    <span className="font-medium">{conversionPercent}%</span>
+                  </div>
+                  <Progress value={conversionPercent} className="h-1.5" />
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    <span className="line-clamp-1">{conversionProgress.message}</span>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">{progressText}</p>
+              )}
               <div className="mt-auto flex items-center justify-between text-xs text-muted-foreground">
                 <div className="flex flex-col">
                   <span>{chapterSummary}</span>
