@@ -38,19 +38,9 @@ lame = "0.1"
 kokoros = { git = "https://github.com/lucasjinreal/Kokoros", package = "kokoros", features = ["cuda"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
-# Use kokoros crate directly - it handles CoreML via ONNX Runtime with CoreML Execution Provider
-# This provides optimal ANE/GPU utilization without custom CoreML code
+# Use kokoros crate - it uses ONNX Runtime with CoreML Execution Provider automatically on macOS/iOS
 kokoros = { git = "https://github.com/lucasjinreal/Kokoros", package = "kokoros", default-features = true }
-# ONNX Runtime with CoreML EP support
+# ONNX Runtime with CoreML EP support for explicit CoreML EP configuration
 ort = { version = "2.0.0-rc.10", default-features = true }
-# CoreML bindings for direct CoreML model loading (FluidInference models)
-objc2-core-ml = "0.3"
-objc2-foundation = "0.3"
-objc2 = "0.6"
-fastrand = "2"
-# espeak-rs for phonemization (same as kokoros uses)
-espeak-rs = "0.1.9"
-lazy_static = "1.5"
-regex = "1"
 ndarray = "0.16"
 

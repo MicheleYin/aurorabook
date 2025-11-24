@@ -1,15 +1,11 @@
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
-// CoreML module for direct CoreML model support (macOS/iOS only)
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-mod kokoro_coreml;
-
 // ONNX Runtime with CoreML EP support (macOS/iOS only)
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod kokoro_onnx_coreml;
 
-// Use kokoros crate directly on all platforms (it handles CoreML via ONNX Runtime on macOS)
+// Use kokoros crate directly on all platforms (it uses ONNX Runtime with CoreML EP on macOS/iOS)
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -174,11 +170,6 @@ async fn copy_directory(
     }
 }
 
-// CoreML engine type (macOS/iOS only)
-// We only use CoreML models, no ONNX fallback
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-type CoreMLEngine = Arc<Mutex<Option<kokoro_coreml::KokoroCoreMLParallel>>>;
-
 #[tauri::command]
 async fn init_kokoros_engine(
     model_path: String,
@@ -186,73 +177,40 @@ async fn init_kokoros_engine(
     num_instances: Option<usize>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let instances = num_instances.unwrap_or(4);
+    // ONNX Runtime with CoreML EP is handled automatically by kokoros crate on macOS/iOS
+    // This function is kept for API compatibility but doesn't need to store engine state
+    // kokoros manages its own instances internally
     
     let model_path_obj = std::path::Path::new(&model_path);
     
-    // Only use CoreML on macOS/iOS
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    {
-        if !model_path_obj.is_dir() {
-            return Err(format!(
-                "Model path must be a directory containing CoreML models. Got: {}",
-                model_path
-            ));
-        }
-        
-        if !model_path_obj.exists() {
-            return Err(format!(
-                "Model directory does not exist: {}. Please ensure the CoreML models directory is available.",
-                model_path
-            ));
-        }
-        
-        // Check if directory contains CoreML models
-        let has_coreml_models = std::fs::read_dir(&model_path)
-            .ok()
-            .map(|entries| {
-                entries.filter_map(|e| e.ok())
-                    .any(|e| {
-                        let file_name = e.file_name();
-                        let name = file_name.to_string_lossy();
-                        name.ends_with(".mlpackage") || name.ends_with(".mlmodelc")
-                    })
-            })
-            .unwrap_or(false);
-        
-        if !has_coreml_models {
-            return Err(format!(
-                "No CoreML models found in directory: {}. Expected .mlpackage or .mlmodelc files.",
-                model_path
-            ));
-        }
-        
-        println!("Initializing CoreML engine with model_path: {}, voices_path: {}", model_path, voices_path);
-        
-        match kokoro_coreml::KokoroCoreMLParallel::new_with_instances(
-            &model_path,
-            &voices_path,
-            instances,
-        ) {
-            Ok(coreml_engine) => {
-                // Store CoreML engine
-                app.manage::<CoreMLEngine>(Arc::new(Mutex::new(Some(coreml_engine))));
-                return Ok(format!(
-                    "Initialized CoreML engine with {} instances using FluidInference models from: {}",
-                    instances, model_path
-                ));
-            }
-            Err(e) => {
-                return Err(format!("Failed to initialize CoreML engine: {}", e));
-            }
-        }
+    if !model_path_obj.exists() {
+        return Err(format!(
+            "Model file does not exist: {}. Expected kokoro-v1.0.onnx",
+            model_path
+        ));
     }
     
-    // Non-Apple platforms: CoreML not available
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    {
-        Err("CoreML is only available on macOS/iOS platforms".to_string())
+    if !model_path_obj.is_file() {
+        return Err(format!(
+            "Model path must be a file (ONNX model). Got: {}",
+            model_path
+        ));
     }
+    
+    if !model_path.ends_with(".onnx") {
+        return Err(format!(
+            "Model file must be an ONNX model (.onnx extension). Got: {}",
+            model_path
+        ));
+    }
+    
+    println!("ONNX Runtime with CoreML EP will be used automatically on macOS/iOS");
+    println!("Model path: {}, Voices path: {}", model_path, voices_path);
+    
+    Ok(format!(
+        "Initialized ONNX Runtime engine (CoreML EP enabled on macOS/iOS). Model: {}",
+        model_path
+    ))
 }
 
 #[tauri::command]
@@ -264,154 +222,104 @@ async fn generate_tts_cached(
     worker_id: Option<usize>,
     app: tauri::AppHandle,
 ) -> Result<Vec<u8>, String> {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    {
-        // Try CoreML first
-        {
-            let engine: tauri::State<'_, CoreMLEngine> = app.state();
-            let coreml_guard = engine.lock().unwrap_or_else(|e| e.into_inner());
-            
-            if let Some(coreml_engine) = coreml_guard.as_ref() {
-                let worker = worker_id.unwrap_or(0);
-                let model_instance = coreml_engine.get_model_instance(worker);
-                let engine_guard = model_instance.lock().unwrap_or_else(|e| e.into_inner());
-                
-                // Try CoreML generation
-                match engine_guard.generate_tts(
-                    &text,
-                    &voice_id,
-                    language.as_deref().unwrap_or("en"),
-                    speed.unwrap_or(1.0),
-                ) {
-                    Ok(audio_samples) => {
-                        // Convert Vec<f32> to 16-bit PCM bytes
-                        let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
-                        for sample in audio_samples {
-                            let clamped = sample.max(-1.0).min(1.0);
-                            let pcm_value = if clamped < 0.0 {
-                                (clamped * 32768.0) as i16
-                            } else {
-                                (clamped * 32767.0) as i16
-                            };
-                            pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
-                        }
-                        return Ok(pcm_bytes);
-                    }
-                    Err(e) => {
-                        // CoreML failed, fall back to ONNX
-                        eprintln!("CoreML generation failed: {}, falling back to ONNX", e);
-                    }
-                }
-            }
-        } // Guard is dropped here before await
+    // Use ONNX Runtime with CoreML EP (automatically enabled on macOS/iOS via kokoros)
+    fn find_onnx_model() -> Option<std::path::PathBuf> {
+        let mut possible_paths = Vec::new();
         
-        // Fallback to ONNX/kokoros - use helper functions from tests module
-        // Note: These are test helpers, but we can use them here for fallback
-        fn find_onnx_model() -> Option<std::path::PathBuf> {
-            // Try multiple possible locations
-            let mut possible_paths = Vec::new();
-            
-            // From project root
-            if let Ok(current_dir) = std::env::current_dir() {
-                possible_paths.push(current_dir.join("src-tauri").join("resources").join("kokoro-v1.0.onnx"));
-                possible_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
-            }
-            
-            // Check KOKORO_MODEL_PATH env var
-            if let Ok(env_path) = std::env::var("KOKORO_MODEL_PATH") {
-                if !env_path.is_empty() {
-                    possible_paths.push(std::path::PathBuf::from(env_path));
-                }
-            }
-            
-            for path in possible_paths {
-                if path.exists() && path.is_file() {
-                    return Some(path);
-                }
-            }
-            None
+        if let Ok(current_dir) = std::env::current_dir() {
+            possible_paths.push(current_dir.join("src-tauri").join("resources").join("kokoro-v1.0.onnx"));
+            possible_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
         }
         
-        fn find_resources_dir() -> Option<std::path::PathBuf> {
-            // Try multiple possible locations
-            let mut possible_paths = Vec::new();
-            
-            if let Ok(current_dir) = std::env::current_dir() {
-                possible_paths.push(current_dir.join("src-tauri").join("resources"));
-                possible_paths.push(current_dir.join("resources"));
-            }
-            
-            for path in possible_paths {
-                if path.exists() && path.is_dir() {
-                    return Some(path);
-                }
-            }
-            None
-        }
-        
-        fn find_voices_file(resources_dir: &std::path::PathBuf) -> Option<std::path::PathBuf> {
-            let voices_path = resources_dir.join("voices-v1.0.bin");
-            if voices_path.exists() {
-                Some(voices_path)
-            } else {
-                None
+        if let Ok(env_path) = std::env::var("KOKORO_MODEL_PATH") {
+            if !env_path.is_empty() {
+                possible_paths.push(std::path::PathBuf::from(env_path));
             }
         }
         
-        let onnx_model = find_onnx_model();
-        let resources_dir = find_resources_dir();
-        
-        if let (Some(onnx_path), Some(res_dir)) = (onnx_model, resources_dir) {
-            if let Some(voices_path) = find_voices_file(&res_dir) {
-                let onnx_path_str = onnx_path.to_str().unwrap();
-                let voices_path_str = voices_path.to_str().unwrap();
-                
-                // Initialize ONNX engine
-                let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
-                    onnx_path_str,
-                    voices_path_str,
-                    1,
-                ).await;
-                
-                let model_instance = engine.get_model_instance(0);
-                match engine.tts_raw_audio_with_instance(
-                    &text,
-                    language.as_deref().unwrap_or("en"),
-                    &voice_id,
-                    speed.unwrap_or(1.0),
-                    None,
-                    None,
-                    None,
-                    None,
-                    model_instance,
-                ) {
-                    Ok(audio_samples) => {
-                        // Convert Vec<f32> to 16-bit PCM bytes
-                        let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
-                        for sample in audio_samples {
-                            let clamped = sample.max(-1.0).min(1.0);
-                            let pcm_value = if clamped < 0.0 {
-                                (clamped * 32768.0) as i16
-                            } else {
-                                (clamped * 32767.0) as i16
-                            };
-                            pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
-                        }
-                        return Ok(pcm_bytes);
-                    }
-                    Err(e) => {
-                        return Err(format!("Both CoreML and ONNX generation failed. ONNX error: {}", e));
-                    }
-                }
+        for path in possible_paths {
+            if path.exists() && path.is_file() {
+                return Some(path);
             }
         }
-        
-        Err("CoreML generation failed and ONNX fallback unavailable. Please ensure models are available.".to_string())
+        None
     }
     
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    {
-        Err("CoreML is only available on macOS/iOS platforms".to_string())
+    fn find_resources_dir() -> Option<std::path::PathBuf> {
+        let mut possible_paths = Vec::new();
+        
+        if let Ok(current_dir) = std::env::current_dir() {
+            possible_paths.push(current_dir.join("src-tauri").join("resources"));
+            possible_paths.push(current_dir.join("resources"));
+        }
+        
+        for path in possible_paths {
+            if path.exists() && path.is_dir() {
+                return Some(path);
+            }
+        }
+        None
+    }
+    
+    fn find_voices_file(resources_dir: &std::path::PathBuf) -> Option<std::path::PathBuf> {
+        let voices_path = resources_dir.join("voices-v1.0.bin");
+        if voices_path.exists() {
+            Some(voices_path)
+        } else {
+            None
+        }
+    }
+    
+    let onnx_model = find_onnx_model();
+    let resources_dir = find_resources_dir();
+    
+    if let (Some(onnx_path), Some(res_dir)) = (onnx_model, resources_dir) {
+        if let Some(voices_path) = find_voices_file(&res_dir) {
+            let onnx_path_str = onnx_path.to_str().unwrap();
+            let voices_path_str = voices_path.to_str().unwrap();
+            
+            // Initialize ONNX engine (uses CoreML EP automatically on macOS/iOS)
+            let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+                onnx_path_str,
+                voices_path_str,
+                1,
+            ).await;
+            
+            let model_instance = engine.get_model_instance(worker_id.unwrap_or(0));
+            match engine.tts_raw_audio_with_instance(
+                &text,
+                language.as_deref().unwrap_or("en"),
+                &voice_id,
+                speed.unwrap_or(1.0),
+                None,
+                None,
+                None,
+                None,
+                model_instance,
+            ) {
+                Ok(audio_samples) => {
+                    // Convert Vec<f32> to 16-bit PCM bytes
+                    let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
+                    for sample in audio_samples {
+                        let clamped = sample.max(-1.0).min(1.0);
+                        let pcm_value = if clamped < 0.0 {
+                            (clamped * 32768.0) as i16
+                        } else {
+                            (clamped * 32767.0) as i16
+                        };
+                        pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
+                    }
+                    Ok(pcm_bytes)
+                }
+                Err(e) => {
+                    Err(format!("TTS generation failed: {}", e))
+                }
+            }
+        } else {
+            Err("Voices file not found. Please ensure voices-v1.0.bin is available.".to_string())
+        }
+    } else {
+        Err("ONNX model not found. Please ensure kokoro-v1.0.onnx is available.".to_string())
     }
 }
 
@@ -424,79 +332,131 @@ async fn generate_tts_batch(
     speed: Option<f32>,
     app: tauri::AppHandle,
 ) -> Result<Vec<Vec<u8>>, String> {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    {
-        // Verify engine is initialized before spawning tasks
-        {
-            let engine: tauri::State<'_, CoreMLEngine> = app.state();
-            // Handle poisoned locks gracefully
-            let coreml_guard = engine.lock().unwrap_or_else(|e| e.into_inner());
-            coreml_guard.as_ref()
-                .ok_or_else(|| "CoreML engine not initialized".to_string())?;
-        } // Guard is dropped here
+    // Use ONNX Runtime with CoreML EP (automatically enabled on macOS/iOS via kokoros)
+    fn find_onnx_model() -> Option<std::path::PathBuf> {
+        let mut possible_paths = Vec::new();
         
-        // Process texts in parallel using different instances
-        let mut handles = Vec::new();
-        for (idx, text) in texts.iter().enumerate() {
-            let app_clone = app.clone();
-            let text_clone = text.clone();
-            let voice_id_clone = voice_id.clone();
-            let language_clone = language.clone();
-            let speed_val = speed.unwrap_or(1.0);
-            
-            let handle = tokio::spawn(async move {
-                let engine: tauri::State<'_, CoreMLEngine> = app_clone.state();
-                // Get the model instance
-                let model_instance = {
-                    // Handle poisoned locks gracefully
-                    let coreml_guard = engine.lock().unwrap_or_else(|e| e.into_inner());
-                    let coreml_engine = coreml_guard.as_ref()
-                        .ok_or_else(|| "CoreML engine not initialized".to_string())?;
-                    
-                    let worker = idx % 4;
-                    coreml_engine.get_model_instance(worker)
-                }; // Guard is dropped here
-                
-                // Generate audio using CoreML engine
-                let engine_guard = model_instance.lock().unwrap_or_else(|e| e.into_inner());
-                engine_guard.generate_tts(
-                    &text_clone,
-                    &voice_id_clone,
-                    language_clone.as_deref().unwrap_or("en"),
-                    speed_val,
-                )
-                .map_err(|e| format!("Failed to generate audio: {}", e))
-            });
-            handles.push(handle);
+        if let Ok(current_dir) = std::env::current_dir() {
+            possible_paths.push(current_dir.join("src-tauri").join("resources").join("kokoro-v1.0.onnx"));
+            possible_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
         }
         
-        // Collect results
-        let mut results = Vec::new();
-        for handle in handles {
-            let audio_samples: Vec<f32> = handle.await
-                .map_err(|e: tokio::task::JoinError| format!("Task error: {}", e))?
-                .map_err(|e: String| e)?;
-            
-            // Convert Vec<f32> to 16-bit PCM bytes
-            let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
-            for sample in audio_samples {
-                let clamped = sample.max(-1.0).min(1.0);
-                let pcm_value = if clamped < 0.0 {
-                    (clamped * 32768.0) as i16
-                } else {
-                    (clamped * 32767.0) as i16
-                };
-                pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
+        if let Ok(env_path) = std::env::var("KOKORO_MODEL_PATH") {
+            if !env_path.is_empty() {
+                possible_paths.push(std::path::PathBuf::from(env_path));
             }
-            results.push(pcm_bytes);
         }
         
-        Ok(results)
+        for path in possible_paths {
+            if path.exists() && path.is_file() {
+                return Some(path);
+            }
+        }
+        None
     }
     
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    {
-        Err("CoreML is only available on macOS/iOS platforms".to_string())
+    fn find_resources_dir() -> Option<std::path::PathBuf> {
+        let mut possible_paths = Vec::new();
+        
+        if let Ok(current_dir) = std::env::current_dir() {
+            possible_paths.push(current_dir.join("src-tauri").join("resources"));
+            possible_paths.push(current_dir.join("resources"));
+        }
+        
+        for path in possible_paths {
+            if path.exists() && path.is_dir() {
+                return Some(path);
+            }
+        }
+        None
+    }
+    
+    fn find_voices_file(resources_dir: &std::path::PathBuf) -> Option<std::path::PathBuf> {
+        let voices_path = resources_dir.join("voices-v1.0.bin");
+        if voices_path.exists() {
+            Some(voices_path)
+        } else {
+            None
+        }
+    }
+    
+    let onnx_model = find_onnx_model();
+    let resources_dir = find_resources_dir();
+    
+    if let (Some(onnx_path), Some(res_dir)) = (onnx_model, resources_dir) {
+        if let Some(voices_path) = find_voices_file(&res_dir) {
+            let onnx_path_str = onnx_path.to_str().unwrap().to_string();
+            let voices_path_str = voices_path.to_str().unwrap().to_string();
+            
+            // Initialize ONNX engine with multiple instances for parallel processing
+            let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+                &onnx_path_str,
+                &voices_path_str,
+                texts.len().max(4), // Use at least 4 instances or one per text
+            ).await;
+            
+            // Process texts in parallel
+            let mut handles = Vec::new();
+            for (idx, text) in texts.iter().enumerate() {
+                let text_clone = text.clone();
+                let voice_id_clone = voice_id.clone();
+                let language_clone = language.clone();
+                let speed_val = speed.unwrap_or(1.0);
+                let onnx_path_clone = onnx_path_str.clone();
+                let voices_path_clone = voices_path_str.clone();
+                
+                let handle = tokio::spawn(async move {
+                    // Create a new engine instance for this task
+                    let task_engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+                        &onnx_path_clone,
+                        &voices_path_clone,
+                        1, // Use 1 instance per task
+                    ).await;
+                    
+                    let model_instance = task_engine.get_model_instance(0);
+                    task_engine.tts_raw_audio_with_instance(
+                        &text_clone,
+                        language_clone.as_deref().unwrap_or("en"),
+                        &voice_id_clone,
+                        speed_val,
+                        None,
+                        None,
+                        None,
+                        None,
+                        model_instance,
+                    )
+                    .map_err(|e| format!("Failed to generate audio: {}", e))
+                });
+                handles.push(handle);
+            }
+            
+            // Collect results
+            let mut results = Vec::new();
+            for handle in handles {
+                let audio_samples: Vec<f32> = handle.await
+                    .map_err(|e: tokio::task::JoinError| format!("Task error: {}", e))?
+                    .map_err(|e: String| e)?;
+                
+                // Convert Vec<f32> to 16-bit PCM bytes
+                let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
+                for sample in audio_samples {
+                    let clamped = sample.max(-1.0).min(1.0);
+                    let pcm_value = if clamped < 0.0 {
+                        (clamped * 32768.0) as i16
+                    } else {
+                        (clamped * 32767.0) as i16
+                    };
+                    pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
+                }
+                results.push(pcm_bytes);
+            }
+            
+            Ok(results)
+        } else {
+            Err("Voices file not found. Please ensure voices-v1.0.bin is available.".to_string())
+        }
+    } else {
+        Err("ONNX model not found. Please ensure kokoro-v1.0.onnx is available.".to_string())
     }
 }
 
@@ -632,7 +592,6 @@ mod tests {
     use std::path::PathBuf;
 
     /// Helper function to find the ONNX model file
-    /// Note: kokoros crate uses ONNX models. For CoreML models, use find_coreml_model_dir()
     fn find_onnx_model() -> Option<PathBuf> {
         // Try multiple possible locations
         let mut possible_paths = Vec::new();
@@ -667,57 +626,6 @@ mod tests {
         None
     }
 
-    /// Helper function to find CoreML model directory (kokoro-82m-coreml)
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    fn find_coreml_model_dir() -> Option<PathBuf> {
-        let mut possible_paths = Vec::new();
-        
-        // From test execution (cargo test) - relative to src-tauri
-        possible_paths.push(PathBuf::from("../kokoro-82m-coreml"));
-        possible_paths.push(PathBuf::from("kokoro-82m-coreml"));
-        possible_paths.push(PathBuf::from("src-tauri/../kokoro-82m-coreml"));
-        
-        // From project root
-        if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
-            let manifest_path = PathBuf::from(manifest_dir);
-            possible_paths.push(manifest_path.join("kokoro-82m-coreml"));
-            possible_paths.push(manifest_path.parent().unwrap_or(&manifest_path).join("kokoro-82m-coreml"));
-        }
-        
-        // Check KOKORO_COREML_DIR env var
-        if let Ok(env_path) = env::var("KOKORO_COREML_DIR") {
-            if !env_path.is_empty() {
-                possible_paths.push(PathBuf::from(env_path));
-            }
-        }
-        
-        for path in possible_paths {
-            if path.exists() && path.is_dir() {
-                // Check if directory contains CoreML models (.mlpackage or .mlmodelc files)
-                let has_coreml_models = path.read_dir()
-                    .ok()
-                    .map(|entries| {
-                        entries.filter_map(|e| e.ok())
-                            .any(|e| {
-                                let file_name = e.file_name();
-                                let name = file_name.to_string_lossy();
-                                name.ends_with(".mlpackage") || name.ends_with(".mlmodelc")
-                            })
-                    })
-                    .unwrap_or(false);
-                
-                if has_coreml_models {
-                    return Some(path);
-                }
-            }
-        }
-        None
-    }
-    
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    fn find_coreml_model_dir() -> Option<PathBuf> {
-        None // CoreML not available on non-Apple platforms
-    }
 
     /// Helper function to find the resources directory
     fn find_resources_dir() -> Option<PathBuf> {
@@ -736,7 +644,6 @@ mod tests {
         for path in possible_paths {
             if path.exists() {
                 // Check if it has model files (look for .onnx files)
-                // Note: We use ONNX models via kokoros crate, not CoreML .mlpackage files
                 let has_models = path.read_dir()
                     .ok()
                     .map(|entries| {
@@ -796,7 +703,6 @@ mod tests {
     #[tokio::test]
     async fn test_onnx_model_and_voices_file() {
         println!("🧪 Testing ONNX model and voices file discovery");
-        println!("   Note: This test checks for ONNX models. Use test_coreml_model_discovery for CoreML models.");
 
         // Find ONNX model file
         let onnx_model = find_onnx_model();
@@ -814,15 +720,6 @@ mod tests {
                 }
             }
             None => {
-                // Check if CoreML models are available instead
-                #[cfg(any(target_os = "macos", target_os = "ios"))]
-                {
-                    if find_coreml_model_dir().is_some() {
-                        println!("⚠️ ONNX model not found, but CoreML models are available");
-                        println!("   Skipping ONNX test - use test_coreml_model_discovery for CoreML");
-                        return;
-                    }
-                }
                 
                 println!("❌ ONNX model not found");
                 println!("   Expected: kokoro-v1.0.onnx");
@@ -1020,105 +917,6 @@ mod tests {
         }
     }
 
-    #[test]
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    fn test_find_coreml_model_dir() {
-        let coreml_dir = find_coreml_model_dir();
-        if let Some(dir) = coreml_dir {
-            println!("✅ Found CoreML model directory: {}", dir.display());
-            assert!(dir.exists(), "CoreML model directory should exist");
-            assert!(dir.is_dir(), "CoreML model path should be a directory");
-            
-            // List CoreML models found
-            if let Ok(entries) = std::fs::read_dir(&dir) {
-                let models: Vec<_> = entries
-                    .filter_map(|e| e.ok())
-                    .filter(|e| {
-                        let file_name = e.file_name();
-                        let name = file_name.to_string_lossy();
-                        name.ends_with(".mlpackage") || name.ends_with(".mlmodelc")
-                    })
-                    .collect();
-                
-                println!("   Found {} CoreML model(s):", models.len());
-                for model in &models {
-                    println!("     - {}", model.file_name().to_string_lossy());
-                }
-                
-                assert!(!models.is_empty(), "CoreML directory should contain at least one model");
-            }
-        } else {
-            println!("⚠️ CoreML model directory not found");
-            println!("   Expected: kokoro-82m-coreml directory with .mlpackage files");
-            println!("   Set KOKORO_COREML_DIR env var or ensure kokoro-82m-coreml is in project root");
-        }
-    }
-
-    #[test]
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    fn test_find_coreml_model_dir() {
-        // CoreML not available on non-Apple platforms
-        let coreml_dir = find_coreml_model_dir();
-        assert!(coreml_dir.is_none(), "CoreML should not be available on non-Apple platforms");
-        println!("✅ CoreML correctly unavailable on this platform");
-    }
-
-    #[tokio::test]
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    async fn test_coreml_model_discovery() {
-        println!("\n🧪 Testing CoreML model discovery");
-        
-        let coreml_dir = find_coreml_model_dir();
-        if coreml_dir.is_none() {
-            println!("⚠️ Skipping test - CoreML model directory not found");
-            println!("   Set KOKORO_COREML_DIR env var or ensure kokoro-82m-coreml directory exists");
-            return;
-        }
-        
-        let coreml_dir = coreml_dir.unwrap();
-        let model_dir_str = coreml_dir.to_str().unwrap();
-        
-        // Find voices file (same as ONNX tests)
-        let resources_dir = find_resources_dir();
-        let voices_path = if let Some(dir) = resources_dir {
-            find_voices_file(&dir)
-        } else {
-            None
-        };
-        
-        if voices_path.is_none() {
-            println!("⚠️ Skipping test - voices-v1.0.bin not found");
-            return;
-        }
-        
-        let voices_path = voices_path.unwrap();
-        let voices_path_str = voices_path.to_str().unwrap();
-        
-        println!("   CoreML model directory: {}", model_dir_str);
-        println!("   Voices path: {}", voices_path_str);
-        
-        // Try to initialize CoreML engine (this will fail if model loading is not implemented)
-        println!("\n🧪 Attempting to initialize CoreML engine...");
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        {
-            use crate::kokoro_coreml::KokoroCoreMLParallel;
-            match KokoroCoreMLParallel::new_with_instances(
-                model_dir_str,
-                voices_path_str,
-                1, // Use 1 instance for testing
-            ) {
-                Ok(_engine) => {
-                    println!("✅ CoreML engine initialized successfully!");
-                    println!("   Note: TTS pipeline is not yet implemented, but model loading works");
-                }
-                Err(e) => {
-                    println!("⚠️ CoreML engine initialization failed: {}", e);
-                    println!("   This is expected if model loading is not yet fully implemented");
-                    println!("   Error details: {}", e);
-                }
-            }
-        }
-    }
 
     /// Helper function to save audio samples as WAV file
     fn save_audio_as_wav(audio_samples: &[f32], sample_rate: u32, file_path: &str) -> Result<(), String> {
@@ -1174,99 +972,6 @@ mod tests {
         }
         
         Ok(())
-    }
-
-    #[tokio::test]
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    async fn test_coreml_only() {
-        println!("\n🧪 Testing CoreML TTS generation (CoreML only, no ONNX fallback)");
-        
-        let coreml_dir = find_coreml_model_dir();
-        if coreml_dir.is_none() {
-            println!("⚠️ Skipping test - CoreML model directory not found");
-            println!("   Set KOKORO_COREML_DIR env var or ensure kokoro-82m-coreml directory exists");
-            return;
-        }
-        
-        let coreml_dir = coreml_dir.unwrap();
-        let model_dir_str = coreml_dir.to_str().unwrap();
-        println!("   CoreML model directory: {}", model_dir_str);
-        
-        use crate::kokoro_coreml::KokoroCoreMLParallel;
-        let engine = match KokoroCoreMLParallel::new_with_instances(
-            model_dir_str,
-            "",
-            1,
-        ) {
-            Ok(engine) => {
-                println!("✅ CoreML engine initialized successfully!");
-                engine
-            }
-            Err(e) => {
-                println!("❌ Failed to initialize CoreML engine: {}", e);
-                panic!("CoreML engine initialization failed: {}", e);
-            }
-        };
-        
-        let test_text = "Hello, this is a CoreML-only test of the text to speech system. ";
-        let voice_id = "af_heart";
-        let language = "en";
-        let speed = 1.0;
-        
-        println!("\n🎤 Generating TTS audio with CoreML...");
-        println!("   Text: '{}'", test_text);
-        println!("   Voice: {}", voice_id);
-        println!("   Language: {}", language);
-        println!("   Speed: {}", speed);
-        
-        let instance = engine.get_model_instance(0);
-        let guard = instance.lock().unwrap_or_else(|e| e.into_inner());
-        
-        match guard.generate_tts(test_text, voice_id, language, speed) {
-            Ok(audio_samples) => {
-                println!("✅ CoreML audio generated successfully!");
-                println!("   Samples: {}", audio_samples.len());
-                println!("   Duration: {:.2}s (at 24kHz)", audio_samples.len() as f32 / 24000.0);
-                
-                // Basic validation
-                assert!(!audio_samples.is_empty(), "Audio should not be empty");
-                
-                // Check for non-zero samples
-                let non_zero_count = audio_samples.iter().filter(|&&s| s.abs() > 0.001).count();
-                println!("   Non-zero samples: {} / {} ({:.1}%)", 
-                    non_zero_count, audio_samples.len(),
-                    (non_zero_count as f32 / audio_samples.len() as f32) * 100.0);
-                
-                if non_zero_count > 0 {
-                    // Check audio range
-                    let min_val = audio_samples.iter().fold(f32::INFINITY, |a, &b| a.min(b));
-                    let max_val = audio_samples.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-                    println!("   Audio range: [{:.6}, {:.6}]", min_val, max_val);
-                } else {
-                    println!("⚠️ WARNING: Audio contains only zeros (silence)");
-                }
-                
-                // Save audio file
-                let output_path = "test_output_coreml_only.wav";
-                match save_audio_as_wav(&audio_samples, 24000, output_path) {
-                    Ok(_) => {
-                        println!("✅ Audio saved to: {}", output_path);
-                        println!("   File location: {}/{}", std::env::current_dir().unwrap().display(), output_path);
-                    }
-                    Err(e) => {
-                        println!("❌ Failed to save audio: {}", e);
-                        panic!("Failed to save audio file: {}", e);
-                    }
-                }
-                
-                println!("\n✅ CoreML-only test PASSED!");
-            }
-            Err(e) => {
-                println!("❌ CoreML TTS generation failed: {}", e);
-                println!("   This indicates CoreML inference is not yet fully implemented.");
-                panic!("CoreML TTS generation failed: {}", e);
-            }
-        }
     }
 
     #[tokio::test]
@@ -1557,50 +1262,8 @@ mod tests {
     async fn test_generate_and_save_audio() {
         println!("\n🧪 Testing TTS generation and audio file saving");
         
-        // Try CoreML first, fallback to ONNX
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        {
-            let coreml_dir = find_coreml_model_dir();
-            if let Some(coreml_dir) = coreml_dir {
-                let model_dir_str = coreml_dir.to_str().unwrap();
-                println!("   Trying CoreML model directory: {}", model_dir_str);
-                
-                use crate::kokoro_coreml::KokoroCoreMLParallel;
-                if let Ok(engine) = KokoroCoreMLParallel::new_with_instances(
-                    model_dir_str,
-                    "",
-                    1,
-                ) {
-                    let test_text = "Hello, this is a test of the CoreML text to speech system.";
-                    let voice_id = "af_heart";
-                    let language = "en";
-                    let speed = 1.0;
-                    
-                    println!("\n🎤 Generating TTS audio with CoreML...");
-                    println!("   Text: '{}'", test_text);
-                    println!("   Voice: {}", voice_id);
-                    
-                    let instance = engine.get_model_instance(0);
-                    let guard = instance.lock().unwrap_or_else(|e| e.into_inner());
-                    if let Ok(audio_samples) = guard.generate_tts(test_text, voice_id, language, speed) {
-                        println!("✅ CoreML audio generated successfully!");
-                        println!("   Samples: {}", audio_samples.len());
-                        println!("   Duration: {:.2}s (at 24kHz)", audio_samples.len() as f32 / 24000.0);
-                        
-                        let output_path = "test_output_coreml.wav";
-                        if let Err(e) = save_audio_as_wav(&audio_samples, 24000, output_path) {
-                            println!("❌ Failed to save audio: {}", e);
-                        } else {
-                            println!("✅ Audio saved to: {}", output_path);
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Fallback to ONNX/kokoros
-        println!("   Falling back to ONNX/kokoros engine...");
+        // Use ONNX Runtime with CoreML EP (automatically enabled on macOS/iOS via kokoros)
+        println!("   Using ONNX Runtime engine (CoreML EP enabled on macOS/iOS)...");
         let onnx_model = find_onnx_model();
         if onnx_model.is_none() {
             println!("⚠️ Skipping test - no models found (neither CoreML nor ONNX)");
