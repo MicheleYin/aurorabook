@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Headphones } from "lucide-react";
 
 import type { ChapterProgressSnapshot, ChapterSelectionOptions, ReaderPanelBaseProps } from "./reader/types";
 import { ReaderSettingsControl } from "./reader/ReaderSettingsControl";
@@ -11,6 +11,8 @@ import { Button } from "./ui/button";
 type ReaderPanelProps = ReaderPanelBaseProps & {
   resolvedUiTheme: "light" | "dark";
   onChromeVisibilityChange?: (visible: boolean) => void;
+  audioPlayerVisible?: boolean;
+  onOpenAudioPlayer?: () => void;
 };
 
 export function ReaderPanel({
@@ -25,10 +27,14 @@ export function ReaderPanel({
   resolvedUiTheme,
   onChapterProgress,
   onChromeVisibilityChange,
+  audioPlayerVisible,
+  onOpenAudioPlayer,
 }: ReaderPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
   const [isImmersive, setIsImmersive] = useState(false);
+  const [isAudioReopenVisible, setIsAudioReopenVisible] = useState(false);
+  const [shouldRenderAudioReopen, setShouldRenderAudioReopen] = useState(false);
   const preserveChromeNextSelectionRef = useRef(false);
   const scrollIntentRef = useRef<"top" | "bottom" | null>(null);
 
@@ -73,8 +79,30 @@ export function ReaderPanel({
   const appliedTheme: "light" | "dark" | "sepia" =
      preferences.theme === "system" ? resolvedUiTheme : preferences.theme;
   const audioTracks = activeBook?.audioTracks ?? [];
-  const showAudioPlayer = audioTracks.length > 0;
+  const hasAudioTracks = audioTracks.length > 0;
+  const showAudioPlayer = audioPlayerVisible ?? hasAudioTracks;
+  const showAudioReopen = Boolean(hasAudioTracks && !showAudioPlayer && onOpenAudioPlayer);
   const chromeVisible = !isImmersive;
+
+  // Handle audio reopen button animation
+  useEffect(() => {
+    if (showAudioReopen) {
+      setShouldRenderAudioReopen(true);
+      // Small delay to trigger enter animation
+      const timer = setTimeout(() => {
+        setIsAudioReopenVisible(true);
+      }, 10);
+      return () => clearTimeout(timer);
+    } else if (shouldRenderAudioReopen) {
+      // Trigger exit animation before hiding
+      setIsAudioReopenVisible(false);
+      // Wait for exit animation to complete before removing from DOM
+      const timer = setTimeout(() => {
+        setShouldRenderAudioReopen(false);
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [showAudioReopen, shouldRenderAudioReopen]);
 
   const handleChapterChange = (chapterId: string, options?: ChapterSelectionOptions) => {
     const requestedScrollPosition = options?.scrollPosition ?? "maintain";
@@ -116,6 +144,23 @@ export function ReaderPanel({
             Library
           </Button>
           <div className="flex items-center gap-2">
+            {shouldRenderAudioReopen ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className={cn(
+                  "transition-all duration-300 ease-out",
+                  isAudioReopenVisible
+                    ? "opacity-100 scale-100 translate-y-0"
+                    : "opacity-0 scale-95 -translate-y-2"
+                )}
+                onClick={onOpenAudioPlayer}
+                aria-label="Open audio player"
+              >
+                <Headphones className="h-4 w-4" />
+              </Button>
+            ) : null}
             {activeBook && (
               <ReaderTocDrawer
                 book={activeBook}

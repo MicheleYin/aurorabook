@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
+import { Pause, Play, SkipBack, SkipForward, X } from "lucide-react";
 
 import type { AudioTrack, BookAudioState } from "../../types/reader";
 import type { AudioProgressSnapshot } from "./types";
@@ -41,6 +41,7 @@ type ReaderAudioPlayerProps = {
   initialAudioState?: BookAudioState;
   onProgress?: (snapshot: AudioProgressSnapshot) => void;
   chromeVisible?: boolean;
+  onClose?: () => void;
 };
 
 export function ReaderAudioPlayer({
@@ -50,6 +51,7 @@ export function ReaderAudioPlayer({
   initialAudioState,
   onProgress,
   chromeVisible = true,
+  onClose,
 }: ReaderAudioPlayerProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -58,6 +60,8 @@ export function ReaderAudioPlayer({
   const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubTime, setScrubTime] = useState<number | null>(null);
+  const [isDismissing, setIsDismissing] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const tracksRef = useRef<AudioTrack[]>(tracks);
@@ -81,6 +85,16 @@ export function ReaderAudioPlayer({
   useEffect(() => {
     onProgressRef.current = onProgress;
   }, [onProgress]);
+
+  // Handle enter animation
+  useEffect(() => {
+    setIsDismissing(false);
+    // Small delay to trigger CSS animation
+    const timer = setTimeout(() => {
+      setIsVisible(true);
+    }, 10);
+    return () => clearTimeout(timer);
+  }, [bookId, tracks.length]);
 
   const normalizeSeekTarget = (value: number | null | undefined) => {
     if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -548,6 +562,14 @@ export function ReaderAudioPlayer({
     setPlaybackRate(nextRate);
   }, []);
 
+  const handleDismiss = useCallback(() => {
+    emitProgressSnapshot();
+    setIsDismissing(true);
+    setIsVisible(false);
+    // Parent component will handle keeping component mounted during exit animation
+    onClose?.();
+  }, [emitProgressSnapshot, onClose]);
+
 
   if (!currentTrack) {
     return null;
@@ -562,8 +584,11 @@ export function ReaderAudioPlayer({
     >
       <div
         className={cn(
-          "pointer-events-auto flex w-full max-w-xl flex-col gap-3 rounded-2xl border border-border bg-background/90 p-4 shadow-lg ring-1 ring-black/5 backdrop-blur",
+          "pointer-events-auto flex w-full max-w-xl flex-col gap-3 rounded-2xl border border-border bg-background/90 p-4 shadow-lg ring-1 ring-black/5 backdrop-blur transition-all duration-300 ease-out",
           !chromeVisible && "pointer-events-none",
+          isVisible && !isDismissing
+            ? "translate-y-0 opacity-100 scale-100"
+            : "translate-y-full opacity-0 scale-95",
         )}
       >
         <div className="flex items-center justify-between gap-3">
@@ -602,23 +627,36 @@ export function ReaderAudioPlayer({
               <SkipForward className="h-4 w-4" />
             </Button>
           </div>
-          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-            <span>Speed</span>
-            <Select value={playbackRate.toString()} onValueChange={handlePlaybackRateChange}>
-              <SelectTrigger
-                aria-label="Playback speed"
-                className="h-8 min-w-[84px] rounded-md border border-input bg-background px-2 text-xs font-medium text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <span>Speed</span>
+              <Select value={playbackRate.toString()} onValueChange={handlePlaybackRateChange}>
+                <SelectTrigger
+                  aria-label="Playback speed"
+                  className="h-8 min-w-[84px] rounded-md border border-input bg-background px-2 text-xs font-medium text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  {PLAYBACK_RATE_OPTIONS.map((rate) => (
+                    <SelectItem key={rate} value={rate.toString()} className="text-xs">
+                      {formatPlaybackRate(rate)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {onClose ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="rounded-full"
+                onClick={handleDismiss}
+                aria-label="Dismiss audio player"
               >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent align="end">
-                {PLAYBACK_RATE_OPTIONS.map((rate) => (
-                  <SelectItem key={rate} value={rate.toString()} className="text-xs">
-                    {formatPlaybackRate(rate)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                <X className="h-4 w-4" />
+              </Button>
+            ) : null}
           </div>
         </div>
         <div className="flex items-center gap-3">

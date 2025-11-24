@@ -56,7 +56,11 @@ function App() {
   const [pendingFragment, setPendingFragment] = useState<string | null>(null);
   const [detailBookId, setDetailBookId] = useState<string | null>(null);
   const [isReaderChromeVisible, setIsReaderChromeVisible] = useState(true);
+  const [isAudioPlayerOpen, setIsAudioPlayerOpen] = useState(false);
+  const [isAudioPlayerDismissing, setIsAudioPlayerDismissing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const lastAudioBookIdRef = useRef<string | null>(null);
+  const previousViewRef = useRef<AppView>(activeView);
   const {
     settings,
     updateSettings,
@@ -121,6 +125,30 @@ function App() {
     if (!activeBook || !activeChapterId) return undefined;
     return activeBook.chapters.find((chapter) => chapter.id === activeChapterId);
   }, [activeBook, activeChapterId]);
+
+  const audioTrackCount = activeBook?.audioTracks?.length ?? 0;
+  const hasAudioTracks = audioTrackCount > 0;
+
+  useEffect(() => {
+    if (!activeBook?.id || audioTrackCount === 0) {
+      setIsAudioPlayerOpen(false);
+      lastAudioBookIdRef.current = null;
+      return;
+    }
+
+    if (lastAudioBookIdRef.current !== activeBook.id) {
+      lastAudioBookIdRef.current = activeBook.id;
+      setIsAudioPlayerOpen(true);
+    }
+  }, [activeBook?.id, audioTrackCount]);
+
+  useEffect(() => {
+    const previousView = previousViewRef.current;
+    if (activeView === "reader" && previousView !== "reader" && hasAudioTracks) {
+      setIsAudioPlayerOpen(true);
+    }
+    previousViewRef.current = activeView;
+  }, [activeView, hasAudioTracks]);
 
   type ProgressUpdatePayload = {
     chapterId: string;
@@ -572,6 +600,18 @@ function App() {
     }
   }, [searchFilteredLibrary, libraryFilter]);
 
+  const showAudioPlayer = hasAudioTracks && (isAudioPlayerOpen || isAudioPlayerDismissing);
+  const audioPlayerChromeVisible = activeView === "reader" ? isReaderChromeVisible : true;
+
+  const handleAudioPlayerClose = useCallback(() => {
+    setIsAudioPlayerDismissing(true);
+    // Wait for exit animation to complete before hiding
+    setTimeout(() => {
+      setIsAudioPlayerOpen(false);
+      setIsAudioPlayerDismissing(false);
+    }, 300);
+  }, []);
+
   const libraryView = (
     <LibraryPanel
       library={filteredLibrary}
@@ -603,6 +643,8 @@ function App() {
       resolvedUiTheme={resolvedUiTheme}
       onChapterProgress={handleChapterProgress}
       onChromeVisibilityChange={setIsReaderChromeVisible}
+      audioPlayerVisible={Boolean(activeBook?.audioTracks?.length) && isAudioPlayerOpen}
+      onOpenAudioPlayer={() => setIsAudioPlayerOpen(true)}
     />
   );
 
@@ -625,9 +667,6 @@ function App() {
         ? libraryView
         : readerView;
   const hideNavigation = activeView === "reader" && !isReaderChromeVisible;
-
-  const showAudioPlayer = Boolean(activeBook?.audioTracks?.length);
-  const audioPlayerChromeVisible = activeView === "reader" ? isReaderChromeVisible : true;
 
   if (!isHydrated || !isSettingsHydrated) {
     return <LoadingScreen message="Loading your library…" />;
@@ -656,6 +695,7 @@ function App() {
             updateBookAudioState(activeBook.id, snapshot);
           }}
           chromeVisible={audioPlayerChromeVisible}
+          onClose={handleAudioPlayerClose}
         />
       ) : null}
       <div
