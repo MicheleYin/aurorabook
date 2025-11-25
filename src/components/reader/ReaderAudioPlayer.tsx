@@ -185,6 +185,17 @@ export function ReaderAudioPlayer({
       // Always update ref immediately (used for internal logic, doesn't cause re-renders)
       currentTimeRef.current = seconds;
       
+      // Sync play state with audio element to handle external pause/play
+      const audioIsPlaying = !audio.paused;
+      if (audioIsPlaying !== isPlayingRef.current) {
+        setIsPlaying(audioIsPlaying);
+        isPlayingRef.current = audioIsPlaying;
+        // If paused externally, emit progress to save state
+        if (!audioIsPlaying) {
+          emitProgress(seconds);
+        }
+      }
+      
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
       
       // Throttle setCurrentTime state updates to at most once per second
