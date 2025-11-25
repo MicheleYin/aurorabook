@@ -140,10 +140,11 @@ mod epub_converter {
     fn format_smil_time(seconds: f64) -> String {
         let hours = (seconds / 3600.0) as u32;
         let minutes = ((seconds % 3600.0) / 60.0) as u32;
-        let secs = seconds % 60.0;
-        let ms = ((secs % 1.0) * 1000.0) as u32;
+        let secs_float = seconds % 60.0;
+        let secs = secs_float.floor() as u32;
+        let ms = ((secs_float % 1.0) * 1000.0) as u32;
         
-        format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, secs as u32, ms)
+        format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, secs, ms)
     }
 
     /// Generate SMIL file content
@@ -373,10 +374,9 @@ mod epub_converter {
                     
                     if name == b"manifest" {
                         // Before closing manifest, add our new items
+                        // Match old version format: all items on one line without extra newlines
                         for item_xml in &manifest_items_to_add {
-                            writer.get_mut().write_all(b"    ").map_err(|e| format!("XML write error: {}", e))?;
                             writer.get_mut().write_all(item_xml).map_err(|e| format!("XML write error: {}", e))?;
-                            writer.get_mut().write_all(b"\n").map_err(|e| format!("XML write error: {}", e))?;
                         }
                         in_manifest = false;
                         writer.write_event(Event::End(e)).map_err(|e| format!("XML write error: {}", e))?;
@@ -807,12 +807,26 @@ mod epub_converter {
         }
         
         // Create new ZIP
+        // EPUB spec requires mimetype to be first and uncompressed
         let mut zip_writer = ZipWriter::new(Cursor::new(Vec::new()));
         let file_options = FileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
+        let mimetype_options = FileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored); // Uncompressed for mimetype
         
-        // Add all files to ZIP
-        let mut file_names: Vec<String> = zip_files.keys().cloned().collect();
+        // Add mimetype first (EPUB spec requirement - must be first and uncompressed)
+        if let Some(mimetype_data) = zip_files.get("mimetype") {
+            zip_writer.start_file("mimetype", mimetype_options)
+                .map_err(|e| format!("Failed to add mimetype to ZIP: {}", e))?;
+            zip_writer.write_all(mimetype_data)
+                .map_err(|e| format!("Failed to write mimetype: {}", e))?;
+        }
+        
+        // Add all other files to ZIP (excluding mimetype which we already added)
+        let mut file_names: Vec<String> = zip_files.keys()
+            .filter(|name| *name != "mimetype")
+            .cloned()
+            .collect();
         file_names.sort();
         
         for file_name in file_names {
@@ -837,6 +851,350 @@ mod epub_converter {
         );
         
         Ok(zip_data.into_inner())
+    }
+    
+    #[cfg(test)]
+    mod tests {
+        use std::fs;
+        use std::path::Path;
+        use quick_xml::events::Event;
+        use quick_xml::Reader;
+
+        /// Test that converted EPUB matches the structure of the old version
+        #[test]
+        fn test_epub_structure_matches_old_version() {
+            // Tests run from project root, so paths are relative to that
+            let project_root = std::env::current_dir()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let old_version_dir = project_root.join("data/old version");
+            let unconverted_dir = project_root.join("data/unconverted");
+            
+            // Check that both directories exist
+            assert!(old_version_dir.exists(), "Old version directory should exist");
+            assert!(unconverted_dir.exists(), "Unconverted directory should exist");
+            
+            // Read and compare content.opf files
+            let old_opf_path = old_version_dir.join("OEBPS/content.opf");
+            let unconverted_opf_path = unconverted_dir.join("OEBPS/content.opf");
+            
+            assert!(old_opf_path.exists(), "Old version content.opf should exist");
+            assert!(unconverted_opf_path.exists(), "Unconverted content.opf should exist");
+            
+            let old_opf = fs::read_to_string(&old_opf_path).expect("Failed to read old content.opf");
+            let unconverted_opf = fs::read_to_string(&unconverted_opf_path).expect("Failed to read unconverted content.opf");
+            
+            // Parse both OPF files and compare structure
+            let old_manifest_items = extract_manifest_items(&old_opf);
+            let unconverted_manifest_items = extract_manifest_items(&unconverted_opf);
+            
+            println!("Old version manifest items: {}", old_manifest_items.len());
+            println!("Unconverted manifest items: {}", unconverted_manifest_items.len());
+            
+            // Check that old version has audio and SMIL items
+            let old_audio_items: Vec<_> = old_manifest_items.iter()
+                .filter(|item| item.media_type.starts_with("audio/"))
+                .collect();
+            let old_smil_items: Vec<_> = old_manifest_items.iter()
+                .filter(|item| item.media_type == "application/smil+xml")
+                .collect();
+            
+            println!("Old version has {} audio items and {} SMIL items", 
+                     old_audio_items.len(), old_smil_items.len());
+            
+            assert!(!old_audio_items.is_empty(), "Old version should have audio items");
+            assert!(!old_smil_items.is_empty(), "Old version should have SMIL items");
+            
+            // Check file structure
+            check_directory_structure(&old_version_dir, "old version");
+        }
+        
+        /// Test SMIL file format matches old version
+        #[test]
+        fn test_smil_format_matches_old_version() {
+            let project_root = std::env::current_dir()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let old_smil_path = project_root.join("data/old version/OEBPS/chapter_1.smil");
+            
+            if !old_smil_path.exists() {
+                println!("Skipping SMIL format test - old SMIL file not found");
+                return;
+            }
+            
+            let old_smil = fs::read_to_string(old_smil_path).expect("Failed to read old SMIL");
+            
+            // Check SMIL structure
+            assert!(old_smil.contains("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+            assert!(old_smil.contains("xmlns=\"http://www.w3.org/ns/SMIL\""));
+            assert!(old_smil.contains("xmlns:epub=\"http://www.idpf.org/2007/ops\""));
+            assert!(old_smil.contains("version=\"3.0\""));
+            assert!(old_smil.contains("<seq"));
+            assert!(old_smil.contains("epub:textref"));
+            assert!(old_smil.contains("epub:type=\"bodymatter chapter\""));
+            
+            // Check time format - should be HH:MM:SS.mmm
+            let time_pattern = regex::Regex::new(r"\d{2}:\d{2}:\d{2}\.\d{3}").unwrap();
+            let times: Vec<_> = time_pattern.find_iter(&old_smil).collect();
+            assert!(!times.is_empty(), "SMIL should contain time stamps in HH:MM:SS.mmm format");
+            
+            // Check that times are properly formatted
+            for time_match in &times {
+                let time_str = time_match.as_str();
+                let parts: Vec<&str> = time_str.split(':').collect();
+                assert_eq!(parts.len(), 3, "Time should have 3 parts (HH:MM:SS.mmm)");
+                let seconds_part = parts[2];
+                assert!(seconds_part.contains('.'), "Seconds part should contain decimal point");
+                let decimal_parts: Vec<&str> = seconds_part.split('.').collect();
+                assert_eq!(decimal_parts.len(), 2, "Seconds should have integer and decimal parts");
+                assert_eq!(decimal_parts[1].len(), 3, "Milliseconds should be 3 digits");
+            }
+            
+            // Check par elements structure
+            assert!(old_smil.contains("<par id="));
+            assert!(old_smil.contains("<text src="));
+            assert!(old_smil.contains("<audio clipBegin="));
+            assert!(old_smil.contains("clipEnd="));
+            assert!(old_smil.contains("src="));
+        }
+        
+        /// Test content.opf manifest structure
+        #[test]
+        fn test_content_opf_structure() {
+            let project_root = std::env::current_dir()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let old_opf_path = project_root.join("data/old version/OEBPS/content.opf");
+            let old_opf = fs::read_to_string(old_opf_path).expect("Failed to read old content.opf");
+            
+            // Check that manifest has media-overlay attributes on chapter items
+            assert!(old_opf.contains("media-overlay="), "OPF should have media-overlay attributes");
+            
+            // Check that metadata has media:active-class
+            assert!(old_opf.contains("media:active-class"), "OPF should have media:active-class meta");
+            
+            // Check that audio items are in manifest
+            assert!(old_opf.contains("media-type=\"audio/mpeg\""), "OPF should have audio items");
+            
+            // Check that SMIL items are in manifest
+            assert!(old_opf.contains("media-type=\"application/smil+xml\""), "OPF should have SMIL items");
+            
+            // Parse and verify structure
+            let manifest_items = extract_manifest_items(&old_opf);
+            
+            // Find items with media-overlay
+            let items_with_overlay: Vec<_> = manifest_items.iter()
+                .filter(|item| item.has_media_overlay)
+                .collect();
+            
+            assert!(!items_with_overlay.is_empty(), "Should have items with media-overlay attributes");
+            
+            // Verify each chapter item has a corresponding SMIL item
+            let chapter_items: Vec<_> = manifest_items.iter()
+                .filter(|item| item.media_type == "application/xhtml+xml" && item.has_media_overlay)
+                .collect();
+            
+            for chapter_item in &chapter_items {
+                if let Some(overlay_id) = &chapter_item.media_overlay_id {
+                    let smil_exists = manifest_items.iter()
+                        .any(|item| item.id == *overlay_id && item.media_type == "application/smil+xml");
+                    assert!(smil_exists, 
+                        "Chapter item {} should have corresponding SMIL item {}", 
+                        chapter_item.id, overlay_id);
+                }
+            }
+        }
+        
+        /// Test ZIP file structure
+        #[test]
+        fn test_zip_structure() {
+            let project_root = std::env::current_dir()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let old_version_dir = project_root.join("data/old version");
+            
+            // Check that Audio directory exists
+            let audio_dir = old_version_dir.join("OEBPS/Audio");
+            assert!(audio_dir.exists(), "Audio directory should exist");
+            
+            // Check that SMIL files exist
+            let smil_files: Vec<_> = fs::read_dir(old_version_dir.join("OEBPS"))
+                .expect("Failed to read OEBPS directory")
+                .filter_map(|entry| {
+                    let entry = entry.ok()?;
+                    let path = entry.path();
+                    if path.extension()? == "smil" {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            
+            assert!(!smil_files.is_empty(), "Should have SMIL files");
+            
+            // Check that each chapter has a corresponding SMIL file
+            let xhtml_files: Vec<_> = fs::read_dir(old_version_dir.join("OEBPS"))
+                .expect("Failed to read OEBPS directory")
+                .filter_map(|entry| {
+                    let entry = entry.ok()?;
+                    let path = entry.path();
+                    if path.extension()? == "xhtml" {
+                        Some(path.file_stem()?.to_string_lossy().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            
+            for xhtml_file in &xhtml_files {
+                let smil_name = format!("{}.smil", xhtml_file);
+                let smil_path = old_version_dir.join("OEBPS").join(&smil_name);
+                assert!(smil_path.exists(), 
+                    "Chapter {} should have corresponding SMIL file {}", 
+                    xhtml_file, smil_name);
+            }
+        }
+        
+        // Helper functions
+        
+        struct ManifestItem {
+            id: String,
+            href: String,
+            media_type: String,
+            has_media_overlay: bool,
+            media_overlay_id: Option<String>,
+        }
+        
+        fn extract_manifest_items(opf_xml: &str) -> Vec<ManifestItem> {
+            let mut items = Vec::new();
+            let mut reader = Reader::from_str(opf_xml);
+            reader.trim_text(true);
+            
+            let mut in_manifest = false;
+            let mut current_item: Option<ManifestItem> = None;
+            
+            loop {
+                match reader.read_event() {
+                    Ok(Event::Start(e)) => {
+                        let name = e.name().into_inner();
+                        
+                        if name == b"manifest" {
+                            in_manifest = true;
+                        } else if in_manifest && name == b"item" {
+                            let mut id = None;
+                            let mut href = None;
+                            let mut media_type = None;
+                            let mut media_overlay = None;
+                            
+                            for attr in e.attributes() {
+                                if let Ok(attr) = attr {
+                                    let key = attr.key.as_ref();
+                                    let value = String::from_utf8_lossy(&attr.value);
+                                    
+                                    if key == b"id" {
+                                        id = Some(value.to_string());
+                                    } else if key == b"href" {
+                                        href = Some(value.to_string());
+                                    } else if key == b"media-type" {
+                                        media_type = Some(value.to_string());
+                                    } else if key == b"media-overlay" {
+                                        media_overlay = Some(value.to_string());
+                                    }
+                                }
+                            }
+                            
+                            if let (Some(id), Some(href), Some(media_type)) = (id, href, media_type) {
+                                current_item = Some(ManifestItem {
+                                    id,
+                                    href,
+                                    media_type,
+                                    has_media_overlay: media_overlay.is_some(),
+                                    media_overlay_id: media_overlay,
+                                });
+                            }
+                        }
+                    }
+                    Ok(Event::End(e)) => {
+                        let name = e.name().into_inner();
+                        if name == b"manifest" {
+                            in_manifest = false;
+                        } else if name == b"item" {
+                            if let Some(item) = current_item.take() {
+                                items.push(item);
+                            }
+                        }
+                    }
+                    Ok(Event::Empty(e)) => {
+                        let name = e.name().into_inner();
+                        if in_manifest && name == b"item" {
+                            let mut id = None;
+                            let mut href = None;
+                            let mut media_type = None;
+                            let mut media_overlay = None;
+                            
+                            for attr in e.attributes() {
+                                if let Ok(attr) = attr {
+                                    let key = attr.key.as_ref();
+                                    let value = String::from_utf8_lossy(&attr.value);
+                                    
+                                    if key == b"id" {
+                                        id = Some(value.to_string());
+                                    } else if key == b"href" {
+                                        href = Some(value.to_string());
+                                    } else if key == b"media-type" {
+                                        media_type = Some(value.to_string());
+                                    } else if key == b"media-overlay" {
+                                        media_overlay = Some(value.to_string());
+                                    }
+                                }
+                            }
+                            
+                            if let (Some(id), Some(href), Some(media_type)) = (id, href, media_type) {
+                                items.push(ManifestItem {
+                                    id,
+                                    href,
+                                    media_type,
+                                    has_media_overlay: media_overlay.is_some(),
+                                    media_overlay_id: media_overlay,
+                                });
+                            }
+                        }
+                    }
+                    Ok(Event::Eof) => break,
+                    _ => {}
+                }
+            }
+            
+            items
+        }
+        
+        fn check_directory_structure(base_dir: &Path, name: &str) {
+            // Check required directories
+            let oebps_dir = base_dir.join("OEBPS");
+            assert!(oebps_dir.exists(), "{} should have OEBPS directory", name);
+            
+            let meta_inf_dir = base_dir.join("META-INF");
+            assert!(meta_inf_dir.exists(), "{} should have META-INF directory", name);
+            
+            // Check required files
+            let mimetype = base_dir.join("mimetype");
+            assert!(mimetype.exists(), "{} should have mimetype file", name);
+            
+            let container_xml = meta_inf_dir.join("container.xml");
+            assert!(container_xml.exists(), "{} should have container.xml", name);
+            
+            let content_opf = oebps_dir.join("content.opf");
+            assert!(content_opf.exists(), "{} should have content.opf", name);
+        }
     }
 }
 
