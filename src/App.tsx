@@ -193,7 +193,7 @@ function App() {
     
     try {
       // Load the EPUB file buffer
-      let buffer: ArrayBuffer;
+      let buffer: ArrayBuffer | null = null;
       
       if (book.sourcePath.startsWith("web://")) {
         // Web file - we can't reload it, show error
