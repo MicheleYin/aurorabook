@@ -22,6 +22,7 @@ use ndarray::ArrayD;
 #[allow(dead_code)] // Used in tests and may be used by library consumers
 pub struct KokoroOnnxCoreML {
     session: Arc<Mutex<Session>>,
+    input_names: (String, String, String), // (tokens/input_ids, style, speed)
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -76,8 +77,29 @@ impl KokoroOnnxCoreML {
         println!("   Inputs: {:?}", session.inputs.iter().map(|i| &i.name).collect::<Vec<_>>());
         println!("   Outputs: {:?}", session.outputs.iter().map(|o| &o.name).collect::<Vec<_>>());
 
+        // Get actual input names from the model (supports both "tokens" and "input_ids")
+        let input_names_vec: Vec<String> = session.inputs.iter().map(|i| i.name.clone()).collect();
+        if input_names_vec.len() < 3 {
+            return Err(format!("Expected at least 3 inputs, found {}", input_names_vec.len()));
+        }
+        
+        // Typically: [tokens/input_ids, style, speed]
+        // Use the actual names from the model
+        let tokens_name = input_names_vec.get(0)
+            .ok_or("No input found at index 0")?
+            .clone();
+        let style_name = input_names_vec.get(1)
+            .ok_or("No input found at index 1")?
+            .clone();
+        let speed_name = input_names_vec.get(2)
+            .ok_or("No input found at index 2")?
+            .clone();
+        
+        println!("   Using input names: tokens={}, style={}, speed={}", tokens_name, style_name, speed_name);
+
         Ok(Self {
             session: Arc::new(Mutex::new(session)),
+            input_names: (tokens_name, style_name, speed_name),
         })
     }
 
@@ -142,26 +164,29 @@ impl KokoroOnnxCoreML {
         // Convert inputs to ONNX Runtime format
         let mut ort_inputs = Vec::new();
         
+        // Get the actual input names from the model (supports both "tokens" and "input_ids")
+        let input_names = &self.input_names;
+        
         // Tokens as i64 - use array for shape like kokoros does
         let tokens_shape = [tokens.shape()[0], tokens.shape()[1]];
         let tokens_data: Vec<i64> = tokens.iter().cloned().collect();
         let tokens_tensor = Tensor::from_array((tokens_shape, tokens_data))
             .map_err(|e| format!("Failed to create tokens tensor: {}", e))?;
-        ort_inputs.push((Cow::Borrowed("tokens"), SessionInputValue::Owned(Value::from(tokens_tensor))));
+        ort_inputs.push((Cow::Owned(input_names.0.clone()), SessionInputValue::Owned(Value::from(tokens_tensor))));
         
         // Style as f32 - use array for shape
         let style_shape = [style.shape()[0], style.shape()[1]];
         let style_data: Vec<f32> = style.iter().cloned().collect();
         let style_tensor = Tensor::from_array((style_shape, style_data))
             .map_err(|e| format!("Failed to create style tensor: {}", e))?;
-        ort_inputs.push((Cow::Borrowed("style"), SessionInputValue::Owned(Value::from(style_tensor))));
+        ort_inputs.push((Cow::Owned(input_names.1.clone()), SessionInputValue::Owned(Value::from(style_tensor))));
         
         // Speed as f32 - use array for shape
         let speed_shape = [1];
         let speed_data: Vec<f32> = speed.iter().cloned().collect();
         let speed_tensor = Tensor::from_array((speed_shape, speed_data))
             .map_err(|e| format!("Failed to create speed tensor: {}", e))?;
-        ort_inputs.push((Cow::Borrowed("speed"), SessionInputValue::Owned(Value::from(speed_tensor))));
+        ort_inputs.push((Cow::Owned(input_names.2.clone()), SessionInputValue::Owned(Value::from(speed_tensor))));
 
         // Run inference
         let outputs: SessionOutputs = session

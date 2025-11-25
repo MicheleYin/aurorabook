@@ -73,6 +73,39 @@ export interface EpubBook {
 }
 
 /**
+ * Sanitize XML to fix common parsing issues
+ */
+function sanitizeXml(xml: string): string {
+  // Remove BOM and other invisible characters that might cause issues
+  let sanitized = xml.replace(/^\uFEFF/, '').replace(/[\u200B-\u200D\uFEFF]/g, '');
+  
+  // Fix unescaped ampersands (must be done before other replacements)
+  // This is a common issue in malformed XML
+  sanitized = sanitized.replace(/&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[\da-fA-F]+;)/g, '&amp;');
+  
+  // Fix invalid characters in attribute names
+  // XML attribute names can only contain: letters, digits, hyphens, underscores, periods, and colons
+  // Match attribute patterns: <tag attr= or <tag attr=" or <tag attr=' or <tag attr = 
+  // This regex matches: tag name, then optional whitespace, then attribute name, then = sign
+  sanitized = sanitized.replace(/(<[^\s>]+)(\s+)([^\s=]+?)(\s*=\s*)/g, (match, tag, whitespace, attrName, equals) => {
+    // Skip if this looks like it might be part of the tag name or closing
+    if (attrName.startsWith('/') || attrName.startsWith('?')) {
+      return match;
+    }
+    // Check if attribute name contains invalid characters (not letters, digits, :, -, ., or _)
+    // Valid XML attribute names: NameStartChar (Letter | '_' | ':') followed by NameChar* (NameStartChar | '-' | '.' | Digit | CombiningChar | Extender)
+    if (/[^\w:.-]/.test(attrName)) {
+      const fixedAttrName = attrName.replace(/[^\w:.-]/g, '_');
+      console.warn(`[EPUB Parser] Fixed invalid attribute name: "${attrName}" -> "${fixedAttrName}"`);
+      return `${tag}${whitespace}${fixedAttrName}${equals}`;
+    }
+    return match;
+  });
+  
+  return sanitized;
+}
+
+/**
  * Parse content.opf XML to extract metadata, spine, and manifest
  */
 function parseContentOpf(opfXml: string): {
@@ -80,13 +113,69 @@ function parseContentOpf(opfXml: string): {
   spine: Spine;
   manifest: Record<string, ManifestItem>;
 } {
+  // Try to sanitize the XML first
+  let sanitizedXml = sanitizeXml(opfXml);
+  
   const parser = new DOMParser();
-  const doc = parser.parseFromString(opfXml, "text/xml");
+  let doc = parser.parseFromString(sanitizedXml, "text/xml");
   
   // Check for parsing errors
-  const parserError = doc.querySelector("parsererror");
+  let parserError = doc.querySelector("parsererror");
   if (parserError) {
-    throw new Error(`Failed to parse content.opf: ${parserError.textContent}`);
+    const errorText = parserError.textContent || '';
+    const lines = opfXml.split('\n');
+    
+    // Extract line and column numbers from error message
+    const lineMatch = errorText.match(/line (\d+)/i);
+    const colMatch = errorText.match(/column (\d+)/i);
+    
+    let errorMsg = `Failed to parse content.opf: ${errorText}`;
+    
+    if (lineMatch) {
+      const lineNum = parseInt(lineMatch[1], 10);
+      if (lineNum > 0 && lineNum <= lines.length) {
+        const problematicLine = lines[lineNum - 1];
+        const colNum = colMatch ? parseInt(colMatch[1], 10) : null;
+        
+        errorMsg += `\n\nProblematic line ${lineNum}:`;
+        errorMsg += `\n${problematicLine}`;
+        
+        if (colNum) {
+          // Add a caret pointing to the problematic column
+          const indent = ' '.repeat(Math.max(0, colNum - 1));
+          errorMsg += `\n${indent}^`;
+        }
+        
+        // Try to identify the issue
+        if (colNum && colNum <= problematicLine.length) {
+          const charAtError = problematicLine[colNum - 1];
+          errorMsg += `\n\nCharacter at error position: "${charAtError}" (code: ${charAtError.charCodeAt(0)})`;
+          
+          // Check for common issues
+          if (/[^\w:.\-=_"'\s<>\/]/.test(charAtError)) {
+            errorMsg += `\nThis appears to be an invalid character in an attribute name or value.`;
+          }
+        }
+      }
+    }
+    
+    // Log the raw XML around the error for debugging
+    if (lineMatch) {
+      const lineNum = parseInt(lineMatch[1], 10);
+      const contextLines = 3;
+      const startLine = Math.max(0, lineNum - contextLines - 1);
+      const endLine = Math.min(lines.length, lineNum + contextLines);
+      
+      console.error('[EPUB Parser] XML parsing error context:', {
+        errorLine: lineNum,
+        context: lines.slice(startLine, endLine).map((line, idx) => ({
+          lineNum: startLine + idx + 1,
+          content: line,
+        })),
+      });
+    }
+    
+    throw new Error(errorMsg);
   }
   
   // Extract metadata

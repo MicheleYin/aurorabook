@@ -379,37 +379,37 @@ async fn generate_tts_batch(
             .ok_or_else(|| "Voices path contains invalid UTF-8".to_string())?
             .to_string();
             
-            // Process texts in parallel
+        // Process texts in parallel
         let mut handles = Vec::new();
         for text in texts.iter() {
             let text_clone = text.clone();
             let voice_id_clone = voice_id.clone();
             let language_clone = language.clone();
             let speed_val = speed.unwrap_or(1.0);
-                let onnx_path_clone = onnx_path_str.clone();
-                let voices_path_clone = voices_path_str.clone();
+            let onnx_path_clone = onnx_path_str.clone();
+            let voices_path_clone = voices_path_str.clone();
             
             let handle = tokio::spawn(async move {
-                    // Create a new engine instance for this task
-                    let task_engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
-                        &onnx_path_clone,
-                        &voices_path_clone,
-                        1, // Use 1 instance per task
-                    ).await;
-                    
-                    let model_instance = task_engine.get_model_instance(0);
-                    task_engine.tts_raw_audio_with_instance(
-                        &text_clone,
-                        language_clone.as_deref().unwrap_or("en"),
-                        &voice_id_clone,
-                        speed_val,
-                        None,
-                        None,
-                        None,
-                        None,
-                        model_instance,
-                    )
-                    .map_err(|e| format!("Failed to generate audio: {}", e))
+                // Create a new engine instance for this task
+                let task_engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+                    &onnx_path_clone,
+                    &voices_path_clone,
+                    1, // Use 1 instance per task
+                ).await;
+                
+                let model_instance = task_engine.get_model_instance(0);
+                task_engine.tts_raw_audio_with_instance(
+                    &text_clone,
+                    language_clone.as_deref().unwrap_or("en"),
+                    &voice_id_clone,
+                    speed_val,
+                    None,
+                    None,
+                    None,
+                    None,
+                    model_instance,
+                )
+                .map_err(|e| format!("Failed to generate audio: {}", e))
             });
             handles.push(handle);
         }
@@ -616,6 +616,41 @@ mod tests {
                 } else if env_buf.is_dir() {
                     possible_paths.push(env_buf.join("kokoro-v1.0.onnx"));
                 }
+            }
+        }
+
+        for path in possible_paths {
+            if path.exists() && path.is_file() {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    /// Helper function to find quantized models from Kokoro-82M-v1.0-ONNX
+    #[allow(dead_code)] // Used in tests
+    fn find_quantized_model(model_name: &str) -> Option<PathBuf> {
+        let mut possible_paths = Vec::new();
+        
+        // Try relative to project root
+        possible_paths.push(PathBuf::from("Kokoro-82M-v1.0-ONNX").join("onnx").join(model_name));
+        possible_paths.push(PathBuf::from("../Kokoro-82M-v1.0-ONNX").join("onnx").join(model_name));
+        
+        // From project root if we have manifest dir
+        if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+            let manifest_path = PathBuf::from(&manifest_dir);
+            // Go up to project root (assuming we're in src-tauri)
+            if let Some(parent) = manifest_path.parent() {
+                possible_paths.push(parent.join("Kokoro-82M-v1.0-ONNX").join("onnx").join(model_name));
+            }
+        }
+        
+        // Check current directory
+        if let Ok(current_dir) = std::env::current_dir() {
+            possible_paths.push(current_dir.join("Kokoro-82M-v1.0-ONNX").join("onnx").join(model_name));
+            // Also check if we're in src-tauri
+            if let Some(parent) = current_dir.parent() {
+                possible_paths.push(parent.join("Kokoro-82M-v1.0-ONNX").join("onnx").join(model_name));
             }
         }
 
@@ -1335,6 +1370,185 @@ mod tests {
             }
             Err(e) => {
                 println!("❌ Failed to save audio: {}", e);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_quantized_model_tts() {
+        println!("\n🧪 Testing TTS generation with quantized model from Kokoro-82M-v1.0-ONNX");
+        
+        // Try to find a quantized model (prefer smaller ones for faster testing)
+        let quantized_models = vec![
+            "model_q8f16.onnx",      // 82MB - smallest
+            "model_quantized.onnx",  // 88MB
+            "model_uint8f16.onnx",   // 109MB
+            "model_q4f16.onnx",      // 147MB
+            "model_fp16.onnx",       // 156MB
+            "model_uint8.onnx",      // 169MB
+            "model_q4.onnx",         // 291MB
+            "model.onnx",            // 310MB - full precision
+        ];
+        
+        let mut model_path: Option<PathBuf> = None;
+        let mut model_name = "";
+        
+        for model in &quantized_models {
+            if let Some(path) = find_quantized_model(model) {
+                model_path = Some(path);
+                model_name = model;
+                break;
+            }
+        }
+        
+        let model_path = match model_path {
+            Some(path) => path,
+            None => {
+                println!("⚠️ Skipping test - no quantized models found in Kokoro-82M-v1.0-ONNX/onnx");
+                println!("   Checked models: {:?}", quantized_models);
+                println!("   Make sure Kokoro-82M-v1.0-ONNX/onnx directory exists with model files");
+                return;
+            }
+        };
+        
+        let model_path_str = model_path.to_str().unwrap();
+        println!("   Using model: {} ({})", model_name, model_path_str);
+        
+        // Find voices file - try to find it in the Kokoro-82M-v1.0-ONNX/voices directory
+        let mut voices_path: Option<PathBuf> = None;
+        
+        // Try voices from Kokoro-82M-v1.0-ONNX
+        let mut voices_locations = vec![
+            PathBuf::from("Kokoro-82M-v1.0-ONNX").join("voices").join("af.bin"),
+            PathBuf::from("../Kokoro-82M-v1.0-ONNX").join("voices").join("af.bin"),
+        ];
+        
+        if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+            let manifest_path = PathBuf::from(&manifest_dir);
+            if let Some(parent) = manifest_path.parent() {
+                voices_locations.push(parent.join("Kokoro-82M-v1.0-ONNX").join("voices").join("af.bin"));
+            }
+        }
+        
+        if let Ok(current_dir) = std::env::current_dir() {
+            voices_locations.push(current_dir.join("Kokoro-82M-v1.0-ONNX").join("voices").join("af.bin"));
+            if let Some(parent) = current_dir.parent() {
+                voices_locations.push(parent.join("Kokoro-82M-v1.0-ONNX").join("voices").join("af.bin"));
+            }
+        }
+        
+        // Also try the standard voices file location
+        if let Some(resources_dir) = find_resources_dir() {
+            if let Some(voices) = find_voices_file(&resources_dir) {
+                voices_path = Some(voices);
+            }
+        }
+        
+        // Try the Kokoro-82M-v1.0-ONNX voices locations
+        if voices_path.is_none() {
+            for path in voices_locations {
+                if path.exists() && path.is_file() {
+                    voices_path = Some(path);
+                    break;
+                }
+            }
+        }
+        
+        let voices_path = match voices_path {
+            Some(path) => path,
+            None => {
+                println!("⚠️ Skipping test - voices file not found");
+                println!("   Expected: Kokoro-82M-v1.0-ONNX/voices/af.bin or voices-v1.0.bin in resources");
+                return;
+            }
+        };
+        
+        let voices_path_str = voices_path.to_str().unwrap();
+        println!("   Voices file: {}", voices_path_str);
+
+        // Initialize kokoros engine with the quantized model
+        println!("\n📦 Initializing kokoros engine with quantized model...");
+        let engine = match kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+            model_path_str,
+            voices_path_str,
+            1, // Use 1 instance for testing
+        ).await {
+            engine => {
+                println!("✅ Engine initialized successfully!");
+                engine
+            }
+        };
+
+        // Generate audio
+        let test_text = "Hello, this is a test using a quantized model from Kokoro-82M-v1.0-ONNX.";
+        let voice_id = "af_heart";
+        let language = "en";
+        let speed = 1.0;
+
+        println!("\n🎤 Generating TTS audio with quantized model...");
+        println!("   Text: '{}'", test_text);
+        println!("   Voice: {}", voice_id);
+        println!("   Language: {}", language);
+        println!("   Speed: {}", speed);
+
+        let model_instance = engine.get_model_instance(0);
+        match engine.tts_raw_audio_with_instance(
+            test_text,
+            language,
+            voice_id,
+            speed,
+            None, // initial_silence
+            None, // request_id
+            None, // instance_id
+            None, // chunk_number
+            model_instance,
+        ) {
+            Ok(audio_samples) => {
+                println!("✅ Audio generated successfully with quantized model!");
+                println!("   Samples: {}", audio_samples.len());
+                println!("   Duration: {:.2}s (at 24kHz)", audio_samples.len() as f32 / 24000.0);
+                
+                // Basic validation
+                assert!(!audio_samples.is_empty(), "Audio should not be empty");
+                
+                // Check for non-zero samples
+                let non_zero_count = audio_samples.iter().filter(|&&s| s.abs() > 0.001).count();
+                println!("   Non-zero samples: {} / {} ({:.1}%)", 
+                    non_zero_count, audio_samples.len(),
+                    (non_zero_count as f32 / audio_samples.len() as f32) * 100.0);
+                
+                if non_zero_count > 0 {
+                    // Check audio range
+                    let min_val = audio_samples.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+                    let max_val = audio_samples.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+                    println!("   Audio range: [{:.6}, {:.6}]", min_val, max_val);
+                    
+                    // Save audio file
+                    let output_path = format!("test_quantized_{}.wav", model_name.replace(".onnx", ""));
+                    match save_audio_as_wav(&audio_samples, 24000, &output_path) {
+                        Ok(_) => {
+                            println!("✅ Audio saved to: {}", output_path);
+                        }
+                        Err(e) => {
+                            println!("⚠️ Failed to save audio: {}", e);
+                        }
+                    }
+                    
+                    println!("\n✅ Quantized model TTS test PASSED!");
+                } else {
+                    println!("⚠️ WARNING: Audio contains only zeros (silence)");
+                    println!("   This might indicate the model is not working correctly");
+                }
+            }
+            Err(e) => {
+                println!("❌ TTS generation failed: {}", e);
+                println!("   This error likely indicates:");
+                println!("   - Input name mismatch (model expects 'input_ids' but kokoros uses 'tokens')");
+                println!("   - Model format incompatibility");
+                println!("   - Other model loading issues");
+                println!("\n   The quantized models from Kokoro-82M-v1.0-ONNX use 'input_ids' as the input name,");
+                println!("   but the kokoros crate may be hardcoded to use 'tokens'.");
+                panic!("TTS generation failed with quantized model: {}", e);
             }
         }
     }

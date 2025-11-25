@@ -45,6 +45,7 @@ mod epub_converter {
         cores.max(1)
     }
 
+
     /// Simple text chunking - split by sentences
     /// Returns (chunks with IDs, updated HTML with span tags)
     fn chunk_text(html: &str) -> (Vec<(String, String)>, String) {
@@ -220,107 +221,263 @@ mod epub_converter {
     }
 
     /// Update content.opf to include audio tracks and SMIL files
+    /// Uses quick-xml for proper XML parsing and generation
     fn update_content_opf(
         opf_xml: &str,
         audio_files: &[(usize, String)],
         smil_files: &[(usize, String)],
         chapters: &[Chapter],
     ) -> Result<String, String> {
-        use regex::Regex;
+        use quick_xml::events::{Event, BytesEnd, BytesStart, BytesText};
+        use quick_xml::Writer;
+        use quick_xml::Reader;
+        use std::io::Cursor;
+        use std::collections::HashSet;
         
-        let mut new_opf = opf_xml.to_string();
+        let mut reader = Reader::from_str(opf_xml);
+        reader.trim_text(true);
         
-        // Remove existing audio and SMIL items
-        let audio_pattern = Regex::new(r#"<item[^>]*media-type="audio/[^"]*"[^>]*/>"#).unwrap();
-        new_opf = audio_pattern.replace_all(&new_opf, "").to_string();
-        let smil_pattern = Regex::new(r#"<item[^>]*media-type="application/smil\+xml"[^>]*/>"#).unwrap();
-        new_opf = smil_pattern.replace_all(&new_opf, "").to_string();
+        let mut writer = Writer::new(Cursor::new(Vec::new()));
         
-        // Remove media-overlay attributes
-        let overlay_pattern = Regex::new(r#"\s+media-overlay="[^"]*""#).unwrap();
-        new_opf = overlay_pattern.replace_all(&new_opf, "").to_string();
+        // Track which hrefs we've already added to avoid duplicates
+        let mut added_audio_hrefs = HashSet::new();
+        let mut added_smil_hrefs = HashSet::new();
         
-        // Find manifest closing tag and insert new items before it
-        if let Some(manifest_end) = new_opf.find("</manifest>") {
-            let mut new_items = String::new();
-            
-            // Add audio files
-            for (idx, (_, href)) in audio_files.iter().enumerate() {
+        // Track if we're inside manifest/metadata
+        let mut in_manifest = false;
+        let mut manifest_items_to_add: Vec<Vec<u8>> = Vec::new();
+        let mut in_metadata = false;
+        let mut needs_media_overlay_meta = true;
+        
+        // Build items to add
+        for (idx, (_, href)) in audio_files.iter().enumerate() {
+            if !added_audio_hrefs.contains(href) {
+                added_audio_hrefs.insert(href.clone());
                 let item_id = format!("m{:03}", idx + 1);
                 let is_mp3 = href.ends_with(".mp3");
                 let media_type = if is_mp3 { "audio/mpeg" } else { "audio/wav" };
-                // Escape XML special characters in href
-                let escaped_href = href
-                    .replace('&', "&amp;")
-                    .replace('<', "&lt;")
-                    .replace('>', "&gt;")
-                    .replace('"', "&quot;");
-                new_items.push_str(&format!(
-                    r#"    <item id="{}" href="{}" media-type="{}"/>
-"#,
-                    item_id, escaped_href, media_type
-                ));
+                
+                let mut item = BytesStart::new("item");
+                item.push_attribute((b"id".as_ref(), item_id.as_bytes()));
+                item.push_attribute((b"href".as_ref(), href.as_bytes()));
+                let media_type_bytes = media_type.as_bytes();
+                item.push_attribute((b"media-type".as_ref(), media_type_bytes));
+                
+                let mut item_xml = Vec::new();
+                let mut item_writer = Writer::new(Cursor::new(&mut item_xml));
+                item_writer.write_event(Event::Empty(item)).map_err(|e| format!("XML write error: {}", e))?;
+                manifest_items_to_add.push(item_xml);
             }
-            
-            // Add SMIL files and link to chapters
-            for (idx, (chapter_idx, href)) in smil_files.iter().enumerate() {
+        }
+        
+        for (idx, (chapter_idx, href)) in smil_files.iter().enumerate() {
+            if !added_smil_hrefs.contains(href) {
+                added_smil_hrefs.insert(href.clone());
                 let smil_item_id = format!("s{:03}", idx + 1);
-                let chapter = &chapters[*chapter_idx];
-                let mut chapter_href = chapter.href.clone();
-                if chapter_href.starts_with("OEBPS/") {
-                    chapter_href = chapter_href[6..].to_string();
-                }
                 
-                // Escape XML special characters in href
-                let escaped_smil_href = href
-                    .replace('&', "&amp;")
-                    .replace('<', "&lt;")
-                    .replace('>', "&gt;")
-                    .replace('"', "&quot;");
-                new_items.push_str(&format!(
-                    r#"    <item id="{}" href="{}" media-type="application/smil+xml"/>
-"#,
-                    smil_item_id, escaped_smil_href
-                ));
+                let mut item = BytesStart::new("item");
+                item.push_attribute((b"id".as_ref(), smil_item_id.as_bytes()));
+                item.push_attribute((b"href".as_ref(), href.as_bytes()));
+                item.push_attribute((b"media-type".as_ref(), b"application/smil+xml".as_ref()));
                 
-                // Update chapter item to include media-overlay
-                // Match the item tag and insert media-overlay before the closing > or />
-                // Escape special regex characters in the href
-                let escaped_href = regex::escape(&chapter_href);
-                // Also escape for XML if needed (but hrefs in OPF are usually already properly formatted)
-                let chapter_pattern = Regex::new(&format!(
-                    r#"(<item[^>]*?href\s*=\s*"{}"[^>]*?)(\s*/?>)"#,
-                    escaped_href
-                )).unwrap();
-                new_opf = chapter_pattern.replace(&new_opf, |caps: &regex::Captures| {
-                    // Check if media-overlay already exists to avoid duplicates
-                    if caps[1].contains("media-overlay") {
-                        caps[0].to_string() // Return unchanged if already present
+                let mut item_xml = Vec::new();
+                let mut item_writer = Writer::new(Cursor::new(&mut item_xml));
+                item_writer.write_event(Event::Empty(item)).map_err(|e| format!("XML write error: {}", e))?;
+                manifest_items_to_add.push(item_xml);
+            }
+        }
+        
+        // Process XML events
+        loop {
+            match reader.read_event() {
+                Ok(Event::Start(e)) => {
+                    let name = e.name().into_inner();
+                    
+                    if name == b"manifest" {
+                        in_manifest = true;
+                        writer.write_event(Event::Start(e)).map_err(|e| format!("XML write error: {}", e))?;
+                    } else if name == b"metadata" {
+                        in_metadata = true;
+                        writer.write_event(Event::Start(e)).map_err(|e| format!("XML write error: {}", e))?;
+                    } else if in_manifest && name == b"item" {
+                        // Collect attributes first to avoid borrowing issues
+                        let attrs: Result<Vec<_>, _> = e.attributes().collect();
+                        let attrs = attrs.map_err(|e| format!("XML attribute error: {}", e))?;
+                        
+                        // Check if this is an audio or SMIL item to skip
+                        let mut href_attr: Option<String> = None;
+                        let mut media_type_attr: Option<String> = None;
+                        
+                        for attr in &attrs {
+                            let key = attr.key.as_ref();
+                            if key == b"href" {
+                                href_attr = Some(String::from_utf8_lossy(&attr.value).to_string());
+                            } else if key == b"media-type" {
+                                media_type_attr = Some(String::from_utf8_lossy(&attr.value).to_string());
+                            }
+                        }
+                        
+                        // Skip audio and SMIL items (we'll add new ones)
+                        if let Some(ref mt) = media_type_attr {
+                            if mt.starts_with("audio/") || mt == "application/smil+xml" {
+                                // Skip reading the content and end tag
+                                reader.read_to_end(e.name()).map_err(|e| format!("XML read error: {}", e))?;
+                                continue;
+                            }
+                        }
+                        
+                        // Check if this is a chapter item that needs media-overlay
+                        let mut needs_media_overlay = false;
+                        let mut smil_id_to_add: Option<String> = None;
+                        
+                        if let Some(ref href) = href_attr {
+                            for (idx, (chapter_idx, _)) in smil_files.iter().enumerate() {
+                                let chapter = &chapters[*chapter_idx];
+                                let mut chapter_href = chapter.href.clone();
+                                if chapter_href.starts_with("OEBPS/") {
+                                    chapter_href = chapter_href[6..].to_string();
+                                }
+                                
+                                if href == &chapter_href {
+                                    needs_media_overlay = true;
+                                    smil_id_to_add = Some(format!("s{:03}", idx + 1));
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Create new item element with media-overlay if needed
+                        let mut new_item = BytesStart::new("item");
+                        for attr in &attrs {
+                            let key = attr.key.as_ref();
+                            // Skip existing media-overlay
+                            if key == b"media-overlay" {
+                                continue;
+                            }
+                            new_item.push_attribute((key, attr.value.as_ref()));
+                        }
+                        
+                        if needs_media_overlay {
+                            if let Some(ref smil_id) = smil_id_to_add {
+                                new_item.push_attribute((b"media-overlay".as_ref(), smil_id.as_bytes()));
+                            }
+                        }
+                        
+                        writer.write_event(Event::Start(new_item)).map_err(|e| format!("XML write error: {}", e))?;
                     } else {
-                        // Trim any trailing whitespace and ensure proper spacing
-                        let prefix = caps[1].trim_end();
-                        // Add space before new attribute if not already present
-                        let separator = if prefix.ends_with('"') { " " } else { " " };
-                        format!(r#"{}{}media-overlay="{}"{}"#, prefix, separator, smil_item_id, &caps[2])
+                        writer.write_event(Event::Start(e)).map_err(|e| format!("XML write error: {}", e))?;
                     }
-                }).to_string();
+                }
+                Ok(Event::End(e)) => {
+                    let name = e.name().into_inner();
+                    
+                    if name == b"manifest" {
+                        // Before closing manifest, add our new items
+                        for item_xml in &manifest_items_to_add {
+                            writer.get_mut().write_all(b"    ").map_err(|e| format!("XML write error: {}", e))?;
+                            writer.get_mut().write_all(item_xml).map_err(|e| format!("XML write error: {}", e))?;
+                            writer.get_mut().write_all(b"\n").map_err(|e| format!("XML write error: {}", e))?;
+                        }
+                        in_manifest = false;
+                        writer.write_event(Event::End(e)).map_err(|e| format!("XML write error: {}", e))?;
+                    } else if name == b"metadata" {
+                        // Add media overlay metadata before closing metadata
+                        if needs_media_overlay_meta {
+                            let mut meta = BytesStart::new("meta");
+                            meta.push_attribute((b"property".as_ref(), b"media:active-class".as_ref()));
+                            writer.write_event(Event::Start(meta)).map_err(|e| format!("XML write error: {}", e))?;
+                            let text_content = BytesText::from_escaped("-epub-media-overlay-active");
+                            writer.write_event(Event::Text(text_content)).map_err(|e| format!("XML write error: {}", e))?;
+                            writer.write_event(Event::End(BytesEnd::new("meta"))).map_err(|e| format!("XML write error: {}", e))?;
+                            needs_media_overlay_meta = false;
+                        }
+                        in_metadata = false;
+                        writer.write_event(Event::End(e)).map_err(|e| format!("XML write error: {}", e))?;
+                    } else {
+                        writer.write_event(Event::End(e)).map_err(|e| format!("XML write error: {}", e))?;
+                    }
+                }
+                Ok(Event::Empty(e)) => {
+                    // Handle self-closing tags
+                    let name = e.name().into_inner();
+                    
+                    if in_manifest && name == b"item" {
+                        // Collect attributes first to avoid borrowing issues
+                        let attrs: Result<Vec<_>, _> = e.attributes().collect();
+                        let attrs = attrs.map_err(|e| format!("XML attribute error: {}", e))?;
+                        
+                        // Check if this is an audio or SMIL item to skip
+                        let mut href_attr: Option<String> = None;
+                        let mut media_type_attr: Option<String> = None;
+                        
+                        for attr in &attrs {
+                            let key = attr.key.as_ref();
+                            if key == b"href" {
+                                href_attr = Some(String::from_utf8_lossy(&attr.value).to_string());
+                            } else if key == b"media-type" {
+                                media_type_attr = Some(String::from_utf8_lossy(&attr.value).to_string());
+                            }
+                        }
+                        
+                        // Skip audio and SMIL items
+                        if let Some(ref mt) = media_type_attr {
+                            if mt.starts_with("audio/") || mt == "application/smil+xml" {
+                                continue;
+                            }
+                        }
+                        
+                        // Check if this is a chapter item
+                        let mut needs_media_overlay = false;
+                        let mut smil_id_to_add: Option<String> = None;
+                        
+                        if let Some(ref href) = href_attr {
+                            for (idx, (chapter_idx, _)) in smil_files.iter().enumerate() {
+                                let chapter = &chapters[*chapter_idx];
+                                let mut chapter_href = chapter.href.clone();
+                                if chapter_href.starts_with("OEBPS/") {
+                                    chapter_href = chapter_href[6..].to_string();
+                                }
+                                
+                                if href == &chapter_href {
+                                    needs_media_overlay = true;
+                                    smil_id_to_add = Some(format!("s{:03}", idx + 1));
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        let mut new_item = BytesStart::new("item");
+                        for attr in &attrs {
+                            let key = attr.key.as_ref();
+                            if key == b"media-overlay" {
+                                continue;
+                            }
+                            new_item.push_attribute((key, attr.value.as_ref()));
+                        }
+                        
+                        if needs_media_overlay {
+                            if let Some(ref smil_id) = smil_id_to_add {
+                                new_item.push_attribute((b"media-overlay".as_ref(), smil_id.as_bytes()));
+                            }
+                        }
+                        
+                        writer.write_event(Event::Empty(new_item)).map_err(|e| format!("XML write error: {}", e))?;
+                    } else {
+                        writer.write_event(Event::Empty(e)).map_err(|e| format!("XML write error: {}", e))?;
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Ok(e) => {
+                    writer.write_event(e).map_err(|e| format!("XML write error: {}", e))?;
+                }
+                Err(e) => {
+                    return Err(format!("XML parse error at position {}: {}", reader.buffer_position(), e));
+                }
             }
-            
-            new_opf.insert_str(manifest_end, &new_items);
         }
         
-        // Add media overlay metadata if not present
-        if !new_opf.contains("media:active-class") {
-            if let Some(metadata_end) = new_opf.find("</metadata>") {
-                new_opf.insert_str(
-                    metadata_end,
-                    r#"    <meta property="media:active-class">-epub-media-overlay-active</meta>
-"#,
-                );
-            }
-        }
-        
-        Ok(new_opf)
+        let result = writer.into_inner().into_inner();
+        Ok(String::from_utf8_lossy(&result).to_string())
     }
 
     /// Main conversion function
