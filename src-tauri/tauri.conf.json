@@ -36,6 +36,12 @@
     "resources": [
       "resources/kokoro-v1.0.onnx",
       "resources/voices-v1.0.bin"
-    ]
+    ],
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "10.13",
+      "exceptionDomain": "",
+      "signingIdentity": "Apple Development: Michele Yin (YOUR_OLD_TEAM_ID)"
+    }
   }
 }

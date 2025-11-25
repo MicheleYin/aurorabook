@@ -188,6 +188,12 @@ export function ReaderAudioPlayer({
       // Sync play state with audio element to handle external pause/play
       const audioIsPlaying = !audio.paused;
       if (audioIsPlaying !== isPlayingRef.current) {
+        console.log("[Audio Player] Play state mismatch detected in timeupdate", {
+          audioIsPlaying,
+          isPlayingRef: isPlayingRef.current,
+          isPlayingState: isPlaying,
+          currentTime: seconds,
+        });
         setIsPlaying(audioIsPlaying);
         isPlayingRef.current = audioIsPlaying;
         // If paused externally, emit progress to save state
@@ -215,6 +221,15 @@ export function ReaderAudioPlayer({
     };
 
     const handleLoadedMetadata = () => {
+      console.log("[Audio Player] loadedmetadata event fired", {
+        duration: audio.duration,
+        currentTime: audio.currentTime,
+        isPlayingRef: isPlayingRef.current,
+        audioPaused: audio.paused,
+        isRestoring: isRestoring,
+        readyState: audio.readyState,
+      });
+      
       setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
       // Hook handles restoration via onTrackLoaded
       onTrackLoaded(audio);
@@ -223,6 +238,34 @@ export function ReaderAudioPlayer({
       const audioTime = audio.currentTime || 0;
       setCurrentTime(audioTime);
       currentTimeRef.current = audioTime;
+      
+      // If we should be playing (e.g., track ended and moved to next), try to play
+      // This is a fallback in case canplay events don't fire
+      if (isPlayingRef.current && audio.paused && !isRestoring) {
+        console.log("[Audio Player] Attempting play from loadedmetadata fallback");
+        // Small delay to ensure metadata is fully loaded
+        setTimeout(() => {
+          if (isPlayingRef.current && audio.paused) {
+            console.log("[Audio Player] Executing loadedmetadata play attempt");
+            audio
+              .play()
+              .then(() => {
+                console.log("[Audio Player] Play succeeded from loadedmetadata");
+                setIsPlaying(true);
+                isPlayingRef.current = true;
+              })
+              .catch((error) => {
+                console.warn("[Audio Player] Failed to autoplay in loadedmetadata:", error);
+                // Don't set to false here - let the canplay handlers try
+              });
+          } else {
+            console.log("[Audio Player] Skipping loadedmetadata play - state changed", {
+              isPlayingRef: isPlayingRef.current,
+              audioPaused: audio.paused,
+            });
+          }
+        }, 100);
+      }
       
       // If we just restored, emit progress to ensure parent state is updated
       // This is important for paused audio where timeupdate might not fire
@@ -235,6 +278,12 @@ export function ReaderAudioPlayer({
     };
     
     const handleCanPlay = () => {
+      console.log("[Audio Player] canplay event fired (main handler)", {
+        trackLoadedForRestoration: trackLoadedForRestorationRef.current,
+        currentTime: audio.currentTime,
+        readyState: audio.readyState,
+      });
+      
       // Only call onTrackLoaded if we loaded this track for restoration
       // This prevents double restoration (loadedmetadata already calls it)
       if (trackLoadedForRestorationRef.current) {
@@ -252,12 +301,34 @@ export function ReaderAudioPlayer({
     };
 
     const handleEnded = () => {
+      console.log("[Audio Player] Track ended", {
+        currentIndex,
+        currentTrackId: currentTrack?.id,
+        totalTracks: tracks.length,
+        isPlayingRef: isPlayingRef.current,
+        isPlayingState: isPlaying,
+      });
+      
       const nextIndex = currentIndex + 1;
       if (nextIndex < tracks.length) {
-        setCurrentIndex(nextIndex);
-        setIsPlaying(true);
+        const nextTrack = tracks[nextIndex];
+        console.log("[Audio Player] Moving to next track", {
+          nextIndex,
+          nextTrackId: nextTrack?.id,
+          nextTrackTitle: nextTrack?.title,
+        });
+        
+        // Set playing state BEFORE changing track so the track loading effect sees it
         isPlayingRef.current = true;
+        setIsPlaying(true);
+        console.log("[Audio Player] Set playing state to true before track change", {
+          isPlayingRef: isPlayingRef.current,
+        });
+        
+        // Change track - the track loading effect will handle autoplay
+        setCurrentIndex(nextIndex);
       } else {
+        console.log("[Audio Player] Last track ended, stopping playback");
         audio.pause();
         audio.currentTime = 0;
         setCurrentTime(0);
@@ -323,7 +394,30 @@ export function ReaderAudioPlayer({
       return;
     }
 
-    const shouldAutoPlay = isPlayingRef.current;
+    // Check if audio was playing BEFORE we change the source
+    // When we change audio.src, the browser automatically pauses it,
+    // so we need to capture the state before the change
+    // Also check isPlaying state in case the ref is stale (e.g., after track ended)
+    // When a track ends, audio.paused is true, but we want to continue playing
+    const audioWasPlaying = !audio.paused;
+    const refSaysPlaying = isPlayingRef.current;
+    const stateSaysPlaying = isPlaying;
+    const wasPlayingBeforeSourceChange = audioWasPlaying || refSaysPlaying || stateSaysPlaying;
+    
+    console.log("[Audio Player] Track loading effect triggered", {
+      trackId: currentTrack.id,
+      trackTitle: currentTrack.title,
+      trackIndex: currentIndex,
+      isPlayingRef: isPlayingRef.current,
+      isPlayingState: isPlaying,
+      audioPaused: audio.paused,
+      audioWasPlaying,
+      refSaysPlaying,
+      stateSaysPlaying,
+      wasPlayingBeforeSourceChange,
+      isRestoring: isRestoringRef.current,
+      audioReadyState: audio.readyState,
+    });
 
     // Notify hook about track change
     onTrackChanged(currentTrack.id);
@@ -331,10 +425,31 @@ export function ReaderAudioPlayer({
     // Reset the restoration flag when starting a new track load
     trackLoadedForRestorationRef.current = false;
 
-    audio.pause();
+    // Store whether we should autoplay for the canplay handler
+    // Use wasPlayingBeforeSourceChange to handle cases where the track changes
+    // from chapter switching (the audio element might be paused after src change)
+    const shouldAutoPlay = wasPlayingBeforeSourceChange;
+    
+    // Update the ref to reflect that we want to continue playing if we were playing
+    if (shouldAutoPlay) {
+      isPlayingRef.current = true;
+      setIsPlaying(true);
+      console.log("[Audio Player] Preserved playing state for autoplay", {
+        wasPlayingBeforeSourceChange,
+        shouldAutoPlay,
+        isPlayingRef: isPlayingRef.current,
+      });
+    }
+
+    // Don't pause - just change the source and let it continue playing
+    console.log("[Audio Player] Setting new audio source", {
+      url: currentTrack.url,
+      previousSrc: audio.src,
+    });
     audio.src = currentTrack.url;
     audio.load();
     audio.playbackRate = playbackRate;
+    console.log("[Audio Player] Audio loaded, readyState:", audio.readyState);
     
     // Reset duration while loading
     setDuration(0);
@@ -350,17 +465,128 @@ export function ReaderAudioPlayer({
       // Mark that we're loading this track for restoration
       trackLoadedForRestorationRef.current = true;
     }
-
+    
     if (shouldAutoPlay) {
-      audio
-        .play()
-        .then(() => {
-          setIsPlaying(true);
-        })
-        .catch(() => {
-          setIsPlaying(false);
-          isPlayingRef.current = false;
+      // Keep playing state as true (don't flicker the button)
+      // The audio element will be paused when src changes, but we'll resume it when ready
+      
+      // Check if audio is already ready (cached content)
+      const tryPlay = () => {
+        const readyState = audio.readyState;
+        const isPaused = audio.paused;
+        console.log("[Audio Player] tryPlay check", {
+          readyState,
+          haveFutureData: readyState >= HTMLMediaElement.HAVE_FUTURE_DATA,
+          isPaused,
+          shouldPlay: readyState >= HTMLMediaElement.HAVE_FUTURE_DATA && isPaused,
         });
+        
+        if (readyState >= HTMLMediaElement.HAVE_FUTURE_DATA && isPaused) {
+          // Audio is ready, try to play immediately
+          console.log("[Audio Player] Audio ready, attempting immediate play");
+          audio
+            .play()
+            .then(() => {
+              console.log("[Audio Player] Immediate play succeeded");
+              setIsPlaying(true);
+              isPlayingRef.current = true;
+            })
+            .catch((error) => {
+              console.warn("[Audio Player] Failed to autoplay after track change (immediate):", error);
+              setIsPlaying(false);
+              isPlayingRef.current = false;
+            });
+          return true;
+        }
+        return false;
+      };
+
+      // Try immediately in case audio is cached
+      if (!tryPlay()) {
+        console.log("[Audio Player] Audio not ready yet, setting up event listeners");
+        // Audio not ready yet, wait for it
+        // Use a one-time canplaythrough event to ensure audio is ready before playing
+        const handleCanPlayThrough = () => {
+          console.log("[Audio Player] canplaythrough event fired", {
+            shouldAutoPlay,
+            audioPaused: audio.paused,
+            readyState: audio.readyState,
+          });
+          audio.removeEventListener("canplaythrough", handleCanPlayThrough);
+          audio.removeEventListener("canplay", handleCanPlay);
+          // Autoplay if we were supposed to and audio is paused (which it will be after src change)
+          if (shouldAutoPlay && audio.paused) {
+            console.log("[Audio Player] Attempting play from canplaythrough handler");
+            audio
+              .play()
+              .then(() => {
+                console.log("[Audio Player] Play succeeded from canplaythrough");
+                setIsPlaying(true);
+                isPlayingRef.current = true;
+              })
+              .catch((error) => {
+                console.warn("[Audio Player] Failed to autoplay after track change (canplaythrough):", error);
+                setIsPlaying(false);
+                isPlayingRef.current = false;
+              });
+          } else {
+            console.log("[Audio Player] Skipping autoplay in canplaythrough", {
+              shouldAutoPlay,
+              audioPaused: audio.paused,
+            });
+          }
+        };
+        
+        // Fallback: if canplaythrough doesn't fire, try on canplay
+        const handleCanPlay = () => {
+          console.log("[Audio Player] canplay event fired", {
+            shouldAutoPlay,
+            audioPaused: audio.paused,
+            readyState: audio.readyState,
+          });
+          audio.removeEventListener("canplaythrough", handleCanPlayThrough);
+          audio.removeEventListener("canplay", handleCanPlay);
+          // Autoplay if we were supposed to and audio is paused
+          if (shouldAutoPlay && audio.paused) {
+            console.log("[Audio Player] Attempting play from canplay handler");
+            audio
+              .play()
+              .then(() => {
+                console.log("[Audio Player] Play succeeded from canplay");
+                setIsPlaying(true);
+                isPlayingRef.current = true;
+              })
+              .catch((error) => {
+                console.warn("[Audio Player] Failed to autoplay after track change (canplay fallback):", error);
+                setIsPlaying(false);
+                isPlayingRef.current = false;
+              });
+          } else {
+            console.log("[Audio Player] Skipping autoplay in canplay", {
+              shouldAutoPlay,
+              audioPaused: audio.paused,
+            });
+          }
+        };
+        
+        audio.addEventListener("canplaythrough", handleCanPlayThrough);
+        audio.addEventListener("canplay", handleCanPlay);
+        
+        // Cleanup listeners if effect re-runs before they fire
+        return () => {
+          audio.removeEventListener("canplaythrough", handleCanPlayThrough);
+          audio.removeEventListener("canplay", handleCanPlay);
+        };
+      }
+    } else {
+      // If we weren't playing, make sure state is correct
+      console.log("[Audio Player] Not autoplaying - was not playing before track change", {
+        wasPlayingBeforeSourceChange,
+        isPlayingRef: isPlayingRef.current,
+        audioPaused: audio.paused,
+      });
+      setIsPlaying(false);
+      isPlayingRef.current = false;
     }
   }, [currentTrack, playbackRate, onTrackChanged]);
 
@@ -383,7 +609,15 @@ export function ReaderAudioPlayer({
       return;
     }
 
+    console.log("[Audio Player] togglePlayback called", {
+      isPlayingRef: isPlayingRef.current,
+      isPlayingState: isPlaying,
+      audioPaused: audio.paused,
+      trackId: currentTrack.id,
+    });
+
     if (isPlayingRef.current) {
+      console.log("[Audio Player] Pausing playback");
       audio.pause();
       emitProgress(audio.currentTime || currentTimeRef.current);
       setIsPlaying(false);
@@ -391,39 +625,32 @@ export function ReaderAudioPlayer({
       return;
     }
 
+    console.log("[Audio Player] Starting playback");
     audio
       .play()
       .then(() => {
+        console.log("[Audio Player] Playback started successfully");
         setIsPlaying(true);
         isPlayingRef.current = true;
       })
-      .catch(() => {
+      .catch((error) => {
+        console.warn("[Audio Player] Failed to start playback:", error);
         setIsPlaying(false);
         isPlayingRef.current = false;
       });
-  }, [currentTrack, emitProgress]);
+  }, [currentTrack, emitProgress, isPlaying]);
 
   const playTrackAt = useCallback(
     (nextIndex: number) => {
       if (!tracks[nextIndex]) return;
+      // Just change the track index - the useEffect that loads tracks will handle
+      // autoplay based on isPlayingRef.current
       setCurrentIndex(nextIndex);
+      // Reset time and duration will be handled by the track loading effect
       setCurrentTime(0);
       setDuration(0);
-      if (isPlayingRef.current) {
-        const audio = audioRef.current;
-        if (audio) {
-          audio.pause();
-          audio
-            .play()
-            .then(() => {
-              setIsPlaying(true);
-            })
-            .catch(() => {
-              setIsPlaying(false);
-              isPlayingRef.current = false;
-            });
-        }
-      }
+      // Don't try to play here - let the track loading effect handle it
+      // The effect will check isPlayingRef.current and autoplay if needed
     },
     [setCurrentIndex, tracks],
   );
