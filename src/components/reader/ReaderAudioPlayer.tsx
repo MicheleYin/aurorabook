@@ -255,10 +255,25 @@ export function ReaderAudioPlayer({
       }
     };
 
+    const handlePlay = () => {
+      setIsPlaying(true);
+      isPlayingRef.current = true;
+    };
+
+    const handlePause = () => {
+      setIsPlaying(false);
+      isPlayingRef.current = false;
+      // Emit progress when paused externally to ensure state is saved
+      const audioTime = audio.currentTime || currentTimeRef.current;
+      emitProgress(audioTime);
+    };
+
     audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
     audio.addEventListener("canplay", handleCanPlay);
     audio.addEventListener("ended", handleEnded);
+    audio.addEventListener("play", handlePlay);
+    audio.addEventListener("pause", handlePause);
 
     return () => {
       audio.pause();
@@ -266,6 +281,8 @@ export function ReaderAudioPlayer({
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
       audio.removeEventListener("canplay", handleCanPlay);
       audio.removeEventListener("ended", handleEnded);
+      audio.removeEventListener("play", handlePlay);
+      audio.removeEventListener("pause", handlePause);
     };
   }, [currentIndex, tracks.length, isRestoring, restoreTime, onTrackLoaded, emitProgress]);
 
