@@ -177,39 +177,46 @@ async fn init_kokoros_engine(
     num_instances: Option<usize>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    // ONNX Runtime with CoreML EP is handled automatically by kokoros crate on macOS/iOS
+    // Models are accessed directly from bundle resources
+    // If paths are empty, we'll find them from bundle resources
     // This function is kept for API compatibility but doesn't need to store engine state
     // kokoros manages its own instances internally
     
-    let model_path_obj = std::path::Path::new(&model_path);
+    // If paths are provided and not empty, validate them
+    if !model_path.is_empty() {
+        let model_path_obj = std::path::Path::new(&model_path);
+        
+        if !model_path_obj.exists() {
+            return Err(format!(
+                "Model file does not exist: {}. Expected kokoro-v1.0.onnx",
+                model_path
+            ));
+        }
+        
+        if !model_path_obj.is_file() {
+            return Err(format!(
+                "Model path must be a file (ONNX model). Got: {}",
+                model_path
+            ));
+        }
+        
+        if !model_path.ends_with(".onnx") {
+            return Err(format!(
+                "Model file must be an ONNX model (.onnx extension). Got: {}",
+                model_path
+            ));
+        }
+    }
     
-    if !model_path_obj.exists() {
-            return Err(format!(
-            "Model file does not exist: {}. Expected kokoro-v1.0.onnx",
-                model_path
-            ));
-        }
-        
-    if !model_path_obj.is_file() {
-            return Err(format!(
-            "Model path must be a file (ONNX model). Got: {}",
-                model_path
-            ));
-        }
-        
-    if !model_path.ends_with(".onnx") {
-            return Err(format!(
-            "Model file must be an ONNX model (.onnx extension). Got: {}",
-                model_path
-            ));
-        }
-        
-    println!("ONNX Runtime with CPU execution provider");
-    println!("Model path: {}, Voices path: {}", model_path, voices_path);
+    println!("ONNX Runtime engine initialization (models will be loaded from bundle resources when needed)");
+    if !model_path.is_empty() {
+        println!("Model path: {}, Voices path: {}", model_path, voices_path);
+    } else {
+        println!("Using bundle resources for models");
+    }
     
     Ok(format!(
-        "Initialized ONNX Runtime engine (CPU execution provider). Model: {}",
-        model_path
+        "Initialized ONNX Runtime engine (using bundle resources)"
     ))
 }
 
@@ -222,104 +229,98 @@ async fn generate_tts_cached(
     worker_id: Option<usize>,
     app: tauri::AppHandle,
 ) -> Result<Vec<u8>, String> {
-    // Use ONNX Runtime with CPU execution provider
-        fn find_onnx_model() -> Option<std::path::PathBuf> {
-            let mut possible_paths = Vec::new();
-            
-            if let Ok(current_dir) = std::env::current_dir() {
-                possible_paths.push(current_dir.join("src-tauri").join("resources").join("kokoro-v1.0.onnx"));
-                possible_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
-            }
-            
-            if let Ok(env_path) = std::env::var("KOKORO_MODEL_PATH") {
-                if !env_path.is_empty() {
-                    possible_paths.push(std::path::PathBuf::from(env_path));
-                }
-            }
-            
-            for path in possible_paths {
-                if path.exists() && path.is_file() {
-                    return Some(path);
-                }
-            }
-            None
-        }
-        
-        fn find_resources_dir() -> Option<std::path::PathBuf> {
-            let mut possible_paths = Vec::new();
-            
-            if let Ok(current_dir) = std::env::current_dir() {
-                possible_paths.push(current_dir.join("src-tauri").join("resources"));
-                possible_paths.push(current_dir.join("resources"));
-            }
-            
-            for path in possible_paths {
-                if path.exists() && path.is_dir() {
-                    return Some(path);
-                }
-            }
-            None
-        }
-        
-        fn find_voices_file(resources_dir: &std::path::PathBuf) -> Option<std::path::PathBuf> {
-            let voices_path = resources_dir.join("voices-v1.0.bin");
-            if voices_path.exists() {
-                Some(voices_path)
-            } else {
-                None
-            }
-        }
-        
-        let onnx_model = find_onnx_model();
-        let resources_dir = find_resources_dir();
-        
-        if let (Some(onnx_path), Some(res_dir)) = (onnx_model, resources_dir) {
-            if let Some(voices_path) = find_voices_file(&res_dir) {
-                let onnx_path_str = onnx_path.to_str().unwrap();
-                let voices_path_str = voices_path.to_str().unwrap();
-                
-            // Initialize ONNX engine (uses CoreML EP automatically on macOS/iOS)
-                let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
-                    onnx_path_str,
-                    voices_path_str,
-                    1,
-                ).await;
-                
-            let model_instance = engine.get_model_instance(worker_id.unwrap_or(0));
-                match engine.tts_raw_audio_with_instance(
-                    &text,
-                    language.as_deref().unwrap_or("en"),
-                    &voice_id,
-                    speed.unwrap_or(1.0),
-                    None,
-                    None,
-                    None,
-                    None,
-                    model_instance,
-                ) {
-                    Ok(audio_samples) => {
-                        // Convert Vec<f32> to 16-bit PCM bytes
-                        let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
-                        for sample in audio_samples {
-                            let clamped = sample.max(-1.0).min(1.0);
-                            let pcm_value = if clamped < 0.0 {
-                                (clamped * 32768.0) as i16
-                            } else {
-                                (clamped * 32767.0) as i16
-                            };
-                            pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
-                        }
-                    Ok(pcm_bytes)
-                    }
-                    Err(e) => {
-                    Err(format!("TTS generation failed: {}", e))
-                    }
-                }
-        } else {
-            Err("Voices file not found. Please ensure voices-v1.0.bin is available.".to_string())
+    // Find ONNX model and voices file - check multiple locations
+    // Priority: 1) Bundle resources, 2) Dev paths
+    let mut possible_onnx_paths = Vec::new();
+    let mut possible_voices_paths = Vec::new();
+    
+    // 1. Check bundle resource directory (primary location for built apps)
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        possible_onnx_paths.push(resource_dir.join("kokoro-v1.0.onnx"));
+        possible_onnx_paths.push(resource_dir.join("resources").join("kokoro-v1.0.onnx"));
+        possible_voices_paths.push(resource_dir.join("voices-v1.0.bin"));
+        possible_voices_paths.push(resource_dir.join("resources").join("voices-v1.0.bin"));
     }
+    
+    // 3. Check dev mode paths (current directory)
+    if let Ok(current_dir) = std::env::current_dir() {
+        possible_onnx_paths.push(current_dir.join("src-tauri").join("resources").join("kokoro-v1.0.onnx"));
+        possible_onnx_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
+        possible_voices_paths.push(current_dir.join("src-tauri").join("resources").join("voices-v1.0.bin"));
+        possible_voices_paths.push(current_dir.join("resources").join("voices-v1.0.bin"));
+    }
+    
+    // 4. Check environment variable
+    if let Ok(env_path) = std::env::var("KOKORO_MODEL_PATH") {
+        if !env_path.is_empty() {
+            possible_onnx_paths.push(std::path::PathBuf::from(env_path));
+        }
+    }
+    
+    // Find first existing ONNX model
+    let onnx_path = possible_onnx_paths.iter()
+        .find(|p| p.exists() && p.is_file())
+        .cloned();
+    
+    // Find first existing voices file
+    let voices_path = possible_voices_paths.iter()
+        .find(|p| p.exists() && p.is_file())
+        .cloned();
+    
+    if let (Some(onnx_path), Some(voices_path)) = (onnx_path, voices_path) {
+        let onnx_path_str = onnx_path.to_str()
+            .ok_or_else(|| "ONNX path contains invalid UTF-8".to_string())?;
+        let voices_path_str = voices_path.to_str()
+            .ok_or_else(|| "Voices path contains invalid UTF-8".to_string())?;
+        
+        // Initialize ONNX engine (uses CoreML EP automatically on macOS/iOS)
+        let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+            onnx_path_str,
+            voices_path_str,
+            1,
+        ).await;
+        
+        let model_instance = engine.get_model_instance(worker_id.unwrap_or(0));
+        match engine.tts_raw_audio_with_instance(
+            &text,
+            language.as_deref().unwrap_or("en"),
+            &voice_id,
+            speed.unwrap_or(1.0),
+            None,
+            None,
+            None,
+            None,
+            model_instance,
+        ) {
+            Ok(audio_samples) => {
+                // Convert Vec<f32> to 16-bit PCM bytes
+                let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
+                for sample in audio_samples {
+                    let clamped = sample.max(-1.0).min(1.0);
+                    let pcm_value = if clamped < 0.0 {
+                        (clamped * 32768.0) as i16
+                    } else {
+                        (clamped * 32767.0) as i16
+                    };
+                    pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
+                }
+                Ok(pcm_bytes)
+            }
+            Err(e) => {
+                Err(format!("TTS generation failed: {}", e))
+            }
+        }
     } else {
-        Err("ONNX model not found. Please ensure kokoro-v1.0.onnx is available.".to_string())
+        let mut error_msg = "Could not find required files. Checked paths:\n".to_string();
+        error_msg.push_str("ONNX model paths:\n");
+        for path in &possible_onnx_paths {
+            error_msg.push_str(&format!("  - {}\n", path.display()));
+        }
+        error_msg.push_str("Voices file paths:\n");
+        for path in &possible_voices_paths {
+            error_msg.push_str(&format!("  - {}\n", path.display()));
+        }
+        Err(error_msg)
     }
 }
 
@@ -332,72 +333,54 @@ async fn generate_tts_batch(
     speed: Option<f32>,
     app: tauri::AppHandle,
 ) -> Result<Vec<Vec<u8>>, String> {
-    // Use ONNX Runtime with CPU execution provider
-    fn find_onnx_model() -> Option<std::path::PathBuf> {
-        let mut possible_paths = Vec::new();
-        
-        if let Ok(current_dir) = std::env::current_dir() {
-            possible_paths.push(current_dir.join("src-tauri").join("resources").join("kokoro-v1.0.onnx"));
-            possible_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
-        }
-        
-        if let Ok(env_path) = std::env::var("KOKORO_MODEL_PATH") {
-            if !env_path.is_empty() {
-                possible_paths.push(std::path::PathBuf::from(env_path));
-            }
-        }
-        
-        for path in possible_paths {
-            if path.exists() && path.is_file() {
-                return Some(path);
-            }
-        }
-        None
+    // Find ONNX model and voices file - check multiple locations (same as generate_tts_cached)
+    let mut possible_onnx_paths = Vec::new();
+    let mut possible_voices_paths = Vec::new();
+    
+    // 1. Check bundle resource directory (primary location for built apps)
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        possible_onnx_paths.push(resource_dir.join("kokoro-v1.0.onnx"));
+        possible_onnx_paths.push(resource_dir.join("resources").join("kokoro-v1.0.onnx"));
+        possible_voices_paths.push(resource_dir.join("voices-v1.0.bin"));
+        possible_voices_paths.push(resource_dir.join("resources").join("voices-v1.0.bin"));
     }
     
-    fn find_resources_dir() -> Option<std::path::PathBuf> {
-        let mut possible_paths = Vec::new();
-        
-        if let Ok(current_dir) = std::env::current_dir() {
-            possible_paths.push(current_dir.join("src-tauri").join("resources"));
-            possible_paths.push(current_dir.join("resources"));
-        }
-        
-        for path in possible_paths {
-            if path.exists() && path.is_dir() {
-                return Some(path);
-            }
-        }
-        None
+    // 3. Check dev mode paths (current directory)
+    if let Ok(current_dir) = std::env::current_dir() {
+        possible_onnx_paths.push(current_dir.join("src-tauri").join("resources").join("kokoro-v1.0.onnx"));
+        possible_onnx_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
+        possible_voices_paths.push(current_dir.join("src-tauri").join("resources").join("voices-v1.0.bin"));
+        possible_voices_paths.push(current_dir.join("resources").join("voices-v1.0.bin"));
     }
     
-    fn find_voices_file(resources_dir: &std::path::PathBuf) -> Option<std::path::PathBuf> {
-        let voices_path = resources_dir.join("voices-v1.0.bin");
-        if voices_path.exists() {
-            Some(voices_path)
-        } else {
-            None
+    // 4. Check environment variable
+    if let Ok(env_path) = std::env::var("KOKORO_MODEL_PATH") {
+        if !env_path.is_empty() {
+            possible_onnx_paths.push(std::path::PathBuf::from(env_path));
         }
     }
     
-    let onnx_model = find_onnx_model();
-    let resources_dir = find_resources_dir();
+    // Find first existing ONNX model
+    let onnx_path = possible_onnx_paths.iter()
+        .find(|p| p.exists() && p.is_file())
+        .cloned();
     
-    if let (Some(onnx_path), Some(res_dir)) = (onnx_model, resources_dir) {
-        if let Some(voices_path) = find_voices_file(&res_dir) {
-            let onnx_path_str = onnx_path.to_str().unwrap().to_string();
-            let voices_path_str = voices_path.to_str().unwrap().to_string();
+    // Find first existing voices file
+    let voices_path = possible_voices_paths.iter()
+        .find(|p| p.exists() && p.is_file())
+        .cloned();
+    
+    if let (Some(onnx_path), Some(voices_path)) = (onnx_path, voices_path) {
+        let onnx_path_str = onnx_path.to_str()
+            .ok_or_else(|| "ONNX path contains invalid UTF-8".to_string())?
+            .to_string();
+        let voices_path_str = voices_path.to_str()
+            .ok_or_else(|| "Voices path contains invalid UTF-8".to_string())?
+            .to_string();
             
-            // Initialize ONNX engine with multiple instances for parallel processing
-            let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
-                &onnx_path_str,
-                &voices_path_str,
-                texts.len().max(4), // Use at least 4 instances or one per text
-            ).await;
-        
             // Process texts in parallel
         let mut handles = Vec::new();
-        for (idx, text) in texts.iter().enumerate() {
+        for text in texts.iter() {
             let text_clone = text.clone();
             let voice_id_clone = voice_id.clone();
             let language_clone = language.clone();
@@ -452,11 +435,17 @@ async fn generate_tts_batch(
         }
         
         Ok(results)
-        } else {
-            Err("Voices file not found. Please ensure voices-v1.0.bin is available.".to_string())
-        }
     } else {
-        Err("ONNX model not found. Please ensure kokoro-v1.0.onnx is available.".to_string())
+        let mut error_msg = "Could not find required files. Checked paths:\n".to_string();
+        error_msg.push_str("ONNX model paths:\n");
+        for path in &possible_onnx_paths {
+            error_msg.push_str(&format!("  - {}\n", path.display()));
+        }
+        error_msg.push_str("Voices file paths:\n");
+        for path in &possible_voices_paths {
+            error_msg.push_str(&format!("  - {}\n", path.display()));
+        }
+        Err(error_msg)
     }
 }
 

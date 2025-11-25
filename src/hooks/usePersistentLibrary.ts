@@ -1,8 +1,8 @@
 import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { readFile } from "@tauri-apps/plugin-fs";
 import { toast } from "sonner";
 import { parseEpub } from "../lib/epub-parser";
+import { getEpub, storeOriginalEpub } from "../lib/epub-store";
 
 import type {
   AudioTrack,
@@ -902,37 +902,18 @@ export function usePersistentLibrary(): PersistentLibrary {
 
               try {
                 const entryWithMeta = entry as PersistedLibraryEntry & Partial<Book>;
-                // Try to get EPUB buffer - first from store (for converted audiobooks), then from file
-                let arrayBuffer: ArrayBuffer | null = null;
+                // Get EPUB buffer from store (works for both original and converted EPUBs)
+                const arrayBuffer = await getEpub(entry.sourcePath);
                 
-                // If it's a converted audiobook (has audioState), try to get from store first
-                if (entryWithMeta.audioState) {
-                  const { getConvertedEpub } = await import("../lib/epub-store");
-                  arrayBuffer = await getConvertedEpub(entry.sourcePath);
-                }
-                
-                // If not found in store, try to read from file system
                 if (!arrayBuffer) {
-                  try {
-                    const binary = await readFile(entry.sourcePath);
-                    arrayBuffer = binary.buffer.slice(
-                      binary.byteOffset,
-                      binary.byteOffset + binary.byteLength,
-                    );
-                  } catch (fileError) {
-                    // File doesn't exist - if it's a converted audiobook, we already tried store
-                    if (entryWithMeta.audioState && !arrayBuffer) {
-                      console.warn(
-                        `${LIBRARY_LOG_PREFIX} converted audiobook not found in store or file system`,
-                        { sourcePath: entry.sourcePath },
-                      );
-                      toast.error(
-                        `Couldn't restore ${entry.title ?? deriveTitleFromPath(entry.sourcePath)}. The converted audiobook is missing.`,
-                      );
-                      continue;
-                    }
-                    throw fileError;
-                  }
+                  console.warn(
+                    `${LIBRARY_LOG_PREFIX} EPUB not found in store`,
+                    { sourcePath: entry.sourcePath },
+                  );
+                  toast.error(
+                    `Couldn't restore ${entry.title ?? deriveTitleFromPath(entry.sourcePath)}. The EPUB is missing from store.`,
+                  );
+                  continue;
                 }
                 
                 const book = await ingestEpub({
@@ -1041,11 +1022,16 @@ export function usePersistentLibrary(): PersistentLibrary {
         return true;
       }
 
+      // Read file from dialog (one-time read)
+      const { readFile } = await import("@tauri-apps/plugin-fs");
       const binary = await readFile(filePath);
       const arrayBuffer = binary.buffer.slice(
         binary.byteOffset,
         binary.byteOffset + binary.byteLength,
       );
+
+      // Store the EPUB in the store for future access
+      await storeOriginalEpub(filePath, arrayBuffer);
 
       const book = await ingestEpub({
         buffer: arrayBuffer,

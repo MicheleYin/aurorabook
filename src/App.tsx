@@ -29,6 +29,7 @@ import { cn, getLibraryBookStatus } from "./lib/utils";
 import { animPatterns, viewTransition } from "./lib/animations";
 import { findChaptersForAudioTrack } from "./lib/epub";
 import { convertEpubToAudiobook } from "./lib/audiobook-converter";
+import { getEpub } from "./lib/epub-store";
 import type { VoiceId } from "./types/reader";
 import type { Book } from "./types/reader";
 
@@ -205,13 +206,11 @@ function App() {
         return;
       }
       
-      // Tauri environment - read from file system
-      const { readFile } = await import("@tauri-apps/plugin-fs");
-      const binary = await readFile(book.sourcePath);
-      buffer = binary.buffer.slice(
-        binary.byteOffset,
-        binary.byteOffset + binary.byteLength,
-      );
+      // Tauri environment - read from store
+      buffer = await getEpub(book.sourcePath);
+      if (!buffer) {
+        throw new Error(`EPUB not found in store: ${book.sourcePath}`);
+      }
       
       // Convert EPUB to audiobook
       console.debug("Starting EPUB conversion", {
@@ -470,17 +469,11 @@ function App() {
           buffer = await getConvertedEpub(activeBook.sourcePath);
         }
         
-        // If not found, try to read from file system
+        // If not found in store, try to get from store (should always be there)
         if (!buffer) {
-          const { readFile } = await import("@tauri-apps/plugin-fs");
-          try {
-            const binary = await readFile(activeBook.sourcePath);
-            buffer = binary.buffer.slice(
-              binary.byteOffset,
-              binary.byteOffset + binary.byteLength,
-            );
-          } catch (fileError) {
-            console.warn("[App] Failed to read EPUB file for sync map rebuild:", fileError);
+          buffer = await getEpub(activeBook.sourcePath);
+          if (!buffer) {
+            console.warn("[App] Failed to read EPUB from store for sync map rebuild:", activeBook.sourcePath);
             rebuildingSyncMapRef.current.delete(activeBook.id);
             return;
           }

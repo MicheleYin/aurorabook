@@ -1,7 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { VoiceId } from "../types/reader";
-import { appDataDir } from "@tauri-apps/api/path";
-import { exists } from "@tauri-apps/plugin-fs";
 
 let engineInitialized = false;
 
@@ -14,7 +12,7 @@ export function resetEngineInitialization(): void {
 
 /**
  * Initialize the Kokoros Rust engine
- * Uses ONNX Runtime with CPU execution provider
+ * Uses bundle resources directly - no file system access needed
  */
 export async function initKokorosEngine(): Promise<void> {
   if (engineInitialized) {
@@ -22,55 +20,16 @@ export async function initKokorosEngine(): Promise<void> {
   }
 
   try {
-    // Get or set model paths
-    const dataDir = await appDataDir();
-    // Ensure trailing slash
-    const dataDirPath = dataDir.endsWith("/") ? dataDir : `${dataDir}/`;
-    
-    // ONNX model file path
-    const onnxModelPath = `${dataDirPath}kokoro-v1.0.onnx`;
-    const voicesPath = `${dataDirPath}voices-v1.0.bin`;
-    
-    // Check if ONNX model exists, if not try to copy from resources
-    if (!(await exists(onnxModelPath))) {
-      try {
-        await invoke("copy_resource_file", {
-          resourcePath: "kokoro-v1.0.onnx",
-          targetPath: onnxModelPath,
-        });
-        console.log("Copied ONNX model from bundle");
-      } catch (e) {
-        console.error("Failed to copy ONNX model from bundle:", e);
-        engineInitialized = false;
-        throw new Error(`ONNX model not found. Please ensure kokoro-v1.0.onnx is available in resources or at ${onnxModelPath}`);
-      }
-    }
-    
-    // Check if voices file exists, if not try to copy from resources
-    if (!(await exists(voicesPath))) {
-      try {
-        await invoke("copy_resource_file", {
-          resourcePath: "voices-v1.0.bin",
-          targetPath: voicesPath,
-        });
-        console.log("Copied voices file from bundle");
-      } catch (e) {
-        console.error("Failed to copy voices file from bundle:", e);
-        engineInitialized = false;
-        throw new Error(`Voices file not found. Please ensure voices-v1.0.bin is available in resources or at ${voicesPath}`);
-      }
-    }
-
-    // Initialize the ONNX Runtime engine (CPU execution provider)
-    // Use 4 instances for better throughput
+    // Models are accessed directly from bundle resources in Rust
+    // No need to copy or specify paths - Rust code handles resource resolution
     await invoke("init_kokoros_engine", {
-      modelPath: onnxModelPath,
-      voicesPath: voicesPath,
+      modelPath: "", // Empty - Rust will find from bundle resources
+      voicesPath: "", // Empty - Rust will find from bundle resources
       numInstances: 4, // 4 instances for maximum parallel processing
     });
 
     engineInitialized = true;
-    console.log("ONNX Runtime engine initialized successfully (CPU execution provider)");
+    console.log("ONNX Runtime engine initialized successfully (using bundle resources)");
   } catch (error) {
     console.error("Failed to initialize Kokoros engine:", error);
     engineInitialized = false; // Reset flag on error so we can retry

@@ -8,6 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "build:macos": "bun run build && bun tauri build",
+    "build:macos:universal": "bun run build && bun tauri build --target universal-apple-darwin",
     "test:playwright": "playwright test"
   },
   "dependencies": {

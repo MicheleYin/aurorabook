@@ -1,6 +1,6 @@
 /**
- * Store for converted EPUB buffers using Tauri store plugin
- * Stores converted audiobook EPUBs as base64-encoded strings
+ * Store for EPUB buffers using Tauri store plugin
+ * Stores both original and converted audiobook EPUBs as base64-encoded strings
  * Uses the same pattern as usePersistentLibrary.ts for consistency
  */
 
@@ -182,10 +182,89 @@ export const getConvertedEpub = async (sourcePath: string): Promise<ArrayBuffer 
 };
 
 /**
- * Remove a converted EPUB buffer for a book
+ * Store an original EPUB buffer for a book
  * Uses sourcePath as key since it's stable across re-ingestions
  */
-export const removeConvertedEpub = async (sourcePath: string): Promise<void> => {
+export const storeOriginalEpub = async (sourcePath: string, buffer: ArrayBuffer): Promise<void> => {
+  const store = await getStore();
+  if (!store) {
+    console.warn(`${EPUB_STORE_LOG_PREFIX} store not available, cannot save original EPUB`);
+    throw new Error("Store not available");
+  }
+
+  try {
+    const key = `${STORE_KEY_PREFIX}${sourcePath}`;
+    
+    // Check buffer size - warn if very large
+    const sizeMB = buffer.byteLength / (1024 * 1024);
+    if (sizeMB > 100) {
+      console.warn(`${EPUB_STORE_LOG_PREFIX} EPUB is very large (${sizeMB.toFixed(2)}MB), storage may be slow`);
+    }
+    
+    const base64Data = arrayBufferToBase64(buffer);
+    console.debug(`${EPUB_STORE_LOG_PREFIX} storing original EPUB`, {
+      sourcePath,
+      key,
+      sizeBytes: buffer.byteLength,
+      sizeMB: sizeMB.toFixed(2),
+    });
+    
+    // Set the value
+    await store.set(key, base64Data);
+    await store.save();
+    
+    console.debug(`${EPUB_STORE_LOG_PREFIX} stored original EPUB successfully`, {
+      sourcePath,
+      sizeBytes: buffer.byteLength,
+    });
+  } catch (error) {
+    console.error(`${EPUB_STORE_LOG_PREFIX} failed to store original EPUB`, {
+      error,
+      sourcePath,
+      bufferSize: buffer.byteLength,
+    });
+    throw error;
+  }
+};
+
+/**
+ * Retrieve an EPUB buffer for a book (works for both original and converted)
+ * Uses sourcePath as key since it's stable across re-ingestions
+ */
+export const getEpub = async (sourcePath: string): Promise<ArrayBuffer | null> => {
+  const store = await getStore();
+  if (!store) {
+    console.warn(`${EPUB_STORE_LOG_PREFIX} store not available, cannot retrieve EPUB`);
+    return null;
+  }
+
+  try {
+    const key = `${STORE_KEY_PREFIX}${sourcePath}`;
+    const base64Data = await store.get<string>(key);
+    if (!base64Data) {
+      console.debug(`${EPUB_STORE_LOG_PREFIX} EPUB not found in store`, {
+        sourcePath,
+        key,
+      });
+      return null;
+    }
+    const buffer = base64ToArrayBuffer(base64Data);
+    console.debug(`${EPUB_STORE_LOG_PREFIX} retrieved EPUB successfully`, {
+      sourcePath,
+      sizeBytes: buffer.byteLength,
+    });
+    return buffer;
+  } catch (error) {
+    console.error(`${EPUB_STORE_LOG_PREFIX} failed to retrieve EPUB`, error);
+    return null;
+  }
+};
+
+/**
+ * Remove an EPUB buffer for a book
+ * Uses sourcePath as key since it's stable across re-ingestions
+ */
+export const removeEpub = async (sourcePath: string): Promise<void> => {
   const store = await getStore();
   if (!store) {
     return;
@@ -196,10 +275,16 @@ export const removeConvertedEpub = async (sourcePath: string): Promise<void> => 
     const deleted = await store.delete(key);
     if (deleted) {
       await store.save();
-      console.debug(`${EPUB_STORE_LOG_PREFIX} removed converted EPUB`, { sourcePath });
+      console.debug(`${EPUB_STORE_LOG_PREFIX} removed EPUB`, { sourcePath });
     }
   } catch (error) {
-    console.error(`${EPUB_STORE_LOG_PREFIX} failed to remove converted EPUB`, error);
+    console.error(`${EPUB_STORE_LOG_PREFIX} failed to remove EPUB`, error);
   }
 };
+
+/**
+ * Remove a converted EPUB buffer for a book (kept for backward compatibility)
+ * @deprecated Use removeEpub instead
+ */
+export const removeConvertedEpub = removeEpub;
 
