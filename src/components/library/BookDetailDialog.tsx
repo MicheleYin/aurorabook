@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ImageOff, X, Loader2, Headphones, Share2, Pause, Play } from "lucide-react";
+import { ImageOff, X, Loader2, Headphones, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Button } from "../ui/button";
@@ -30,11 +30,7 @@ type BookDetailDialogProps = {
   onOpenBook: () => void;
   onDeleteBook: () => void;
   conversionProgress?: ConversionProgress;
-  isConversionPaused?: boolean;
   onConvertToAudiobook?: (book: Book, voiceId: VoiceId) => Promise<void>;
-  onPauseConversion?: () => void;
-  onResumeConversion?: () => void;
-  onCancelConversion?: () => void;
 };
 
 const formatFileSize = (bytes?: number) => {
@@ -61,11 +57,7 @@ export function BookDetailDialog({
   onOpenBook,
   onDeleteBook,
   conversionProgress,
-  isConversionPaused = false,
   onConvertToAudiobook,
-  onPauseConversion,
-  onResumeConversion,
-  onCancelConversion,
 }: BookDetailDialogProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [showConvertDialog, setShowConvertDialog] = useState(false);
@@ -348,45 +340,14 @@ export function BookDetailDialog({
             <Progress
               value={animatedConversionPercent}
               className="h-2"
-              showPulse={!isConversionPaused}
-              showWave={!isConversionPaused}
+              showPulse={true}
+              showWave={true}
             />
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              {!isConversionPaused && <Loader2 className="h-3 w-3 animate-spin" />}
+              <Loader2 className="h-3 w-3 animate-spin" />
               <span>
                 Chapter {conversionProgress.currentChapter} of {conversionProgress.totalChapters}: {conversionProgress.message}
               </span>
-            </div>
-            <div className="flex items-center gap-2 pt-1">
-              {isConversionPaused ? (
-                <>
-                  {onResumeConversion && (
-                    <Button onClick={onResumeConversion} size="sm" variant="outline" className="gap-2 h-7 text-xs">
-                      <Play className="h-3 w-3" />
-                      Resume
-                    </Button>
-                  )}
-                  {onCancelConversion && (
-                    <Button onClick={onCancelConversion} size="sm" variant="outline" className="h-7 text-xs">
-                      Cancel
-                    </Button>
-                  )}
-                </>
-              ) : (
-                <>
-                  {onPauseConversion && (
-                    <Button onClick={onPauseConversion} size="sm" variant="outline" className="gap-2 h-7 text-xs">
-                      <Pause className="h-3 w-3" />
-                      Pause
-                    </Button>
-                  )}
-                  {onCancelConversion && (
-                    <Button onClick={onCancelConversion} size="sm" variant="outline" className="h-7 text-xs">
-                      Cancel
-                    </Button>
-                  )}
-                </>
-              )}
             </div>
           </div>
         ) : (

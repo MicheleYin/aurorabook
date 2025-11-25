@@ -66,7 +66,6 @@ type IngestParams = {
   progress?: BookProgress;
   pageCountHint?: number;
   audioState?: BookAudioState;
-  preserveBookId?: string; // If provided, use this ID when replacing existing book
 };
 
 type PersistentLibrary = {
@@ -288,17 +287,13 @@ export function usePersistentLibrary(): PersistentLibrary {
       progress: savedProgress,
       pageCountHint,
       audioState: savedAudioState,
-      preserveBookId,
     }: IngestParams) => {
       ensureEpubSignature(buffer);
 
       const epubBook = await parseEpub(buffer);
 
       const navMap = buildNavigationMap(epubBook.navigation?.toc as NavItem[] | undefined);
-      
-      // Use preserveBookId if provided, otherwise create a new ID
-      // The actual ID preservation happens in setLibrary callback
-      const newBookId = preserveBookId || createId();
+      const newBookId = createId();
 
       const spineItems = epubBook.spine.items;
       const manifestItems = epubBook.manifest;
@@ -799,50 +794,33 @@ export function usePersistentLibrary(): PersistentLibrary {
 
       const normalizedBook = normalizeBookProgressShape(applyDerivedFields(newBook));
 
-      // Determine the final book ID before updating library
-      // We need to check the current library state to see if a book exists
-      let finalBookId = newBookId;
       setLibrary((prev) => {
-        // Check if book with same sourcePath or same ID already exists
-        const existingByPathIndex = prev.findIndex((book) => book.sourcePath === sourcePath);
-        const existingByIdIndex = newBookId ? prev.findIndex((book) => book.id === newBookId) : -1;
-        const existingIndex = existingByIdIndex !== -1 ? existingByIdIndex : existingByPathIndex;
-        
+        // Check if book with same sourcePath already exists
+        const existingIndex = prev.findIndex((book) => book.sourcePath === sourcePath);
         if (existingIndex !== -1) {
           // Replace existing book (for in-place conversion)
           const oldBook = prev[existingIndex];
-          // If preserveBookId was provided, use it; otherwise keep the old book's ID
-          finalBookId = preserveBookId || oldBook.id;
-          const finalBook = { ...normalizedBook, id: finalBookId };
-          
           console.debug(`${LIBRARY_LOG_PREFIX} replacing existing book`, {
-            oldBookId: oldBook.id,
-            newBookId: finalBook.id,
-            preserveBookId,
-            title: finalBook.title,
+            bookId: normalizedBook.id,
+            title: normalizedBook.title,
             sourcePath,
             oldFileSizeBytes: oldBook.fileSizeBytes,
-            newFileSizeBytes: finalBook.fileSizeBytes,
+            newFileSizeBytes: normalizedBook.fileSizeBytes,
             oldFileSizeMB: oldBook.fileSizeBytes ? (oldBook.fileSizeBytes / (1024 * 1024)).toFixed(2) : "N/A",
-            newFileSizeMB: finalBook.fileSizeBytes ? (finalBook.fileSizeBytes / (1024 * 1024)).toFixed(2) : "N/A",
+            newFileSizeMB: normalizedBook.fileSizeBytes ? (normalizedBook.fileSizeBytes / (1024 * 1024)).toFixed(2) : "N/A",
           });
           const updated = [...prev];
-          updated[existingIndex] = finalBook;
+          updated[existingIndex] = normalizedBook;
           return updated;
         }
-        // New book - use the ID we created (or preserveBookId if provided)
-        finalBookId = newBookId;
-        const finalBook = { ...normalizedBook, id: finalBookId };
         console.debug(`${LIBRARY_LOG_PREFIX} adding book to library`, {
-          bookId: finalBook.id,
-          title: finalBook.title,
-          preserveBookId,
+          bookId: normalizedBook.id,
+          title: normalizedBook.title,
         });
-        return [...prev, finalBook];
+        return [...prev, normalizedBook];
       });
       
-      // Return the book with the final ID
-      return { ...normalizedBook, id: finalBookId };
+      return normalizedBook;
     },
     [],
   );

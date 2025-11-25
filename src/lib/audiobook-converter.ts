@@ -7,7 +7,7 @@ import type { Chapter } from "../types/reader";
 export type ConversionProgress = {
   currentChapter: number;
   totalChapters: number;
-  currentStep: "initializing" | "generating-audio" | "merging-audio" | "creating-smil" | "updating-epub" | "saving" | "complete";
+  currentStep: "initializing" | "generating-audio" | "merging-audio" | "creating-smil" | "updating-epub" | "complete";
   message: string;
 };
 

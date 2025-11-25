@@ -28,18 +28,8 @@ import type {
 import { cn, getLibraryBookStatus } from "./lib/utils";
 import { animPatterns, viewTransition } from "./lib/animations";
 import { findChaptersForAudioTrack } from "./lib/epub";
-import { 
-  convertEpubToAudiobookIncremental,
-  type IncrementalConversionProgress,
-} from "./lib/incremental-audiobook-converter";
+import { convertEpubToAudiobook } from "./lib/audiobook-converter";
 import { getEpub } from "./lib/epub-store";
-import { 
-  loadConversionState, 
-  saveConversionState, 
-  pauseConversionState,
-  clearConversionState,
-  type ConversionState 
-} from "./lib/conversion-state";
 import type { VoiceId } from "./types/reader";
 import type { Book } from "./types/reader";
 
@@ -71,13 +61,10 @@ function App() {
     buffer: ArrayBuffer;
   } | null>(null);
   const [isConverting, setIsConverting] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
   const [conversionProgress, setConversionProgress] = useState<ConversionProgress | null>(null);
   const [bookConversionProgress, setBookConversionProgress] = useState<Record<string, ConversionProgress>>({});
   const conversionAbortControllerRef = useRef<AbortController | null>(null);
   const convertingBookIdRef = useRef<string | null>(null);
-  const conversionStateRef = useRef<ConversionState | null>(null);
-  
 
   const handleConvertToAudiobook = useCallback(async (voiceId: VoiceId) => {
     if (!pendingBookForConversion || isConverting) return;
@@ -95,82 +82,16 @@ function App() {
     try {
       const { book, buffer } = pendingBookForConversion;
       
-      // Determine the new sourcePath for the converted audiobook
-      const newSourcePath = book.sourcePath.replace(/\.epub$/, "-audiobook.epub");
-      
-      // Check for existing conversion state (resume capability)
-      let resumeState = loadConversionState(bookId);
-      if (resumeState && resumeState.voiceId === voiceId && resumeState.sourcePath === newSourcePath) {
-        console.log("Resuming conversion from saved state", {
-          completedChapters: resumeState.completedChapters.length,
-          totalChapters: resumeState.chapters.length,
-          isPaused: resumeState.isPaused,
-        });
-        resumeState.isPaused = false; // Mark as resumed
-        resumeState.lastUpdated = Date.now();
-        saveConversionState(resumeState);
-        setIsPaused(false);
-      } else if (!resumeState) {
-        // Create new state
-        resumeState = {
-          bookId,
-          voiceId,
-          sourcePath: newSourcePath,
-          chapters: book.chapters,
-          completedChapters: [],
-          lastUpdated: Date.now(),
-          isPaused: false,
-        };
-        saveConversionState(resumeState);
-      }
-      conversionStateRef.current = resumeState;
-      
-      // Convert EPUB to audiobook incrementally (saves after each chapter)
-      const convertedBuffer = await convertEpubToAudiobookIncremental(buffer, book.chapters, {
+      // Convert EPUB to audiobook
+      const convertedBuffer = await convertEpubToAudiobook(buffer, book.chapters, {
         voiceId,
-        bookId,
-        sourcePath: newSourcePath,
         signal: abortController.signal,
-        resumeState: resumeState,
-        onPauseRequested: () => {
-          setIsPaused(true);
-          setIsConverting(false);
-        },
-        onProgress: (progress: IncrementalConversionProgress) => {
-          // Convert to regular progress for compatibility
-          const regularProgress: ConversionProgress = {
-            currentChapter: progress.currentChapter,
-            totalChapters: progress.totalChapters,
-            currentStep: progress.currentStep,
-            message: progress.message,
-          };
-          setConversionProgress(regularProgress);
+        onProgress: (progress) => {
+          setConversionProgress(progress);
           setBookConversionProgress((prev) => ({
             ...prev,
-            [bookId]: regularProgress,
+            [bookId]: progress,
           }));
-        },
-        onChapterComplete: async (chapterIndex) => {
-          // After each chapter is saved, re-ingest the book so it appears with audio tracks
-          try {
-            const updatedBuffer = await getEpub(newSourcePath);
-            if (updatedBuffer) {
-              // Re-ingest to update the book with new audio tracks
-              // Preserve the book ID so conversion progress is maintained
-              await ingestEpub({
-                buffer: updatedBuffer,
-                sourcePath: newSourcePath,
-                fallbackTitle: book.title,
-                progress: book.progress,
-                pageCountHint: book.pageCount,
-                preserveBookId: bookId, // Preserve ID to maintain conversion progress
-              });
-              console.log(`Re-ingested book after chapter ${chapterIndex + 1} completion (preserved book ID: ${bookId})`);
-            }
-          } catch (error) {
-            console.warn("Failed to re-ingest book after chapter completion:", error);
-            // Don't throw - conversion can continue
-          }
         },
       });
       
@@ -178,7 +99,9 @@ function App() {
         throw new Error("Conversion produced an empty buffer");
       }
       
-      // EPUB is already saved incrementally, but ensure final version is stored
+      // Determine the new sourcePath for the converted audiobook
+      const newSourcePath = book.sourcePath.replace(/\.epub$/, "-audiobook.epub");
+      
       // Store converted EPUB buffer in Tauri store (using the new sourcePath)
       try {
         const { storeConvertedEpub } = await import("./lib/epub-store");
@@ -226,29 +149,13 @@ function App() {
         description: "Your ebook has been converted to an audiobook.",
       });
     } catch (error) {
-      // Don't show error toast if conversion was paused or cancelled
-      if (error instanceof Error) {
-        if (error.message === "Conversion paused") {
-          console.log("Conversion paused by user");
-          setIsPaused(true);
-          setIsConverting(false);
-          toast.info("Conversion paused", {
-            description: "You can resume the conversion later.",
-          });
-          return; // Don't clear state, allow resume
-        } else if (error.message === "Conversion cancelled") {
-          console.log("Conversion cancelled by user");
-          clearConversionState(bookId);
-        } else {
-          console.error("Conversion error:", error);
-          toast.error("Conversion failed", {
-            description: error.message || "An error occurred during conversion",
-          });
-        }
+      // Don't show error toast if conversion was cancelled
+      if (error instanceof Error && error.message === "Conversion cancelled") {
+        console.log("Conversion cancelled by user");
       } else {
         console.error("Conversion error:", error);
         toast.error("Conversion failed", {
-          description: "An error occurred during conversion",
+          description: error instanceof Error ? error.message : "An error occurred during conversion",
         });
       }
       setConversionProgress(null);
@@ -257,217 +164,12 @@ function App() {
         delete next[bookId];
         return next;
       });
-      setIsPaused(false);
     } finally {
-      if (!isPaused) {
-        setIsConverting(false);
-        conversionAbortControllerRef.current = null;
-        convertingBookIdRef.current = null;
-        conversionStateRef.current = null;
-      }
-    }
-  }, [pendingBookForConversion, isConverting, setLibrary, ingestEpub, isPaused]);
-  
-  // Handle pause
-  const handlePauseConversion = useCallback(() => {
-    if (conversionAbortControllerRef.current && convertingBookIdRef.current) {
-      const bookId = convertingBookIdRef.current;
-      pauseConversionState(bookId);
-      conversionAbortControllerRef.current.abort();
-      // State will be saved in onPauseRequested callback
-    }
-  }, []);
-  
-  // Handle resume
-  const handleResumeConversion = useCallback(async (voiceId: VoiceId) => {
-    const bookId = convertingBookIdRef.current;
-    if (!bookId) {
-      // Try to find from library
-      const state = library.find(b => {
-        const savedState = loadConversionState(b.id);
-        return savedState && savedState.isPaused;
-      });
-      if (state) {
-        const savedState = loadConversionState(state.id);
-        if (savedState) {
-          convertingBookIdRef.current = savedState.bookId;
-          return handleResumeConversion(savedState.voiceId);
-        }
-      }
-      toast.error("No paused conversion found");
-      return;
-    }
-    
-    const state = loadConversionState(bookId);
-    if (!state || !state.isPaused) {
-      toast.error("No paused conversion found");
-      return;
-    }
-    
-    // Reload the book and buffer
-    const book = library.find(b => b.id === bookId);
-    if (!book) {
-      toast.error("Book not found");
-      return;
-    }
-    
-    let buffer: ArrayBuffer | null = null;
-    if (book.sourcePath.startsWith("web://")) {
-      toast.error("Cannot resume conversion for web files");
-      return;
-    }
-    
-    // Try to load from the saved source path first
-    buffer = await getEpub(state.sourcePath);
-    if (!buffer) {
-      // Try original source path
-      buffer = await getEpub(book.sourcePath);
-      if (!buffer) {
-        toast.error("Could not load EPUB file");
-        return;
-      }
-    }
-    
-    // Create new abort controller
-    const abortController = new AbortController();
-    conversionAbortControllerRef.current = abortController;
-    convertingBookIdRef.current = bookId;
-    
-    setIsConverting(true);
-    setIsPaused(false);
-    setConversionProgress(null);
-    
-    try {
-      state.isPaused = false;
-      state.lastUpdated = Date.now();
-      saveConversionState(state);
-      conversionStateRef.current = state;
-      
-      const convertedBuffer = await convertEpubToAudiobookIncremental(buffer, state.chapters, {
-        voiceId: state.voiceId,
-        bookId: state.bookId,
-        sourcePath: state.sourcePath,
-        signal: abortController.signal,
-        resumeState: state,
-        onPauseRequested: () => {
-          setIsPaused(true);
-          setIsConverting(false);
-        },
-        onProgress: (progress: IncrementalConversionProgress) => {
-          const regularProgress: ConversionProgress = {
-            currentChapter: progress.currentChapter,
-            totalChapters: progress.totalChapters,
-            currentStep: progress.currentStep,
-            message: progress.message,
-          };
-          setConversionProgress(regularProgress);
-          setBookConversionProgress((prev) => ({
-            ...prev,
-            [bookId]: regularProgress,
-          }));
-        },
-        onChapterComplete: async (chapterIndex) => {
-          try {
-            const updatedBuffer = await getEpub(state.sourcePath);
-            if (updatedBuffer) {
-              await ingestEpub({
-                buffer: updatedBuffer,
-                sourcePath: state.sourcePath,
-                fallbackTitle: book.title,
-                progress: book.progress,
-                pageCountHint: book.pageCount,
-                preserveBookId: state.bookId, // Preserve ID to maintain conversion progress
-              });
-            }
-          } catch (error) {
-            console.warn("Failed to re-ingest book after chapter completion:", error);
-          }
-        },
-      });
-      
-      if (!convertedBuffer || convertedBuffer.byteLength === 0) {
-        throw new Error("Conversion produced an empty buffer");
-      }
-      
-      const { storeConvertedEpub } = await import("./lib/epub-store");
-      await storeConvertedEpub(state.sourcePath, convertedBuffer);
-      
-      // Re-ingest the converted EPUB
-      // Note: ingestEpub will handle replacing the book if sourcePath matches
-      // Preserve the book ID to maintain conversion progress
-      await ingestEpub({
-        buffer: convertedBuffer,
-        sourcePath: state.sourcePath,
-        fallbackTitle: book.title,
-        progress: book.progress,
-        pageCountHint: book.pageCount,
-        preserveBookId: state.bookId, // Preserve ID to maintain conversion progress
-      });
-      
-      setConversionProgress(null);
-      setBookConversionProgress((prev) => {
-        const next = { ...prev };
-        delete next[bookId];
-        return next;
-      });
-      clearConversionState(bookId);
-      toast.success("Audiobook ready!", {
-        description: "Your ebook has been converted to an audiobook.",
-      });
-    } catch (error) {
-      if (error instanceof Error) {
-        if (error.message === "Conversion paused") {
-          setIsPaused(true);
-          setIsConverting(false);
-          toast.info("Conversion paused", {
-            description: "You can resume the conversion later.",
-          });
-          return;
-        } else if (error.message === "Conversion cancelled") {
-          clearConversionState(bookId);
-        } else {
-          toast.error("Conversion failed", {
-            description: error.message,
-          });
-        }
-      }
-      setConversionProgress(null);
-      setBookConversionProgress((prev) => {
-        const next = { ...prev };
-        delete next[bookId];
-        return next;
-      });
-      setIsPaused(false);
-    } finally {
-      if (!isPaused) {
-        setIsConverting(false);
-        conversionAbortControllerRef.current = null;
-        convertingBookIdRef.current = null;
-        conversionStateRef.current = null;
-      }
-    }
-  }, [library, setLibrary, ingestEpub, isPaused]);
-  
-  // Handle cancel
-  const handleCancelConversion = useCallback(() => {
-    if (conversionAbortControllerRef.current && convertingBookIdRef.current) {
-      const bookId = convertingBookIdRef.current;
-      clearConversionState(bookId);
-      conversionAbortControllerRef.current.abort();
       setIsConverting(false);
-      setIsPaused(false);
-      setConversionProgress(null);
-      setBookConversionProgress((prev) => {
-        const next = { ...prev };
-        delete next[bookId];
-        return next;
-      });
       conversionAbortControllerRef.current = null;
       convertingBookIdRef.current = null;
-      conversionStateRef.current = null;
-      toast.info("Conversion cancelled");
     }
-  }, []);
+  }, [pendingBookForConversion, isConverting, setLibrary, ingestEpub]);
 
   const handleConvertBookFromDetail = useCallback(async (book: Book, voiceId: VoiceId) => {
     if (book.audioTracks.length > 0) return;
@@ -517,94 +219,21 @@ function App() {
         voiceId,
       });
       
-      // Check for existing conversion state (resume capability)
-      let resumeState = loadConversionState(bookId);
-      if (resumeState && resumeState.voiceId === voiceId && resumeState.sourcePath === book.sourcePath) {
-        console.log("Resuming conversion from saved state", {
-          completedChapters: resumeState.completedChapters.length,
-          totalChapters: resumeState.chapters.length,
-          isPaused: resumeState.isPaused,
-        });
-        resumeState.isPaused = false; // Mark as resumed
-        resumeState.lastUpdated = Date.now();
-        saveConversionState(resumeState);
-        setIsPaused(false);
-      } else if (!resumeState) {
-        // Create new state
-        resumeState = {
-          bookId,
-          voiceId,
-          sourcePath: book.sourcePath,
-          chapters: book.chapters,
-          completedChapters: [],
-          lastUpdated: Date.now(),
-          isPaused: false,
-        };
-        saveConversionState(resumeState);
-      }
-      conversionStateRef.current = resumeState;
-      
-      // Convert EPUB to audiobook incrementally (saves after each chapter)
       let convertedBuffer: ArrayBuffer;
       try {
-        convertedBuffer = await convertEpubToAudiobookIncremental(buffer, book.chapters, {
+        convertedBuffer = await convertEpubToAudiobook(buffer, book.chapters, {
           voiceId,
-          bookId,
-          sourcePath: book.sourcePath, // Convert in place
           signal: abortController.signal,
-          resumeState: resumeState,
-          onPauseRequested: () => {
-            setIsPaused(true);
-            setIsConverting(false);
-          },
-          onProgress: (progress: IncrementalConversionProgress) => {
-            // Convert to regular progress for compatibility
-            const regularProgress: ConversionProgress = {
-              currentChapter: progress.currentChapter,
-              totalChapters: progress.totalChapters,
-              currentStep: progress.currentStep,
-              message: progress.message,
-            };
-            setConversionProgress(regularProgress);
+          onProgress: (progress) => {
+            setConversionProgress(progress);
             setBookConversionProgress((prev) => ({
               ...prev,
-              [bookId]: regularProgress,
+              [bookId]: progress,
             }));
-          },
-          onChapterComplete: async (chapterIndex) => {
-            // After each chapter is saved, re-ingest the book so it appears with audio tracks
-            try {
-              const updatedBuffer = await getEpub(book.sourcePath);
-              if (updatedBuffer) {
-                // Re-ingest to update the book with new audio tracks
-                // Preserve the book ID so conversion progress is maintained
-                await ingestEpub({
-                  buffer: updatedBuffer,
-                  sourcePath: book.sourcePath,
-                  fallbackTitle: book.title,
-                  progress: book.progress,
-                  pageCountHint: book.pageCount,
-                  preserveBookId: bookId, // Preserve ID to maintain conversion progress
-                });
-                console.log(`Re-ingested book after chapter ${chapterIndex + 1} completion (preserved book ID: ${bookId})`);
-              }
-            } catch (error) {
-              console.warn("Failed to re-ingest book after chapter completion:", error);
-              // Don't throw - conversion can continue
-            }
           },
         });
       } catch (conversionError) {
         console.error("EPUB conversion failed", conversionError);
-        // Check if it's a pause
-        if (conversionError instanceof Error && conversionError.message === "Conversion paused") {
-          setIsPaused(true);
-          setIsConverting(false);
-          toast.info("Conversion paused", {
-            description: "You can resume the conversion later.",
-          });
-          return; // Don't clear state, allow resume
-        }
         throw conversionError; // Re-throw to be caught by outer catch
       }
       
@@ -652,14 +281,12 @@ function App() {
       
       // Update the book in place instead of removing and re-adding
       // Re-ingest to update audio tracks and other metadata
-      // Preserve the book ID to maintain conversion progress
       await ingestEpub({
         buffer: convertedBuffer,
         sourcePath: book.sourcePath, // Keep same path - convert in place
         fallbackTitle: book.title,
         progress: book.progress,
         pageCountHint: book.pageCount,
-        preserveBookId: bookId, // Preserve ID to maintain conversion progress
       });
       
       // The book will be updated in the library by ingestEpub
@@ -1771,16 +1398,7 @@ function App() {
           }}
           onDeleteBook={() => handleDeleteBook(detailBook.id)}
           conversionProgress={bookConversionProgress[detailBook.id]}
-          isConversionPaused={isPaused && convertingBookIdRef.current === detailBook.id}
           onConvertToAudiobook={handleConvertBookFromDetail}
-          onPauseConversion={convertingBookIdRef.current === detailBook.id ? handlePauseConversion : undefined}
-          onResumeConversion={convertingBookIdRef.current === detailBook.id ? () => {
-            const state = conversionStateRef.current;
-            if (state) {
-              handleResumeConversion(state.voiceId);
-            }
-          } : undefined}
-          onCancelConversion={convertingBookIdRef.current === detailBook.id ? handleCancelConversion : undefined}
         />
       ) : null}
       {pendingBookForConversion ? (
@@ -1799,18 +1417,9 @@ function App() {
             bookTitle={pendingBookForConversion.book.title}
           />
           <ConversionProgressDialog
-            open={(isConverting || isPaused) && convertingBookIdRef.current === pendingBookForConversion.book.id}
+            open={isConverting && convertingBookIdRef.current === pendingBookForConversion.book.id}
             progress={conversionProgress}
             bookTitle={pendingBookForConversion.book.title}
-            isPaused={isPaused}
-            onPause={handlePauseConversion}
-            onResume={() => {
-              const state = conversionStateRef.current;
-              if (state) {
-                handleResumeConversion(state.voiceId);
-              }
-            }}
-            onCancel={handleCancelConversion}
           />
         </>
       ) : null}
