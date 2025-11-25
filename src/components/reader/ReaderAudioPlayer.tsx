@@ -282,6 +282,37 @@ export function ReaderAudioPlayer({
 
   const currentTrack = tracks[currentIndex];
 
+  // Periodically check audio state to detect external pause/play
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !currentTrack) {
+      return;
+    }
+
+    const checkAudioState = () => {
+      const audioIsPlaying = !audio.paused;
+      if (audioIsPlaying !== isPlayingRef.current) {
+        setIsPlaying(audioIsPlaying);
+        isPlayingRef.current = audioIsPlaying;
+        // If paused externally, emit progress to save state
+        if (!audioIsPlaying) {
+          const audioTime = audio.currentTime || currentTimeRef.current;
+          emitProgress(audioTime);
+        }
+      }
+    };
+
+    // Check immediately
+    checkAudioState();
+
+    // Check periodically (every 500ms) to catch external state changes
+    const interval = setInterval(checkAudioState, 500);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [currentTrack, emitProgress]);
+
   // Track if we've loaded a track for restoration to prevent resetting time after restoration
   const trackLoadedForRestorationRef = useRef(false);
 
