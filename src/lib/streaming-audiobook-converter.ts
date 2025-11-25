@@ -4,22 +4,45 @@ import { invoke } from "@tauri-apps/api/core";
 import type { VoiceId } from "../types/reader";
 import type { Chapter } from "../types/reader";
 
-export type ConversionProgress = {
+export type StreamingConversionProgress = {
   currentChapter: number;
   totalChapters: number;
-  currentStep: "initializing" | "generating-audio" | "merging-audio" | "creating-smil" | "updating-epub" | "saving" | "complete";
+  currentStep: "initializing" | "generating-audio" | "merging-audio" | "creating-smil" | "updating-epub" | "complete";
   message: string;
+  // New fields for streaming
+  completedChunks: number;
+  totalChunks: number;
+  audioChunkReady?: {
+    chapterIndex: number;
+    chunkIndex: number;
+    audioData: Uint8Array;
+    duration: number;
+  };
 };
 
-type ConversionOptions = {
+export type ConversionState = {
+  bookId: string;
   voiceId: VoiceId;
-  onProgress?: (progress: ConversionProgress) => void;
+  chapters: Chapter[];
+  completedChapters: number[];
+  completedChunks: Record<number, number[]>; // chapterIndex -> chunk indices
+  audioData: Record<string, Uint8Array>; // "chapter-chunk" -> audio data
+  audioSegments: Record<number, Array<{ id: string; startTime: number; endTime: number }>>; // chapterIndex -> segments
+  startTime: number;
+  lastUpdated: number;
+};
+
+type StreamingConversionOptions = {
+  voiceId: VoiceId;
+  bookId?: string; // Optional bookId for new conversions
+  onProgress?: (progress: StreamingConversionProgress) => void;
+  onAudioChunk?: (chunk: { chapterIndex: number; chunkIndex: number; audioData: Uint8Array; duration: number }) => void;
   signal?: AbortSignal;
+  resumeState?: ConversionState;
 };
 
 /**
  * Chunk text into sentences and paragraphs for TTS
- * Returns chunks with IDs and updated HTML
  */
 function chunkText(html: string): {
   chunks: Array<{ id: string; text: string }>;
@@ -30,17 +53,14 @@ function chunkText(html: string): {
   const chunks: Array<{ id: string; text: string }> = [];
   let chunkIndex = 0;
 
-  // Find all text-containing elements (p, h1-h6, li, etc.)
   const textElements = doc.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li, blockquote, div");
   
   textElements.forEach((element) => {
     const text = element.textContent?.trim();
     if (!text || text.length === 0) return;
 
-    // Clear element content to rebuild with spans
     element.innerHTML = "";
 
-    // Split by sentences (period, exclamation, question mark followed by space or end of string)
     const sentenceRegex = /([^.!?]+[.!?]+)\s*/g;
     const sentences: string[] = [];
     let match;
@@ -48,12 +68,10 @@ function chunkText(html: string): {
       sentences.push(match[1].trim());
     }
     
-    // If no sentences found (no punctuation), treat entire text as one chunk
     if (sentences.length === 0) {
       sentences.push(text);
     }
 
-    // Create spans for each sentence
     sentences.forEach((sentence) => {
       if (sentence.trim().length === 0) return;
       
@@ -63,7 +81,6 @@ function chunkText(html: string): {
       span.textContent = sentence;
       element.appendChild(span);
       
-      // Add a space after the span if not the last sentence
       if (sentences.indexOf(sentence) < sentences.length - 1) {
         element.appendChild(doc.createTextNode(" "));
       }
@@ -76,7 +93,6 @@ function chunkText(html: string): {
     });
   });
 
-  // Serialize the updated HTML
   const serializer = new XMLSerializer();
   const updatedHtml = serializer.serializeToString(doc);
 
@@ -115,23 +131,20 @@ ${segments.map((seg, idx) => `   <par id="p${String(idx + 1).padStart(6, "0")}">
 }
 
 /**
- * Extract PCM data from WAV file (removes WAV header)
+ * Extract PCM data from WAV file
  */
 function extractPcmFromWav(wavBuffer: ArrayBuffer): { pcmData: Uint8Array; sampleRate: number; channels: number } {
   const view = new DataView(wavBuffer);
   
-  // Check WAV header
   if (wavBuffer.byteLength < 44) {
     throw new Error("WAV file too small to contain valid header");
   }
   
-  // Read WAV header
   const sampleRate = view.getUint32(24, true);
   const channels = view.getUint16(22, true);
   const bitsPerSample = view.getUint16(34, true);
-  const dataOffset = 44; // Standard WAV header size
+  const dataOffset = 44;
   
-  // Verify it's a valid WAV file
   const riff = String.fromCharCode(...new Uint8Array(wavBuffer, 0, 4));
   const wave = String.fromCharCode(...new Uint8Array(wavBuffer, 8, 4));
   if (riff !== "RIFF" || wave !== "WAVE") {
@@ -142,7 +155,6 @@ function extractPcmFromWav(wavBuffer: ArrayBuffer): { pcmData: Uint8Array; sampl
     throw new Error(`Unsupported bits per sample: ${bitsPerSample} (only 16-bit supported)`);
   }
   
-  // Extract PCM data (everything after the header)
   const pcmData = new Uint8Array(wavBuffer, dataOffset);
   
   return { pcmData, sampleRate, channels };
@@ -157,7 +169,6 @@ async function convertWavToMp3(
 ): Promise<ArrayBuffer> {
   const { pcmData, sampleRate, channels } = extractPcmFromWav(wavBuffer);
   
-  // Convert to MP3 using Rust function
   const mp3Bytes = await invoke<number[]>("convert_pcm_to_mp3", {
     pcmData: Array.from(pcmData),
     sampleRate,
@@ -169,8 +180,7 @@ async function convertWavToMp3(
 }
 
 /**
- * Merge WAV audio data incrementally to avoid memory issues
- * Processes chunks in batches and merges incrementally
+ * Merge WAV audio data incrementally
  */
 async function mergeWavFilesIncremental(
   audioDataArrays: Uint8Array[],
@@ -183,7 +193,6 @@ async function mergeWavFilesIncremental(
   }
   
   if (audioDataArrays.length === 1) {
-    // Single chunk - just create WAV header
     const audioData = audioDataArrays[0];
     const dataLength = audioData.length;
     const buffer = new ArrayBuffer(44 + dataLength);
@@ -200,7 +209,7 @@ async function mergeWavFilesIncremental(
     writeString(8, "WAVE");
     writeString(12, "fmt ");
     view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true); // PCM
+    view.setUint16(20, 1, true);
     view.setUint16(22, numChannels, true);
     view.setUint32(24, sampleRate, true);
     view.setUint32(28, sampleRate * numChannels * (bitsPerSample / 8), true);
@@ -213,18 +222,15 @@ async function mergeWavFilesIncremental(
     return buffer;
   }
   
-  // Calculate total length first
   let totalAudioLength = 0;
   for (const audioData of audioDataArrays) {
     totalAudioLength += audioData.length;
   }
   
-  // Create merged WAV file
   const dataLength = totalAudioLength;
   const buffer = new ArrayBuffer(44 + dataLength);
   const view = new DataView(buffer);
   
-  // Write WAV header
   const writeString = (offset: number, string: string) => {
     for (let i = 0; i < string.length; i++) {
       view.setUint8(offset + i, string.charCodeAt(i));
@@ -236,7 +242,7 @@ async function mergeWavFilesIncremental(
   writeString(8, "WAVE");
   writeString(12, "fmt ");
   view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
+  view.setUint16(20, 1, true);
   view.setUint16(22, numChannels, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, sampleRate * numChannels * (bitsPerSample / 8), true);
@@ -245,13 +251,11 @@ async function mergeWavFilesIncremental(
   writeString(36, "data");
   view.setUint32(40, dataLength, true);
   
-  // Concatenate audio data incrementally
   const mergedAudio = new Uint8Array(buffer, 44);
   let offset = 0;
   for (const audioData of audioDataArrays) {
     mergedAudio.set(audioData, offset);
     offset += audioData.length;
-    // Allow garbage collection of processed chunks
     if (offset % (1024 * 1024) === 0) {
       await new Promise(resolve => setTimeout(resolve, 0));
     }
@@ -261,47 +265,115 @@ async function mergeWavFilesIncremental(
 }
 
 /**
- * Convert an EPUB to audiobook format
+ * Save conversion state to localStorage
  */
-export async function convertEpubToAudiobook(
+export function saveConversionState(state: ConversionState): void {
+  try {
+    const key = `conversion-state-${state.bookId}`;
+    localStorage.setItem(key, JSON.stringify(state));
+  } catch (error) {
+    console.warn("Failed to save conversion state:", error);
+  }
+}
+
+/**
+ * Load conversion state from localStorage
+ */
+export function loadConversionState(bookId: string): ConversionState | null {
+  try {
+    const key = `conversion-state-${bookId}`;
+    const stored = localStorage.getItem(key);
+    if (!stored) return null;
+    return JSON.parse(stored) as ConversionState;
+  } catch (error) {
+    console.warn("Failed to load conversion state:", error);
+    return null;
+  }
+}
+
+/**
+ * Clear conversion state
+ */
+export function clearConversionState(bookId: string): void {
+  try {
+    const key = `conversion-state-${bookId}`;
+    localStorage.removeItem(key);
+  } catch (error) {
+    console.warn("Failed to clear conversion state:", error);
+  }
+}
+
+/**
+ * Convert an EPUB to audiobook format with streaming support
+ */
+export async function convertEpubToAudiobookStreaming(
   epubBuffer: ArrayBuffer,
   chapters: Chapter[],
-  options: ConversionOptions,
-): Promise<ArrayBuffer> {
-  const { voiceId, onProgress, signal } = options;
+  options: StreamingConversionOptions,
+): Promise<{ buffer: ArrayBuffer; state: ConversionState }> {
+  const { voiceId, bookId, onProgress, onAudioChunk, signal, resumeState } = options;
   
-  // Check for cancellation before starting
   if (signal?.aborted) {
     throw new Error("Conversion cancelled");
   }
   
+  // Initialize or resume state
+  const state: ConversionState = resumeState || {
+    bookId: bookId || "", // Use provided bookId or empty string
+    voiceId,
+    chapters,
+    completedChapters: [],
+    completedChunks: {},
+    audioData: {},
+    audioSegments: {},
+    startTime: Date.now(),
+    lastUpdated: Date.now(),
+  };
+  
+  // Ensure bookId is set
+  if (!state.bookId && bookId) {
+    state.bookId = bookId;
+  }
+  
+  // Don't save state if bookId is not set (can't resume without it)
+  if (!state.bookId) {
+    console.warn("Conversion state will not be saved: bookId is not set");
+  }
+  
   onProgress?.({
-    currentChapter: 0,
+    currentChapter: state.completedChapters.length,
     totalChapters: chapters.length,
     currentStep: "initializing",
-    message: "Initializing TTS engine...",
+    message: resumeState ? "Resuming conversion..." : "Initializing TTS engine...",
+    completedChunks: Object.values(state.completedChunks).flat().length,
+    totalChunks: 0, // Will be calculated
   });
 
-  // Initialize Kokoros Rust engine
   try {
     await initKokorosEngine();
   } catch (error) {
-    // Reset engine initialization flag on failure to allow retry
     resetEngineInitialization();
     throw error;
   }
 
-  // Load EPUB as ZIP
   const zip = await JSZip.loadAsync(epubBuffer);
   
   const audioFiles: Array<{ chapterIndex: number; href: string; buffer: ArrayBuffer }> = [];
   const smilFiles: Array<{ chapterIndex: number; href: string; content: string }> = [];
   
+  const sampleRate = 24000;
+  const BATCH_SIZE = 4;
+  
   // Process each chapter
   for (let chapterIndex = 0; chapterIndex < chapters.length; chapterIndex++) {
-    // Check for cancellation before processing each chapter
     if (signal?.aborted) {
       throw new Error("Conversion cancelled");
+    }
+    
+    // Skip if already completed
+    if (state.completedChapters.includes(chapterIndex)) {
+      console.log(`Skipping chapter ${chapterIndex + 1} (already completed)`);
+      continue;
     }
     
     const chapter = chapters[chapterIndex];
@@ -311,168 +383,232 @@ export async function convertEpubToAudiobook(
       totalChapters: chapters.length,
       currentStep: "generating-audio",
       message: `Generating audio for chapter ${chapterIndex + 1}: ${chapter.title}`,
+      completedChunks: Object.values(state.completedChunks).flat().length,
+      totalChunks: 0, // Will be calculated after chunking
     });
 
-    // Chunk the chapter text
     const { chunks, updatedHtml } = chunkText(chapter.contentHtml);
     
     if (chunks.length === 0) {
-      console.warn(`No text chunks found in chapter ${chapterIndex + 1}, skipping audio/SMIL generation`);
-      // Still update the chapter HTML in ZIP
       const chapterPath = chapter.href.startsWith("OEBPS/") ? chapter.href : `OEBPS/${chapter.href}`;
       zip.file(chapterPath, updatedHtml);
+      state.completedChapters.push(chapterIndex);
+      state.lastUpdated = Date.now();
+      saveConversionState(state);
       continue;
     }
 
-    // Generate audio for each chunk - process in parallel batches
     const audioDataArrays: Uint8Array[] = [];
     const audioSegments: Array<{ id: string; startTime: number; endTime: number }> = [];
     let currentTime = 0;
-    const BATCH_SIZE = 4; // Process 4 chunks in parallel (max parallelism)
-    const sampleRate = 24000; // Kokoro default sample rate is 24kHz
-
+    
+    // Initialize chunks tracking for this chapter
+    if (!state.completedChunks[chapterIndex]) {
+      state.completedChunks[chapterIndex] = [];
+    }
+    
+    const totalChunks = chunks.length;
+    
+    // Process chunks in batches
     for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-      // Check for cancellation before processing each batch
       if (signal?.aborted) {
         throw new Error("Conversion cancelled");
       }
       
       const batch = chunks.slice(i, i + BATCH_SIZE);
       
-      // Process batch in parallel using batch TTS generation
-      try {
-        const batchTexts = batch.map(chunk => chunk.text);
-        const batchResults = await generateTTSBatch(batchTexts, voiceId, "en", 1.0);
-        
-        // Process results in order
-        for (let j = 0; j < batch.length; j++) {
-          const chunk = batch[j];
-          const pcmBytes = batchResults[j];
-          
-          // Convert PCM bytes to Uint8Array
-          const pcmData = new Uint8Array(pcmBytes);
-          audioDataArrays.push(pcmData);
-          
-          // Estimate duration (PCM bytes are 16-bit, so divide by 2 for samples)
-          const numSamples = pcmData.length / 2;
-          const duration = numSamples / sampleRate;
-          audioSegments.push({
-            id: chunk.id,
-            startTime: currentTime,
-            endTime: currentTime + duration,
-          });
-          currentTime += duration;
-        }
-      } catch (error) {
-        console.error(`Error generating audio for batch starting at chunk ${i}:`, error);
-        // Fallback to sequential processing if batch fails
-        for (const chunk of batch) {
-          if (signal?.aborted) {
-            throw new Error("Conversion cancelled");
+      // Check which chunks in this batch are already completed
+      const batchToProcess: Array<{ chunk: { id: string; text: string }; index: number }> = [];
+      for (let j = 0; j < batch.length; j++) {
+        const globalChunkIndex = i + j;
+        if (!state.completedChunks[chapterIndex].includes(globalChunkIndex)) {
+          batchToProcess.push({ chunk: batch[j], index: globalChunkIndex });
+        } else {
+          // Use cached audio data
+          const cacheKey = `${chapterIndex}-${globalChunkIndex}`;
+          const cachedAudio = state.audioData[cacheKey];
+          if (cachedAudio) {
+            audioDataArrays.push(cachedAudio);
+            const numSamples = cachedAudio.length / 2;
+            const duration = numSamples / sampleRate;
+            audioSegments.push({
+              id: batch[j].id,
+              startTime: currentTime,
+              endTime: currentTime + duration,
+            });
+            currentTime += duration;
           }
+        }
+      }
+      
+      // Process new chunks
+      if (batchToProcess.length > 0) {
+        try {
+          const batchTexts = batchToProcess.map(item => item.chunk.text);
+          const batchResults = await generateTTSBatch(batchTexts, voiceId, "en", 1.0);
           
-          try {
-            const { audio: audioData, sampleRate: actualSampleRate } = await generateTTS(
-              chunk.text,
-              voiceId,
-              "en",
-              1.0,
-            );
+          for (let j = 0; j < batchToProcess.length; j++) {
+            const { chunk, index: globalChunkIndex } = batchToProcess[j];
+            const pcmBytes = batchResults[j];
+            const pcmData = new Uint8Array(pcmBytes);
             
-            const numSamples = audioData.length;
-            const pcmData = new Uint8Array(numSamples * 2);
-            const pcmView = new DataView(pcmData.buffer);
-            
-            for (let j = 0; j < numSamples; j++) {
-              const sample = Math.max(-1, Math.min(1, audioData[j]));
-              pcmView.setInt16(j * 2, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
-            }
+            // Cache the audio data
+            const cacheKey = `${chapterIndex}-${globalChunkIndex}`;
+            state.audioData[cacheKey] = pcmData;
+            state.completedChunks[chapterIndex].push(globalChunkIndex);
             
             audioDataArrays.push(pcmData);
             
-            const duration = audioData.length / actualSampleRate;
+            const numSamples = pcmData.length / 2;
+            const duration = numSamples / sampleRate;
             audioSegments.push({
               id: chunk.id,
               startTime: currentTime,
               endTime: currentTime + duration,
             });
             currentTime += duration;
-          } catch (chunkError) {
-            console.error(`Error generating audio for chunk ${chunk.id}:`, chunkError);
-            // Continue with next chunk
+            
+            // Emit audio chunk for streaming playback
+            onAudioChunk?.({
+              chapterIndex,
+              chunkIndex: globalChunkIndex,
+              audioData: pcmData,
+              duration,
+            });
+            
+            // Update progress
+            onProgress?.({
+              currentChapter: chapterIndex + 1,
+              totalChapters: chapters.length,
+              currentStep: "generating-audio",
+              message: `Generating audio for chapter ${chapterIndex + 1}: ${chapter.title}`,
+              completedChunks: Object.values(state.completedChunks).flat().length,
+              totalChunks,
+              audioChunkReady: {
+                chapterIndex,
+                chunkIndex: globalChunkIndex,
+                audioData: pcmData,
+                duration,
+              },
+            });
+          }
+          
+          // Save state after each batch (only if bookId is set)
+          if (state.bookId) {
+            state.lastUpdated = Date.now();
+            saveConversionState(state);
+          }
+        } catch (error) {
+          console.error(`Error generating audio for batch starting at chunk ${i}:`, error);
+          // Fallback to sequential processing
+          for (const { chunk, index: globalChunkIndex } of batchToProcess) {
+            if (signal?.aborted) {
+              throw new Error("Conversion cancelled");
+            }
+            
+            try {
+              const { audio: audioData, sampleRate: actualSampleRate } = await generateTTS(
+                chunk.text,
+                voiceId,
+                "en",
+                1.0,
+              );
+              
+              const numSamples = audioData.length;
+              const pcmData = new Uint8Array(numSamples * 2);
+              const pcmView = new DataView(pcmData.buffer);
+              
+              for (let j = 0; j < numSamples; j++) {
+                const sample = Math.max(-1, Math.min(1, audioData[j]));
+                pcmView.setInt16(j * 2, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+              }
+              
+              const cacheKey = `${chapterIndex}-${globalChunkIndex}`;
+              state.audioData[cacheKey] = pcmData;
+              state.completedChunks[chapterIndex].push(globalChunkIndex);
+              
+              audioDataArrays.push(pcmData);
+              
+              const duration = audioData.length / actualSampleRate;
+              audioSegments.push({
+                id: chunk.id,
+                startTime: currentTime,
+                endTime: currentTime + duration,
+              });
+              currentTime += duration;
+              
+              onAudioChunk?.({
+                chapterIndex,
+                chunkIndex: globalChunkIndex,
+                audioData: pcmData,
+                duration,
+              });
+              
+              if (state.bookId) {
+                state.lastUpdated = Date.now();
+                saveConversionState(state);
+              }
+            } catch (chunkError) {
+              console.error(`Error generating audio for chunk ${chunk.id}:`, chunkError);
+            }
           }
         }
       }
       
-      // Allow garbage collection after each batch
       await new Promise(resolve => setTimeout(resolve, 0));
     }
 
     if (audioDataArrays.length === 0) {
-      console.error(`No audio generated for chapter ${chapterIndex + 1} - all TTS calls failed or returned empty data`);
-      // Don't skip - create a minimal silence file so the EPUB structure is valid
-      // Create 1 second of silence at 24kHz
-      const silenceSamples = sampleRate; // 1 second
-      const silencePcm = new Uint8Array(silenceSamples * 2); // 16-bit = 2 bytes per sample
+      const silenceSamples = sampleRate;
+      const silencePcm = new Uint8Array(silenceSamples * 2);
       audioDataArrays.push(silencePcm);
-      // Add a single segment for the silence
       audioSegments.push({
         id: chunks[0]?.id || `f000000`,
         startTime: 0,
         endTime: 1.0,
       });
-      console.warn(`Created silence placeholder for chapter ${chapterIndex + 1} due to audio generation failure`);
     }
+
+    // Store segments in state
+    state.audioSegments[chapterIndex] = audioSegments;
 
     onProgress?.({
       currentChapter: chapterIndex + 1,
       totalChapters: chapters.length,
       currentStep: "merging-audio",
       message: `Merging audio for chapter ${chapterIndex + 1}...`,
+      completedChunks: Object.values(state.completedChunks).flat().length,
+      totalChunks,
     });
 
-    // Merge audio data incrementally - use first chunk's sample rate if available
-    // For now, use 24kHz as Kokoro's default
     const mergedWav = await mergeWavFilesIncremental(audioDataArrays, sampleRate);
-    
-    // Clear audio data arrays to free memory
     audioDataArrays.length = 0;
     
-    // Determine audio file path (using MP3 for smaller file size)
     const chapterHrefBase = chapter.href.split("/").pop()?.replace(/\.(xhtml|html)$/, "") || `chapter${chapterIndex + 1}`;
-    // Store in ZIP with OEBPS/ prefix
     const audioHrefZip = `OEBPS/Audio/${chapterHrefBase}.mp3`;
-    // Use relative path (without OEBPS/) in manifest
     const audioHrefManifest = `Audio/${chapterHrefBase}.mp3`;
     
-    // Verify audio data is not empty (should have at least WAV header = 44 bytes)
     if (mergedWav.byteLength < 44) {
-      console.error(`Generated audio for chapter ${chapterIndex + 1} is invalid (${mergedWav.byteLength} bytes), creating minimal WAV`);
-      // Create minimal valid WAV file (44 bytes header + 1 sample = 46 bytes)
       const minimalWav = new ArrayBuffer(46);
       const view = new DataView(minimalWav);
-      // Write minimal WAV header
-      view.setUint32(0, 0x46464952, false); // "RIFF"
-      view.setUint32(4, 38, true); // File size - 8
-      view.setUint32(8, 0x45564157, false); // "WAVE"
-      view.setUint32(12, 0x20746d66, false); // "fmt "
-      view.setUint32(16, 16, true); // fmt chunk size
-      view.setUint16(20, 1, true); // PCM
-      view.setUint16(22, 1, true); // channels
+      view.setUint32(0, 0x46464952, false);
+      view.setUint32(4, 38, true);
+      view.setUint32(8, 0x45564157, false);
+      view.setUint32(12, 0x20746d66, false);
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
       view.setUint32(24, sampleRate, true);
-      view.setUint32(28, sampleRate * 2, true); // byte rate
-      view.setUint16(32, 2, true); // block align
-      view.setUint16(34, 16, true); // bits per sample
-      view.setUint32(36, 0x61746164, false); // "data"
-      view.setUint32(40, 2, true); // data chunk size (1 sample = 2 bytes)
-      // Sample value = 0 (silence)
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      view.setUint32(36, 0x61746164, false);
+      view.setUint32(40, 2, true);
       view.setInt16(44, 0, true);
       
-      // Convert minimal WAV to MP3
       try {
         const minimalMp3 = await convertWavToMp3(minimalWav, 128);
         zip.file(audioHrefZip, new Uint8Array(minimalMp3));
-        console.debug(`Added minimal MP3 file to ZIP: ${audioHrefZip} (${minimalMp3.byteLength} bytes)`);
         audioFiles.push({
           chapterIndex,
           href: audioHrefManifest,
@@ -480,7 +616,6 @@ export async function convertEpubToAudiobook(
         });
       } catch (error) {
         console.error(`Failed to convert minimal WAV to MP3:`, error);
-        // Fallback to WAV if MP3 conversion fails
         zip.file(audioHrefZip.replace('.mp3', '.wav'), new Uint8Array(minimalWav));
         audioFiles.push({
           chapterIndex,
@@ -489,34 +624,19 @@ export async function convertEpubToAudiobook(
         });
       }
     } else {
-      // Convert WAV to MP3 for smaller file size
-      onProgress?.({
-        currentChapter: chapterIndex + 1,
-        totalChapters: chapters.length,
-        currentStep: "merging-audio",
-        message: `Converting audio to MP3 for chapter ${chapterIndex + 1}...`,
-      });
-      
       try {
         const mp3Buffer = await convertWavToMp3(mergedWav, 128);
-        
-        // Add MP3 file to ZIP immediately to free memory
         zip.file(audioHrefZip, new Uint8Array(mp3Buffer));
-        console.debug(`Added MP3 file to ZIP: ${audioHrefZip} (${mp3Buffer.byteLength} bytes, was ${mergedWav.byteLength} bytes WAV)`);
-        
-        // Store reference for manifest update (use relative path)
         audioFiles.push({
           chapterIndex,
-          href: audioHrefManifest, // Store relative path for manifest
-          buffer: mp3Buffer, // Keep reference for manifest update, will be cleared later
+          href: audioHrefManifest,
+          buffer: mp3Buffer,
         });
       } catch (error) {
         console.error(`Failed to convert WAV to MP3 for chapter ${chapterIndex + 1}:`, error);
-        // Fallback to WAV if MP3 conversion fails
         const fallbackWavPath = audioHrefZip.replace('.mp3', '.wav');
         const fallbackManifest = audioHrefManifest.replace('.mp3', '.wav');
         zip.file(fallbackWavPath, new Uint8Array(mergedWav));
-        console.debug(`Added WAV file to ZIP (fallback): ${fallbackWavPath} (${mergedWav.byteLength} bytes)`);
         audioFiles.push({
           chapterIndex,
           href: fallbackManifest,
@@ -525,64 +645,36 @@ export async function convertEpubToAudiobook(
       }
     }
 
-    // Update chapter file in ZIP with updated HTML (already has chunk IDs)
-    // Normalize chapter path - ensure it has OEBPS/ prefix for ZIP storage
     let chapterPathZip = chapter.href;
     if (!chapterPathZip.startsWith("OEBPS/")) {
       chapterPathZip = `OEBPS/${chapterPathZip}`;
     }
     zip.file(chapterPathZip, updatedHtml);
     
-    // Normalize chapter href for SMIL (use relative path without OEBPS/)
     let chapterHrefForSmil = chapter.href;
     if (chapterHrefForSmil.startsWith("OEBPS/")) {
       chapterHrefForSmil = chapterHrefForSmil.substring(6);
     }
     
-    // Calculate relative path from SMIL file location to audio file
-    // SMIL files are stored in the same directory as chapters (e.g., OEBPS/chapter1.smil or OEBPS/Text/chapter1.smil)
-    // Audio files are in OEBPS/Audio/ (e.g., OEBPS/Audio/chapter1.mp3)
-    // So from OEBPS/chapter1.smil to OEBPS/Audio/chapter1.mp3, the relative path is Audio/chapter1.mp3
-    // But if chapters are in a subdirectory (e.g., OEBPS/Text/chapter1.smil), we'd need ../Audio/chapter1.mp3
     let audioHrefForSmil = audioHrefManifest;
     if (chapterHrefForSmil.includes("/")) {
-      // Chapter is in a subdirectory (e.g., Text/chapter1.xhtml)
-      // Calculate relative path: go up from Text/ to OEBPS/, then into Audio/
       const depth = chapterHrefForSmil.split("/").length - 1;
       audioHrefForSmil = "../".repeat(depth) + audioHrefManifest;
-    } else {
-      // Chapter is directly in OEBPS/ (e.g., chapter1.xhtml)
-      // Audio is in Audio/ subdirectory, so path is Audio/chapter1.mp3
-      audioHrefForSmil = audioHrefManifest;
     }
     
-    // Clear merged WAV from memory after adding to ZIP
-    // Note: JSZip may still hold a reference, but we've done our part
-    if (audioFiles.length > 0) {
-      // Clear old buffers periodically
-      const oldFile = audioFiles[audioFiles.length - 1];
-      if (oldFile.buffer.byteLength > 10 * 1024 * 1024) { // If > 10MB
-        // JSZip already has it, we can clear our reference
-        oldFile.buffer = new ArrayBuffer(0);
-      }
-    }
-
     onProgress?.({
       currentChapter: chapterIndex + 1,
       totalChapters: chapters.length,
       currentStep: "creating-smil",
       message: `Creating SMIL file for chapter ${chapterIndex + 1}...`,
+      completedChunks: Object.values(state.completedChunks).flat().length,
+      totalChunks,
     });
 
-    // Generate SMIL file
-    // Store SMIL file with OEBPS/ prefix in ZIP, but manifest will use relative path
     const smilHrefZip = chapterPathZip.replace(/\.(xhtml|html)$/, ".smil");
     const smilHrefManifest = chapterHrefForSmil.replace(/\.(xhtml|html)$/, ".smil");
     
-    // Ensure we have audio segments for SMIL generation
     if (audioSegments.length === 0) {
-      console.warn(`No audio segments for chapter ${chapterIndex + 1}, creating minimal SMIL`);
-      // Create minimal SMIL with single segment
       audioSegments.push({
         id: chunks[0]?.id || `f000000`,
         startTime: 0,
@@ -590,17 +682,9 @@ export async function convertEpubToAudiobook(
       });
     }
     
-    // Use relative paths in SMIL (without OEBPS/ prefix) to avoid path duplication
     const smilContent = generateSmilFile(chapterHrefForSmil, audioHrefForSmil, audioSegments);
     
     if (!smilContent || smilContent.trim().length === 0) {
-      console.error(`Generated SMIL for chapter ${chapterIndex + 1} is empty after generation!`, {
-        chapterHref: chapter.href,
-        audioHrefZip,
-        audioHrefForSmil,
-        segmentsCount: audioSegments.length,
-      });
-      // Don't skip - create a minimal SMIL file
       const minimalSmil = `<?xml version="1.0" encoding="UTF-8"?>
 <smil xmlns="http://www.w3.org/ns/SMIL" xmlns:epub="http://www.idpf.org/2007/ops" version="3.0">
  <body>
@@ -611,19 +695,24 @@ export async function convertEpubToAudiobook(
 </smil>`;
       smilFiles.push({
         chapterIndex,
-        href: smilHrefManifest, // Store relative path for manifest
+        href: smilHrefManifest,
         content: minimalSmil,
       });
       zip.file(smilHrefZip, minimalSmil);
-      console.debug(`Added minimal SMIL file to ZIP: ${smilHrefZip}`);
     } else {
       smilFiles.push({
         chapterIndex,
-        href: smilHrefManifest, // Store relative path for manifest
+        href: smilHrefManifest,
         content: smilContent,
       });
       zip.file(smilHrefZip, smilContent);
-      console.debug(`Added SMIL file to ZIP: ${smilHrefZip} (${smilContent.length} chars)`);
+    }
+    
+    // Mark chapter as completed
+    state.completedChapters.push(chapterIndex);
+    if (state.bookId) {
+      state.lastUpdated = Date.now();
+      saveConversionState(state);
     }
   }
 
@@ -632,137 +721,54 @@ export async function convertEpubToAudiobook(
     totalChapters: chapters.length,
     currentStep: "updating-epub",
     message: "Updating EPUB metadata...",
+    completedChunks: Object.values(state.completedChunks).flat().length,
+    totalChunks: 0,
   });
 
   // Update content.opf to include audio tracks and SMIL files
-  // Note: Keep audioFiles array intact for manifest update - files are already in ZIP
   const contentOpfPath = "OEBPS/content.opf";
   const contentOpfXml = await zip.file(contentOpfPath)?.async("string");
   if (contentOpfXml) {
-    console.debug("Updating content.opf", {
-      audioFilesCount: audioFiles.length,
-      smilFilesCount: smilFiles.length,
-      audioHrefs: audioFiles.map(f => f.href),
-      smilHrefs: smilFiles.map(f => f.href),
-    });
     const updatedOpf = updateContentOpf(contentOpfXml, audioFiles, smilFiles, chapters);
     zip.file(contentOpfPath, updatedOpf);
   } else {
     console.warn("content.opf not found in EPUB, cannot update manifest");
   }
 
-  // Verify files are in ZIP before generating
-  // JSZip stores files in zip.files object - iterate properly
-  const zipFileNames: string[] = [];
-  if (zip.files) {
-    // JSZip files object can be iterated with Object.keys or for...in
-    // Use Object.keys for safer iteration
-    zipFileNames.push(...Object.keys(zip.files));
-  }
-  
-  const audioFilesInZip = zipFileNames.filter(name => 
-    (name.includes("Audio/") || name.includes("audio/")) && 
-    (name.endsWith(".wav") || name.endsWith(".mp3"))
-  );
-  const smilFilesInZip = zipFileNames.filter(name => name.endsWith(".smil"));
-  
-  console.debug("ZIP contents before generation", {
-    totalFiles: zipFileNames.length,
-    audioFilesFound: audioFilesInZip.length,
-    smilFilesFound: smilFilesInZip.length,
-    expectedAudioCount: audioFiles.length,
-    expectedSmilCount: smilFiles.length,
-    audioFilePaths: audioFilesInZip,
-    smilFilePaths: smilFilesInZip,
-    expectedAudioHrefs: audioFiles.map(f => f.href),
-    expectedSmilHrefs: smilFiles.map(f => f.href),
-  });
-  
-  if (audioFilesInZip.length === 0 && audioFiles.length > 0) {
-    console.error("ERROR: Audio files were added to audioFiles array but not found in ZIP!", {
-      expectedAudioFiles: audioFiles.map(f => f.href),
-      allZipFiles: zipFileNames.filter(f => f.includes("OEBPS")),
-    });
-  }
-  
-  if (smilFilesInZip.length === 0 && smilFiles.length > 0) {
-    console.error("ERROR: SMIL files were added to smilFiles array but not found in ZIP!", {
-      expectedSmilFiles: smilFiles.map(f => f.href),
-      allZipFiles: zipFileNames.filter(f => f.includes("OEBPS")),
-    });
-  }
-  
-  // If no files found, this is a critical error
-  if (audioFilesInZip.length === 0 && smilFilesInZip.length === 0 && (audioFiles.length > 0 || smilFiles.length > 0)) {
-    console.error("CRITICAL: No audio or SMIL files found in ZIP despite being added!", {
-      audioFilesCount: audioFiles.length,
-      smilFilesCount: smilFiles.length,
-      zipFilesCount: zipFileNames.length,
-    });
-  }
-
-  // Store audio files count before clearing (needed for logging)
-  const audioFilesCount = audioFiles.length;
-
-  // Generate updated EPUB
-  // Reuse zipFileNames and audioFilesInZip that were already computed above
-  console.debug("Generating final EPUB ZIP...", {
-    totalFiles: zipFileNames.length,
-    audioFilesInZip: audioFilesInZip.length,
-    audioFilePaths: audioFilesInZip,
-    expectedAudioCount: audioFilesCount,
-  });
-  
   let updatedEpubBuffer: ArrayBuffer;
   try {
     updatedEpubBuffer = await zip.generateAsync({ 
       type: "arraybuffer",
       compression: "DEFLATE",
       compressionOptions: { level: 6 },
-      streamFiles: false, // Don't stream - include all files
+      streamFiles: false,
     });
   } catch (zipError) {
     console.error("Failed to generate EPUB ZIP", zipError);
     throw new Error(`Failed to generate EPUB: ${zipError instanceof Error ? zipError.message : String(zipError)}`);
   }
-  
-  // Clear audio file buffers AFTER ZIP generation to free memory
-  // Files are now in the generated ZIP, so we can safely clear the buffer references
+
   audioFiles.forEach(file => {
     file.buffer = new ArrayBuffer(0);
   });
   audioFiles.length = 0;
-  
-  const sizeMB = updatedEpubBuffer.byteLength / (1024 * 1024);
-  console.debug("EPUB generation complete", {
-    outputSizeBytes: updatedEpubBuffer.byteLength,
-    outputSizeMB: sizeMB.toFixed(2),
-    isValid: updatedEpubBuffer && updatedEpubBuffer.byteLength > 0,
-    audioFilesCount: audioFilesCount,
-    audioFilesInZip: audioFilesInZip.length,
-  });
-  
-  // Warn if size seems too small for an audiobook
-  if (sizeMB < 1 && audioFilesCount > 0) {
-    console.warn("WARNING: Generated EPUB size is suspiciously small for an audiobook!", {
-      outputSizeMB: sizeMB.toFixed(2),
-      audioFilesCount: audioFilesCount,
-      audioFilesInZip: audioFilesInZip.length,
-      expectedSizeMB: "> 1MB (audio files should make it much larger)",
-    });
-  }
-  
+
   onProgress?.({
     currentChapter: chapters.length,
     totalChapters: chapters.length,
     currentStep: "complete",
     message: "Conversion complete!",
+    completedChunks: Object.values(state.completedChunks).flat().length,
+    totalChunks: 0,
   });
 
-  console.debug("Returning converted EPUB buffer to caller");
-  return updatedEpubBuffer;
-}
+  // Clear state on completion (only if bookId is set)
+  if (state.bookId) {
+    clearConversionState(state.bookId);
+  }
 
+  return { buffer: updatedEpubBuffer, state };
+}
 
 /**
  * Update content.opf to include audio tracks and SMIL files
@@ -781,7 +787,7 @@ function updateContentOpf(
     throw new Error("No manifest found in content.opf");
   }
 
-  // Remove existing audio entries (both WAV and MP3) to avoid stale references
+  // Remove existing audio entries
   const existingAudioItems = Array.from(manifest.querySelectorAll("item")).filter((item) => {
     const mediaType = item.getAttribute("media-type");
     return mediaType?.startsWith("audio/");
@@ -807,10 +813,9 @@ function updateContentOpf(
     }
   });
 
-  // Add audio files to manifest (avoid duplicates)
+  // Add audio files to manifest
   const addedHrefs = new Set<string>();
   audioFiles.forEach((audioFile, idx) => {
-    // Skip if this href was already added
     if (addedHrefs.has(audioFile.href)) {
       console.warn(`Skipping duplicate audio file href: ${audioFile.href}`);
       return;
@@ -821,30 +826,25 @@ function updateContentOpf(
     const item = doc.createElement("item");
     item.setAttribute("id", itemId);
     item.setAttribute("href", audioFile.href);
-    // Use audio/wav for WAV files, audio/mpeg for MP3
     const isMp3 = audioFile.href.endsWith(".mp3");
     item.setAttribute("media-type", isMp3 ? "audio/mpeg" : "audio/wav");
     manifest.appendChild(item);
   });
 
-  // Add SMIL files to manifest and link to chapters (avoid duplicates)
+  // Add SMIL files to manifest and link to chapters
   const addedSmilHrefs = new Set<string>();
   smilFiles.forEach((smilFile, idx) => {
     const chapter = chapters[smilFile.chapterIndex];
     const smilItemId = `s${String(idx + 1).padStart(3, "0")}`;
     
-    // SMIL href is already relative (without OEBPS/ prefix)
     const smilHref = smilFile.href;
     
-    // Skip if this SMIL href was already added
     if (addedSmilHrefs.has(smilHref)) {
       console.warn(`Skipping duplicate SMIL file href: ${smilHref}`);
       return;
     }
     addedSmilHrefs.add(smilHref);
     
-    // Normalize chapter href for lookup - try both with and without OEBPS/ prefix
-    // Chapter hrefs in manifest are typically relative (without OEBPS/)
     let chapterHrefForLookup = chapter.href;
     if (chapterHrefForLookup.startsWith("OEBPS/")) {
       chapterHrefForLookup = chapterHrefForLookup.substring(6);
@@ -852,7 +852,6 @@ function updateContentOpf(
     
     let chapterItem = doc.querySelector(`item[href="${chapterHrefForLookup}"]`);
     if (!chapterItem) {
-      // Try with OEBPS/ prefix as fallback
       chapterItem = doc.querySelector(`item[href="OEBPS/${chapterHrefForLookup}"]`);
     }
     
@@ -860,7 +859,6 @@ function updateContentOpf(
       chapterItem.setAttribute("media-overlay", smilItemId);
     }
     
-    // Add SMIL item
     const smilItem = doc.createElement("item");
     smilItem.setAttribute("id", smilItemId);
     smilItem.setAttribute("href", smilHref);
@@ -877,14 +875,8 @@ function updateContentOpf(
     metadata.appendChild(activeClassMeta);
   }
 
-  // Serialize and format the XML properly
   let xmlString = new XMLSerializer().serializeToString(doc);
-  
-  // Format the XML for better readability (optional, but helps with debugging)
-  // Replace /> with />\n for self-closing tags in manifest
   xmlString = xmlString.replace(/(<item[^>]*\/>)/g, '$1\n    ');
-  
-  // Clean up any double newlines
   xmlString = xmlString.replace(/\n\n+/g, '\n');
   
   return xmlString;

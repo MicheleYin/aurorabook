@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+import { Loader2, Pause, Play } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -7,6 +7,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Progress } from "../ui/progress";
+import { Button } from "../ui/button";
 import type { ConversionProgress } from "../../lib/audiobook-converter";
 import { useAnimatedNumber } from "../../hooks/use-animated-number";
 
@@ -14,12 +15,20 @@ type ConversionProgressDialogProps = {
   open: boolean;
   progress: ConversionProgress | null;
   bookTitle: string;
+  isPaused?: boolean;
+  onPause?: () => void;
+  onResume?: () => void;
+  onCancel?: () => void;
 };
 
 export function ConversionProgressDialog({
   open,
   progress,
   bookTitle,
+  isPaused = false,
+  onPause,
+  onResume,
+  onCancel,
 }: ConversionProgressDialogProps) {
   const targetProgressPercent = progress
     ? Math.round((progress.currentChapter / progress.totalChapters) * 100)
@@ -34,6 +43,7 @@ export function ConversionProgressDialog({
     "merging-audio": "Merging audio files",
     "creating-smil": "Creating synchronization files",
     "updating-epub": "Updating EPUB structure",
+    saving: "Saving EPUB...",
     complete: "Complete!",
   };
 
@@ -64,8 +74,39 @@ export function ConversionProgressDialog({
                 />
               </div>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
+                {!isPaused && <Loader2 className="h-4 w-4 animate-spin" />}
                 <span>{progress.message || currentStepLabel}</span>
+              </div>
+              <div className="flex items-center gap-2 pt-2">
+                {isPaused ? (
+                  <>
+                    {onResume && (
+                      <Button onClick={onResume} size="sm" className="gap-2">
+                        <Play className="h-4 w-4" />
+                        Resume
+                      </Button>
+                    )}
+                    {onCancel && (
+                      <Button onClick={onCancel} variant="outline" size="sm">
+                        Cancel
+                      </Button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {onPause && (
+                      <Button onClick={onPause} variant="outline" size="sm" className="gap-2">
+                        <Pause className="h-4 w-4" />
+                        Pause
+                      </Button>
+                    )}
+                    {onCancel && (
+                      <Button onClick={onCancel} variant="outline" size="sm">
+                        Cancel
+                      </Button>
+                    )}
+                  </>
+                )}
               </div>
             </>
           ) : (
