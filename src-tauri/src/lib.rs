@@ -1,9 +1,10 @@
-use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
 // ONNX Runtime with CoreML EP support (macOS/iOS only)
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod kokoro_onnx_coreml;
+
+mod epub_converter;
 
 // Use kokoros crate directly on all platforms (it uses ONNX Runtime with CoreML EP on macOS/iOS)
 
@@ -174,8 +175,8 @@ async fn copy_directory(
 async fn init_kokoros_engine(
     model_path: String,
     voices_path: String,
-    num_instances: Option<usize>,
-    app: tauri::AppHandle,
+    _num_instances: Option<usize>,
+    _app: tauri::AppHandle,
 ) -> Result<String, String> {
     // Models are accessed directly from bundle resources
     // If paths are empty, we'll find them from bundle resources
@@ -398,17 +399,17 @@ async fn generate_tts_batch(
                     
                     let model_instance = task_engine.get_model_instance(0);
                     task_engine.tts_raw_audio_with_instance(
-                    &text_clone,
-                    language_clone.as_deref().unwrap_or("en"),
+                        &text_clone,
+                        language_clone.as_deref().unwrap_or("en"),
                         &voice_id_clone,
-                    speed_val,
+                        speed_val,
                         None,
                         None,
                         None,
                         None,
                         model_instance,
-                )
-                .map_err(|e| format!("Failed to generate audio: {}", e))
+                    )
+                    .map_err(|e| format!("Failed to generate audio: {}", e))
             });
             handles.push(handle);
         }
@@ -555,6 +556,16 @@ fn convert_pcm_to_mp3(
     Ok(mp3_output)
 }
 
+/// Convert EPUB to audiobook format (backend implementation)
+#[tauri::command]
+async fn convert_epub_to_audiobook(
+    epub_data: Vec<u8>,
+    options: epub_converter::ConversionOptions,
+    app: tauri::AppHandle,
+) -> Result<Vec<u8>, String> {
+    epub_converter::convert_epub_to_audiobook(epub_data, options, app).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -569,7 +580,8 @@ pub fn run() {
             generate_tts_batch,
             copy_resource_file,
             copy_directory,
-            convert_pcm_to_mp3
+            convert_pcm_to_mp3,
+            convert_epub_to_audiobook
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -996,16 +1008,13 @@ mod tests {
         
         // Initialize ONNX engine
         println!("\n📦 Initializing ONNX engine...");
-        let engine = match kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+        let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
             model_path_str,
             voices_path_str,
             1, // Use 1 instance for testing
-        ).await {
-            engine => {
-                println!("✅ ONNX engine initialized successfully!");
-                engine
-            }
-        };
+        ).await;
+        
+        println!("✅ ONNX engine initialized successfully!");
         
         let test_text = "Hello, this is an ONNX-only test of the text to speech system.";
         let voice_id = "af_heart";
@@ -1172,16 +1181,13 @@ mod tests {
         println!("   Speed: {}", speed);
         
         // Initialize kokoros engine - it will use ONNX Runtime which should use CoreML EP on macOS/iOS
-        let engine = match kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+        let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
             model_path_str,
             voices_path_str,
             1, // Use 1 instance for testing
-        ).await {
-            engine => {
-                println!("✅ Kokoros engine initialized (should use CoreML EP via ONNX Runtime)");
-                engine
-            }
-        };
+        ).await;
+        
+        println!("✅ Kokoros engine initialized (should use CoreML EP via ONNX Runtime)");
         
         // Generate audio
         let model_instance = engine.get_model_instance(0);
