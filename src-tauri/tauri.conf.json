@@ -14,7 +14,9 @@
       {
         "title": "tts-tauri",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "minWidth": 300,
+        "minHeight": 300
       }
     ],
     "security": {

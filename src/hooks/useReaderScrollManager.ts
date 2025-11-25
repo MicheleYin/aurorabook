@@ -7,10 +7,10 @@ import {
   type MutableRefObject,
 } from "react";
 
-import type { Book, Chapter, ReaderPreferences } from "../../../types/reader";
+import type { Book, Chapter, ReaderPreferences } from "../types/reader";
+import type { ChapterProgressSnapshot } from "../components/reader/types";
 
 const LOG_PREFIX = "[ReaderScroll]";
-import type { ChapterProgressSnapshot } from "../types";
 
 const clampValue = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);

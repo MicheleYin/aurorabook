@@ -1,0 +1,7 @@
+[env]
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+
+[target.aarch64-apple-ios]
+rustflags = []
+
+

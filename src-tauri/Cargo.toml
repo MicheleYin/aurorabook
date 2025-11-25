@@ -32,9 +32,8 @@ lame = "0.1"
 # - CoreML: For Apple devices (macOS/iOS/iPadOS) - ONNX Runtime uses CoreML Execution Provider
 #   CoreML automatically leverages GPU and Neural Engine when available on Apple devices
 #   Note: Using local kokoros crate with CoreML EP support built-in for macOS/iOS
-# Use local kokoros crate (modified to support CoreML EP on macOS/iOS)
-# CoreML EP is automatically used on macOS/iOS via code changes in ort_base.rs
-kokoros = { path = "../Kokoros/kokoros", package = "kokoros", default-features = true }
+# Use kokoros crate from GitHub (not yet published to crates.io)
+kokoros = { git = "https://github.com/lucasjinreal/Kokoros", default-features = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 # ONNX Runtime with CoreML EP support for explicit CoreML EP configuration

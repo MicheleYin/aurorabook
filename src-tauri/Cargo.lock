@@ -2139,6 +2139,7 @@ dependencies = [
 [[package]]
 name = "kokoros"
 version = "0.1.0"
+source = "git+https://github.com/lucasjinreal/Kokoros#429d37483f1ba4f6ca924f36e544c84d2c11aa89"
 dependencies = [
  "espeak-rs",
  "hound",

@@ -303,17 +303,16 @@ function parseNavPoint(navPoint: Element): TocItem | null {
 /**
  * Find the content.opf file in the EPUB
  */
-function findContentOpfPath(zip: JSZip): string | null {
+async function findContentOpfPath(zip: JSZip): Promise<string | null> {
   // Check for container.xml first
   const containerXml = zip.file("META-INF/container.xml");
   if (containerXml) {
-    return containerXml.async("string").then((xml) => {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(xml, "text/xml");
-      const rootfile = doc.querySelector("rootfile[media-type='application/oebps-package+xml']");
-      const fullPath = rootfile?.getAttribute("full-path");
-      return fullPath || null;
-    });
+    const xml = await containerXml.async("string");
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xml, "text/xml");
+    const rootfile = doc.querySelector("rootfile[media-type='application/oebps-package+xml']");
+    const fullPath = rootfile?.getAttribute("full-path");
+    return fullPath || null;
   }
   
   // Fallback: look for content.opf in common locations
@@ -326,11 +325,11 @@ function findContentOpfPath(zip: JSZip): string | null {
   
   for (const path of commonPaths) {
     if (zip.file(path)) {
-      return Promise.resolve(path);
+      return path;
     }
   }
   
-  return Promise.resolve(null);
+  return null;
 }
 
 /**
