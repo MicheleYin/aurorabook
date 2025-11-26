@@ -36,12 +36,13 @@ export type BookAudioState = {
 export type Chapter = {
   id: string;
   title: string;
-  contentHtml: string;
-  plainText: string;
+  contentHtml?: string; // Optional - loaded lazily
+  plainText?: string; // Optional - loaded lazily
   order: number;
   href: string;
   wordCount?: number;
   estimatedPageCount?: number;
+  _loading?: boolean; // Internal flag to track loading state
 };
 
 export type BookProgress = {

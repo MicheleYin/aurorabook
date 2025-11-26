@@ -20,13 +20,9 @@ import {
   deriveTitleFromPath,
   ensureEpubSignature,
   ensureStringArray,
-  extractPlainText,
   extractYear,
-  normalizeChapterContent,
-  sanitizeChapterHtml,
 } from "../lib/epub";
 import {
-  countWords,
   estimatePagesFromWords,
   getChapterPageCount,
   getChapterWordCount,
@@ -353,16 +349,10 @@ export function usePersistentLibrary(): PersistentLibrary {
         console.debug("Could not load cover image", error);
       }
 
-      const chapters = await Promise.all(
-        spineItems.map(async (item, index: number) => {
+      // Only extract chapter metadata, not full content (lazy loading)
+      const chapters: Chapter[] = spineItems
+        .map((item, index: number) => {
           try {
-            const rawHtml = await epubBook.load(item.href);
-            const normalizedHtml = await normalizeChapterContent(rawHtml);
-            if (!normalizedHtml) {
-              return null;
-            }
-
-            // Get chapter href first (needed for image resolution)
             const manifestItem = manifestItems[item.id || ""] || 
               Object.values(manifestItems).find((entry) => entry.href === item.href);
             const chapterHref = manifestItem?.href ?? item.href ?? "";
@@ -370,218 +360,33 @@ export function usePersistentLibrary(): PersistentLibrary {
               return null;
             }
 
-            // Basic HTML substitution for relative links/images
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(normalizedHtml, "text/html");
-            
-            // Resolve image URLs - convert relative paths to blob URLs
-            const images = doc.querySelectorAll("img[src]");
-            await Promise.all(
-              Array.from(images).map(async (img) => {
-                const src = img.getAttribute("src");
-                if (!src) return;
-                
-                // Skip data URLs and absolute URLs
-                if (src.startsWith("data:") || src.startsWith("http://") || src.startsWith("https://")) {
-                  return;
-                }
-                
-                try {
-                  // Resolve relative image path
-                  // Images are relative to the chapter file location
-                  const imagePath = src;
-                  
-                  // Normalize chapter href - remove leading OEBPS/ if present for path resolution
-                  let normalizedChapterHref = chapterHref;
-                  if (normalizedChapterHref.startsWith("OEBPS/")) {
-                    normalizedChapterHref = normalizedChapterHref.substring(6);
-                  }
-                  
-                  // First, try to resolve relative to chapter directory
-                  let resolvedPath: string;
-                  
-                  // If it's a relative path (not starting with / or OEBPS/), resolve it relative to chapter
-                  if (!imagePath.startsWith("/") && !imagePath.startsWith("OEBPS/") && !imagePath.startsWith("http://") && !imagePath.startsWith("https://")) {
-                    // Build path relative to chapter
-                    const chapterParts = normalizedChapterHref.split("/");
-                    const imageParts = imagePath.split("/");
-                    const chapterDirParts = chapterParts.slice(0, -1);
-                    
-                    const resolvedParts = [...chapterDirParts];
-                    for (const part of imageParts) {
-                      if (part === "..") {
-                        if (resolvedParts.length > 0) {
-                          resolvedParts.pop();
-                        }
-                      } else if (part !== "." && part !== "") {
-                        resolvedParts.push(part);
-                      }
-                    }
-                    
-                    resolvedPath = resolvedParts.join("/");
-                  } else {
-                    // Already absolute or OEBPS/ path
-                    resolvedPath = imagePath;
-                  }
-                  
-                  // Use epubBook.resolve() to add OEBPS/ prefix if needed
-                  resolvedPath = epubBook.resolve(resolvedPath);
-                  console.debug(`Resolving image: ${src} -> ${resolvedPath} (chapter: ${chapterHref})`);
-                  
-                  // Create blob URL for the image
-                  // createUrl will handle the path correctly via getFile
-                  const imageUrl = await epubBook.createUrl(resolvedPath);
-                  console.debug(`Successfully created blob URL for image: ${src}`);
-                  img.setAttribute("src", imageUrl);
-                } catch (error) {
-                  console.error(`Could not resolve image ${src} in chapter ${chapterHref}:`, error);
-                  // Mark it so we know it failed - browser might still try to load it
-                  img.setAttribute("data-image-error", "true");
-                }
-              }),
-            );
-            
-            // Also handle CSS background images
-            const elementsWithBackground = doc.querySelectorAll("[style*='background']");
-            await Promise.all(
-              Array.from(elementsWithBackground).map(async (el) => {
-                const style = el.getAttribute("style");
-                if (!style) return;
-                
-                // Match url(...) patterns in CSS
-                const urlMatches = style.match(/url\(['"]?([^'")]+)['"]?\)/gi);
-                if (!urlMatches) return;
-                
-                let updatedStyle = style;
-                for (const urlMatch of urlMatches) {
-                  const urlMatchContent = urlMatch.match(/url\(['"]?([^'")]+)['"]?\)/i);
-                  if (!urlMatchContent || !urlMatchContent[1]) continue;
-                  
-                  const imageSrc = urlMatchContent[1];
-                  
-                  // Skip data URLs and absolute URLs
-                  if (imageSrc.startsWith("data:") || imageSrc.startsWith("http://") || imageSrc.startsWith("https://")) {
-                    continue;
-                  }
-                  
-                  try {
-                    // Resolve relative image path
-                    let imagePath = imageSrc;
-                    
-                    // Normalize chapter href - remove leading OEBPS/ if present for path resolution
-                    let normalizedChapterHref = chapterHref;
-                    if (normalizedChapterHref.startsWith("OEBPS/")) {
-                      normalizedChapterHref = normalizedChapterHref.substring(6);
-                    }
-                    
-                    // Resolve relative paths properly
-                    if (!imagePath.startsWith("/") && !imagePath.startsWith("OEBPS/") && !imagePath.startsWith("http://") && !imagePath.startsWith("https://")) {
-                      // Build full path by resolving relative to chapter
-                      const chapterParts = normalizedChapterHref.split("/");
-                      const imageParts = imagePath.split("/");
-                      
-                      // Remove filename from chapter parts to get directory
-                      const chapterDirParts = chapterParts.slice(0, -1);
-                      
-                      // Resolve .. and . in image path
-                      const resolvedParts = [...chapterDirParts];
-                      for (const part of imageParts) {
-                        if (part === "..") {
-                          resolvedParts.pop(); // Go up one directory
-                        } else if (part !== "." && part !== "") {
-                          resolvedParts.push(part); // Add directory/file
-                        }
-                      }
-                      
-                      imagePath = resolvedParts.join("/");
-                    }
-                    
-                    // epubBook.createUrl will handle OEBPS/ prefix internally
-                    const imageUrl = await epubBook.createUrl(imagePath);
-                    updatedStyle = updatedStyle.replace(urlMatch, `url('${imageUrl}')`);
-                  } catch (error) {
-                    console.warn(`Could not resolve background image ${imageSrc} in chapter ${chapterHref}:`, error);
-                  }
-                }
-                
-                if (updatedStyle !== style) {
-                  el.setAttribute("style", updatedStyle);
-                }
-              }),
-            );
-
-            const substitutedHtml = new XMLSerializer().serializeToString(doc);
-            
-            // Debug: Check if images have blob URLs before sanitization
-            const tempDoc = new DOMParser().parseFromString(substitutedHtml, "text/html");
-            const tempImages = tempDoc.querySelectorAll("img[src]");
-            tempImages.forEach((img) => {
-              const src = img.getAttribute("src");
-              if (src && src.startsWith("blob:")) {
-                console.debug(`Image has blob URL before sanitization: ${src.substring(0, 50)}...`);
-              }
-            });
-            
-            const sanitized = sanitizeChapterHtml(substitutedHtml);
-            
-            // Debug: Check if images still have blob URLs after sanitization
-            const sanitizedDoc = new DOMParser().parseFromString(sanitized, "text/html");
-            const sanitizedImages = sanitizedDoc.querySelectorAll("img[src]");
-            sanitizedImages.forEach((img) => {
-              const src = img.getAttribute("src");
-              if (src && src.startsWith("blob:")) {
-                console.debug(`Image still has blob URL after sanitization: ${src.substring(0, 50)}...`);
-              } else if (src) {
-                console.warn(`Image src changed after sanitization: ${src.substring(0, 50)}...`);
-              } else {
-                console.error(`Image src was removed by sanitization!`);
-              }
-            });
-            
-            if (!sanitized.trim()) {
-              return null;
-            }
-
-            const plainText = extractPlainText(sanitized);
-
             const lookupKey = chapterHref.split("#")[0];
             const title =
               navMap.get(lookupKey) ?? item.label?.trim() ?? `Section ${index + 1}`;
 
-            const wordCount = countWords(plainText);
-            const estimatedChapterPages = estimatePagesFromWords(wordCount);
-
+            // Create chapter with metadata only - content will be loaded lazily
             return {
               id: `${newBookId}-${item.id ?? index}`,
               title,
-              contentHtml: sanitized,
-              plainText,
               order: index,
               href: chapterHref,
-              wordCount,
-              estimatedPageCount: estimatedChapterPages,
+              // contentHtml and plainText will be loaded on demand
             } as Chapter;
           } catch (chapterError) {
-            console.warn("Could not load chapter", chapterError);
+            console.warn("Could not create chapter metadata", chapterError);
             return null;
           }
-        }),
-      );
+        })
+        .filter((chapter): chapter is Chapter => Boolean(chapter));
 
-      const filteredChapters = chapters.filter(
-        (chapter): chapter is Chapter => Boolean(chapter && chapter.plainText.trim()),
-      );
+      const filteredChapters = chapters;
 
-      const totalWordCount = filteredChapters.reduce(
-        (sum, chapter) => sum + (chapter.wordCount ?? countWords(chapter.plainText)),
-        0,
-      );
-
+      // Page count will be estimated when chapters are loaded
+      // For now, use hint if provided
       const estimatedPageCount =
-        estimatePagesFromWords(totalWordCount) ??
-        (typeof pageCountHint === "number" && Number.isFinite(pageCountHint) && pageCountHint > 0
+        typeof pageCountHint === "number" && Number.isFinite(pageCountHint) && pageCountHint > 0
           ? Math.max(1, Math.round(pageCountHint))
-          : undefined);
+          : undefined;
 
       let appliedProgress: BookProgress | undefined;
       if (savedProgress && filteredChapters.length) {
@@ -731,7 +536,11 @@ export function usePersistentLibrary(): PersistentLibrary {
       ).filter((track): track is AudioTrack => Boolean(track));
 
       // Build audio sync map from SMIL files if available
-      const audioSyncMap = await buildAudioSyncMap(epubBook, filteredChapters);
+      // Note: buildAudioSyncMap may need chapters with content, but we'll handle that lazily
+      const audioSyncMap = await buildAudioSyncMap(epubBook, filteredChapters).catch((error) => {
+        console.warn("Could not build audio sync map (chapters not loaded yet)", error);
+        return undefined;
+      });
 
       let restoredAudioState: BookAudioState | undefined;
       if (savedAudioState && audioTracks.length) {

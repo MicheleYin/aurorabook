@@ -822,8 +822,18 @@ function App() {
   }, []);
 
   const handleSelectBook = useCallback(
-    (bookId: string) => {
+    async (bookId: string) => {
       const selectedBook = library.find((book) => book.id === bookId);
+      if (!selectedBook) return;
+      
+      // Clear cache for all books except the one being opened
+      try {
+        const { clearAllCachesExcept } = await import("./lib/lazy-chapter-loader");
+        clearAllCachesExcept(selectedBook.sourcePath);
+      } catch (error) {
+        console.warn("Failed to clear book caches", error);
+      }
+      
       setActiveBookId(bookId);
       console.debug(`${PROGRESS_LOG_PREFIX} select book`, { bookId });
       let progressChapterId: string | undefined;
@@ -1159,6 +1169,10 @@ function App() {
         try {
           const { removeConvertedEpub } = await import("./lib/epub-store");
           await removeConvertedEpub(bookToDelete.sourcePath);
+          
+          // Clear lazy loader cache
+          const { clearBookCache } = await import("./lib/lazy-chapter-loader");
+          clearBookCache(bookToDelete.sourcePath);
         } catch (error) {
           console.warn("Failed to remove stored EPUB:", error);
         }

@@ -43,7 +43,11 @@ export const getChapterWordCount = (
   if (typeof chapter.wordCount === "number" && Number.isFinite(chapter.wordCount)) {
     return Math.max(0, Math.round(chapter.wordCount));
   }
-  return countWords(chapter.plainText);
+  if (chapter.plainText) {
+    return countWords(chapter.plainText);
+  }
+  // If plainText is not loaded yet, return 0 (will be calculated when chapter is loaded)
+  return 0;
 };
 
 export const getChapterPageCount = (

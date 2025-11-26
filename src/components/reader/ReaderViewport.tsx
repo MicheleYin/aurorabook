@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
+import { Loader2 } from "lucide-react";
 
 import { cn } from "../../lib/utils";
 import { anim, animPatterns } from "../../lib/animations";
 import { findCurrentAudioSegment } from "../../lib/epub";
+import { ensureChapterLoaded } from "../../lib/lazy-chapter-loader";
 import {
   contentPaddingConfigMap,
   fontClassMap,
@@ -17,7 +19,7 @@ import type {
   ChapterSelectionOptions,
   ReaderPanelBaseProps,
 } from "./types";
-import type { ReaderTheme } from "../../types/reader";
+import type { Chapter, ReaderTheme } from "../../types/reader";
 import { Button } from "../ui/button";
 
 type ResolvedReaderTheme = Exclude<ReaderTheme, "system">;
@@ -69,11 +71,59 @@ export function ReaderViewport({
   const [isScrolling, setIsScrolling] = useState(false);
   const [highlightedElementId, setHighlightedElementId] = useState<string | null>(null);
   const [chapterTransitionDirection, setChapterTransitionDirection] = useState<"left" | "right" | "fade" | null>(null);
+  const [loadedChapter, setLoadedChapter] = useState<Chapter | null>(null);
+  const [isLoadingChapter, setIsLoadingChapter] = useState(false);
   const showAudioPlayer = audioPlayerVisible;
   const lastHighlightedElementRef = useRef<string | null>(null);
   const lastScrolledElementRef = useRef<string | null>(null);
   const previousChapterIdRef = useRef<string | undefined>(activeChapter?.id);
   const highlightEnterTimeoutRef = useRef<number | null>(null);
+
+  // Lazy load chapter content when needed
+  useEffect(() => {
+    if (!activeBook || !activeChapter) {
+      setLoadedChapter(null);
+      return;
+    }
+
+    // If chapter already has content, use it directly
+    if (activeChapter.contentHtml && activeChapter.plainText) {
+      setLoadedChapter(activeChapter);
+      return;
+    }
+
+    // Load chapter content lazily
+    setIsLoadingChapter(true);
+    ensureChapterLoaded(activeBook.sourcePath, activeChapter)
+      .then((loaded) => {
+        setLoadedChapter(loaded);
+        setIsLoadingChapter(false);
+        
+        // Update the chapter in the library if needed
+        // This ensures the loaded content is available for future use
+        if (activeBook && loaded.contentHtml && loaded.plainText) {
+          // The chapter is now loaded and cached
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to load chapter", error);
+        setIsLoadingChapter(false);
+        // Keep the chapter even if loading failed
+        setLoadedChapter(activeChapter);
+      });
+  }, [activeBook?.sourcePath, activeChapter?.id, activeChapter?.href]);
+
+  // Use loaded chapter if available, otherwise fall back to activeChapter
+  const displayChapter = loadedChapter || activeChapter;
+  
+  // Early return if no chapter is available
+  if (!displayChapter || !activeChapter) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <div className="text-muted-foreground">No chapter selected</div>
+      </div>
+    );
+  }
 
   const computeScrollMetrics = useCallback(() => {
     const node = contentRef.current;
@@ -101,7 +151,8 @@ export function ReaderViewport({
   }, []);
 
   const emitChapterProgress = useCallback(() => {
-    if (!activeChapter || !onChapterProgress) {
+    const chapter = displayChapter || activeChapter;
+    if (!chapter || !onChapterProgress) {
       return;
     }
 
@@ -123,7 +174,7 @@ export function ReaderViewport({
     }
 
     const snapshot: ChapterProgressSnapshot = {
-      chapterId: activeChapter.id,
+      chapterId: chapter.id,
       scrollTop: metrics.scrollTop,
       scrollHeight: metrics.scrollHeight,
       clientHeight: metrics.clientHeight,
@@ -133,7 +184,7 @@ export function ReaderViewport({
     };
 
     onChapterProgress(snapshot);
-  }, [activeChapter, computeScrollMetrics, onChapterProgress]);
+  }, [displayChapter, activeChapter, computeScrollMetrics, onChapterProgress]);
 
   const scheduleProgressEmit = useCallback(() => {
     if (!activeChapter || !onChapterProgress) {
@@ -233,8 +284,8 @@ export function ReaderViewport({
   }, [
     activeBook?.id,
     activeBook?.progress?.updatedAt,
-    activeChapter?.id,
-    activeChapter?.contentHtml,
+    displayChapter?.id,
+    displayChapter?.contentHtml,
     computeScrollMetrics,
     scheduleProgressEmit,
     scrollIntent,
@@ -976,10 +1027,10 @@ export function ReaderViewport({
         >
           {renderNavigation()}
           <article
-            id={activeChapter.id}
-            data-chapter-id={activeChapter.id}
+            id={displayChapter.id}
+            data-chapter-id={displayChapter.id}
             data-reader-chapter-root="true"
-            key={activeChapter.id}
+            key={displayChapter.id}
             className={cn(
               "prose reader-prose max-w-none space-y-4",
               anim("normal", "colors"),
@@ -993,15 +1044,26 @@ export function ReaderViewport({
               chapterTransitionDirection === "fade" && animPatterns.chapterCrossFade,
             )}
           >
-            <h2 className="text-2xl font-semibold">{activeChapter.title}</h2>
-            <div
-              data-reader-chapter-content="true"
-              data-chapter-id={activeChapter.id}
-              className=""
-              dangerouslySetInnerHTML={{
-                __html: activeChapter.contentHtml,
-              }}
-            />
+            <h2 className="text-2xl font-semibold">{displayChapter.title}</h2>
+            {isLoadingChapter ? (
+              <div className="flex flex-col items-center justify-center py-24">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                <p className="mt-4 text-sm text-muted-foreground">Loading chapter…</p>
+              </div>
+            ) : displayChapter.contentHtml ? (
+              <div
+                data-reader-chapter-content="true"
+                data-chapter-id={displayChapter.id}
+                className="animate-in fade-in duration-300"
+                dangerouslySetInnerHTML={{
+                  __html: displayChapter.contentHtml,
+                }}
+              />
+            ) : (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-muted-foreground">Chapter content not available</div>
+              </div>
+            )}
           </article>
           {renderNavigation()}
         </div>
