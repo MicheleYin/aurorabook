@@ -37,7 +37,7 @@ echo "Removing existing signature (if any)..."
 codesign --remove-signature "$APP_PATH" 2>/dev/null || true
 
 # Check for entitlements file
-ENTITLEMENTS_FILE="src-tauri/gen/apple/tts-tauri_macOS/tts-tauri_macOS.entitlements"
+ENTITLEMENTS_FILE="src-tauri/gen/apple/aurorabook_macOS/aurorabook_macOS.entitlements"
 if [ -f "$ENTITLEMENTS_FILE" ]; then
     echo "Signing app with entitlements..."
     codesign --force --deep --sign "$SIGNING_IDENTITY" --entitlements "$ENTITLEMENTS_FILE" "$APP_PATH"

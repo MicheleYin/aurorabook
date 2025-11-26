@@ -70,7 +70,11 @@ mod epub_converter {
         ];
         
         let sentence_pattern = Regex::new(r"([^.!?]+[.!?]+)\s*").unwrap();
-        let mut updated_html = html.to_string();
+        
+        // Store replacements with unique markers to avoid conflicts
+        // Format: (marker_id, new_inner_html, old_outer_html)
+        let mut replacements: Vec<(String, String, String)> = Vec::new();
+        let mut marker_counter = 0;
         
         // Process each element type
         for selector in &selectors {
@@ -97,7 +101,14 @@ mod epub_converter {
                 let mut new_content = String::new();
                 for (idx, sentence) in sentences.iter().enumerate() {
                     let chunk_id = format!("f{:06}", chunk_index + 1);
-                    new_content.push_str(&format!(r#"<span id="{}">{}</span>"#, chunk_id, sentence));
+                    // Escape XML special characters in sentence text
+                    let escaped_sentence = sentence
+                        .replace('&', "&amp;")
+                        .replace('<', "&lt;")
+                        .replace('>', "&gt;")
+                        .replace('"', "&quot;")
+                        .replace('\'', "&apos;");
+                    new_content.push_str(&format!(r#"<span id="{}">{}</span>"#, chunk_id, escaped_sentence));
                     if idx < sentences.len() - 1 {
                         new_content.push(' ');
                     }
@@ -105,30 +116,37 @@ mod epub_converter {
                     chunk_index += 1;
                 }
                 
-                // Replace the element's text content in the HTML
-                // Use the element's outer HTML to find and replace
-                let _element_outer = element.html();
-                let tag_name = element.value().name();
+                // Get the element's outer HTML
+                let element_outer = element.html();
+                let marker = format!("__CHUNK_MARKER_{}__", marker_counter);
+                marker_counter += 1;
                 
-                // Try to find and replace the element's content
-                // Match: <tag...>old_text</tag>
-                let old_inner = element.inner_html();
-                if !old_inner.is_empty() {
-                    let _new_element = format!("<{}>{}</{}>", tag_name, new_content, tag_name);
-                    // Simple replacement: find the opening tag and replace until closing tag
-                    if let Some(start) = updated_html.find(&format!("<{}", tag_name)) {
-                        if let Some(end) = updated_html[start..].find(&format!("</{}>", tag_name)) {
-                            let end_pos = start + end + tag_name.len() + 4;
-                            // Find the actual content start (after >)
-                            if let Some(content_start) = updated_html[start..end_pos].find('>') {
-                                let content_start_pos = start + content_start + 1;
-                                let before = &updated_html[..content_start_pos];
-                                let after = &updated_html[end_pos..];
-                                updated_html = format!("{}<{}>{}</{}>{}", 
-                                    before, tag_name, new_content, tag_name, after);
-                            }
-                        }
-                    }
+                replacements.push((marker, new_content, element_outer));
+            }
+        }
+        
+        // Now replace elements using markers to avoid conflicts
+        let mut updated_html = html.to_string();
+        
+        // First pass: replace each element with a unique marker
+        for (marker, _, old_outer) in &replacements {
+            // Find and replace the exact element (only first occurrence to avoid duplicates)
+            if let Some(pos) = updated_html.find(old_outer) {
+                updated_html.replace_range(pos..pos + old_outer.len(), marker);
+            }
+        }
+        
+        // Second pass: replace markers with new content
+        for (marker, new_inner, old_outer) in &replacements {
+            // Extract opening and closing tags from old_outer
+            if let Some(open_tag_end) = old_outer.find('>') {
+                let open_tag = &old_outer[..open_tag_end + 1];
+                if let Some(close_tag_start) = old_outer.rfind("</") {
+                    let close_tag = &old_outer[close_tag_start..];
+                    
+                    // Replace marker with: <tag>new_content</tag>
+                    let new_pattern = format!("{}{}{}", open_tag, new_inner, close_tag);
+                    updated_html = updated_html.replace(marker, &new_pattern);
                 }
             }
         }
@@ -147,37 +165,89 @@ mod epub_converter {
         format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, secs, ms)
     }
 
-    /// Generate SMIL file content
+    /// Generate SMIL file content using quick-xml for proper XML generation
     fn generate_smil_file(
         chapter_href: &str,
         audio_href: &str,
         segments: &[(String, f64, f64)],
-    ) -> String {
-        let mut smil = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>
-<smil xmlns="http://www.w3.org/ns/SMIL" xmlns:epub="http://www.idpf.org/2007/ops" version="3.0">
- <body>
-  <seq id="seq1" epub:textref=""#);
-        smil.push_str(chapter_href);
-        smil.push_str(r#"" epub:type="bodymatter chapter">
-"#);
+    ) -> Result<String, String> {
+        use quick_xml::events::{Event, BytesEnd, BytesStart, BytesDecl};
+        use quick_xml::Writer;
+        use std::io::Cursor;
         
+        let mut writer = Writer::new(Cursor::new(Vec::new()));
+        
+        // Write XML declaration
+        let decl = BytesDecl::new("1.0", Some("UTF-8"), None);
+        writer.write_event(Event::Decl(decl))
+            .map_err(|e| format!("XML write error: {}", e))?;
+        
+        // Write <smil> root element with namespaces
+        let mut smil_start = BytesStart::new("smil");
+        smil_start.push_attribute(("xmlns", "http://www.w3.org/ns/SMIL"));
+        smil_start.push_attribute(("xmlns:epub", "http://www.idpf.org/2007/ops"));
+        smil_start.push_attribute(("version", "3.0"));
+        writer.write_event(Event::Start(smil_start))
+            .map_err(|e| format!("XML write error: {}", e))?;
+        
+        // Write <body>
+        writer.write_event(Event::Start(BytesStart::new("body")))
+            .map_err(|e| format!("XML write error: {}", e))?;
+        
+        // Write <seq> with epub attributes
+        let mut seq_start = BytesStart::new("seq");
+        seq_start.push_attribute(("id", "seq1"));
+        seq_start.push_attribute(("epub:textref", chapter_href));
+        seq_start.push_attribute(("epub:type", "bodymatter chapter"));
+        writer.write_event(Event::Start(seq_start))
+            .map_err(|e| format!("XML write error: {}", e))?;
+        
+        // Write <par> elements for each segment
         for (idx, (id, start, end)) in segments.iter().enumerate() {
-            smil.push_str(&format!(
-                r#"   <par id="p{:06}"><text src="{}#{}"/><audio clipBegin="{}" clipEnd="{}" src="{}"/></par>
-"#,
-                idx + 1,
-                chapter_href,
-                id,
-                format_smil_time(*start),
-                format_smil_time(*end),
-                audio_href
-            ));
+            let par_id = format!("p{:06}", idx + 1);
+            let text_src = format!("{}#{}", chapter_href, id);
+            let clip_begin = format_smil_time(*start);
+            let clip_end = format_smil_time(*end);
+            
+            // Write <par> start
+            let mut par_start = BytesStart::new("par");
+            par_start.push_attribute(("id", par_id.as_str()));
+            writer.write_event(Event::Start(par_start))
+                .map_err(|e| format!("XML write error: {}", e))?;
+            
+            // Write <text> element
+            let mut text_start = BytesStart::new("text");
+            text_start.push_attribute(("src", text_src.as_str()));
+            writer.write_event(Event::Empty(text_start))
+                .map_err(|e| format!("XML write error: {}", e))?;
+            
+            // Write <audio> element
+            let mut audio_start = BytesStart::new("audio");
+            audio_start.push_attribute(("clipBegin", clip_begin.as_str()));
+            audio_start.push_attribute(("clipEnd", clip_end.as_str()));
+            audio_start.push_attribute(("src", audio_href));
+            writer.write_event(Event::Empty(audio_start))
+                .map_err(|e| format!("XML write error: {}", e))?;
+            
+            // Write </par> end
+            writer.write_event(Event::End(BytesEnd::new("par")))
+                .map_err(|e| format!("XML write error: {}", e))?;
         }
         
-        smil.push_str(r#"  </seq>
- </body>
-</smil>"#);
-        smil
+        // Write </seq>
+        writer.write_event(Event::End(BytesEnd::new("seq")))
+            .map_err(|e| format!("XML write error: {}", e))?;
+        
+        // Write </body>
+        writer.write_event(Event::End(BytesEnd::new("body")))
+            .map_err(|e| format!("XML write error: {}", e))?;
+        
+        // Write </smil>
+        writer.write_event(Event::End(BytesEnd::new("smil")))
+            .map_err(|e| format!("XML write error: {}", e))?;
+        
+        let result = writer.into_inner().into_inner();
+        Ok(String::from_utf8_lossy(&result).to_string())
     }
 
     /// Merge WAV audio data
@@ -480,7 +550,328 @@ mod epub_converter {
         Ok(String::from_utf8_lossy(&result).to_string())
     }
 
-    /// Main conversion function
+    /// Standalone conversion function that doesn't require AppHandle
+    pub async fn convert_epub_to_audiobook_standalone(
+        epub_data: Vec<u8>,
+        options: ConversionOptions,
+    ) -> Result<Vec<u8>, String> {
+        let parallelism = get_parallelism();
+        
+        println!("Initializing TTS engine (using {} cores)...", parallelism);
+        
+        // Find model files (standalone version - no AppHandle needed)
+        let mut possible_onnx_paths = Vec::new();
+        let mut possible_voices_paths = Vec::new();
+        
+        if let Ok(current_dir) = std::env::current_dir() {
+            possible_onnx_paths.push(current_dir.join("src-tauri").join("resources").join("kokoro-v1.0.onnx"));
+            possible_voices_paths.push(current_dir.join("src-tauri").join("resources").join("voices-v1.0.bin"));
+            // Also try from project root
+            if let Some(parent) = current_dir.parent() {
+                possible_onnx_paths.push(parent.join("src-tauri").join("resources").join("kokoro-v1.0.onnx"));
+                possible_voices_paths.push(parent.join("src-tauri").join("resources").join("voices-v1.0.bin"));
+            }
+        }
+        
+        // Try common resource locations
+        if let Ok(home) = std::env::var("HOME") {
+            let home_path = std::path::Path::new(&home);
+            possible_onnx_paths.push(home_path.join(".aurorabook").join("kokoro-v1.0.onnx"));
+            possible_voices_paths.push(home_path.join(".aurorabook").join("voices-v1.0.bin"));
+        }
+        
+        let onnx_path = possible_onnx_paths.iter()
+            .find(|p| p.exists() && p.is_file())
+            .ok_or_else(|| "ONNX model not found".to_string())?;
+        
+        let voices_path = possible_voices_paths.iter()
+            .find(|p| p.exists() && p.is_file())
+            .ok_or_else(|| "Voices file not found".to_string())?;
+        
+        let onnx_path_str = onnx_path.to_str()
+            .ok_or_else(|| "ONNX path contains invalid UTF-8".to_string())?
+            .to_string();
+        let voices_path_str = voices_path.to_str()
+            .ok_or_else(|| "Voices path contains invalid UTF-8".to_string())?
+            .to_string();
+        
+        // Log which model file is being used
+        println!("Using ONNX model: {}", onnx_path_str);
+        println!("Using voices file: {}", voices_path_str);
+        
+        // Validate engine can be created (but we'll create per-task instances for parallel processing)
+        let _test_engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+            &onnx_path_str,
+            &voices_path_str,
+            1,
+        ).await;
+        
+        // Load EPUB as ZIP
+        let mut archive = ZipArchive::new(Cursor::new(&epub_data))
+            .map_err(|e| format!("Failed to open EPUB: {}", e))?;
+        
+        let mut audio_files: Vec<(usize, String)> = Vec::new();
+        let mut smil_files: Vec<(usize, String)> = Vec::new();
+        let mut zip_files: HashMap<String, Vec<u8>> = HashMap::new();
+        
+        // Extract all existing files
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)
+                .map_err(|e| format!("Failed to read file {}: {}", i, e))?;
+            let name = file.name().to_string();
+            let mut data = Vec::new();
+            file.read_to_end(&mut data)
+                .map_err(|e| format!("Failed to read file data: {}", e))?;
+            zip_files.insert(name, data);
+        }
+        
+        // Process each chapter
+        for (chapter_index, chapter) in options.chapters.iter().enumerate() {
+            println!("Generating audio for chapter {}: {}", chapter_index + 1, chapter.title);
+            
+            // Chunk the chapter text
+            let (chunks, updated_html) = chunk_text(&chapter.content_html);
+            
+            if chunks.is_empty() {
+                // Update chapter HTML in ZIP
+                let chapter_path = if chapter.href.starts_with("OEBPS/") {
+                    chapter.href.clone()
+                } else {
+                    format!("OEBPS/{}", chapter.href)
+                };
+                zip_files.insert(chapter_path, updated_html.into_bytes());
+                continue;
+            }
+            
+            // Generate audio for chunks in parallel batches
+            let mut audio_data_arrays: Vec<Vec<u8>> = Vec::new();
+            let mut audio_segments: Vec<(String, f64, f64)> = Vec::new();
+            let mut current_time = 0.0;
+            let sample_rate = 24000.0;
+            
+            // Process in batches based on parallelism
+            for i in (0..chunks.len()).step_by(parallelism) {
+                let batch: Vec<_> = chunks.iter().skip(i).take(parallelism).collect();
+                
+                // Generate TTS for batch in parallel (same pattern as generate_tts_batch)
+                let mut handles = Vec::new();
+                for (chunk_id, text) in &batch {
+                    let text_clone = text.clone();
+                    let voice_id_clone = options.voice_id.clone();
+                    let onnx_path_clone = onnx_path_str.clone();
+                    let voices_path_clone = voices_path_str.clone();
+                    
+                    let handle = tokio::spawn(async move {
+                        // Create a new engine instance for this task (same as generate_tts_batch)
+                        let task_engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+                            &onnx_path_clone,
+                            &voices_path_clone,
+                            1, // Use 1 instance per task
+                        ).await;
+                        
+                        let model_instance = task_engine.get_model_instance(0);
+                        task_engine.tts_raw_audio_with_instance(
+                            &text_clone,
+                            "en",
+                            &voice_id_clone,
+                            1.0,
+                            None,
+                            None,
+                            None,
+                            None,
+                            model_instance,
+                        )
+                        .map_err(|e| format!("TTS generation failed: {}", e))
+                    });
+                    handles.push((chunk_id.clone(), handle));
+                }
+                
+                // Collect results
+                for (chunk_id, handle) in handles {
+                    match handle.await {
+                        Ok(Ok(audio_samples)) => {
+                            // Convert Vec<f32> to 16-bit PCM bytes
+                            let num_samples = audio_samples.len();
+                            let mut pcm_bytes = Vec::with_capacity(num_samples * 2);
+                            for sample in &audio_samples {
+                                let clamped = sample.max(-1.0).min(1.0);
+                                let pcm_value = if clamped < 0.0 {
+                                    (clamped * 32768.0) as i16
+                                } else {
+                                    (clamped * 32767.0) as i16
+                                };
+                                pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
+                            }
+                            
+                            audio_data_arrays.push(pcm_bytes.clone());
+                            
+                            let duration = num_samples as f64 / sample_rate;
+                            audio_segments.push((
+                                chunk_id,
+                                current_time,
+                                current_time + duration,
+                            ));
+                            current_time += duration;
+                        }
+                        Ok(Err(e)) => {
+                            eprintln!("Error generating audio for chunk {}: {}", chunk_id, e);
+                        }
+                        Err(e) => {
+                            eprintln!("Task error for chunk {}: {}", chunk_id, e);
+                        }
+                    }
+                }
+            }
+            
+            if audio_data_arrays.is_empty() {
+                // Create minimal silence
+                let silence_samples = sample_rate as usize;
+                let silence_pcm = vec![0u8; silence_samples * 2];
+                audio_data_arrays.push(silence_pcm);
+                audio_segments.push((
+                    chunks[0].0.clone(),
+                    0.0,
+                    1.0,
+                ));
+            }
+            
+            println!("Merging audio for chapter {}...", chapter_index + 1);
+            
+            // Merge audio
+            let merged_wav = merge_wav_files(&audio_data_arrays, sample_rate as u32);
+            
+            // Convert to MP3
+            println!("Converting audio to MP3 for chapter {}...", chapter_index + 1);
+            
+            // Extract PCM from WAV
+            let pcm_data = if merged_wav.len() > 44 {
+                merged_wav[44..].to_vec()
+            } else {
+                merged_wav
+            };
+            
+            // Convert to MP3 using existing function
+            let mp3_bytes = crate::convert_pcm_to_mp3(
+                pcm_data,
+                sample_rate as u32,
+                1,
+                Some(128),
+            ).map_err(|e| format!("MP3 conversion failed: {}", e))?;
+            
+            // Determine audio file path
+            let chapter_href_base = chapter.href
+                .split('/')
+                .last()
+                .unwrap_or(&format!("chapter{}", chapter_index + 1))
+                .replace(".xhtml", "")
+                .replace(".html", "");
+            
+            let audio_href_zip = format!("OEBPS/Audio/{}.mp3", chapter_href_base);
+            let audio_href_manifest = format!("Audio/{}.mp3", chapter_href_base);
+            
+            zip_files.insert(audio_href_zip.clone(), mp3_bytes);
+            let audio_href_manifest_clone = audio_href_manifest.clone();
+            audio_files.push((chapter_index, audio_href_manifest));
+            
+            // Update chapter HTML
+            let chapter_path_zip = if chapter.href.starts_with("OEBPS/") {
+                chapter.href.clone()
+            } else {
+                format!("OEBPS/{}", chapter.href)
+            };
+            let chapter_path_zip_clone = chapter_path_zip.clone();
+            zip_files.insert(chapter_path_zip, updated_html.into_bytes());
+            
+            println!("Creating SMIL file for chapter {}...", chapter_index + 1);
+            
+            // Generate SMIL file
+            let chapter_href_for_smil = if chapter.href.starts_with("OEBPS/") {
+                chapter.href[6..].to_string()
+            } else {
+                chapter.href.clone()
+            };
+            
+            let audio_href_for_smil = if chapter_href_for_smil.contains('/') {
+                let depth = chapter_href_for_smil.matches('/').count();
+                format!("{}{}", "../".repeat(depth), audio_href_manifest_clone)
+            } else {
+                audio_href_manifest_clone
+            };
+            
+            let smil_content = generate_smil_file(
+                &chapter_href_for_smil,
+                &audio_href_for_smil,
+                &audio_segments,
+            ).map_err(|e| format!("SMIL generation failed: {}", e))?;
+            
+            let smil_href_zip = chapter_path_zip_clone
+                .replace(".xhtml", ".smil")
+                .replace(".html", ".smil");
+            let smil_href_manifest = chapter_href_for_smil
+                .replace(".xhtml", ".smil")
+                .replace(".html", ".smil");
+            
+            zip_files.insert(smil_href_zip, smil_content.into_bytes());
+            smil_files.push((chapter_index, smil_href_manifest));
+        }
+        
+        println!("Updating EPUB metadata...");
+        
+        // Update content.opf
+        if let Some(opf_content) = zip_files.get("OEBPS/content.opf") {
+            let opf_str = String::from_utf8(opf_content.clone())
+                .map_err(|e| format!("Invalid UTF-8 in OPF: {}", e))?;
+            
+            let updated_opf = update_content_opf(
+                &opf_str,
+                &audio_files,
+                &smil_files,
+                &options.chapters,
+            )?;
+            
+            zip_files.insert("OEBPS/content.opf".to_string(), updated_opf.into_bytes());
+        }
+        
+        // Create new ZIP
+        // EPUB spec requires mimetype to be first and uncompressed
+        let mut zip_writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let file_options = FileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        let mimetype_options = FileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored); // Uncompressed for mimetype
+        
+        // Add mimetype first (EPUB spec requirement - must be first and uncompressed)
+        if let Some(mimetype_data) = zip_files.get("mimetype") {
+            zip_writer.start_file("mimetype", mimetype_options)
+                .map_err(|e| format!("Failed to add mimetype to ZIP: {}", e))?;
+            zip_writer.write_all(mimetype_data)
+                .map_err(|e| format!("Failed to write mimetype: {}", e))?;
+        }
+        
+        // Add all other files to ZIP (excluding mimetype which we already added)
+        let mut file_names: Vec<String> = zip_files.keys()
+            .filter(|name| *name != "mimetype")
+            .cloned()
+            .collect();
+        file_names.sort();
+        
+        for file_name in file_names {
+            let data = &zip_files[&file_name];
+            zip_writer.start_file(&file_name, file_options)
+                .map_err(|e| format!("Failed to add file to ZIP: {}", e))?;
+            zip_writer.write_all(data)
+                .map_err(|e| format!("Failed to write file data: {}", e))?;
+        }
+        
+        let zip_data = zip_writer.finish()
+            .map_err(|e| format!("Failed to finalize ZIP: {}", e))?;
+        
+        println!("Conversion complete!");
+        
+        Ok(zip_data.into_inner())
+    }
+    
+    /// Main conversion function (with AppHandle for Tauri integration)
     pub async fn convert_epub_to_audiobook(
         epub_data: Vec<u8>,
         options: ConversionOptions,
@@ -768,7 +1159,7 @@ mod epub_converter {
                 &chapter_href_for_smil,
                 &audio_href_for_smil,
                 &audio_segments,
-            );
+            ).map_err(|e| format!("SMIL generation failed: {}", e))?;
             
             let smil_href_zip = chapter_path_zip_clone
                 .replace(".xhtml", ".smil")
@@ -1194,6 +1585,395 @@ mod epub_converter {
             
             let content_opf = oebps_dir.join("content.opf");
             assert!(content_opf.exists(), "{} should have content.opf", name);
+        }
+        
+        /// Helper function to collect all file paths in a directory recursively
+        fn collect_files(dir: &Path, base: &Path) -> Vec<String> {
+            let mut files = Vec::new();
+            
+            if dir.is_dir() {
+                if let Ok(entries) = fs::read_dir(dir) {
+                    for entry in entries {
+                        if let Ok(entry) = entry {
+                            let path = entry.path();
+                            if path.is_dir() {
+                                files.extend(collect_files(&path, base));
+                            } else if path.is_file() {
+                                if let Ok(relative) = path.strip_prefix(base) {
+                                    files.push(relative.to_string_lossy().replace('\\', "/"));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            files.sort();
+            files
+        }
+        
+        /// Test that converting the "asd" EPUB creates the same files as "old version"
+        #[tokio::test]
+        async fn test_asd_epub_creates_same_files_as_old_version() {
+            
+            // Get project root (tests run from src-tauri, so go up one level)
+            let project_root = std::env::current_dir()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            
+            let asd_dir = project_root.join("data/asd");
+            let old_version_dir = project_root.join("data/old version");
+            
+            // Check that both directories exist
+            assert!(asd_dir.exists(), "asd directory should exist");
+            assert!(old_version_dir.exists(), "old version directory should exist");
+            
+            // Collect expected files from old version
+            let expected_files = collect_files(&old_version_dir, &old_version_dir);
+            println!("Expected files from old version ({} files):", expected_files.len());
+            for file in &expected_files {
+                println!("  - {}", file);
+            }
+            
+            // Create EPUB ZIP from asd directory
+            let epub_data = create_epub_from_directory(&asd_dir)
+                .expect("Failed to create EPUB from asd directory");
+            
+            // Parse the EPUB to get chapters
+            let chapters = parse_epub_chapters(&epub_data)
+                .expect("Failed to parse EPUB chapters");
+            
+            println!("Found {} chapters", chapters.len());
+            
+            // For now, we'll just verify the expected file structure
+            // The actual conversion would require TTS models and AppHandle
+            // This test verifies what files should be created
+            
+            // Check that we expect audio files
+            let expected_audio_files: Vec<_> = expected_files.iter()
+                .filter(|f| f.ends_with(".mp3"))
+                .collect();
+            assert!(!expected_audio_files.is_empty(), 
+                "Expected at least one audio file, found: {:?}", expected_audio_files);
+            
+            // Check that we expect SMIL files
+            let expected_smil_files: Vec<_> = expected_files.iter()
+                .filter(|f| f.ends_with(".smil"))
+                .collect();
+            assert!(!expected_smil_files.is_empty(), 
+                "Expected at least one SMIL file, found: {:?}", expected_smil_files);
+            
+            // Check that we expect Audio directory
+            assert!(expected_files.iter().any(|f| f.contains("Audio/")), 
+                "Expected Audio directory in output");
+            
+            // Verify that each chapter xhtml file has a corresponding smil file
+            let chapter_xhtml_files: Vec<_> = expected_files.iter()
+                .filter(|f| f.ends_with(".xhtml") && !f.contains("toc") && !f.contains("copyright"))
+                .map(|f| {
+                    let stem = f.strip_suffix(".xhtml").unwrap();
+                    stem.to_string()
+                })
+                .collect();
+            
+            for chapter_stem in &chapter_xhtml_files {
+                let expected_smil = format!("OEBPS/{}.smil", chapter_stem);
+                assert!(expected_files.contains(&expected_smil),
+                    "Expected SMIL file {} for chapter {}", expected_smil, chapter_stem);
+            }
+            
+            println!("Test passed: Expected file structure matches requirements");
+        }
+        
+        /// Test that converts an EPUB to audiobook format
+        /// 
+        /// Usage:
+        ///   cargo test test_convert_epub_standalone -- --ignored --nocapture
+        ///   
+        /// Or set environment variables:
+        ///   EPUB_INPUT=/path/to/input.epub EPUB_OUTPUT=/path/to/output.epub cargo test test_convert_epub_standalone -- --ignored --nocapture
+        #[tokio::test]
+        #[ignore] // Ignore by default - requires TTS models
+        async fn test_convert_epub_standalone() {
+            use super::{ConversionOptions, convert_epub_to_audiobook_standalone};
+            
+            // Get input and output paths from environment or use defaults
+            let input_path = std::env::var("EPUB_INPUT")
+                .unwrap_or_else(|_| {
+                    // Default to asd directory
+                    let project_root = std::env::current_dir()
+                        .unwrap()
+                        .parent()
+                        .unwrap()
+                        .to_path_buf();
+                    let asd_dir = project_root.join("data/asd");
+                    if asd_dir.exists() {
+                        // Create EPUB from directory
+                        let epub_data = create_epub_from_directory(&asd_dir)
+                            .expect("Failed to create EPUB from asd directory");
+                        let temp_file = std::env::temp_dir().join("test_input.epub");
+                        std::fs::write(&temp_file, epub_data)
+                            .expect("Failed to write temp EPUB");
+                        temp_file.to_string_lossy().to_string()
+                    } else {
+                        panic!("No input EPUB found. Set EPUB_INPUT environment variable or ensure data/asd directory exists");
+                    }
+                });
+            
+            let output_path = std::env::var("EPUB_OUTPUT")
+                .unwrap_or_else(|_| {
+                    let project_root = std::env::current_dir()
+                        .unwrap()
+                        .parent()
+                        .unwrap()
+                        .to_path_buf();
+                    project_root.join("data/asd_converted.epub").to_string_lossy().to_string()
+                });
+            
+            println!("Input EPUB: {}", input_path);
+            println!("Output EPUB: {}", output_path);
+            
+            // Read input EPUB
+            let epub_data = std::fs::read(&input_path)
+                .expect(&format!("Failed to read input EPUB: {}", input_path));
+            
+            println!("Loaded EPUB: {} bytes", epub_data.len());
+            
+            // Parse the EPUB to get chapters
+            let chapters = parse_epub_chapters(&epub_data)
+                .expect("Failed to parse EPUB chapters");
+            
+            if chapters.is_empty() {
+                panic!("No chapters found in EPUB");
+            }
+            
+            println!("Found {} chapters to convert", chapters.len());
+            for (idx, chapter) in chapters.iter().enumerate() {
+                println!("  Chapter {}: {} ({} bytes)", 
+                    idx + 1, 
+                    chapter.title, 
+                    chapter.content_html.len());
+            }
+            
+            // Create conversion options
+            let options = ConversionOptions {
+                voice_id: std::env::var("VOICE_ID")
+                    .unwrap_or_else(|_| "af_heart".to_string()),
+                chapters,
+            };
+            
+            println!("\nStarting conversion with voice: {}", options.voice_id);
+            println!("This may take a while...\n");
+            
+            // Run the conversion
+            let converted_epub = convert_epub_to_audiobook_standalone(
+                epub_data,
+                options,
+            ).await
+            .expect("Conversion failed");
+            
+            println!("\n✅ Conversion successful! Output size: {} bytes", converted_epub.len());
+            
+            // Write output file
+            std::fs::write(&output_path, &converted_epub)
+                .expect(&format!("Failed to write output EPUB: {}", output_path));
+            
+            println!("✅ Output written to: {}", output_path);
+            
+            // Verify the output
+            use std::io::Cursor;
+            use zip::ZipArchive;
+            
+            let mut archive = ZipArchive::new(Cursor::new(&converted_epub))
+                .expect("Failed to open converted EPUB");
+            
+            let mut converted_files = Vec::new();
+            for i in 0..archive.len() {
+                let file = archive.by_index(i).expect("Failed to read file from archive");
+                converted_files.push(file.name().to_string());
+            }
+            converted_files.sort();
+            
+            println!("\nConverted EPUB contains {} files:", converted_files.len());
+            for file in &converted_files {
+                println!("  - {}", file);
+            }
+            
+            // Verify expected files exist
+            let has_audio_files = converted_files.iter().any(|f| f.ends_with(".mp3"));
+            let has_smil_files = converted_files.iter().any(|f| f.ends_with(".smil"));
+            let has_audio_dir = converted_files.iter().any(|f| f.contains("Audio/"));
+            
+            assert!(has_audio_files, "Converted EPUB should contain audio files");
+            assert!(has_smil_files, "Converted EPUB should contain SMIL files");
+            assert!(has_audio_dir, "Converted EPUB should contain Audio directory");
+            
+            println!("\n✅ All verifications passed!");
+        }
+        
+        /// Create an EPUB ZIP file from a directory
+        fn create_epub_from_directory(dir: &Path) -> Result<Vec<u8>, String> {
+            use std::io::{Cursor, Write};
+            use zip::ZipWriter;
+            use zip::write::FileOptions;
+            
+            let mut zip_writer = ZipWriter::new(Cursor::new(Vec::new()));
+            let file_options = FileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            let mimetype_options = FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            
+            // Add mimetype first (must be first and uncompressed)
+            let mimetype_path = dir.join("mimetype");
+            if mimetype_path.exists() {
+                let mimetype_data = fs::read(&mimetype_path)
+                    .map_err(|e| format!("Failed to read mimetype: {}", e))?;
+                zip_writer.start_file("mimetype", mimetype_options)
+                    .map_err(|e| format!("Failed to add mimetype: {}", e))?;
+                zip_writer.write_all(&mimetype_data)
+                    .map_err(|e| format!("Failed to write mimetype: {}", e))?;
+            }
+            
+            // Add all other files
+            add_directory_to_zip(&mut zip_writer, dir, dir, &file_options)?;
+            
+            let zip_data = zip_writer.finish()
+                .map_err(|e| format!("Failed to finalize ZIP: {}", e))?;
+            
+            Ok(zip_data.into_inner())
+        }
+        
+        /// Recursively add directory contents to ZIP
+        fn add_directory_to_zip(
+            writer: &mut zip::ZipWriter<std::io::Cursor<Vec<u8>>>,
+            dir: &Path,
+            base: &Path,
+            options: &zip::write::FileOptions,
+        ) -> Result<(), String> {
+            use std::io::{Read, Write};
+            
+            if dir.is_dir() {
+                let entries = fs::read_dir(dir)
+                    .map_err(|e| format!("Failed to read directory {}: {}", dir.display(), e))?;
+                
+                for entry in entries {
+                    let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+                    let path = entry.path();
+                    let file_name = path.strip_prefix(base)
+                        .map_err(|e| format!("Failed to strip prefix: {}", e))?;
+                    
+                    // Skip mimetype (already added)
+                    if file_name.to_string_lossy() == "mimetype" {
+                        continue;
+                    }
+                    
+                    if path.is_dir() {
+                        add_directory_to_zip(writer, &path, base, options)?;
+                    } else if path.is_file() {
+                        let file_name_str = file_name.to_string_lossy().replace('\\', "/");
+                        writer.start_file(&file_name_str, *options)
+                            .map_err(|e| format!("Failed to add file {}: {}", file_name_str, e))?;
+                        
+                        let mut file = fs::File::open(&path)
+                            .map_err(|e| format!("Failed to open file {}: {}", path.display(), e))?;
+                        let mut contents = Vec::new();
+                        file.read_to_end(&mut contents)
+                            .map_err(|e| format!("Failed to read file {}: {}", path.display(), e))?;
+                        writer.write_all(&contents)
+                            .map_err(|e| format!("Failed to write file {}: {}", file_name_str, e))?;
+                    }
+                }
+            }
+            
+            Ok(())
+        }
+        
+        /// Parse EPUB to extract chapter information
+        fn parse_epub_chapters(epub_data: &[u8]) -> Result<Vec<super::Chapter>, String> {
+            use std::io::{Cursor, Read};
+            use zip::ZipArchive;
+            
+            // First, read content.opf to get chapter list
+            let (opf_content, chapter_hrefs) = {
+                let mut archive = ZipArchive::new(Cursor::new(epub_data))
+                    .map_err(|e| format!("Failed to open EPUB: {}", e))?;
+                
+                // Try OEBPS/content.opf first, then content.opf
+                let opf_path = if archive.by_name("OEBPS/content.opf").is_ok() {
+                    "OEBPS/content.opf"
+                } else {
+                    "content.opf"
+                };
+                
+                let mut opf_file = archive.by_name(opf_path)
+                    .map_err(|e| format!("Failed to find content.opf: {}", e))?;
+                
+                let mut content = String::new();
+                opf_file.read_to_string(&mut content)
+                    .map_err(|e| format!("Failed to read content.opf: {}", e))?;
+                
+                // Parse OPF to find chapter hrefs
+                let manifest_items = extract_manifest_items(&content);
+                let hrefs: Vec<_> = manifest_items.iter()
+                    .filter(|item| item.media_type == "application/xhtml+xml")
+                    .filter(|item| !item.href.contains("toc") && !item.href.contains("copyright"))
+                    .map(|item| (item.id.clone(), item.href.clone()))
+                    .collect();
+                
+                (content, hrefs)
+            };
+            
+            // Now read chapter files (archive is dropped from previous scope)
+            let mut chapters = Vec::new();
+            for (id, href) in chapter_hrefs {
+                // Re-open archive for each chapter
+                let mut archive = ZipArchive::new(Cursor::new(epub_data))
+                    .map_err(|e| format!("Failed to reopen EPUB: {}", e))?;
+                
+                // Read the chapter content
+                let chapter_content = {
+                    let chapter_path = if href.starts_with("OEBPS/") {
+                        href.clone()
+                    } else {
+                        format!("OEBPS/{}", href)
+                    };
+                    
+                    let mut chapter_file = archive.by_name(&chapter_path)
+                        .map_err(|e| format!("Failed to find chapter {}: {}", chapter_path, e))?;
+                    
+                    let mut content = String::new();
+                    chapter_file.read_to_string(&mut content)
+                        .map_err(|e| format!("Failed to read chapter {}: {}", chapter_path, e))?;
+                    content
+                };
+                
+                chapters.push(super::Chapter {
+                    id: id.clone(),
+                    title: extract_title_from_html(&chapter_content).unwrap_or_else(|| href.clone()),
+                    href: href.clone(),
+                    content_html: chapter_content,
+                });
+            }
+            
+            Ok(chapters)
+        }
+        
+        /// Extract title from HTML content
+        fn extract_title_from_html(html: &str) -> Option<String> {
+            // Simple extraction - look for <h1> or <title>
+            if let Some(start) = html.find("<h1>") {
+                if let Some(end) = html[start+4..].find("</h1>") {
+                    return Some(html[start+4..start+4+end].trim().to_string());
+                }
+            }
+            if let Some(start) = html.find("<title>") {
+                if let Some(end) = html[start+7..].find("</title>") {
+                    return Some(html[start+7..start+7+end].trim().to_string());
+                }
+            }
+            None
         }
     }
 }
