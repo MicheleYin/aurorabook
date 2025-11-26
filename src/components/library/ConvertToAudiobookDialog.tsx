@@ -8,7 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "../ui/select";
 import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
 import type { VoiceId } from "../../types/reader";
 
@@ -58,16 +58,14 @@ export function ConvertToAudiobookDialog({
                 </SelectTrigger>
                 <SelectContent>
                   {KOKORO_VOICE_GROUPS.map((group) => (
-                    <div key={group.label}>
-                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
-                        {group.label}
-                      </div>
+                    <SelectGroup key={group.label}>
+                      <SelectLabel>{group.label}</SelectLabel>
                       {group.voices.map((voice) => (
                         <SelectItem key={voice.id} value={voice.id}>
-                          {voice.name} ({voice.gender}) - {voice.summary}
+                          {voice.name}
                         </SelectItem>
                       ))}
-                    </div>
+                    </SelectGroup>
                   ))}
                 </SelectContent>
               </Select>
