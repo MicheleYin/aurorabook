@@ -1322,6 +1322,7 @@ function App() {
           bookId={activeBook.id}
           tracks={activeBook.audioTracks}
           bookTitle={activeBook.title}
+          sourcePath={activeBook.sourcePath}
           initialAudioState={activeBook.audioState}
           onProgress={(snapshot) => {
             updateBookAudioState(activeBook.id, snapshot);

@@ -162,7 +162,7 @@ export function ReaderPanel({
                 type="button"
                 variant="outline"
                 size="icon"
-                // className={enterExit(isAudioReopenVisible, "scaleFade")}
+                className={enterExit(isAudioReopenVisible, "scaleFade")}
                 onClick={onOpenAudioPlayer}
                 aria-label="Open audio player"
               >

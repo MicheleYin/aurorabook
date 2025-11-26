@@ -7,8 +7,9 @@ export type AudioTrack = {
   id: string;
   title: string;
   href: string;
-  url: string;
+  url?: string; // Optional - loaded lazily
   duration?: number;
+  _loading?: boolean; // Internal flag to track loading state
 };
 
 export type AudioSyncSegment = {

@@ -5,7 +5,7 @@
 
 import { parseEpub, type EpubBook } from "./epub-parser";
 import { getEpub } from "./epub-store";
-import type { Chapter } from "../types/reader";
+import type { Chapter, AudioTrack } from "../types/reader";
 import {
   normalizeChapterContent,
   sanitizeChapterHtml,
@@ -17,6 +17,9 @@ const LOADER_LOG_PREFIX = "[LazyChapterLoader]";
 
 // Cache for loaded chapters to avoid reloading
 const chapterCache = new Map<string, { contentHtml: string; plainText: string; wordCount: number }>();
+
+// Cache for loaded audio track URLs
+const audioTrackCache = new Map<string, string>();
 
 // Cache for parsed EPUB books (only metadata, not full content)
 const epubBookCache = new Map<string, EpubBook>();
@@ -34,8 +37,22 @@ export function clearBookCache(sourcePath: string): void {
     }
   });
   keysToDelete.forEach((key) => chapterCache.delete(key));
+  
+  // Clear all audio tracks for this book
+  const audioKeysToDelete: string[] = [];
+  audioTrackCache.forEach((_, key) => {
+    if (key.startsWith(`${bookId}:`)) {
+      audioKeysToDelete.push(key);
+    }
+  });
+  audioKeysToDelete.forEach((key) => audioTrackCache.delete(key));
+  
   epubBookCache.delete(bookId);
-  console.debug(`${LOADER_LOG_PREFIX} cleared cache for book`, { sourcePath, clearedChapters: keysToDelete.length });
+  console.debug(`${LOADER_LOG_PREFIX} cleared cache for book`, {
+    sourcePath,
+    clearedChapters: keysToDelete.length,
+    clearedAudioTracks: audioKeysToDelete.length,
+  });
 }
 
 /**
@@ -57,6 +74,15 @@ export function clearAllCachesExcept(sourcePath: string): void {
   });
   keysToDelete.forEach((key) => chapterCache.delete(key));
   
+  // Clear all audio track URLs except those for the specified book
+  const audioKeysToDelete: string[] = [];
+  audioTrackCache.forEach((_, key) => {
+    if (!key.startsWith(`${keepBookId}:`)) {
+      audioKeysToDelete.push(key);
+    }
+  });
+  audioKeysToDelete.forEach((key) => audioTrackCache.delete(key));
+  
   // Clear all EPUB book caches except the specified one
   epubBookCache.forEach((_, bookId) => {
     if (bookId !== keepBookId) {
@@ -68,6 +94,7 @@ export function clearAllCachesExcept(sourcePath: string): void {
   console.debug(`${LOADER_LOG_PREFIX} cleared all caches except book`, {
     keepSourcePath: sourcePath,
     clearedChapters,
+    clearedAudioTracks: audioKeysToDelete.length,
     clearedBooks,
   });
 }
@@ -310,6 +337,88 @@ export async function ensureChapterLoaded(
     });
     // Return chapter with loading flag cleared even on error
     return { ...chapter, _loading: false };
+  }
+}
+
+/**
+ * Load an audio track URL from EPUB
+ */
+export async function loadAudioTrackUrl(
+  sourcePath: string,
+  track: AudioTrack,
+): Promise<string> {
+  const cacheKey = `${sourcePath}:${track.href}`;
+  
+  // Check cache first
+  if (audioTrackCache.has(cacheKey)) {
+    const cachedUrl = audioTrackCache.get(cacheKey)!;
+    console.debug(`${LOADER_LOG_PREFIX} using cached audio track URL`, {
+      sourcePath,
+      href: track.href,
+    });
+    return cachedUrl;
+  }
+
+  try {
+    // Get EPUB book metadata
+    const epubBook = await getEpubBookMetadata(sourcePath);
+    if (!epubBook) {
+      throw new Error(`EPUB not found: ${sourcePath}`);
+    }
+
+    // Load audio file and create blob URL
+    const url = await epubBook.createUrl(track.href);
+    if (typeof url !== "string") {
+      throw new Error(`Failed to create URL for audio track: ${track.href}`);
+    }
+
+    // Cache the URL
+    audioTrackCache.set(cacheKey, url);
+    
+    console.debug(`${LOADER_LOG_PREFIX} loaded audio track URL`, {
+      sourcePath,
+      href: track.href,
+    });
+
+    return url;
+  } catch (error) {
+    console.error(`${LOADER_LOG_PREFIX} failed to load audio track URL`, {
+      sourcePath,
+      href: track.href,
+      error,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Ensure an audio track URL is loaded, loading it if necessary
+ */
+export async function ensureAudioTrackLoaded(
+  sourcePath: string,
+  track: AudioTrack,
+): Promise<AudioTrack> {
+  // If already loaded, return as-is
+  if (track.url) {
+    return track;
+  }
+
+  try {
+    const url = await loadAudioTrackUrl(sourcePath, track);
+    
+    return {
+      ...track,
+      url,
+      _loading: false,
+    };
+  } catch (error) {
+    console.error(`${LOADER_LOG_PREFIX} failed to ensure audio track loaded`, {
+      sourcePath,
+      href: track.href,
+      error,
+    });
+    // Return track with loading flag cleared even on error
+    return { ...track, _loading: false };
   }
 }
 

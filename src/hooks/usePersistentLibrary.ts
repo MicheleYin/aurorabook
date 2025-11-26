@@ -499,41 +499,26 @@ export function usePersistentLibrary(): PersistentLibrary {
         throw new Error("We couldn't extract any readable chapters from this ebook.");
       }
 
-      const audioTracks = (
-        await Promise.all(
-          Object.entries(manifestItems)
-            .filter(([, entry]) => entry.type?.startsWith("audio/"))
-            .map(async ([id, entry], trackIndex) => {
-              if (!entry.href) return null;
-              try {
-                const url = await epubBook.createUrl(entry.href);
-                if (typeof url !== "string") {
-                  return null;
-                }
-                const filename = entry.href.split("/").pop() ?? id;
-                const baseTitle = decodeURIComponent(filename)
-                  .replace(/\.[^/.]+$/, "")
-                  .replace(/[-_]+/g, " ")
-                  .trim();
-                const title = baseTitle.length ? baseTitle : `Track ${trackIndex + 1}`;
-                return {
-                  id: `${newBookId}-audio-${id}`,
-                  title,
-                  href: entry.href,
-                  url,
-                } as AudioTrack;
-              } catch (error) {
-                console.error("Could not load audio track", {
-                  href: entry.href,
-                  id,
-                  error: error instanceof Error ? error.message : String(error),
-                  stack: error instanceof Error ? error.stack : undefined,
-                });
-                return null;
-              }
-            }),
-        )
-      ).filter((track): track is AudioTrack => Boolean(track));
+      // Only extract audio track metadata, not URLs (lazy loading)
+      const audioTracks: AudioTrack[] = Object.entries(manifestItems)
+        .filter(([, entry]) => entry.type?.startsWith("audio/"))
+        .map(([id, entry], trackIndex) => {
+          if (!entry.href) return null;
+          const filename = entry.href.split("/").pop() ?? id;
+          const baseTitle = decodeURIComponent(filename)
+            .replace(/\.[^/.]+$/, "")
+            .replace(/[-_]+/g, " ")
+            .trim();
+          const title = baseTitle.length ? baseTitle : `Track ${trackIndex + 1}`;
+          // Create track with metadata only - URL will be loaded lazily
+          return {
+            id: `${newBookId}-audio-${id}`,
+            title,
+            href: entry.href,
+            // url will be loaded on demand
+          } as AudioTrack;
+        })
+        .filter((track): track is AudioTrack => Boolean(track));
 
       // Build audio sync map from SMIL files if available
       // Note: buildAudioSyncMap may need chapters with content, but we'll handle that lazily

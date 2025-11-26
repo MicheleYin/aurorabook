@@ -3,6 +3,7 @@ import { MoveVertical, Pause, Play, SkipBack, SkipForward, StepBack, StepForward
 
 import type { AudioTrack, BookAudioState } from "../../types/reader";
 import type { AudioProgressSnapshot } from "./types";
+import { ensureAudioTrackLoaded } from "../../lib/lazy-chapter-loader";
 import { Button } from "../ui/button";
 import {
   Select,
@@ -39,6 +40,7 @@ type ReaderAudioPlayerProps = {
   bookId?: string;
   tracks: AudioTrack[];
   bookTitle?: string;
+  sourcePath?: string; // Needed for lazy loading audio tracks
   initialAudioState?: BookAudioState;
   onProgress?: (snapshot: AudioProgressSnapshot) => void;
   onRestorationStateChange?: (isRestoring: boolean) => void;
@@ -52,6 +54,7 @@ export function ReaderAudioPlayer({
   bookId,
   tracks,
   bookTitle,
+  sourcePath,
   initialAudioState,
   onProgress,
   onRestorationStateChange,
@@ -90,6 +93,8 @@ export function ReaderAudioPlayer({
   const [scrubTime, setScrubTime] = useState<number | null>(null);
   const [isDismissing, setIsDismissing] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [loadedTracks, setLoadedTracks] = useState<Map<string, AudioTrack>>(new Map());
+  const [isLoadingTrack, setIsLoadingTrack] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isPlayingRef = useRef(false);
@@ -230,7 +235,12 @@ export function ReaderAudioPlayer({
         readyState: audio.readyState,
       });
       
-      setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
+      const newDuration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      setDuration(newDuration);
+      // Clear loading state once we have duration
+      if (newDuration > 0) {
+        setIsLoadingTrack(false);
+      }
       // Hook handles restoration via onTrackLoaded
       onTrackLoaded(audio);
       
@@ -390,85 +400,119 @@ export function ReaderAudioPlayer({
   // Load track when currentIndex changes
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || !currentTrack) {
+    if (!audio || !currentTrack || !sourcePath) {
       return;
     }
 
-    // Check if audio was playing BEFORE we change the source
-    // When we change audio.src, the browser automatically pauses it,
-    // so we need to capture the state before the change
-    // Also check isPlaying state in case the ref is stale (e.g., after track ended)
-    // When a track ends, audio.paused is true, but we want to continue playing
-    const audioWasPlaying = !audio.paused;
-    const refSaysPlaying = isPlayingRef.current;
-    const stateSaysPlaying = isPlaying;
-    const wasPlayingBeforeSourceChange = audioWasPlaying || refSaysPlaying || stateSaysPlaying;
-    
-    console.log("[Audio Player] Track loading effect triggered", {
-      trackId: currentTrack.id,
-      trackTitle: currentTrack.title,
-      trackIndex: currentIndex,
-      isPlayingRef: isPlayingRef.current,
-      isPlayingState: isPlaying,
-      audioPaused: audio.paused,
-      audioWasPlaying,
-      refSaysPlaying,
-      stateSaysPlaying,
-      wasPlayingBeforeSourceChange,
-      isRestoring: isRestoringRef.current,
-      audioReadyState: audio.readyState,
-    });
+    // Check if track is already loaded
+    const loadedTrack = loadedTracks.get(currentTrack.id);
+    const trackToUse = loadedTrack || currentTrack;
 
-    // Notify hook about track change
-    onTrackChanged(currentTrack.id);
+    // If track doesn't have a URL, load it lazily
+    if (!trackToUse.url) {
+      setIsLoadingTrack(true);
+      ensureAudioTrackLoaded(sourcePath, currentTrack)
+        .then((loaded) => {
+          setLoadedTracks((prev) => {
+            const next = new Map(prev);
+            next.set(loaded.id, loaded);
+            return next;
+          });
+          setIsLoadingTrack(false);
+          
+          // Now set the audio source with the loaded URL
+          const finalTrack = loaded;
+          setupAudioSource(audio, finalTrack);
+        })
+        .catch((error) => {
+          console.error("[Audio Player] Failed to load audio track", error);
+          setIsLoadingTrack(false);
+        });
+      return;
+    }
 
-    // Reset the restoration flag when starting a new track load
-    trackLoadedForRestorationRef.current = false;
+    // Track already has URL, proceed with setup
+    setupAudioSource(audio, trackToUse);
 
-    // Store whether we should autoplay for the canplay handler
-    // Use wasPlayingBeforeSourceChange to handle cases where the track changes
-    // from chapter switching (the audio element might be paused after src change)
-    const shouldAutoPlay = wasPlayingBeforeSourceChange;
-    
-    // Update the ref to reflect that we want to continue playing if we were playing
-    if (shouldAutoPlay) {
-      isPlayingRef.current = true;
-      setIsPlaying(true);
-      console.log("[Audio Player] Preserved playing state for autoplay", {
-        wasPlayingBeforeSourceChange,
-        shouldAutoPlay,
+    function setupAudioSource(audio: HTMLAudioElement, track: AudioTrack) {
+      // Check if audio was playing BEFORE we change the source
+      // When we change audio.src, the browser automatically pauses it,
+      // so we need to capture the state before the change
+      // Also check isPlaying state in case the ref is stale (e.g., after track ended)
+      // When a track ends, audio.paused is true, but we want to continue playing
+      const audioWasPlaying = !audio.paused;
+      const refSaysPlaying = isPlayingRef.current;
+      const stateSaysPlaying = isPlaying;
+      const wasPlayingBeforeSourceChange = audioWasPlaying || refSaysPlaying || stateSaysPlaying;
+      
+      console.log("[Audio Player] Track loading effect triggered", {
+        trackId: track.id,
+        trackTitle: track.title,
+        trackIndex: currentIndex,
         isPlayingRef: isPlayingRef.current,
+        isPlayingState: isPlaying,
+        audioPaused: audio.paused,
+        audioWasPlaying,
+        refSaysPlaying,
+        stateSaysPlaying,
+        wasPlayingBeforeSourceChange,
+        isRestoring: isRestoringRef.current,
+        audioReadyState: audio.readyState,
       });
-    }
 
-    // Don't pause - just change the source and let it continue playing
-    console.log("[Audio Player] Setting new audio source", {
-      url: currentTrack.url,
-      previousSrc: audio.src,
-    });
-    audio.src = currentTrack.url;
-    audio.load();
-    audio.playbackRate = playbackRate;
-    console.log("[Audio Player] Audio loaded, readyState:", audio.readyState);
-    
-    // Reset duration while loading
-    setDuration(0);
-    
-    // Only reset time if we're not restoring
-    // Restoration will be handled in loadedmetadata/canplay via onTrackLoaded
-    // Use ref to avoid re-running effect when isRestoring changes
-    if (!isRestoringRef.current) {
-      audio.currentTime = 0;
-      setCurrentTime(0);
-      currentTimeRef.current = 0;
-    } else {
-      // Mark that we're loading this track for restoration
-      trackLoadedForRestorationRef.current = true;
-    }
-    
-    if (shouldAutoPlay) {
-      // Keep playing state as true (don't flicker the button)
-      // The audio element will be paused when src changes, but we'll resume it when ready
+      // Notify hook about track change
+      onTrackChanged(track.id);
+
+      // Reset the restoration flag when starting a new track load
+      trackLoadedForRestorationRef.current = false;
+
+      // Store whether we should autoplay for the canplay handler
+      // Use wasPlayingBeforeSourceChange to handle cases where the track changes
+      // from chapter switching (the audio element might be paused after src change)
+      const shouldAutoPlay = wasPlayingBeforeSourceChange;
+      
+      // Update the ref to reflect that we want to continue playing if we were playing
+      if (shouldAutoPlay) {
+        isPlayingRef.current = true;
+        setIsPlaying(true);
+        console.log("[Audio Player] Preserved playing state for autoplay", {
+          wasPlayingBeforeSourceChange,
+          shouldAutoPlay,
+          isPlayingRef: isPlayingRef.current,
+        });
+      }
+
+      // Don't pause - just change the source and let it continue playing
+      console.log("[Audio Player] Setting new audio source", {
+        url: track.url,
+        previousSrc: audio.src,
+      });
+      audio.src = track.url!;
+      audio.load();
+      audio.playbackRate = playbackRate;
+      console.log("[Audio Player] Audio loaded, readyState:", audio.readyState);
+      
+      // Reset duration while loading (but keep loading state)
+      // Don't reset duration if we're just changing tracks and already have duration
+      if (!track.url) {
+        setDuration(0);
+      }
+      
+      // Only reset time if we're not restoring
+      // Restoration will be handled in loadedmetadata/canplay via onTrackLoaded
+      // Use ref to avoid re-running effect when isRestoring changes
+      if (!isRestoringRef.current) {
+        audio.currentTime = 0;
+        setCurrentTime(0);
+        currentTimeRef.current = 0;
+      } else {
+        // Mark that we're loading this track for restoration
+        trackLoadedForRestorationRef.current = true;
+      }
+      
+      if (shouldAutoPlay) {
+        // Keep playing state as true (don't flicker the button)
+        // The audio element will be paused when src changes, but we'll resume it when ready
       
       // Check if audio is already ready (cached content)
       const tryPlay = () => {
@@ -588,7 +632,8 @@ export function ReaderAudioPlayer({
       setIsPlaying(false);
       isPlayingRef.current = false;
     }
-  }, [currentTrack, playbackRate, onTrackChanged]);
+    }
+  }, [currentIndex, currentTrack, sourcePath, loadedTracks, playbackRate, isPlaying, onTrackChanged]);
 
   useEffect(() => {
     setIsScrubbing(false);
@@ -1036,7 +1081,7 @@ export function ReaderAudioPlayer({
           ) : null}
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs tabular-nums text-muted-foreground">
+          <span className="text-xs tabular-nums text-muted-foreground min-w-[3rem] text-right">
             {formatTime(displayedCurrentTime)}
           </span>
           <Slider
@@ -1052,8 +1097,29 @@ export function ReaderAudioPlayer({
             onPointerUp={handleScrubPointerUp}
             aria-label="Seek audio"
             />
-          <span className="text-xs tabular-nums text-muted-foreground">
-            {formatTime(duration)}
+          <span className="text-xs tabular-nums text-muted-foreground min-w-[5rem] relative">
+            {(isLoadingTrack || (duration === 0 && currentTrack && !currentTrack.url)) ? (
+              <span 
+                key="loading"
+                className="opacity-50 inline-block transition-opacity duration-300 ease-in-out"
+              >
+                --:--
+              </span>
+            ) : duration > 0 ? (
+              <span
+                key="duration"
+                className="inline-block transition-opacity duration-300 ease-in-out animate-in fade-in"
+              >
+                {formatTime(duration)}
+              </span>
+            ) : (
+              <span
+                key="current-only"
+                className="inline-block transition-opacity duration-300 ease-in-out animate-in fade-in"
+              >
+                {formatTime(displayedCurrentTime)}
+              </span>
+            )}
           </span>
         </div>
       </div>
