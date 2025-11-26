@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { Check } from "lucide-react";
+import { useEffect, useRef, useState, useMemo } from "react";
+import { Check, Play, Pause, Volume2 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { KOKORO_VOICE_GROUPS } from "../constants/kokoro";
 import type { AppSettings } from "../types/settings";
 import type { UITheme } from "../types/ui";
@@ -14,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
+import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { anim } from "../lib/animations";
 
@@ -25,6 +27,9 @@ type SettingsPanelProps = {
 export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps) {
   const [showSaved, setShowSaved] = useState(false);
   const [previousSettings, setPreviousSettings] = useState(settings);
+  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     // Check if settings changed
@@ -39,6 +44,87 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
   }, [settings, previousSettings]);
 
   const handleThemeChange = (theme: UITheme) => onSettingsChange({ theme });
+
+  // Find the currently selected voice
+  const selectedVoice = useMemo(() => {
+    const allVoices = KOKORO_VOICE_GROUPS.flatMap(group => group.voices);
+    return allVoices.find(voice => voice.id === settings.ttsVoiceId);
+  }, [settings.ttsVoiceId]);
+
+  const handlePlaySample = async (voiceId: string, sampleUrl: string) => {
+    
+    // If clicking the same voice that's playing, pause it
+    if (playingVoiceId === voiceId && audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setPlayingVoiceId(null);
+      return;
+    }
+    
+    // Stop any currently playing audio
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+    
+    // Clean up previous blob URL
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
+    }
+    
+    try {
+      // Load resource file from bundle (sampleUrl is like "voice-samples/af_heart.mp3")
+      const fileData = await invoke<number[]>("read_resource_file", {
+        resourcePath: sampleUrl,
+      });
+      
+      // Convert number array to Uint8Array
+      const uint8Array = new Uint8Array(fileData);
+      
+      // Create blob URL
+      const blob = new Blob([uint8Array], { type: "audio/mpeg" });
+      const blobUrl = URL.createObjectURL(blob);
+      blobUrlRef.current = blobUrl;
+      
+      // Create new audio element if needed
+      if (!audioRef.current) {
+        audioRef.current = new Audio();
+        audioRef.current.addEventListener("ended", () => {
+          setPlayingVoiceId(null);
+        });
+        audioRef.current.addEventListener("error", () => {
+          console.error("Failed to play voice sample:", sampleUrl);
+          setPlayingVoiceId(null);
+        });
+      }
+      
+      // Play the new sample
+      audioRef.current.src = blobUrl;
+      audioRef.current.play().catch((error) => {
+        console.error("Error playing audio:", error);
+        setPlayingVoiceId(null);
+      });
+      setPlayingVoiceId(voiceId);
+    } catch (error) {
+      console.error("Failed to load voice sample:", error);
+      setPlayingVoiceId(null);
+    }
+  };
+
+  // Cleanup audio and blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
+    };
+  }, []);
 
   return (
     <div className="flex h-full flex-col gap-6">
@@ -99,12 +185,7 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
                         <SelectLabel>{group.label}</SelectLabel>
                         {group.voices.map((voice) => (
                           <SelectItem key={voice.id} value={voice.id}>
-                            <div className="flex flex-col">
-                              <span className="font-medium">{voice.name}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {voice.languageTag.toUpperCase()} · {voice.gender} · {voice.summary}
-                              </span>
-                            </div>
+                            {voice.name}
                           </SelectItem>
                         ))}
                       </SelectGroup>
@@ -113,6 +194,53 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
                 </Select>
               </div>
             </div>
+
+            {/* Voice Preview Component */}
+            {selectedVoice && (
+              <div className="rounded-lg border bg-gradient-to-br from-muted/50 to-muted/30 p-4 transition-all duration-300">
+                <div className="flex items-start gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Volume2 className="h-4 w-4 text-muted-foreground" />
+                      <h4 className="font-semibold text-sm">Voice Preview</h4>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="font-medium text-base">{selectedVoice.name}</p>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span className="px-2 py-0.5 rounded-full bg-background/60 border border-border/40">
+                          {selectedVoice.languageTag.toUpperCase()}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full bg-background/60 border border-border/40">
+                          {selectedVoice.gender}
+                        </span>
+                        <span className="text-muted-foreground/80">{selectedVoice.summary}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="lg"
+                    className={cn(
+                      "shrink-0 gap-2 min-w-[140px] justify-center"
+                    )}
+                    onClick={() => handlePlaySample(selectedVoice.id, selectedVoice.sampleUrl)}
+                    aria-label={`Play sample for ${selectedVoice.name}`}
+                  >
+                    {playingVoiceId === selectedVoice.id ? (
+                      <>
+                        <Pause className="h-4 w-4" />
+                        <span>Pause</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-4 w-4" />
+                        <span>Play</span>
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

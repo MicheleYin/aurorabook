@@ -11,6 +11,7 @@ export type KokoroVoiceOption = {
   gender: "Female" | "Male";
   languageTag: string;
   summary: string;
+  sampleUrl: string;
 };
 
 export type KokoroVoiceGroup = {
@@ -25,6 +26,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-US",
     summary: "Expressive default, Grade A",
+    sampleUrl: "voice-samples/af_heart.mp3",
   },
   {
     id: "af_alloy",
@@ -32,6 +34,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-US",
     summary: "Bright & steady, Grade C",
+    sampleUrl: "voice-samples/af_alloy.mp3",
   },
   {
     id: "af_aoede",
@@ -39,6 +42,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-US",
     summary: "Balanced tone, Grade C+",
+    sampleUrl: "voice-samples/af_aoede.mp3",
   },
   {
     id: "af_bella",
@@ -46,6 +50,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-US",
     summary: "Warm storyteller, Grade A-",
+    sampleUrl: "voice-samples/af_bella.mp3",
   },
   {
     id: "af_jessica",
@@ -53,6 +58,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-US",
     summary: "Soft conversational, Grade D",
+    sampleUrl: "voice-samples/af_jessica.mp3",
   },
   {
     id: "af_kore",
@@ -60,6 +66,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-US",
     summary: "Neutral & calm, Grade C+",
+    sampleUrl: "voice-samples/af_kore.mp3",
   },
   {
     id: "af_nicole",
@@ -67,6 +74,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-US",
     summary: "Headphone-ready, Grade B-",
+    sampleUrl: "voice-samples/af_nicole.mp3",
   },
   {
     id: "af_nova",
@@ -74,6 +82,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-US",
     summary: "Friendly narrator, Grade C",
+    sampleUrl: "voice-samples/af_nova.mp3",
   },
   {
     id: "af_river",
@@ -81,6 +90,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-US",
     summary: "Airy light tone, Grade D",
+    sampleUrl: "voice-samples/af_river.mp3",
   },
   {
     id: "af_sarah",
@@ -88,6 +98,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-US",
     summary: "Clear generalist, Grade C+",
+    sampleUrl: "voice-samples/af_sarah.mp3",
   },
   {
     id: "af_sky",
@@ -95,6 +106,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-US",
     summary: "Crisp & bright, Grade C-",
+    sampleUrl: "voice-samples/af_sky.mp3",
   },
   {
     id: "am_adam",
@@ -102,6 +114,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Male",
     languageTag: "en-US",
     summary: "Casual tenor, Grade F+",
+    sampleUrl: "voice-samples/am_adam.mp3",
   },
   {
     id: "am_echo",
@@ -109,6 +122,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Male",
     languageTag: "en-US",
     summary: "Even delivery, Grade D",
+    sampleUrl: "voice-samples/am_echo.mp3",
   },
   {
     id: "am_eric",
@@ -116,6 +130,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Male",
     languageTag: "en-US",
     summary: "Relaxed & warm, Grade D",
+    sampleUrl: "voice-samples/am_eric.mp3",
   },
   {
     id: "am_fenrir",
@@ -123,6 +138,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Male",
     languageTag: "en-US",
     summary: "Deep & bold, Grade C+",
+    sampleUrl: "voice-samples/am_fenrir.mp3",
   },
   {
     id: "am_liam",
@@ -130,6 +146,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Male",
     languageTag: "en-US",
     summary: "Bright tenor, Grade D",
+    sampleUrl: "voice-samples/am_liam.mp3",
   },
   {
     id: "am_michael",
@@ -137,6 +154,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Male",
     languageTag: "en-US",
     summary: "Presenter feel, Grade C+",
+    sampleUrl: "voice-samples/am_michael.mp3",
   },
   {
     id: "am_onyx",
@@ -144,6 +162,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Male",
     languageTag: "en-US",
     summary: "Neutral & modern, Grade D",
+    sampleUrl: "voice-samples/am_onyx.mp3",
   },
   {
     id: "am_puck",
@@ -151,6 +170,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Male",
     languageTag: "en-US",
     summary: "Playful narrator, Grade C+",
+    sampleUrl: "voice-samples/am_puck.mp3",
   },
   {
     id: "am_santa",
@@ -158,6 +178,7 @@ const americanVoices: KokoroVoiceOption[] = [
     gender: "Male",
     languageTag: "en-US",
     summary: "Cheerful bass, Grade D-",
+    sampleUrl: "voice-samples/am_santa.mp3",
   },
 ];
 
@@ -168,6 +189,7 @@ const britishVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-GB",
     summary: "Light RP accent, Grade D",
+    sampleUrl: "voice-samples/bf_alice.mp3",
   },
   {
     id: "bf_emma",
@@ -175,6 +197,7 @@ const britishVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-GB",
     summary: "Premium narrator, Grade B-",
+    sampleUrl: "voice-samples/bf_emma.mp3",
   },
   {
     id: "bf_isabella",
@@ -182,6 +205,7 @@ const britishVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-GB",
     summary: "Polished neutral, Grade C",
+    sampleUrl: "voice-samples/bf_isabella.mp3",
   },
   {
     id: "bf_lily",
@@ -189,6 +213,7 @@ const britishVoices: KokoroVoiceOption[] = [
     gender: "Female",
     languageTag: "en-GB",
     summary: "Soft & friendly, Grade D",
+    sampleUrl: "voice-samples/bf_lily.mp3",
   },
   {
     id: "bm_daniel",
@@ -196,6 +221,7 @@ const britishVoices: KokoroVoiceOption[] = [
     gender: "Male",
     languageTag: "en-GB",
     summary: "Warm storyteller, Grade D",
+    sampleUrl: "voice-samples/bm_daniel.mp3",
   },
   {
     id: "bm_fable",
@@ -203,6 +229,7 @@ const britishVoices: KokoroVoiceOption[] = [
     gender: "Male",
     languageTag: "en-GB",
     summary: "Dramatic baritone, Grade C",
+    sampleUrl: "voice-samples/bm_fable.mp3",
   },
   {
     id: "bm_george",
@@ -210,6 +237,7 @@ const britishVoices: KokoroVoiceOption[] = [
     gender: "Male",
     languageTag: "en-GB",
     summary: "Clean RP read, Grade C",
+    sampleUrl: "voice-samples/bm_george.mp3",
   },
   {
     id: "bm_lewis",
@@ -217,6 +245,7 @@ const britishVoices: KokoroVoiceOption[] = [
     gender: "Male",
     languageTag: "en-GB",
     summary: "Relaxed delivery, Grade D+",
+    sampleUrl: "voice-samples/bm_lewis.mp3",
   },
 ];
 

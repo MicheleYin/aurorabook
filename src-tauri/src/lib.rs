@@ -14,6 +14,46 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+/// Read a resource file and return its contents as bytes
+/// Useful for loading bundled resources like voice samples
+#[tauri::command]
+async fn read_resource_file(
+    resource_path: String,
+    app: tauri::AppHandle,
+) -> Result<Vec<u8>, String> {
+    use std::fs;
+    
+    // Get resource file path from bundle
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("Failed to get resource dir: {}", e))?;
+    
+    // Try multiple possible resource locations (dev vs production)
+    let mut possible_paths = vec![
+        resource_dir.join(&resource_path),
+        resource_dir.join("resources").join(&resource_path),
+    ];
+    
+    // Add dev mode path if available
+    if let Ok(current_dir) = std::env::current_dir() {
+        possible_paths.push(current_dir.join("src-tauri").join("resources").join(&resource_path));
+        possible_paths.push(current_dir.join("resources").join(&resource_path));
+    }
+    
+    for path in &possible_paths {
+        if path.exists() && path.is_file() {
+            return fs::read(path)
+                .map_err(|e| format!("Failed to read resource file {:?}: {}", path, e));
+        }
+    }
+    
+    Err(format!(
+        "Resource file {} not found in any expected location. Checked: {:?}",
+        resource_path, possible_paths
+    ))
+}
+
 // Copy bundled resource file to app data directory
 #[tauri::command]
 async fn copy_resource_file(
@@ -581,7 +621,8 @@ pub fn run() {
             copy_resource_file,
             copy_directory,
             convert_pcm_to_mp3,
-            convert_epub_to_audiobook
+            convert_epub_to_audiobook,
+            read_resource_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -955,7 +996,7 @@ mod tests {
 
 
     /// Helper function to save audio samples as WAV file
-    fn save_audio_as_wav(audio_samples: &[f32], sample_rate: u32, file_path: &str) -> Result<(), String> {
+    pub fn save_audio_as_wav(audio_samples: &[f32], sample_rate: u32, file_path: &str) -> Result<(), String> {
         use std::fs::File;
         use std::io::Write;
         
@@ -1551,6 +1592,205 @@ mod tests {
                 panic!("TTS generation failed with quantized model: {}", e);
             }
         }
+    }
+
+    /// Generate voice samples for all Kokoro voices
+    /// Run with: cargo test --test generate_voice_samples -- --nocapture
+    /// Or: cargo test generate_voice_samples -- --nocapture --ignored
+    #[tokio::test]
+    #[ignore] // Ignore by default - only run when explicitly requested
+    async fn generate_voice_samples() {
+        use std::fs;
+        use std::path::PathBuf;
+        
+        println!("\n🎤 Generating voice samples for all Kokoro voices");
+        println!("{}", "=".repeat(60));
+        
+        // Find ONNX model file
+        let onnx_model = find_onnx_model();
+        if onnx_model.is_none() {
+            println!("⚠️ Skipping - kokoro-v1.0.onnx not found");
+            println!("   Set KOKORO_MODEL_DIR env var or ensure kokoro-v1.0.onnx is in resources directory");
+            return;
+        }
+        let onnx_model = onnx_model.unwrap();
+        let model_path_str = onnx_model.to_str().unwrap();
+        println!("   ONNX model: {}", model_path_str);
+        
+        // Find voices file
+        let resources_dir = find_resources_dir();
+        if resources_dir.is_none() {
+            println!("⚠️ Skipping - resources directory not found");
+            return;
+        }
+        let voices_path = find_voices_file(&resources_dir.unwrap());
+        if voices_path.is_none() {
+            println!("⚠️ Skipping - voices-v1.0.bin not found");
+            return;
+        }
+        let voices_path = voices_path.unwrap();
+        let voices_path_str = voices_path.to_str().unwrap();
+        println!("   Voices file: {}", voices_path_str);
+        
+        // Create output directory
+        // Handle both cases: running from project root or from src-tauri directory
+        let output_dir = if let Ok(current_dir) = std::env::current_dir() {
+            if current_dir.ends_with("src-tauri") {
+                // Running from src-tauri directory
+                current_dir.join("resources").join("voice-samples")
+            } else {
+                // Running from project root
+                current_dir.join("src-tauri").join("resources").join("voice-samples")
+            }
+        } else {
+            PathBuf::from("resources/voice-samples")
+        };
+        
+        fs::create_dir_all(&output_dir)
+            .expect("Failed to create output directory");
+        println!("   Output directory: {}", output_dir.display());
+        
+        // All voice IDs
+        let voices = vec![
+            // American voices
+            "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica",
+            "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
+            "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam",
+            "am_michael", "am_onyx", "am_puck", "am_santa",
+            // British voices
+            "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
+            "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+        ];
+        
+        let sample_text = "Hello, this is a sample of my voice. I hope you enjoy listening to it.";
+        
+        println!("\n📦 Initializing TTS engine...");
+        let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+            model_path_str,
+            voices_path_str,
+            1,
+        ).await;
+        
+        println!("✅ Engine initialized\n");
+        
+        // Generate samples for all voices
+        for (i, voice_id) in voices.iter().enumerate() {
+            println!("[{}/{}] Generating {}...", i + 1, voices.len(), voice_id);
+            
+            // Get a new model instance for each voice (or clone if needed)
+            let model_instance = engine.get_model_instance(0);
+            
+            match engine.tts_raw_audio_with_instance(
+                sample_text,
+                "en",
+                voice_id,
+                1.0,
+                None,
+                None,
+                None,
+                None,
+                model_instance,
+            ) {
+                Ok(audio_samples) => {
+                    // Convert f32 samples to 16-bit PCM bytes
+                    let mut pcm_bytes = Vec::with_capacity(audio_samples.len() * 2);
+                    for sample in &audio_samples {
+                        let clamped = sample.max(-1.0).min(1.0);
+                        let pcm_value = if clamped < 0.0 {
+                            (clamped * 32768.0) as i16
+                        } else {
+                            (clamped * 32767.0) as i16
+                        };
+                        pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
+                    }
+                    
+                    // Convert PCM to MP3 (64 kbps for voice samples)
+                    // Use the same logic as the convert_pcm_to_mp3 command
+                    use lame::Lame;
+                    
+                    let bitrate_kbps = 64;
+                    let num_samples = pcm_bytes.len() / 2;
+                    let mut pcm_samples = Vec::with_capacity(num_samples);
+                    for chunk in pcm_bytes.chunks_exact(2) {
+                        let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
+                        pcm_samples.push(sample);
+                    }
+                    
+                    let mut encoder = match Lame::new() {
+                        Some(e) => e,
+                        None => {
+                            println!("   ❌ Failed to initialize LAME encoder");
+                            continue;
+                        }
+                    };
+                    
+                    if let Err(e) = encoder.set_sample_rate(24000) {
+                        println!("   ❌ Failed to set sample rate: {:?}", e);
+                        continue;
+                    }
+                    if let Err(e) = encoder.set_channels(1) {
+                        println!("   ❌ Failed to set channels: {:?}", e);
+                        continue;
+                    }
+                    if let Err(e) = encoder.set_quality(2) {
+                        println!("   ❌ Failed to set quality: {:?}", e);
+                        continue;
+                    }
+                    if let Err(e) = encoder.set_kilobitrate(bitrate_kbps as i32) {
+                        println!("   ❌ Failed to set bitrate: {:?}", e);
+                        continue;
+                    }
+                    if let Err(e) = encoder.init_params() {
+                        println!("   ❌ Failed to initialize encoder parameters: {:?}", e);
+                        continue;
+                    }
+                    
+                    let buffer_size = (pcm_samples.len() as f64 * 1.25) as usize + 7200;
+                    let mut mp3_buffer = vec![0u8; buffer_size];
+                    let encoded_size = match encoder.encode(&pcm_samples, &pcm_samples, &mut mp3_buffer) {
+                        Ok(size) => size,
+                        Err(e) => {
+                            println!("   ❌ Failed to encode audio: {:?}", e);
+                            continue;
+                        }
+                    };
+                    
+                    let mut mp3_data = Vec::from(&mp3_buffer[..encoded_size]);
+                    let flush_size = match encoder.encode(&[], &[], &mut mp3_buffer) {
+                        Ok(size) => size,
+                        Err(e) => {
+                            println!("   ❌ Failed to flush encoder: {:?}", e);
+                            continue;
+                        }
+                    };
+                    if flush_size > 0 {
+                        mp3_data.extend_from_slice(&mp3_buffer[..flush_size]);
+                    }
+                    
+                    if mp3_data.is_empty() {
+                        println!("   ❌ MP3 encoding produced no output");
+                    } else {
+                        let filename = format!("{}.mp3", voice_id);
+                        let output_path = output_dir.join(&filename);
+                        
+                        fs::write(&output_path, &mp3_data)
+                            .expect(&format!("Failed to write MP3 file: {}", output_path.display()));
+                        
+                        let file_size_kb = mp3_data.len() as f64 / 1024.0;
+                        println!("   ✅ Generated: {} ({:.1} KB)", filename, file_size_kb);
+                    }
+                }
+                Err(e) => {
+                    println!("   ❌ Failed to generate audio: {}", e);
+                }
+            }
+            
+            // Small delay to avoid overwhelming the system
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+        
+        println!("\n✅ Completed! Generated {} voice samples in {}", voices.len(), output_dir.display());
+        println!("   Files are ready to be bundled with the app.");
     }
 
     #[tokio::test]
