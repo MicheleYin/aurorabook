@@ -14,21 +14,30 @@ if [ ! -f "${IPA_PATH}" ]; then
 fi
 
 echo "📱 Checking for connected devices..."
-DEVICES=$(xcrun devicectl list devices 2>/dev/null | grep "connected" | head -1)
+# Look for devices that are connected or available (paired devices show as "available")
+DEVICE_INFO=$(xcrun devicectl list devices 2>/dev/null | grep -E "(connected|available)" | grep -v "unavailable" | head -1)
 
-if [ -z "${DEVICES}" ]; then
+if [ -z "${DEVICE_INFO}" ]; then
     echo "❌ Error: No connected iOS device found"
     echo "   Please connect your iPhone via USB and ensure it's unlocked"
+    echo ""
+    echo "Available devices:"
+    xcrun devicectl list devices 2>/dev/null || true
     exit 1
 fi
 
-echo "✅ Found connected device"
+# Extract device identifier (UUID) from the device info
+# Format: Name  Hostname  Identifier  State  Model
+DEVICE_ID=$(echo "${DEVICE_INFO}" | awk '{print $3}')
+DEVICE_NAME=$(echo "${DEVICE_INFO}" | awk '{print $1}')
+
+echo "✅ Found connected device: ${DEVICE_NAME} (${DEVICE_ID})"
 echo ""
 echo "Installing AuroraBook IPA..."
 echo ""
 
 # Try to install - will show helpful error if Developer Mode is disabled
-if xcrun devicectl device install app "${IPA_PATH}" 2>&1; then
+if xcrun devicectl device install app --device "${DEVICE_ID}" "${IPA_PATH}" 2>&1; then
     echo ""
     echo "✅ Installation successful!"
     echo ""

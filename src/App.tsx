@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { HiddenFileInput } from "./components/HiddenFileInput";
 import { LibraryPanel } from "./components/LibraryPanel";
 import type {
   LibraryFilterOption,
@@ -32,7 +31,6 @@ import { convertEpubToAudiobook } from "./lib/audiobook-converter";
 import { getEpub } from "./lib/epub-store";
 import type { VoiceId } from "./types/reader";
 import type { Book } from "./types/reader";
-import { isIOS } from "./lib/is-tauri";
 
 const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   theme: "system",
@@ -52,7 +50,6 @@ function App() {
     isHydrated,
     isImporting,
     importFromDialog,
-    handleWebFileSelection,
     ingestEpub,
   } = usePersistentLibrary();
 
@@ -346,7 +343,6 @@ function App() {
   const manualChapterSelectionRef = useRef<{ chapterId: string; timestamp: number } | null>(null);
   const previousAutoScrollEnabledRef = useRef<boolean | null>(null);
   const explicitlyDisabledRef = useRef<boolean>(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastAudioBookIdRef = useRef<string | null>(null);
   const rebuildingSyncMapRef = useRef<Set<string>>(new Set());
   const previousViewRef = useRef<AppView>(activeView);
@@ -1107,7 +1103,7 @@ function App() {
     
     const result = await importFromDialog();
     if (!result) {
-      fileInputRef.current?.click();
+      // User cancelled or not in Tauri environment
       return;
     }
     
@@ -1131,6 +1127,27 @@ function App() {
   }, [importFromDialog, isImporting, isConverting]);
 
   const handleDeleteBook = useCallback(async (bookId: string) => {
+      // Show native confirmation dialog
+      const isTauri = typeof window !== "undefined" &&
+        typeof (window as typeof window & { __TAURI_INTERNALS__?: { invoke?: unknown } })
+          .__TAURI_INTERNALS__?.invoke === "function";
+      
+      if (isTauri) {
+        const { ask } = await import("@tauri-apps/plugin-dialog");
+        const bookToDelete = library.find((book) => book.id === bookId);
+        const confirmed = await ask(
+          `Are you sure you want to delete "${bookToDelete?.title ?? "this book"}"? This action cannot be undone.`,
+          {
+            title: "Delete Book",
+            kind: "warning",
+          }
+        );
+        
+        if (!confirmed) {
+          return;
+        }
+      }
+      
       // If this book is currently being converted, cancel the conversion
       if (convertingBookIdRef.current === bookId && conversionAbortControllerRef.current) {
         conversionAbortControllerRef.current.abort();
@@ -1296,24 +1313,6 @@ function App() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <HiddenFileInput
-        ref={fileInputRef}
-        accept={isIOS() ? "*/*" : ".epub,application/epub+zip"}
-        aria-label="Select an EPUB file to import"
-        aria-hidden="true"
-        tabIndex={-1}
-        onChange={async (e) => {
-          const result = await handleWebFileSelection(e);
-          if (result && "book" in result && "buffer" in result) {
-            const { book, buffer } = result;
-            // Check if book needs conversion (no audio tracks)
-            if (book.audioTracks.length === 0) {
-              setPendingBookForConversion({ book, buffer });
-              setShowConvertDialog(true);
-            }
-          }
-        }}
-      />
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-6 pb-28 sm:px-6 lg:px-8">
         <div 
           className={cn(

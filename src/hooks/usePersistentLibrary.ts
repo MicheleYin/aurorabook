@@ -1,6 +1,7 @@
 import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
+import { isIOS } from "../lib/is-tauri";
 import { parseEpub } from "../lib/epub-parser";
 import { getEpub, storeOriginalEpub } from "../lib/epub-store";
 
@@ -1003,10 +1004,20 @@ export function usePersistentLibrary(): PersistentLibrary {
     try {
       setIsImporting(true);
 
-      const selection = await open({
-        multiple: false,
-        filters: [{ name: "EPUB files", extensions: ["epub"] }],
-      });
+      // On iOS, we need to allow all file types to access the Files app
+      // The filters might restrict it to only showing photos
+      const dialogOptions: Parameters<typeof open>[0] = isIOS()
+        ? {
+            multiple: false,
+            // On iOS, don't use filters as they may restrict to photos only
+            // Instead, allow all file types and filter manually
+          }
+        : {
+            multiple: false,
+            filters: [{ name: "EPUB files", extensions: ["epub"] }],
+          };
+
+      const selection = await open(dialogOptions);
 
       const filePath = Array.isArray(selection) ? selection[0] : selection ?? undefined;
 
