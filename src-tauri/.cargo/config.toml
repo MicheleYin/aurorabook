@@ -1,7 +1,17 @@
 [env]
+# Fix CMake compatibility issue with espeak-rs-sys for iOS builds
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
 
+[target.aarch64-apple-ios-sim]
+# Help bindgen find iOS SDK headers
+rustflags = [
+  "-C", "link-arg=-isysroot",
+  "-C", "link-arg=$(xcrun --show-sdk-path --sdk iphonesimulator)",
+]
+
 [target.aarch64-apple-ios]
-rustflags = []
-
-
+# Help bindgen find iOS SDK headers
+rustflags = [
+  "-C", "link-arg=-isysroot",
+  "-C", "link-arg=$(xcrun --show-sdk-path --sdk iphoneos)",
+]

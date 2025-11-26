@@ -3,7 +3,7 @@
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use ort::{
-    execution_providers::{coreml::CoreMLExecutionProvider, cpu::CPUExecutionProvider},
+    ep::{CoreMLExecutionProvider, CPUExecutionProvider},
     session::{Session, SessionInputValue, SessionInputs, SessionOutputs, builder::SessionBuilder},
     logging::LogLevel,
     value::{Tensor, Value},
@@ -41,8 +41,8 @@ impl KokoroOnnxCoreML {
         if use_coreml {
             // Configure CoreML EP with optimal settings
             let coreml_provider = CoreMLExecutionProvider::default()
-                .with_model_format(ort::execution_providers::coreml::CoreMLModelFormat::MLProgram)
-                .with_compute_units(ort::execution_providers::coreml::CoreMLComputeUnits::All)
+                .with_model_format(ort::ep::coreml::ModelFormat::MLProgram)
+                .with_compute_units(ort::ep::coreml::ComputeUnits::All)
                 .with_static_input_shapes(false)
                 .with_subgraphs(false)
                 .with_profile_compute_plan(true); // Enable profiling to verify GPU/ANE usage
