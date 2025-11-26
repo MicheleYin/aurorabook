@@ -46,3 +46,7 @@ kokoros = { path = "../Kokoros/kokoros", default-features = true }
 ort = { path = "../ort", default-features = true, features = ["coreml"] }
 ndarray = "0.16"
 
+[patch.crates-io]
+# Patch audiopus_sys to fix CMake compatibility issue for iOS builds
+audiopus_sys = { path = "../patches/audiopus_sys" }
+

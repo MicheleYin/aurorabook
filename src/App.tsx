@@ -32,6 +32,7 @@ import { convertEpubToAudiobook } from "./lib/audiobook-converter";
 import { getEpub } from "./lib/epub-store";
 import type { VoiceId } from "./types/reader";
 import type { Book } from "./types/reader";
+import { isIOS } from "./lib/is-tauri";
 
 const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   theme: "system",
@@ -1297,7 +1298,7 @@ function App() {
     <div className="flex min-h-screen flex-col bg-background text-foreground">
       <HiddenFileInput
         ref={fileInputRef}
-        accept=".epub,application/epub+zip"
+        accept={isIOS() ? "*/*" : ".epub,application/epub+zip"}
         aria-label="Select an EPUB file to import"
         aria-hidden="true"
         tabIndex={-1}

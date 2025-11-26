@@ -1,108 +1,197 @@
-# iOS Build Guide
+# iOS Build Guide for AuroraBook
 
-## Current Build Issues
+This guide will help you build the AuroraBook app for iOS devices and simulators.
 
-Your app has **three native dependencies** that don't build easily for iOS:
+## Prerequisites
 
-### 1. ONNX Runtime (ort-sys) - No iOS Prebuilt Binaries
-**Error**: `downloaded binaries not available for target aarch64-apple-ios`
+### 1. Required Software
 
-### 2. Opus Audio Codec (audiopus_sys) - CMake Compatibility  
-**Error**: `Compatibility with CMake < 3.5 has been removed from CMake`
+- **Xcode** (latest version recommended)
+  - Install from Mac App Store
+  - Make sure to install command line tools: `xcode-select --install`
+  
+- **Rust** with iOS targets
+  ```bash
+  rustup target add aarch64-apple-ios
+  rustup target add aarch64-apple-ios-sim
+  ```
 
-### 3. eSpeak-ng (espeak-rs-sys) - Build Issues
-**Error**: Build script failures during compilation
+- **Bun** (already installed if you can run `bun` commands)
 
-## Recommended Solutions
+- **Tauri CLI** (already installed as dev dependency)
 
-### Option 1: Build Reader-Only Version First (Fastest Path)
+### 2. Apple Developer Account
 
-Create an iOS build **without TTS features** to get the app running first:
+- You need an Apple Developer account (free or paid)
+- Your development team ID is configured in `tauri.conf.json` as `YOUR_OLD_TEAM_ID`
+- Make sure your signing identity is set up in Xcode
 
-1. **Temporarily disable TTS dependencies** in `Cargo.toml`:
-   ```toml
-   # Comment out or make optional:
-   # kokoros = { path = "../Kokoros/kokoros", package = "kokoros", default-features = true }
-   ```
+## Build Commands
 
-2. **Build basic reader app**:
-   ```bash
-   bun tauri ios build --target aarch64-apple-ios
-   ```
+The project includes several npm scripts for building iOS:
 
-3. **Add TTS back later** once you have a working iOS build
-
-### Option 2: Use Xcode Directly (May Handle Dependencies Better)
-
-1. **Open the Xcode project**:
-   ```bash
-   cd src-tauri/gen/apple
-   open tts-tauri.xcodeproj
-   ```
-
-2. **In Xcode**:
-   - Select your iOS device or simulator
-   - Go to **Product > Build** (⌘B)
-   - Xcode may handle some build issues better than CLI
-
-3. **Configure signing**:
-   - Select your project in navigator
-   - Go to **Signing & Capabilities**
-   - Select your development team
-   - Xcode will create provisioning profile automatically
-
-### Option 3: Build ONNX Runtime from Source (Complex)
-
-If you need TTS immediately:
-
-1. **Clone and build ONNX Runtime**:
-   ```bash
-   git clone https://github.com/microsoft/onnxruntime.git
-   cd onnxruntime
-   ./build.sh --config Release --build_shared_lib --parallel --ios --ios_sysroot $(xcrun --show-sdk-path --sdk iphoneos) --minimal_build
-   ```
-
-2. **Point ort-sys to built library**:
-   ```bash
-   export ORT_LIB_LOCATION=/path/to/onnxruntime/build/iOS/Release
-   ```
-
-**Note**: This is a multi-hour build process and requires significant setup.
-
-### Option 4: Use CoreML Models Directly (Best Long-term)
-
-You already have CoreML models in `kokoro-82m-coreml/`. Consider:
-
-1. **Create Swift/CoreML bindings** for iOS
-2. **Use the existing CoreML models** instead of ONNX Runtime
-3. **Bridge to Rust** via FFI if needed
-
-This would be the most iOS-native approach.
-
-## Quick Commands
-
+### Build for iOS Device (Release)
 ```bash
-# Clean everything
-cd src-tauri
-cargo clean
-cd ..
+bun run build:ios
+```
+This builds for `aarch64-apple-ios` target (physical devices).
 
-# Try Xcode build
-cd src-tauri/gen/apple
-open tts-tauri.xcodeproj
+### Build for iOS Simulator
+```bash
+bun run build:ios:sim
+```
+This builds for `aarch64-apple-ios-sim` target (simulators).
 
-# Or try Tauri CLI with verbose output
-bun tauri ios build --target aarch64-apple-ios --verbose
+### Debug Builds
+```bash
+# Debug build for device
+bun run build:ios:debug
 
-# Check what targets are available
-rustup target list | grep ios
+# Debug build for simulator
+bun run build:ios:sim:debug
 ```
 
-## Next Steps
+### Open in Xcode
+```bash
+bun run ios:xcode
+```
+This opens the generated Xcode project where you can:
+- Configure signing
+- Build and run on devices/simulators
+- Archive for App Store distribution
 
-**Immediate**: Try **Option 2** (Xcode) - it often handles iOS builds better than CLI.
+## Build Process
 
-**Short-term**: Consider **Option 1** (disable TTS) to get a working build, then add TTS back.
+1. **Frontend Build**: The build scripts automatically run `bun run build` to compile the frontend
+2. **Rust Compilation**: Tauri compiles the Rust code for the iOS target
+3. **Xcode Project**: The iOS app is generated in `src-tauri/gen/apple/`
 
-**Long-term**: **Option 4** (CoreML directly) would be the best iOS-native solution.
+## Configuration
+
+### Bundle Identifier
+- Current: `com.bigemperor26.tauri`
+- Configured in: `src-tauri/tauri.conf.json`
+
+### iOS Deployment Target
+- Minimum iOS version: **14.0**
+- Configured in: `src-tauri/tauri.conf.json` and `src-tauri/gen/apple/project.yml`
+
+### Code Signing
+
+1. Open Xcode project:
+   ```bash
+   bun run ios:xcode
+   ```
+
+2. Select the `tts-tauri_iOS` target
+
+3. Go to "Signing & Capabilities" tab
+
+4. Select your development team
+
+5. Xcode will automatically manage provisioning profiles
+
+### Resources
+
+The following resources are bundled with the iOS app:
+- `kokoro-v1.0.onnx` - TTS model
+- `voices-v1.0.bin` - Voice data
+- `voice-samples/**/*.mp3` - Voice sample files
+
+These are configured in `tauri.conf.json` under `bundle.resources`.
+
+## Troubleshooting
+
+### Build Errors
+
+**Error: "No such module 'Tauri' or similar"**
+- Make sure you've run `bun install` to install dependencies
+- Regenerate the Xcode project: `bun tauri ios init` (if needed)
+
+**Error: Code signing issues**
+- Open Xcode and configure signing in "Signing & Capabilities"
+- Make sure your Apple Developer account is added in Xcode Preferences
+- Check that your team ID matches in `tauri.conf.json`
+
+**Error: Rust compilation fails**
+- Ensure iOS targets are installed: `rustup target list | grep ios`
+- Install missing targets: `rustup target add aarch64-apple-ios`
+
+**Error: CMake or build tool issues**
+- Make sure Xcode command line tools are installed: `xcode-select --install`
+- Check that `CMAKE_POLICY_VERSION_MINIMUM` is set (configured in `.cargo/config.toml`)
+
+### Runtime Issues
+
+**App crashes on launch**
+- Check device logs in Xcode Console
+- Verify all resources are bundled correctly
+- Test on simulator first to rule out device-specific issues
+
+**TTS not working**
+- Verify model files are included in bundle
+- Check that CoreML EP is available (iOS automatically uses it)
+- Review console logs for ONNX Runtime errors
+
+## Testing on Device
+
+1. Connect your iOS device via USB
+2. Trust the computer on your device
+3. Open Xcode project: `bun run ios:xcode`
+4. Select your device from the device list
+5. Click Run (▶️) or press `Cmd+R`
+
+## Testing on Simulator
+
+1. Open Xcode project: `bun run ios:xcode`
+2. Select a simulator from the device list (e.g., "iPhone 15 Pro")
+3. Click Run (▶️) or press `Cmd+R`
+
+## Distribution
+
+### App Store Distribution
+
+1. Build for release: `bun run build:ios`
+2. Open Xcode project: `bun run ios:xcode`
+3. Select "Any iOS Device" as target
+4. Go to Product → Archive
+5. Follow the App Store Connect workflow
+
+### Ad Hoc Distribution
+
+1. Build for release: `bun run build:ios`
+2. Open Xcode project: `bun run ios:xcode`
+3. Select your device
+4. Archive and export for Ad Hoc distribution
+5. Install via TestFlight or direct installation
+
+## Architecture Notes
+
+- **Device builds**: `aarch64-apple-ios` (ARM64 for physical devices)
+- **Simulator builds**: `aarch64-apple-ios-sim` (ARM64 for Apple Silicon simulators)
+- The app uses CoreML Execution Provider for ONNX Runtime on iOS (automatic)
+- Metal framework is required (configured in Xcode project)
+
+## Additional Resources
+
+- [Tauri iOS Documentation](https://tauri.app/v1/guides/building/ios)
+- [Apple Developer Documentation](https://developer.apple.com/documentation/)
+- [Xcode Help](https://help.apple.com/xcode/)
+
+## Quick Start
+
+For a quick test build:
+
+```bash
+# Build frontend
+bun run build
+
+# Build iOS app for simulator
+bun run build:ios:sim
+
+# Open in Xcode to run
+bun run ios:xcode
+```
+
+Then in Xcode, select a simulator and press `Cmd+R` to run!
 

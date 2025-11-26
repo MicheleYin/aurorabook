@@ -44,7 +44,11 @@
       "frameworks": [],
       "minimumSystemVersion": "10.13",
       "exceptionDomain": "",
-      "signingIdentity": "Apple Development: Michele Yin (YOUR_OLD_TEAM_ID)"
+      "signingIdentity": "Apple Development: Michele Yin (YOUR_TEAM_ID)"
+    },
+    "iOS": {
+      "developmentTeam": "YOUR_TEAM_ID",
+      "frameworks": []
     }
   }
 }
