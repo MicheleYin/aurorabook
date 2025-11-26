@@ -67,6 +67,7 @@ export function ReaderViewport({
 }: ReaderViewportProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const progressRafRef = useRef<number | null>(null);
+  const progressDebounceTimeoutRef = useRef<number | null>(null);
   const scrollActivityTimeoutRef = useRef<number | null>(null);
   const [isScrolling, setIsScrolling] = useState(false);
   const [highlightedElementId, setHighlightedElementId] = useState<string | null>(null);
@@ -131,23 +132,12 @@ export function ReaderViewport({
       return null;
     }
 
-    const hasWindow = typeof window !== "undefined";
     const scrollHeight = Math.max(node.scrollHeight, 0);
-
-    if (!hasWindow) {
-      const clientHeight = Math.max(node.clientHeight, 0);
-      const maxScroll = Math.max(scrollHeight - clientHeight, 0);
-      const scrollTop = Math.min(Math.max(node.scrollTop, 0), maxScroll);
-      return { scrollTop, scrollHeight, clientHeight, maxScroll, nodeDocumentTop: 0 };
-    }
-
-    const clientHeight = Math.max(window.innerHeight, 0);
+    const clientHeight = Math.max(node.clientHeight, 0);
     const maxScroll = Math.max(scrollHeight - clientHeight, 0);
-    const rectTop = node.getBoundingClientRect().top;
-    const scrollTop = Math.min(Math.max(-rectTop, 0), maxScroll);
-    const nodeDocumentTop = window.scrollY + rectTop;
+    const scrollTop = Math.min(Math.max(node.scrollTop, 0), maxScroll);
 
-    return { scrollTop, scrollHeight, clientHeight, maxScroll, nodeDocumentTop };
+    return { scrollTop, scrollHeight, clientHeight, maxScroll };
   }, []);
 
   const emitChapterProgress = useCallback(() => {
@@ -191,14 +181,21 @@ export function ReaderViewport({
       return;
     }
 
-    if (progressRafRef.current !== null) {
-      cancelAnimationFrame(progressRafRef.current);
+    // Debounce progress emissions to reduce state sync calls
+    if (progressDebounceTimeoutRef.current !== null) {
+      clearTimeout(progressDebounceTimeoutRef.current);
     }
 
-    progressRafRef.current = requestAnimationFrame(() => {
-      progressRafRef.current = null;
-      emitChapterProgress();
-    });
+    progressDebounceTimeoutRef.current = window.setTimeout(() => {
+      progressDebounceTimeoutRef.current = null;
+      if (progressRafRef.current !== null) {
+        cancelAnimationFrame(progressRafRef.current);
+      }
+      progressRafRef.current = requestAnimationFrame(() => {
+        progressRafRef.current = null;
+        emitChapterProgress();
+      });
+    }, 150); // Debounce by 150ms
   }, [activeChapter, emitChapterProgress, onChapterProgress]);
 
   useEffect(() => {
@@ -207,26 +204,23 @@ export function ReaderViewport({
         cancelAnimationFrame(progressRafRef.current);
         progressRafRef.current = null;
       }
+      if (progressDebounceTimeoutRef.current !== null) {
+        clearTimeout(progressDebounceTimeoutRef.current);
+        progressDebounceTimeoutRef.current = null;
+      }
     };
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    const node = contentRef.current;
+    if (!node) {
       return;
     }
 
-    let lastScrollY = window.scrollY;
-    const handleWindowScroll = () => {
-      lastScrollY = window.scrollY;
-      console.log("Scroll Y:", lastScrollY);
-
-      if (!contentRef.current) {
-        return;
-      }
-
+    const handleScroll = () => {
       setIsScrolling(true);
       if (scrollActivityTimeoutRef.current !== null) {
-        window.clearTimeout(scrollActivityTimeoutRef.current);
+        clearTimeout(scrollActivityTimeoutRef.current);
       }
       scrollActivityTimeoutRef.current = window.setTimeout(() => {
         scrollActivityTimeoutRef.current = null;
@@ -236,11 +230,11 @@ export function ReaderViewport({
       scheduleProgressEmit();
     };
 
-    window.addEventListener("scroll", handleWindowScroll, { passive: true });
+    node.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
-      window.removeEventListener("scroll", handleWindowScroll);
+      node.removeEventListener("scroll", handleScroll);
       if (scrollActivityTimeoutRef.current !== null) {
-        window.clearTimeout(scrollActivityTimeoutRef.current);
+        clearTimeout(scrollActivityTimeoutRef.current);
         scrollActivityTimeoutRef.current = null;
       }
       setIsScrolling(false);
@@ -270,13 +264,7 @@ export function ReaderViewport({
           ? Math.max(Math.min(progress.currentChapterScrollTop, maxScroll), 0)
           : 0;
 
-      if (typeof window !== "undefined") {
-        const rectTop = node.getBoundingClientRect().top;
-        const nodeDocumentTop = window.scrollY + rectTop;
-        window.scrollTo({ top: nodeDocumentTop + targetWithinChapter });
-      } else {
-        node.scrollTop = targetWithinChapter;
-      }
+      node.scrollTop = targetWithinChapter;
       scheduleProgressEmit();
     });
 
@@ -302,61 +290,33 @@ export function ReaderViewport({
       return;
     }
 
-    let rafId: number | null = null;
-    let attempts = 0;
-    const maxAttempts = 12;
-    const tolerance = 1;
-
-    const finalize = () => {
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId);
-        rafId = null;
-      }
-      onScrollIntentConsumed?.();
-    };
-
-    const applyIntent = () => {
+    const rafId = requestAnimationFrame(() => {
       const metrics = computeScrollMetrics();
       if (!metrics) {
-        finalize();
+        onScrollIntentConsumed?.();
         return;
       }
+      
       const target = scrollIntent === "bottom" ? metrics.maxScroll : 0;
-
-      if (typeof window !== "undefined") {
-        const rectTop = node.getBoundingClientRect().top;
-        const nodeDocumentTop = window.scrollY + rectTop;
-        window.scrollTo({ top: nodeDocumentTop + target });
-      } else {
-        node.scrollTop = target;
-      }
-      scheduleProgressEmit();
-
-      rafId = requestAnimationFrame(() => {
-        const verifyMetrics = computeScrollMetrics();
-        if (!verifyMetrics) {
-          finalize();
-          return;
+      node.scrollTo({ top: target, behavior: "smooth" });
+      
+      // Wait for smooth scroll to complete before emitting progress
+      const checkComplete = () => {
+        const currentMetrics = computeScrollMetrics();
+        if (currentMetrics && Math.abs(currentMetrics.scrollTop - target) <= 5) {
+          scheduleProgressEmit();
+          onScrollIntentConsumed?.();
+        } else {
+          requestAnimationFrame(checkComplete);
         }
+      };
+      
+      setTimeout(() => {
+        checkComplete();
+      }, 100);
+    });
 
-        const reached = Math.abs(verifyMetrics.scrollTop - target) <= tolerance;
-        if (reached || attempts >= maxAttempts) {
-          finalize();
-          return;
-        }
-
-        attempts += 1;
-        applyIntent();
-      });
-    };
-
-    applyIntent();
-
-    return () => {
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId);
-      }
-    };
+    return () => cancelAnimationFrame(rafId);
   }, [
     scrollIntent,
     activeChapter?.id,
@@ -392,7 +352,10 @@ export function ReaderViewport({
 
       if (target) {
         target.scrollIntoView({ behavior: "smooth", block: "start" });
-        scheduleProgressEmit();
+        // Delay progress emit to allow scroll to complete
+        setTimeout(() => {
+          scheduleProgressEmit();
+        }, 300);
       }
 
       onFragmentConsumed();
@@ -401,17 +364,12 @@ export function ReaderViewport({
     return () => cancelAnimationFrame(rafId);
   }, [pendingFragment, activeChapter?.id, onFragmentConsumed, scheduleProgressEmit]);
 
+  // Only emit progress on chapter change, not on preference/visibility changes
   useEffect(() => {
-    scheduleProgressEmit();
-  }, [
-    activeChapter?.id,
-    preferences.fontFamily,
-    preferences.fontSize,
-    preferences.contentPadding,
-    chromeVisible,
-    audioPlayerVisible,
-    scheduleProgressEmit,
-  ]);
+    if (activeChapter?.id) {
+      scheduleProgressEmit();
+    }
+  }, [activeChapter?.id, scheduleProgressEmit]);
 
   // Reset scroll tracking when chapter changes
   useEffect(() => {
@@ -608,104 +566,8 @@ export function ReaderViewport({
       // Mark this element as scrolled to prevent multiple scrolls
       lastScrolledElementRef.current = elementId;
       
-      // Always scroll to highlighted element when auto-scroll is enabled
-      console.log("[Auto-Scroll] Triggering scroll to highlighted element:", {
-        elementId,
-        selector,
-        elementText: element.textContent?.substring(0, 50),
-        currentTime: currentAudioTime,
-        elementRect: { top: elementRect.top, bottom: elementRect.bottom },
-      });
-      
-      // Use requestAnimationFrame to ensure DOM is ready and layout is complete
-      requestAnimationFrame(() => {
-        // Check if using window scrolling (based on how other scrolls work in this component)
-        if (typeof window !== "undefined") {
-          const updatedElementRect = element.getBoundingClientRect();
-          const rootRect = root.getBoundingClientRect();
-          
-          // Calculate position relative to document
-          const elementTop = updatedElementRect.top + window.scrollY;
-          
-          // Calculate header height dynamically
-          // The header is sticky and contains navigation + title sections
-          const headerSelector = '[data-reader-header]';
-          const headerElement = document.querySelector<HTMLElement>(headerSelector);
-          let headerHeight = 0;
-          
-          if (headerElement) {
-            headerHeight = headerElement.offsetHeight;
-          } else {
-            // Fallback: estimate header height (navigation ~60px + title section ~60px + padding)
-            headerHeight = 120;
-          }
-          
-          // Add extra padding for visual spacing
-          const padding = 16;
-          const offset = headerHeight + padding;
-          
-          // Scroll to position element below the header
-          const targetScrollTop = Math.max(0, elementTop - offset);
-          const startScrollTop = window.scrollY;
-          const distance = targetScrollTop - startScrollTop;
-          
-          // Don't scroll if distance is very small (less than 50px) to prevent jitter
-          if (Math.abs(distance) < 50) {
-            console.debug("[Auto-Scroll] Distance too small, skipping scroll:", Math.abs(distance));
-            return;
-          }
-          
-          console.log("[Auto-Scroll] Scrolling window to position:", {
-            elementTop,
-            targetScrollTop,
-            startScrollTop,
-            distance,
-            headerHeight,
-            offset,
-            elementRect: { top: updatedElementRect.top, bottom: updatedElementRect.bottom },
-            rootRect: { top: rootRect.top, bottom: rootRect.bottom },
-          });
-          
-          // Custom smooth scroll with easing and overshoot effect
-          const duration = Math.min(Math.max(Math.abs(distance) * 0.5, 300), 800); // 300-800ms based on distance
-          const startTime = performance.now();
-          
-          // Easing function with subtle overshoot for natural bounce effect
-          const easeInOutCubic = (t: number): number => {
-            return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-          };
-          
-          const easeWithOvershoot = (t: number): number => {
-            // Use ease-in-out-cubic for most of the animation, add slight overshoot at the end
-            if (t < 0.85) {
-              return easeInOutCubic(t / 0.85) * 0.85;
-            }
-            // Add subtle overshoot in the last 15% (max 3% overshoot)
-            const overshootProgress = (t - 0.85) / 0.15;
-            const overshootAmount = Math.sin(overshootProgress * Math.PI) * 0.03;
-            return 0.85 + overshootProgress * 0.15 + overshootAmount;
-          };
-          
-          const animateScroll = (currentTime: number) => {
-            const elapsed = currentTime - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            const easedProgress = easeWithOvershoot(progress);
-            
-            const currentScrollTop = startScrollTop + distance * easedProgress;
-            window.scrollTo({ top: currentScrollTop, behavior: "auto" });
-            
-            if (progress < 1) {
-              requestAnimationFrame(animateScroll);
-            }
-          };
-          
-          requestAnimationFrame(animateScroll);
-        } else {
-          // Fallback: use scrollIntoView if window is not available
-          console.log("[Auto-Scroll] Using scrollIntoView fallback");
-          element.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-      });
+      // Use native scrollIntoView for simplicity
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
     } else if (element && !autoScrollEnabled) {
       console.debug("[Auto-Scroll] Auto-scroll disabled, skipping scroll to:", elementId);
     } else if (element && lastScrolledElementRef.current === elementId) {
@@ -943,6 +805,7 @@ export function ReaderViewport({
           root.querySelector<HTMLElement>(`a[name="${fragment}"]`);
         if (target) {
           target.scrollIntoView({ behavior: "smooth", block: "start" });
+          scheduleProgressEmit();
         }
         return;
       }

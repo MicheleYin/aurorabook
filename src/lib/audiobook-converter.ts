@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { VoiceId } from "../types/reader";
-import type { Chapter } from "../types/reader";
 
 export type ConversionProgress = {
   currentChapter: number;
@@ -11,6 +10,8 @@ export type ConversionProgress = {
 };
 
 type ConversionOptions = {
+  sourcePath: string;
+  epubData: ArrayBuffer;
   voiceId: VoiceId;
   onProgress?: (progress: ConversionProgress) => void;
   signal?: AbortSignal;
@@ -18,13 +19,12 @@ type ConversionOptions = {
 
 /**
  * Convert an EPUB to audiobook format (backend implementation)
+ * The backend handles everything: extracts chapters from EPUB, generates audio, and stores the result
  */
 export async function convertEpubToAudiobook(
-  epubBuffer: ArrayBuffer,
-  chapters: Chapter[],
   options: ConversionOptions,
-): Promise<ArrayBuffer> {
-  const { voiceId, onProgress, signal } = options;
+): Promise<void> {
+  const { sourcePath, epubData, voiceId, onProgress, signal } = options;
   
   // Check for cancellation before starting
   if (signal?.aborted) {
@@ -45,28 +45,15 @@ export async function convertEpubToAudiobook(
   });
   
   try {
-    // Convert ArrayBuffer to Vec<u8> for Rust
-    const epubData = Array.from(new Uint8Array(epubBuffer));
+    // Convert ArrayBuffer to number array for Tauri
+    const epubBytes = Array.from(new Uint8Array(epubData));
     
-    // Convert chapters to Rust format
-    const rustChapters = chapters.map(ch => ({
-      id: ch.id,
-      title: ch.title,
-      href: ch.href,
-      content_html: ch.contentHtml,
-    }));
-    
-    // Call backend conversion function
-    const result = await invoke<number[]>("convert_epub_to_audiobook", {
-      epubData,
-      options: {
-        voice_id: voiceId,  // Rust expects snake_case
-        chapters: rustChapters,
-      },
+    // Call backend conversion function - backend handles everything
+    await invoke("convert_epub_to_audiobook", {
+      sourcePath,
+      epubData: epubBytes,
+      voiceId,
     });
-    
-    // Convert result back to ArrayBuffer
-    return new Uint8Array(result).buffer;
   } finally {
     // Clean up event listener
     unlisten();

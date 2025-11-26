@@ -292,6 +292,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-store",
  "tokio",
+ "uuid",
  "zip 0.6.6",
 ]
 

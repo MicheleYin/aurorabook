@@ -18,7 +18,6 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "../ui/drawer";
-import { useMediaQuery } from "../../hooks/use-media-query";
 import { cn, formatDurationShort, getBookProgressSummary } from "../../lib/utils";
 import { dialogSectionStagger } from "../../lib/animations";
 import { useAnimatedNumber } from "../../hooks/use-animated-number";
@@ -63,7 +62,6 @@ export function BookDetailDialog({
   const [showConvertDialog, setShowConvertDialog] = useState(false);
   const [durationMap, setDurationMap] = useState<Record<string, number>>({});
   const durationMapRef = useRef<Record<string, number>>({});
-  const isDesktop = useMediaQuery("(min-width: 640px)");
   const genres = (book.subjects ?? []).filter(Boolean);
   const hasAudio = book.audioTracks.length > 0;
   const isConverting = Boolean(conversionProgress);
@@ -495,16 +493,33 @@ export function BookDetailDialog({
     </Dialog>
   );
 
-  if (!isDesktop) {
     return (
       <>
+      <style>{`
+        /* Hide drawer overlay and content on desktop */
+        @media (min-width: 640px) {
+          [data-vaul-overlay],
+          [data-vaul-content] {
+            display: none !important;
+          }
+        }
+        /* Hide dialog overlay and content on mobile */
+        @media (max-width: 639px) {
+          [data-radix-dialog-overlay],
+          [data-radix-dialog-content] {
+            display: none !important;
+          }
+        }
+      `}</style>
+      
+      {/* Mobile: Drawer */}
         <Drawer
           open={open}
           onOpenChange={(next) => {
             if (!next) onClose();
           }}
         >
-          <DrawerContent className="">
+        <DrawerContent>
             <DrawerHandle className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-muted" />
             <div className="flex flex-1 flex-col gap-6 overflow-y-auto">
               <DrawerHeader className="gap-3 text-left">
@@ -527,25 +542,8 @@ export function BookDetailDialog({
             </div>
           </DrawerContent>
         </Drawer>
-        {confirmDialog}
-        {onConvertToAudiobook && (
-          <ConvertToAudiobookDialog
-            open={showConvertDialog && !isConverting}
-            onOpenChange={(open) => {
-              if (!isConverting) {
-                setShowConvertDialog(open);
-              }
-            }}
-            onConfirm={handleConvertConfirm}
-            bookTitle={book.title}
-          />
-        )}
-      </>
-    );
-  }
-
-  return (
-    <>
+      
+      {/* Desktop: Dialog */}
       <Dialog
         open={open}
         onOpenChange={(next) => {
@@ -573,6 +571,7 @@ export function BookDetailDialog({
           <Actions layout="dialog" />
         </DialogContent>
       </Dialog>
+      
       {confirmDialog}
       {onConvertToAudiobook && (
         <ConvertToAudiobookDialog

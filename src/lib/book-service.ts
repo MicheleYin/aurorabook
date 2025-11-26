@@ -131,3 +131,47 @@ export async function getEpubBuffer(
   }
 }
 
+/**
+ * Update book progress
+ */
+export async function updateBookProgress(
+  bookId: string,
+  progress: Book["progress"]
+): Promise<Book> {
+  if (!progress) {
+    throw new Error("Progress is required");
+  }
+  try {
+    const book = await invoke<Book>("update_book_progress", {
+      bookId,
+      progress,
+    });
+    return book;
+  } catch (error) {
+    console.error("Failed to update book progress:", error);
+    throw error;
+  }
+}
+
+/**
+ * Update book audio state
+ */
+export async function updateBookAudioState(
+  bookId: string,
+  audioState: Book["audioState"]
+): Promise<Book> {
+  if (!audioState) {
+    throw new Error("Audio state is required");
+  }
+  try {
+    const book = await invoke<Book>("update_book_audio_state", {
+      bookId,
+      audioState,
+    });
+    return book;
+  } catch (error) {
+    console.error("Failed to update book audio state:", error);
+    throw error;
+  }
+}
+

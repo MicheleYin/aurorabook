@@ -24,11 +24,17 @@ import type {
   ChapterProgressSnapshot,
   ChapterSelectionOptions,
 } from "./components/reader/types";
-import { cn, getLibraryBookStatus } from "./lib/utils";
+import { cn } from "./lib/utils";
 import { animPatterns, viewTransition } from "./lib/animations";
 import { findChaptersForAudioTrack } from "./lib/epub";
 import { convertEpubToAudiobook } from "./lib/audiobook-converter";
 // EPUB operations now handled by Rust backend via book-service
+import { 
+  updateBookProgress as updateBookProgressBackend, 
+  updateBookAudioState as updateBookAudioStateBackend,
+  getEpubBuffer,
+  type LibraryFilter,
+} from "./lib/book-service";
 import type { VoiceId } from "./types/reader";
 import type { Book } from "./types/reader";
 
@@ -51,6 +57,7 @@ function App() {
     isImporting,
     importFromDialog,
     ingestEpub,
+    refreshLibrary,
   } = usePersistentLibrary();
 
   const [showConvertDialog, setShowConvertDialog] = useState(false);
@@ -78,10 +85,18 @@ function App() {
     const bookId = pendingBookForConversion.book.id;
     
     try {
-      const { book, buffer } = pendingBookForConversion;
+      const { book } = pendingBookForConversion;
       
-      // Convert EPUB to audiobook
-      const convertedBuffer = await convertEpubToAudiobook(buffer, book.chapters, {
+      // Load EPUB buffer before conversion
+      const epubBuffer = await getEpubBuffer(book.sourcePath);
+      if (!epubBuffer) {
+        throw new Error("Failed to load EPUB file for conversion");
+      }
+      
+      // Convert EPUB to audiobook - backend handles everything
+      await convertEpubToAudiobook({
+        sourcePath: book.sourcePath,
+        epubData: epubBuffer,
         voiceId,
         signal: abortController.signal,
         onProgress: (progress) => {
@@ -93,41 +108,18 @@ function App() {
         },
       });
       
-      if (!convertedBuffer || convertedBuffer.byteLength === 0) {
-        throw new Error("Conversion produced an empty buffer");
-      }
-      
       // Determine the new sourcePath for the converted audiobook
       const newSourcePath = book.sourcePath.replace(/\.epub$/, "-audiobook.epub");
-      
-      // Store converted EPUB buffer in Tauri store (using the new sourcePath)
-      try {
-        const { storeConvertedEpub } = await import("./lib/epub-store");
-        console.debug("Storing converted EPUB", {
-          sourcePath: newSourcePath,
-          bufferSize: convertedBuffer.byteLength,
-        });
-        await storeConvertedEpub(newSourcePath, convertedBuffer);
-        console.debug("Successfully stored converted EPUB to cache");
-      } catch (storeError) {
-        console.error("Failed to store converted EPUB to cache", {
-          error: storeError,
-          sourcePath: newSourcePath,
-          bufferSize: convertedBuffer.byteLength,
-        });
-        // Don't fail the conversion if storage fails - the EPUB is still valid
-        // But warn the user that export might not work
-        toast.warning("Conversion complete, but caching failed", {
-          description: storeError instanceof Error 
-            ? `The audiobook was created but caching failed: ${storeError.message}. Export may not work.`
-            : "The audiobook was created but may not be exportable. The conversion completed successfully.",
-        });
-      }
       
       // Remove the original book from library
       setLibrary((prev) => prev.filter((b) => b.id !== book.id));
       
-      // Re-ingest the converted EPUB
+      // Re-ingest the converted EPUB (backend has already stored it, just need to reload metadata)
+      const convertedBuffer = await getEpubBuffer(book.sourcePath); // Backend stored it with same sourcePath
+      if (!convertedBuffer) {
+        throw new Error("Converted EPUB not found in backend store");
+      }
+      
       await ingestEpub({
         buffer: convertedBuffer,
         sourcePath: newSourcePath,
@@ -190,9 +182,6 @@ function App() {
     const bookId = book.id;
     
     try {
-      // Load the EPUB file buffer
-      let buffer: ArrayBuffer | null = null;
-      
       if (book.sourcePath.startsWith("web://")) {
         // Web file - we can't reload it, show error
         toast.error("Cannot convert web files", {
@@ -204,27 +193,23 @@ function App() {
         return;
       }
       
-      // Tauri environment - read from Rust backend
-      const { getEpubBuffer } = await import("./lib/book-service");
-      const epubBytes = await getEpubBuffer(book.sourcePath);
-      if (!epubBytes) {
-        throw new Error(`EPUB not found: ${book.sourcePath}`);
-      }
-      buffer = epubBytes;
-      if (!buffer) {
-        throw new Error(`EPUB not found in store: ${book.sourcePath}`);
+      // Load EPUB buffer before conversion
+      const epubBuffer = await getEpubBuffer(book.sourcePath);
+      if (!epubBuffer) {
+        throw new Error("Failed to load EPUB file for conversion");
       }
       
-      // Convert EPUB to audiobook
+      // Convert EPUB to audiobook - backend handles everything (extracts chapters, generates audio, stores result)
       console.debug("Starting EPUB conversion", {
         sourcePath: book.sourcePath,
-        chaptersCount: book.chapters.length,
         voiceId,
+        epubSize: epubBuffer.byteLength,
       });
       
-      let convertedBuffer: ArrayBuffer;
       try {
-        convertedBuffer = await convertEpubToAudiobook(buffer, book.chapters, {
+        await convertEpubToAudiobook({
+          sourcePath: book.sourcePath,
+          epubData: epubBuffer,
           voiceId,
           signal: abortController.signal,
           onProgress: (progress) => {
@@ -240,49 +225,16 @@ function App() {
         throw conversionError; // Re-throw to be caught by outer catch
       }
       
-      console.debug("Conversion completed, buffer received", {
+      console.debug("Conversion completed, reloading book from backend", {
         sourcePath: book.sourcePath,
-        bufferSize: convertedBuffer.byteLength,
-        bufferSizeMB: (convertedBuffer.byteLength / (1024 * 1024)).toFixed(2),
-        bufferIsValid: convertedBuffer && convertedBuffer.byteLength > 0,
       });
       
-      if (!convertedBuffer || convertedBuffer.byteLength === 0) {
-        throw new Error("Conversion produced an empty buffer");
+      // Backend has stored the converted EPUB, reload it to update metadata
+      const convertedBuffer = await getEpubBuffer(book.sourcePath);
+      if (!convertedBuffer) {
+        throw new Error("Converted EPUB not found in backend store");
       }
       
-      // Store converted EPUB buffer in Tauri store (keyed by sourcePath for stability)
-      console.debug("About to store converted EPUB", {
-        sourcePath: book.sourcePath,
-        bufferSize: convertedBuffer.byteLength,
-        bufferSizeMB: (convertedBuffer.byteLength / (1024 * 1024)).toFixed(2),
-      });
-      
-      try {
-        const { storeConvertedEpub } = await import("./lib/epub-store");
-        console.debug("Import successful, calling storeConvertedEpub", {
-          sourcePath: book.sourcePath,
-        });
-        await storeConvertedEpub(book.sourcePath, convertedBuffer);
-        console.debug("Successfully stored converted EPUB to cache");
-      } catch (storeError) {
-        console.error("Failed to store converted EPUB to cache", {
-          error: storeError,
-          sourcePath: book.sourcePath,
-          bufferSize: convertedBuffer.byteLength,
-          errorMessage: storeError instanceof Error ? storeError.message : String(storeError),
-          errorStack: storeError instanceof Error ? storeError.stack : undefined,
-        });
-        // Don't fail the conversion if storage fails - the EPUB is still valid
-        // But warn the user that export might not work
-        toast.warning("Conversion complete, but caching failed", {
-          description: storeError instanceof Error 
-            ? `The audiobook was created but caching failed: ${storeError.message}. Export may not work.`
-            : "The audiobook was created but may not be exportable. The conversion completed successfully.",
-        });
-      }
-      
-      // Update the book in place instead of removing and re-adding
       // Re-ingest to update audio tracks and other metadata
       await ingestEpub({
         buffer: convertedBuffer,
@@ -466,7 +418,6 @@ function App() {
         let buffer: ArrayBuffer | null = null;
         
         // Get EPUB from Rust backend
-        const { getEpubBuffer } = await import("./lib/book-service");
         buffer = await getEpubBuffer(activeBook.sourcePath);
         if (!buffer) {
           console.warn("[App] Failed to read EPUB from Rust backend for sync map rebuild:", activeBook.sourcePath);
@@ -516,180 +467,181 @@ function App() {
   };
 
   const updateBookProgress = useCallback(
-    (bookId: string, payload: ProgressUpdatePayload) => {
+    async (bookId: string, payload: ProgressUpdatePayload) => {
       if (!payload?.chapterId) return;
 
       console.debug(`${PROGRESS_LOG_PREFIX} update requested`, { bookId, payload });
 
-      setLibrary((prev) => {
-        let updated = false;
-        const timestamp = new Date().toISOString();
+      const book = library.find((b) => b.id === bookId);
+      if (!book) return;
 
-        const nextLibrary = prev.map((book) => {
-          if (book.id !== bookId) {
-            return book;
-          }
+      const chapterIndex = book.chapters.findIndex(
+        (chapter) => chapter.id === payload.chapterId,
+      );
+      if (chapterIndex === -1) return;
 
-          const chapterIndex = book.chapters.findIndex(
-            (chapter) => chapter.id === payload.chapterId,
-          );
-          if (chapterIndex === -1) {
-            return book;
-          }
+      const chapter = book.chapters[chapterIndex];
+      const existingProgress = book.progress;
+      const chapterMatchesExisting =
+        existingProgress?.currentChapterId === chapter.id &&
+        existingProgress.currentChapterIndex === chapterIndex;
 
-          const chapter = book.chapters[chapterIndex];
-          const existingProgress = book.progress;
-          const chapterMatchesExisting =
-            existingProgress?.currentChapterId === chapter.id &&
-            existingProgress.currentChapterIndex === chapterIndex;
+      const previousScrollTop =
+        typeof existingProgress?.currentChapterScrollTop === "number" &&
+        Number.isFinite(existingProgress.currentChapterScrollTop)
+          ? Math.max(existingProgress.currentChapterScrollTop, 0)
+          : 0;
+      const previousScrollHeight =
+        typeof existingProgress?.currentChapterScrollHeight === "number" &&
+        Number.isFinite(existingProgress.currentChapterScrollHeight)
+          ? Math.max(existingProgress.currentChapterScrollHeight, 0)
+          : 0;
+      const previousClientHeight =
+        typeof existingProgress?.currentChapterClientHeight === "number" &&
+        Number.isFinite(existingProgress.currentChapterClientHeight)
+          ? Math.max(existingProgress.currentChapterClientHeight, 0)
+          : 0;
+      const previousPercent =
+        typeof existingProgress?.chapterProgressPercent === "number" &&
+        Number.isFinite(existingProgress.chapterProgressPercent)
+          ? existingProgress.chapterProgressPercent
+          : 0;
 
-          const previousScrollTop =
-            typeof existingProgress?.currentChapterScrollTop === "number" &&
-            Number.isFinite(existingProgress.currentChapterScrollTop)
-              ? Math.max(existingProgress.currentChapterScrollTop, 0)
-              : 0;
-          const previousScrollHeight =
-            typeof existingProgress?.currentChapterScrollHeight === "number" &&
-            Number.isFinite(existingProgress.currentChapterScrollHeight)
-              ? Math.max(existingProgress.currentChapterScrollHeight, 0)
-              : 0;
-          const previousClientHeight =
-            typeof existingProgress?.currentChapterClientHeight === "number" &&
-            Number.isFinite(existingProgress.currentChapterClientHeight)
-              ? Math.max(existingProgress.currentChapterClientHeight, 0)
-              : 0;
-          const previousPercent =
-            typeof existingProgress?.chapterProgressPercent === "number" &&
-            Number.isFinite(existingProgress.chapterProgressPercent)
-              ? existingProgress.chapterProgressPercent
-              : 0;
+      const previousElementId =
+        typeof existingProgress?.currentChapterElementId === "string" &&
+        existingProgress.currentChapterElementId.length > 0
+          ? existingProgress.currentChapterElementId
+          : null;
+      const previousElementIndex =
+        typeof existingProgress?.currentChapterElementIndex === "number" &&
+        Number.isFinite(existingProgress.currentChapterElementIndex)
+          ? Math.max(Math.round(existingProgress.currentChapterElementIndex), 0)
+          : null;
 
-          const previousElementId =
-            typeof existingProgress?.currentChapterElementId === "string" &&
-            existingProgress.currentChapterElementId.length > 0
-              ? existingProgress.currentChapterElementId
-              : null;
-          const previousElementIndex =
-            typeof existingProgress?.currentChapterElementIndex === "number" &&
-            Number.isFinite(existingProgress.currentChapterElementIndex)
-              ? Math.max(Math.round(existingProgress.currentChapterElementIndex), 0)
-              : null;
+      const resolvedScrollTop =
+        typeof payload.scrollTop === "number" && Number.isFinite(payload.scrollTop)
+          ? Math.max(payload.scrollTop, 0)
+          : chapterMatchesExisting
+            ? previousScrollTop
+            : 0;
 
-          const resolvedScrollTop =
-            typeof payload.scrollTop === "number" && Number.isFinite(payload.scrollTop)
-              ? Math.max(payload.scrollTop, 0)
-              : chapterMatchesExisting
-                ? previousScrollTop
-                : 0;
+      const resolvedScrollHeight =
+        typeof payload.scrollHeight === "number" && Number.isFinite(payload.scrollHeight)
+          ? Math.max(payload.scrollHeight, 0)
+          : chapterMatchesExisting
+            ? previousScrollHeight
+            : 0;
 
-          const resolvedScrollHeight =
-            typeof payload.scrollHeight === "number" && Number.isFinite(payload.scrollHeight)
-              ? Math.max(payload.scrollHeight, 0)
-              : chapterMatchesExisting
-                ? previousScrollHeight
-                : 0;
+      const resolvedClientHeight =
+        typeof payload.clientHeight === "number" && Number.isFinite(payload.clientHeight)
+          ? Math.max(payload.clientHeight, 0)
+          : chapterMatchesExisting
+            ? previousClientHeight
+            : 0;
 
-          const resolvedClientHeight =
-            typeof payload.clientHeight === "number" && Number.isFinite(payload.clientHeight)
-              ? Math.max(payload.clientHeight, 0)
-              : chapterMatchesExisting
-                ? previousClientHeight
-                : 0;
+      const percentSource =
+        typeof payload.percent === "number" && Number.isFinite(payload.percent)
+          ? payload.percent
+          : chapterMatchesExisting
+            ? previousPercent
+            : 0;
 
-          const percentSource =
-            typeof payload.percent === "number" && Number.isFinite(payload.percent)
-              ? payload.percent
-              : chapterMatchesExisting
-                ? previousPercent
-                : 0;
+      const percent = Number(Math.min(Math.max(percentSource ?? 0, 0), 1).toFixed(4));
 
-          const percent = Number(Math.min(Math.max(percentSource ?? 0, 0), 1).toFixed(4));
+      const resolvedElementId =
+        payload.elementId === undefined
+          ? (chapterMatchesExisting ? previousElementId : null)
+          : payload.elementId && payload.elementId.length > 0
+            ? payload.elementId
+            : null;
 
-          const resolvedElementId =
-            payload.elementId === undefined
-              ? (chapterMatchesExisting ? previousElementId : null)
-              : payload.elementId && payload.elementId.length > 0
-                ? payload.elementId
-                : null;
+      let resolvedElementIndex: number | null = null;
+      if (payload.elementIndex === undefined) {
+        resolvedElementIndex = chapterMatchesExisting ? previousElementIndex : null;
+      } else if (payload.elementIndex === null) {
+        resolvedElementIndex = null;
+      } else if (typeof payload.elementIndex === "number" && Number.isFinite(payload.elementIndex)) {
+        resolvedElementIndex = Math.max(Math.round(payload.elementIndex), 0);
+      } else if (chapterMatchesExisting) {
+        resolvedElementIndex = previousElementIndex;
+      }
 
-          let resolvedElementIndex: number | null = null;
-          if (payload.elementIndex === undefined) {
-            resolvedElementIndex = chapterMatchesExisting ? previousElementIndex : null;
-          } else if (payload.elementIndex === null) {
-            resolvedElementIndex = null;
-          } else if (typeof payload.elementIndex === "number" && Number.isFinite(payload.elementIndex)) {
-            resolvedElementIndex = Math.max(Math.round(payload.elementIndex), 0);
-          } else if (chapterMatchesExisting) {
-            resolvedElementIndex = previousElementIndex;
-          }
+      const nextProgress = {
+        currentChapterId: chapter.id,
+        currentChapterHref: chapter.href,
+        currentChapterIndex: chapterIndex,
+        currentChapterElementId: resolvedElementId ?? null,
+        currentChapterElementIndex: resolvedElementIndex ?? null,
+        currentChapterScrollTop: resolvedScrollTop,
+        currentChapterScrollHeight: resolvedScrollHeight,
+        currentChapterClientHeight: resolvedClientHeight,
+        chapterProgressPercent: percent,
+        updatedAt: new Date().toISOString(),
+      };
 
-          const nextProgress = {
-            currentChapterId: chapter.id,
-            currentChapterHref: chapter.href,
-            currentChapterIndex: chapterIndex,
-            currentChapterElementId: resolvedElementId ?? null,
-            currentChapterElementIndex: resolvedElementIndex ?? null,
-            currentChapterScrollTop: resolvedScrollTop,
-            currentChapterScrollHeight: resolvedScrollHeight,
-            currentChapterClientHeight: resolvedClientHeight,
-            chapterProgressPercent: percent,
-            updatedAt: timestamp,
-          };
+      const isUnchanged =
+        existingProgress &&
+        existingProgress.currentChapterId === nextProgress.currentChapterId &&
+        existingProgress.currentChapterIndex === nextProgress.currentChapterIndex &&
+        Math.abs(
+          (typeof existingProgress.currentChapterScrollTop === "number"
+            ? existingProgress.currentChapterScrollTop
+            : 0) - nextProgress.currentChapterScrollTop,
+        ) < 1 &&
+        Math.abs(
+          (typeof existingProgress.currentChapterScrollHeight === "number"
+            ? existingProgress.currentChapterScrollHeight
+            : 0) - nextProgress.currentChapterScrollHeight,
+        ) < 1 &&
+        Math.abs(
+          (typeof existingProgress.currentChapterClientHeight === "number"
+            ? existingProgress.currentChapterClientHeight
+            : 0) - nextProgress.currentChapterClientHeight,
+        ) < 1 &&
+        Math.abs(existingProgress.chapterProgressPercent - nextProgress.chapterProgressPercent) <
+          0.002 &&
+        ((existingProgress.currentChapterElementId ?? null) ===
+          (nextProgress.currentChapterElementId ?? null)) &&
+        ((existingProgress.currentChapterElementIndex ?? null) ===
+          (nextProgress.currentChapterElementIndex ?? null));
 
-          const isUnchanged =
-            existingProgress &&
-            existingProgress.currentChapterId === nextProgress.currentChapterId &&
-            existingProgress.currentChapterIndex === nextProgress.currentChapterIndex &&
-            Math.abs(
-              (typeof existingProgress.currentChapterScrollTop === "number"
-                ? existingProgress.currentChapterScrollTop
-                : 0) - nextProgress.currentChapterScrollTop,
-            ) < 1 &&
-            Math.abs(
-              (typeof existingProgress.currentChapterScrollHeight === "number"
-                ? existingProgress.currentChapterScrollHeight
-                : 0) - nextProgress.currentChapterScrollHeight,
-            ) < 1 &&
-            Math.abs(
-              (typeof existingProgress.currentChapterClientHeight === "number"
-                ? existingProgress.currentChapterClientHeight
-                : 0) - nextProgress.currentChapterClientHeight,
-            ) < 1 &&
-            Math.abs(existingProgress.chapterProgressPercent - nextProgress.chapterProgressPercent) <
-              0.002 &&
-            ((existingProgress.currentChapterElementId ?? null) ===
-              (nextProgress.currentChapterElementId ?? null)) &&
-            ((existingProgress.currentChapterElementIndex ?? null) ===
-              (nextProgress.currentChapterElementIndex ?? null));
-
-          if (isUnchanged) {
-            console.debug(`${PROGRESS_LOG_PREFIX} unchanged progress, skipping persist`, {
-              bookId,
-              chapterId: chapter.id,
-            });
-            return book;
-          }
-
-          updated = true;
-          console.debug(`${PROGRESS_LOG_PREFIX} persisting progress`, {
-            bookId,
-            chapterId: chapter.id,
-            progress: nextProgress,
-          });
-          return {
-            ...book,
-            progress: nextProgress,
-          };
+      if (isUnchanged) {
+        console.debug(`${PROGRESS_LOG_PREFIX} unchanged progress, skipping persist`, {
+          bookId,
+          chapterId: chapter.id,
         });
+        return;
+      }
 
-        return updated ? nextLibrary : prev;
-      });
+      // Update local state optimistically
+      setLibrary((prev) =>
+        prev.map((b) => (b.id === bookId ? { ...b, progress: nextProgress } : b))
+      );
+
+      // Sync to backend
+      try {
+        const updatedBook = await updateBookProgressBackend(bookId, nextProgress);
+        // Update local state with backend response
+        setLibrary((prev) =>
+          prev.map((b) => (b.id === bookId ? updatedBook : b))
+        );
+        console.debug(`${PROGRESS_LOG_PREFIX} synced progress to backend`, {
+          bookId,
+          chapterId: chapter.id,
+        });
+      } catch (error) {
+        console.error(`${PROGRESS_LOG_PREFIX} failed to sync progress to backend`, error);
+        // Revert optimistic update on error
+        setLibrary((prev) =>
+          prev.map((b) => (b.id === bookId ? book : b))
+        );
+      }
     },
-    [setLibrary],
+    [library, setLibrary],
   );
 
   const updateBookAudioState = useCallback(
-    (bookId: string, snapshot: AudioProgressSnapshot) => {
+    async (bookId: string, snapshot: AudioProgressSnapshot) => {
       if (!bookId) {
         return;
       }
@@ -701,52 +653,62 @@ function App() {
         return;
       }
 
-      setLibrary((prev) => {
-        let updated = false;
-        const timestamp = snapshot.updatedAt ?? new Date().toISOString();
-        const nextLibrary = prev.map((book) => {
-          if (book.id !== bookId || !book.audioTracks.length) {
-            return book;
-          }
+      const book = library.find((b) => b.id === bookId);
+      if (!book || !book.audioTracks.length) {
+        return;
+      }
 
-          const resolvedTrack =
-            book.audioTracks.find((track) => track.id === snapshot.trackId) ??
-            book.audioTracks.find((track) => track.href === snapshot.trackHref) ??
-            book.audioTracks[snapshot.trackIndex];
+      const resolvedTrack =
+        book.audioTracks.find((track) => track.id === snapshot.trackId) ??
+        book.audioTracks.find((track) => track.href === snapshot.trackHref) ??
+        book.audioTracks[snapshot.trackIndex];
 
-          if (!resolvedTrack) {
-            return book;
-          }
+      if (!resolvedTrack) {
+        return;
+      }
 
-          const resolvedIndex = book.audioTracks.findIndex((track) => track.id === resolvedTrack.id);
-          const normalizedSeconds = Number(snapshot.currentTimeSeconds.toFixed(3));
-          const existing = book.audioState;
+      const resolvedIndex = book.audioTracks.findIndex((track) => track.id === resolvedTrack.id);
+      const normalizedSeconds = Number(snapshot.currentTimeSeconds.toFixed(3));
+      const existing = book.audioState;
 
-          if (
-            existing &&
-            existing.currentTrackId === resolvedTrack.id &&
-            Math.abs(existing.currentTimeSeconds - normalizedSeconds) < 0.25
-          ) {
-            return book;
-          }
+      // Skip if change is too small (throttle updates)
+      if (
+        existing &&
+        existing.currentTrackId === resolvedTrack.id &&
+        Math.abs(existing.currentTimeSeconds - normalizedSeconds) < 0.25
+      ) {
+        return;
+      }
 
-          updated = true;
-          return {
-            ...book,
-            audioState: {
-              currentTrackId: resolvedTrack.id,
-              currentTrackHref: resolvedTrack.href,
-              currentTrackIndex: resolvedIndex === -1 ? snapshot.trackIndex : resolvedIndex,
-              currentTimeSeconds: normalizedSeconds,
-              updatedAt: timestamp,
-            },
-          };
-        });
+      const nextAudioState = {
+        currentTrackId: resolvedTrack.id,
+        currentTrackHref: resolvedTrack.href,
+        currentTrackIndex: resolvedIndex === -1 ? snapshot.trackIndex : resolvedIndex,
+        currentTimeSeconds: normalizedSeconds,
+        updatedAt: snapshot.updatedAt ?? new Date().toISOString(),
+      };
 
-        return updated ? nextLibrary : prev;
-      });
+      // Update local state optimistically
+      setLibrary((prev) =>
+        prev.map((b) => (b.id === bookId ? { ...b, audioState: nextAudioState } : b))
+      );
+
+      // Sync to backend (debounced/throttled in practice via the 0.25s check above)
+      try {
+        const updatedBook = await updateBookAudioStateBackend(bookId, nextAudioState);
+        // Update local state with backend response
+        setLibrary((prev) =>
+          prev.map((b) => (b.id === bookId ? updatedBook : b))
+        );
+      } catch (error) {
+        console.error("[Audio State] failed to sync audio state to backend", error);
+        // Revert optimistic update on error
+        setLibrary((prev) =>
+          prev.map((b) => (b.id === bookId ? book : b))
+        );
+      }
     },
-    [setLibrary],
+    [library, setLibrary],
   );
 
   useEffect(() => {
@@ -1202,37 +1164,22 @@ function App() {
     }
   }, [library.length]);
 
-  const normalizedLibrarySearch = librarySearchTerm.trim().toLowerCase();
-  const searchFilteredLibrary = useMemo(() => {
-    if (!normalizedLibrarySearch) return library;
-    return library.filter((book) => {
-      const haystack = `${book.title} ${book.author}`.toLowerCase();
-      return haystack.includes(normalizedLibrarySearch);
+  // Use backend filtering/search - refresh library when filter or search changes
+  useEffect(() => {
+    if (!isHydrated) return;
+    
+    const filter: LibraryFilter = {
+      filter: libraryFilter !== "all" ? libraryFilter : undefined,
+      search: librarySearchTerm.trim() || undefined,
+    };
+    
+    refreshLibrary(filter).catch((error) => {
+      console.error("Failed to refresh library with filter:", error);
     });
-  }, [library, normalizedLibrarySearch]);
+  }, [libraryFilter, librarySearchTerm, isHydrated, refreshLibrary]);
 
-  const filteredLibrary = useMemo(() => {
-    switch (libraryFilter) {
-      case "new":
-        return searchFilteredLibrary.filter((book) => getLibraryBookStatus(book) === "new");
-      case "resume":
-        return searchFilteredLibrary.filter(
-          (book) => getLibraryBookStatus(book) === "resume",
-        );
-      case "finished":
-        return searchFilteredLibrary.filter(
-          (book) => getLibraryBookStatus(book) === "finished",
-        );
-      case "recent":
-        return [...searchFilteredLibrary].reverse();
-      case "author":
-        return [...searchFilteredLibrary].sort((a, b) =>
-          a.author.localeCompare(b.author, undefined, { sensitivity: "base" }),
-        );
-      default:
-        return searchFilteredLibrary;
-    }
-  }, [searchFilteredLibrary, libraryFilter]);
+  // Use library directly since filtering is done by backend
+  const filteredLibrary = library;
 
   const showAudioPlayer = hasAudioTracks && (isAudioPlayerOpen || isAudioPlayerDismissing);
   const audioPlayerChromeVisible = activeView === "reader" ? isReaderChromeVisible : true;

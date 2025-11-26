@@ -6,6 +6,7 @@ import { parseEpub } from "../lib/epub-parser";
 import {
   readAllBooks,
   addBook,
+  type LibraryFilter,
 } from "../lib/book-service";
 
 import type {
@@ -51,7 +52,7 @@ type PersistedLibraryFile = {
 };
 
 type IngestParams = {
-  buffer: ArrayBuffer;
+  filePath: string;
   sourcePath: string;
   fallbackTitle?: string;
   progress?: BookProgress;
@@ -67,6 +68,7 @@ type PersistentLibrary = {
   importFromDialog: () => Promise<boolean | { book: Book; buffer: ArrayBuffer }>;
   handleWebFileSelection: (event: ChangeEvent<HTMLInputElement>) => Promise<void | { book: Book; buffer: ArrayBuffer }>;
   ingestEpub: (params: IngestParams) => Promise<Book | null>;
+  refreshLibrary: (filter?: LibraryFilter) => Promise<void>;
 };
 
 const isTauriEnvironment = () =>
@@ -579,32 +581,9 @@ export function usePersistentLibrary(): PersistentLibrary {
         }
       }
 
-      // Update local state for immediate UI update
-      setLibrary((prev) => {
-        // Check if book with same sourcePath already exists
-        const existingIndex = prev.findIndex((book) => book.sourcePath === sourcePath);
-        if (existingIndex !== -1) {
-          // Replace existing book (for in-place conversion)
-          const oldBook = prev[existingIndex];
-          console.debug(`${LIBRARY_LOG_PREFIX} replacing existing book`, {
-            bookId: normalizedBook.id,
-            title: normalizedBook.title,
-            sourcePath,
-            oldFileSizeBytes: oldBook.fileSizeBytes,
-            newFileSizeBytes: normalizedBook.fileSizeBytes,
-            oldFileSizeMB: oldBook.fileSizeBytes ? (oldBook.fileSizeBytes / (1024 * 1024)).toFixed(2) : "N/A",
-            newFileSizeMB: normalizedBook.fileSizeBytes ? (normalizedBook.fileSizeBytes / (1024 * 1024)).toFixed(2) : "N/A",
-          });
-          const updated = [...prev];
-          updated[existingIndex] = normalizedBook;
-          return updated;
-        }
-        console.debug(`${LIBRARY_LOG_PREFIX} adding book to library`, {
-          bookId: normalizedBook.id,
-          title: normalizedBook.title,
-        });
-        return [...prev, normalizedBook];
-      });
+      // Refresh library from backend to get updated state
+      // This ensures we have the latest data including any backend-side updates
+      await refreshLibrary();
       
       return normalizedBook;
     },
@@ -614,21 +593,33 @@ export function usePersistentLibrary(): PersistentLibrary {
   // Library is now managed by Rust backend - no need for local persistence
   // Updates are handled via Rust commands
 
+  const refreshLibrary = useCallback(async (filter?: LibraryFilter) => {
+    if (isTauriEnvironment()) {
+      try {
+        // Load books from Rust backend with optional filtering
+        const books = await readAllBooks(filter);
+        
+        console.debug(`${LIBRARY_LOG_PREFIX} loaded books from Rust backend`, {
+          bookCount: books.length,
+          filter,
+        });
+        
+        setLibrary(books);
+      } catch (error) {
+        console.warn("Reader library: failed to load books from Rust backend.", error);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
     const hydrateLibrary = async () => {
       if (isTauriEnvironment()) {
         try {
-          // Load all books from Rust backend
-          const books = await readAllBooks();
+          // Load all books from Rust backend (no filter on initial load)
+          await refreshLibrary();
           if (cancelled) return;
-          
-          console.debug(`${LIBRARY_LOG_PREFIX} loaded books from Rust backend`, {
-            bookCount: books.length,
-          });
-          
-          setLibrary(books);
         } catch (error) {
           console.warn("Reader library: failed to load books from Rust backend.", error);
         } finally {
@@ -815,6 +806,7 @@ export function usePersistentLibrary(): PersistentLibrary {
     importFromDialog,
     handleWebFileSelection,
     ingestEpub,
+    refreshLibrary,
   };
 }
 

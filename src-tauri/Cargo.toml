@@ -33,6 +33,7 @@ scraper = "0.19"
 num_cpus = "1.16"
 regex = "1.10"
 base64 = "0.22"
+uuid = { version = "1.0", features = ["v4"] }
 # GPU acceleration configuration:
 # - CUDA: For NVIDIA GPUs (Linux/Windows) - enables GPU acceleration via kokoros cuda feature
 # - CoreML: For Apple devices (macOS/iOS/iPadOS) - ONNX Runtime uses CoreML Execution Provider

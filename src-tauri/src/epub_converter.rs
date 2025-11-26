@@ -924,12 +924,26 @@ mod epub_converter {
         eprintln!("Using ONNX model: {}", onnx_path_str);
         eprintln!("Using voices file: {}", voices_path_str);
         
+        // Validate that model files are readable before attempting initialization
+        std::fs::metadata(&onnx_path_str)
+            .map_err(|e| format!("Cannot read ONNX model file at {}: {}", onnx_path_str, e))?;
+        std::fs::metadata(&voices_path_str)
+            .map_err(|e| format!("Cannot read voices file at {}: {}", voices_path_str, e))?;
+        
         // Validate engine can be created (but we'll create per-task instances for parallel processing)
-        let _test_engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
-            &onnx_path_str,
-            &voices_path_str,
-            1,
-        ).await;
+        // Spawn in a separate task to catch panics that might occur during initialization
+        let onnx_path_clone = onnx_path_str.clone();
+        let voices_path_clone = voices_path_str.clone();
+        let init_handle = tokio::task::spawn(async move {
+            kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+                &onnx_path_clone,
+                &voices_path_clone,
+                1,
+            ).await
+        });
+        
+        let _test_engine = init_handle.await
+            .map_err(|e| format!("TTS engine initialization task failed: {:?}. This may indicate the model files are corrupted or incompatible.", e))?;
         
         // Load EPUB as ZIP
         let mut archive = ZipArchive::new(Cursor::new(&epub_data))
@@ -1047,10 +1061,14 @@ mod epub_converter {
                             current_time += duration;
                         }
                         Ok(Err(e)) => {
-                            eprintln!("Error generating audio for chunk {}: {}", chunk_id, e);
+                            let error_msg = format!("TTS generation failed for chunk {} in chapter '{}': {}. Voice ID: {}", chunk_id, chapter.title, e, options.voice_id);
+                            eprintln!("{}", error_msg);
+                            return Err(error_msg);
                         }
                         Err(e) => {
-                            eprintln!("Task error for chunk {}: {}", chunk_id, e);
+                            let error_msg = format!("TTS engine initialization failed for chunk {} in chapter '{}': {:?}. This may indicate the model files are corrupted, missing, or incompatible. Voice ID: {}", chunk_id, chapter.title, e, options.voice_id);
+                            eprintln!("{}", error_msg);
+                            return Err(error_msg);
                         }
                     }
                 }
@@ -1891,9 +1909,11 @@ mod epub_converter {
         }
         
         /// Parse EPUB to extract chapter information
-        fn parse_epub_chapters(epub_data: &[u8]) -> Result<Vec<super::Chapter>, String> {
+        pub fn parse_epub_chapters(epub_data: &[u8]) -> Result<Vec<Chapter>, String> {
             use std::io::{Cursor, Read};
             use zip::ZipArchive;
+            use quick_xml::events::Event;
+            use quick_xml::Reader;
             
             // First, read content.opf to get chapter list
             let (opf_content, chapter_hrefs) = {
@@ -1914,13 +1934,69 @@ mod epub_converter {
                 opf_file.read_to_string(&mut content)
                     .map_err(|e| format!("Failed to read content.opf: {}", e))?;
                 
-                // Parse OPF to find chapter hrefs
+                // Parse OPF to find chapter hrefs using spine (reading order)
                 let manifest_items = extract_manifest_items(&content);
-                let hrefs: Vec<_> = manifest_items.iter()
-                    .filter(|item| item.media_type == "application/xhtml+xml")
-                    .filter(|item| !item.href.contains("toc") && !item.href.contains("copyright"))
-                    .map(|item| (item.id.clone(), item.href.clone()))
+                // Build a map of id -> item for quick lookup
+                let manifest_map: std::collections::HashMap<String, &ManifestItem> = manifest_items
+                    .iter()
+                    .map(|item| (item.id.clone(), item))
                     .collect();
+                
+                // Parse spine to get reading order
+                let mut hrefs = Vec::new();
+                let mut reader = Reader::from_str(&content);
+                reader.trim_text(true);
+                let mut in_spine = false;
+                
+                loop {
+                    match reader.read_event() {
+                        Ok(Event::Start(e)) => {
+                            if e.name().as_ref() == b"spine" {
+                                in_spine = true;
+                            } else if in_spine && e.name().as_ref() == b"itemref" {
+                                let mut idref = String::new();
+                                for attr in e.attributes() {
+                                    if let Ok(attr) = attr {
+                                        if attr.key.as_ref() == b"idref" {
+                                            idref = String::from_utf8_lossy(&attr.value).to_string();
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                // Look up this item in manifest
+                                if let Some(item) = manifest_map.get(&idref) {
+                                    // Include XHTML/HTML files (chapters) but exclude navigation/toc files
+                                    // Be lenient with media types as some EPUBs use variations
+                                    let is_html_content = item.media_type == "application/xhtml+xml"
+                                        || item.media_type == "text/html"
+                                        || item.media_type == "application/html+xml"
+                                        || item.href.ends_with(".xhtml")
+                                        || item.href.ends_with(".html");
+                                    
+                                    if is_html_content {
+                                        // Exclude navigation, toc, and copyright pages
+                                        let href_lower = item.href.to_lowercase();
+                                        if !href_lower.contains("toc") 
+                                            && !href_lower.contains("nav")
+                                            && !href_lower.contains("copyright")
+                                            && !href_lower.contains("cover")
+                                            && !href_lower.contains("titlepage") {
+                                            hrefs.push((item.id.clone(), item.href.clone()));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Ok(Event::End(e)) => {
+                            if e.name().as_ref() == b"spine" {
+                                in_spine = false;
+                            }
+                        }
+                        Ok(Event::Eof) => break,
+                        _ => {}
+                    }
+                }
                 
                 (content, hrefs)
             };
@@ -1949,7 +2025,7 @@ mod epub_converter {
                     content
                 };
                 
-                chapters.push(super::Chapter {
+                chapters.push(Chapter {
                     id: id.clone(),
                     title: extract_title_from_html(&chapter_content).unwrap_or_else(|| href.clone()),
                     href: href.clone(),
@@ -1979,3 +2055,5 @@ mod epub_converter {
 }
 
 pub use epub_converter::*;
+
+// parse_epub_chapters is re-exported via pub use epub_converter::*;

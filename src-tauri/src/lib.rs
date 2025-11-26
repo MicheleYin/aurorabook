@@ -598,13 +598,452 @@ fn convert_pcm_to_mp3(
 }
 
 /// Convert EPUB to audiobook format (backend implementation)
+/// Takes EPUB data, source path, and voice ID, extracts chapters from EPUB itself,
+/// converts to audiobook, and stores the result in the backend
 #[tauri::command]
 async fn convert_epub_to_audiobook(
+    source_path: String,
     epub_data: Vec<u8>,
-    options: epub_converter::ConversionOptions,
+    voice_id: String,
     app: tauri::AppHandle,
-) -> Result<Vec<u8>, String> {
-    epub_converter::convert_epub_to_audiobook(epub_data, options, app).await
+) -> Result<(), String> {
+    use tauri_plugin_store::StoreBuilder;
+    use base64::{Engine as _, engine::general_purpose};
+    
+    // Store the original EPUB data in the cache for future use
+    let epub_store = StoreBuilder::new(&app, "epub-cache.store.json")
+        .build()
+        .map_err(|e| format!("Failed to create EPUB store: {}", e))?;
+    let key = format!("epub:{}", source_path);
+    
+    // Save the EPUB data to store for future use
+    let base64_data = general_purpose::STANDARD.encode(&epub_data);
+    epub_store.set(&key, serde_json::Value::String(base64_data));
+    epub_store.save()
+        .map_err(|e| format!("Failed to save EPUB to store: {}", e))?;
+    
+    // Use the standalone conversion function which extracts chapters internally
+    // But we need to pass chapters, so let's extract them first using the existing function
+    // Actually, let's modify the approach: use convert_epub_to_audiobook which takes chapters
+    // but we'll extract chapters inline here using a simpler approach that doesn't have Send issues
+    
+    // Extract chapters using spawn_blocking to handle non-Send types
+    use tokio::task;
+    let epub_data_for_parsing = epub_data.clone();
+    let (chapters, stats) = task::spawn_blocking(move || -> Result<(Vec<epub_converter::Chapter>, (usize, usize, usize, usize, usize)), String> {
+        // This runs in a blocking thread, so we can use non-Send types like ZipArchive
+        use std::io::{Cursor, Read};
+        use zip::ZipArchive;
+        use quick_xml::events::Event;
+        use quick_xml::Reader;
+        
+        // Parse EPUB to extract chapters (same logic as in epub_converter module)
+        let mut chapters = Vec::new();
+        
+        // Read content.opf to get chapter list
+        let mut archive = ZipArchive::new(Cursor::new(&epub_data_for_parsing))
+            .map_err(|e| format!("Failed to open EPUB: {}", e))?;
+        
+        // First, try to find content.opf path from META-INF/container.xml (EPUB standard)
+        let opf_path = {
+            eprintln!("[EPUB Debug] Looking for OPF file...");
+            let mut found_path = None;
+            
+            // Try reading container.xml first
+            if let Ok(mut container_file) = archive.by_name("META-INF/container.xml") {
+                eprintln!("[EPUB Debug] Found META-INF/container.xml");
+                let mut container_content = String::new();
+                if container_file.read_to_string(&mut container_content).is_ok() {
+                    // Parse container.xml to find rootfile with media-type="application/oebps-package+xml"
+                    let mut reader = Reader::from_str(&container_content);
+                    reader.trim_text(true);
+                    let mut full_path = String::new();
+                    let mut media_type = String::new();
+                    
+                    loop {
+                        match reader.read_event() {
+                            Ok(Event::Start(e)) => {
+                                if e.name().as_ref() == b"rootfile" {
+                                    full_path.clear();
+                                    media_type.clear();
+                                    for attr in e.attributes() {
+                                        if let Ok(attr) = attr {
+                                            match attr.key.as_ref() {
+                                                b"full-path" => {
+                                                    full_path = String::from_utf8_lossy(&attr.value).to_string();
+                                                }
+                                                b"media-type" => {
+                                                    media_type = String::from_utf8_lossy(&attr.value).to_string();
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    // Check if this is the OPF file
+                                    if media_type == "application/oebps-package+xml" && !full_path.is_empty() {
+                                        eprintln!("[EPUB Debug] Found OPF path from container.xml: {}", full_path);
+                                        found_path = Some(full_path);
+                                        break;
+                                    }
+                                }
+                            }
+                            Ok(Event::Eof) => break,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            
+            // Fallback to common paths if container.xml didn't work
+            found_path.unwrap_or_else(|| {
+                eprintln!("[EPUB Debug] container.xml not found or didn't contain OPF path, trying common paths...");
+                // Try common locations
+                let common_paths = vec![
+                    "OEBPS/content.opf",
+                    "content.opf",
+                    "OEBPS/package.opf",
+                    "package.opf",
+                ];
+                
+                for path in common_paths {
+                    if archive.by_name(path).is_ok() {
+                        eprintln!("[EPUB Debug] Found OPF at common path: {}", path);
+                        return path.to_string();
+                    }
+                }
+                
+                eprintln!("[EPUB Debug] No OPF found in common paths, defaulting to content.opf");
+                // If nothing found, default to content.opf (will error later with better message)
+                "content.opf".to_string()
+            })
+        };
+        
+        eprintln!("[EPUB Debug] Using OPF path: {}", opf_path);
+        let mut opf_file = archive.by_name(&opf_path)
+            .map_err(|e| format!("Failed to find content.opf at path '{}': {}", opf_path, e))?;
+        
+        let mut opf_content = String::new();
+        opf_file.read_to_string(&mut opf_content)
+            .map_err(|e| format!("Failed to read content.opf: {}", e))?;
+        eprintln!("[EPUB Debug] OPF content length: {} bytes", opf_content.len());
+        eprintln!("[EPUB Debug] OPF content preview (first 500 chars): {}", 
+            opf_content.chars().take(500).collect::<String>());
+        
+        // Parse OPF to find chapter hrefs using spine (reading order)
+        let chapter_data: (Vec<(String, String)>, usize, (usize, usize, usize, usize)) = {
+            // First, parse manifest to build a map of id -> (href, media_type)
+            let mut manifest_map: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+            let mut reader = Reader::from_str(&opf_content);
+            reader.trim_text(true);
+            let mut in_manifest = false;
+            let mut current_item_id = String::new();
+            let mut current_item_href = String::new();
+            let mut current_item_media_type = String::new();
+            
+            // Parse manifest first - handle both regular and self-closing tags
+            loop {
+                match reader.read_event() {
+                    Ok(Event::Start(e)) => {
+                        let name_vec: Vec<u8> = e.name().as_ref().to_vec();
+                        let name_bytes = name_vec.as_slice();
+                        if name_bytes == b"manifest" {
+                            in_manifest = true;
+                            eprintln!("[EPUB Debug] Found <manifest> tag");
+                        } else if in_manifest && name_bytes == b"item" {
+                            current_item_id.clear();
+                            current_item_href.clear();
+                            current_item_media_type.clear();
+                            for attr in e.attributes() {
+                                if let Ok(attr) = attr {
+                                    match attr.key.as_ref() {
+                                        b"id" => current_item_id = String::from_utf8_lossy(&attr.value).to_string(),
+                                        b"href" => current_item_href = String::from_utf8_lossy(&attr.value).to_string(),
+                                        b"media-type" => current_item_media_type = String::from_utf8_lossy(&attr.value).to_string(),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            eprintln!("[EPUB Debug] Found <item> tag: id='{}', href='{}', media-type='{}'", 
+                                current_item_id, current_item_href, current_item_media_type);
+                        }
+                    }
+                    Ok(Event::Empty(e)) => {
+                        // Handle self-closing tags like <item id="..." href="..." media-type="..."/>
+                        let name_vec: Vec<u8> = e.name().as_ref().to_vec();
+                        let name_bytes = name_vec.as_slice();
+                        if in_manifest && name_bytes == b"item" {
+                            let mut item_id = String::new();
+                            let mut item_href = String::new();
+                            let mut item_media_type = String::new();
+                            for attr in e.attributes() {
+                                if let Ok(attr) = attr {
+                                    match attr.key.as_ref() {
+                                        b"id" => item_id = String::from_utf8_lossy(&attr.value).to_string(),
+                                        b"href" => item_href = String::from_utf8_lossy(&attr.value).to_string(),
+                                        b"media-type" => item_media_type = String::from_utf8_lossy(&attr.value).to_string(),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            if !item_id.is_empty() && !item_href.is_empty() {
+                                eprintln!("[EPUB Debug] Found self-closing <item/>: id='{}', href='{}', media-type='{}'", 
+                                    item_id, item_href, item_media_type);
+                                manifest_map.insert(item_id.clone(), (item_href.clone(), item_media_type.clone()));
+                            }
+                        }
+                    }
+                    Ok(Event::End(e)) => {
+                        let name_vec: Vec<u8> = e.name().as_ref().to_vec();
+                        let name_bytes = name_vec.as_slice();
+                        if name_bytes == b"manifest" {
+                            in_manifest = false;
+                            eprintln!("[EPUB Debug] Parsed manifest: {} items found", manifest_map.len());
+                        } else if name_bytes == b"item" && !current_item_id.is_empty() {
+                            if !current_item_href.is_empty() {
+                                eprintln!("[EPUB Debug] Adding manifest item: id='{}', href='{}', media-type='{}'", 
+                                    current_item_id, current_item_href, current_item_media_type);
+                                manifest_map.insert(current_item_id.clone(), (current_item_href.clone(), current_item_media_type.clone()));
+                            }
+                            current_item_id.clear();
+                            current_item_href.clear();
+                            current_item_media_type.clear();
+                        }
+                    }
+                    Ok(Event::Eof) => break,
+                    _ => {}
+                }
+            }
+            
+            // Now parse spine to get reading order
+            let mut hrefs = Vec::new();
+            let mut reader = Reader::from_str(&opf_content);
+            reader.trim_text(true);
+            let mut in_spine = false;
+            let mut spine_itemref_count = 0;
+            let mut missing_manifest_count = 0;
+            let mut non_html_count = 0;
+            let mut filtered_count = 0;
+            
+            loop {
+                match reader.read_event() {
+                    Ok(Event::Start(e)) => {
+                        let name_vec: Vec<u8> = e.name().as_ref().to_vec();
+                        let name_bytes = name_vec.as_slice();
+                        if name_bytes == b"spine" {
+                            in_spine = true;
+                            eprintln!("[EPUB Debug] Starting to parse spine...");
+                        } else if in_spine && name_bytes == b"itemref" {
+                            spine_itemref_count += 1;
+                            let mut idref = String::new();
+                            for attr in e.attributes() {
+                                if let Ok(attr) = attr {
+                                    if attr.key.as_ref() == b"idref" {
+                                        idref = String::from_utf8_lossy(&attr.value).to_string();
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            // Look up this item in manifest
+                            if let Some((href, media_type)) = manifest_map.get(&idref) {
+                                eprintln!("[EPUB Debug] Spine itemref #{}: idref='{}', href='{}', media-type='{}'", 
+                                    spine_itemref_count, idref, href, media_type);
+                                
+                                // Include XHTML/HTML files (chapters) but exclude navigation/toc files
+                                // Be lenient with media types as some EPUBs use variations
+                                let is_html_content = media_type == "application/xhtml+xml"
+                                    || media_type == "text/html"
+                                    || media_type == "application/html+xml"
+                                    || href.ends_with(".xhtml")
+                                    || href.ends_with(".html");
+                                
+                                if !is_html_content {
+                                    non_html_count += 1;
+                                    eprintln!("[EPUB Debug]   -> Filtered out (not HTML): media-type='{}'", media_type);
+                                } else {
+                                    // Exclude navigation, toc, and copyright pages
+                                    let href_lower = href.to_lowercase();
+                                    if !href_lower.contains("toc") 
+                                        && !href_lower.contains("nav")
+                                        && !href_lower.contains("copyright")
+                                        && !href_lower.contains("cover")
+                                        && !href_lower.contains("titlepage") {
+                                        eprintln!("[EPUB Debug]   -> Accepted as chapter: {}", href);
+                                        hrefs.push((idref.clone(), href.clone()));
+                                    } else {
+                                        filtered_count += 1;
+                                        eprintln!("[EPUB Debug]   -> Filtered out (navigation/toc/copyright/cover/titlepage): {}", href);
+                                    }
+                                }
+                            } else {
+                                missing_manifest_count += 1;
+                                eprintln!("[EPUB Debug] Spine itemref #{}: idref='{}' NOT FOUND in manifest!", 
+                                    spine_itemref_count, idref);
+                            }
+                        }
+                    }
+                    Ok(Event::Empty(e)) => {
+                        // Handle self-closing itemref tags
+                        let name_vec: Vec<u8> = e.name().as_ref().to_vec();
+                        let name_bytes = name_vec.as_slice();
+                        if in_spine && name_bytes == b"itemref" {
+                            spine_itemref_count += 1;
+                            let mut idref = String::new();
+                            for attr in e.attributes() {
+                                if let Ok(attr) = attr {
+                                    if attr.key.as_ref() == b"idref" {
+                                        idref = String::from_utf8_lossy(&attr.value).to_string();
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            if let Some((href, media_type)) = manifest_map.get(&idref) {
+                                eprintln!("[EPUB Debug] Spine self-closing itemref #{}: idref='{}', href='{}', media-type='{}'", 
+                                    spine_itemref_count, idref, href, media_type);
+                                
+                                let is_html_content = media_type == "application/xhtml+xml"
+                                    || media_type == "text/html"
+                                    || media_type == "application/html+xml"
+                                    || href.ends_with(".xhtml")
+                                    || href.ends_with(".html");
+                                
+                                if !is_html_content {
+                                    non_html_count += 1;
+                                } else {
+                                    let href_lower = href.to_lowercase();
+                                    if !href_lower.contains("toc") 
+                                        && !href_lower.contains("nav")
+                                        && !href_lower.contains("copyright")
+                                        && !href_lower.contains("cover")
+                                        && !href_lower.contains("titlepage") {
+                                        hrefs.push((idref.clone(), href.clone()));
+                                    } else {
+                                        filtered_count += 1;
+                                    }
+                                }
+                            } else {
+                                missing_manifest_count += 1;
+                                eprintln!("[EPUB Debug] Spine self-closing itemref #{}: idref='{}' NOT FOUND in manifest!", 
+                                    spine_itemref_count, idref);
+                            }
+                        }
+                    }
+                    Ok(Event::End(e)) => {
+                        let name_vec: Vec<u8> = e.name().as_ref().to_vec();
+                        let name_bytes = name_vec.as_slice();
+                        if name_bytes == b"spine" {
+                            in_spine = false;
+                            eprintln!("[EPUB Debug] Finished parsing spine:");
+                            eprintln!("[EPUB Debug]   Total itemrefs: {}", spine_itemref_count);
+                            eprintln!("[EPUB Debug]   Missing from manifest: {}", missing_manifest_count);
+                            eprintln!("[EPUB Debug]   Non-HTML items: {}", non_html_count);
+                            eprintln!("[EPUB Debug]   Filtered (nav/toc/etc): {}", filtered_count);
+                            eprintln!("[EPUB Debug]   Accepted chapters: {}", hrefs.len());
+                        }
+                    }
+                    Ok(Event::Eof) => break,
+                    _ => {}
+                }
+            }
+            let manifest_count = manifest_map.len();
+            (hrefs, manifest_count, (spine_itemref_count, missing_manifest_count, non_html_count, filtered_count))
+        };
+        
+        let (chapter_hrefs, manifest_count, spine_stats) = chapter_data;
+        eprintln!("[EPUB Debug] Found {} chapters from spine", chapter_hrefs.len());
+        
+        // Store stats for error message if needed
+        let (spine_itemref_count, missing_manifest_count, non_html_count, filtered_count) = spine_stats;
+        
+        // Determine OEBPS base path from OPF path location
+        let oebps_base = if opf_path.contains("/") {
+            opf_path[..opf_path.rfind("/").unwrap() + 1].to_string()
+        } else {
+            "OEBPS/".to_string()
+        };
+        eprintln!("[EPUB Debug] OEBPS base path: '{}'", oebps_base);
+        
+        // Read chapter files
+        for (idx, (id, href)) in chapter_hrefs.iter().enumerate() {
+            eprintln!("[EPUB Debug] Processing chapter {}/{}: id='{}', href='{}'", 
+                idx + 1, chapter_hrefs.len(), id, href);
+            let epub_data_clone = epub_data_for_parsing.clone();
+            let mut archive = ZipArchive::new(Cursor::new(epub_data_clone))
+                .map_err(|e| format!("Failed to reopen EPUB: {}", e))?;
+            
+            // Resolve chapter path relative to OEBPS base
+            let chapter_path = if href.starts_with("/") {
+                // Absolute path (uncommon but possible)
+                href[1..].to_string()
+            } else if href.starts_with("OEBPS/") || href.starts_with("../") {
+                // Already has path prefix or relative path
+                href.clone()
+            } else {
+                // Relative to OEBPS base
+                format!("{}{}", oebps_base, href)
+            };
+            
+            let mut chapter_file = archive.by_name(&chapter_path)
+                .map_err(|e| format!("Failed to find chapter {}: {}", chapter_path, e))?;
+            
+            let mut content = String::new();
+            chapter_file.read_to_string(&mut content)
+                .map_err(|e| format!("Failed to read chapter {}: {}", chapter_path, e))?;
+            
+            // Extract title from HTML
+            let title = if let Some(start) = content.find("<h1>") {
+                if let Some(end) = content[start+4..].find("</h1>") {
+                    content[start+4..start+4+end].trim().to_string()
+                } else if let Some(start_title) = content.find("<title>") {
+                    if let Some(end_title) = content[start_title+7..].find("</title>") {
+                        content[start_title+7..start_title+7+end_title].trim().to_string()
+                    } else {
+                        href.clone()
+                    }
+                } else {
+                    href.clone()
+                }
+            } else {
+                href.clone()
+            };
+            
+            chapters.push(epub_converter::Chapter {
+                id: id.clone(),
+                title,
+                href: href.clone(),
+                content_html: content,
+            });
+        }
+        
+        eprintln!("[EPUB Debug] Successfully extracted {} chapters", chapters.len());
+        Ok((chapters, (manifest_count, spine_itemref_count, missing_manifest_count, non_html_count, filtered_count)))
+    }).await.map_err(|e| format!("Failed to extract chapters: {}", e))??;
+    
+    let (manifest_count, spine_itemref_count, missing_manifest_count, non_html_count, filtered_count) = stats;
+    
+    if chapters.is_empty() {
+        eprintln!("[EPUB Debug] ERROR: No chapters found after processing!");
+        return Err(format!("No chapters found in EPUB. Manifest had {} items, spine had {} itemrefs ({} missing from manifest, {} non-HTML, {} filtered), but no valid chapters were extracted.", 
+            manifest_count, spine_itemref_count, missing_manifest_count, non_html_count, filtered_count));
+    }
+    
+    // Create conversion options
+    let options = epub_converter::ConversionOptions {
+        voice_id,
+        chapters,
+    };
+    
+    // Convert EPUB to audiobook
+    let converted_epub = epub_converter::convert_epub_to_audiobook(epub_data, options, app).await?;
+    
+    // Store converted EPUB back in store (same sourcePath, overwrites original)
+    let converted_base64 = general_purpose::STANDARD.encode(&converted_epub);
+    epub_store.set(&key, serde_json::Value::String(converted_base64));
+    epub_store.save()
+        .map_err(|e| format!("Failed to save converted EPUB to store: {}", e))?;
+    
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -631,6 +1070,9 @@ pub fn run() {
             book_service::delete_book,
             book_service::add_book,
             book_service::get_epub_buffer,
+            book_service::update_book_progress,
+            book_service::update_book_audio_state,
+            book_service::ingest_epub,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
