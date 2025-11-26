@@ -1,4 +1,4 @@
-import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { isIOS } from "../lib/is-tauri";
@@ -6,7 +6,6 @@ import { parseEpub } from "../lib/epub-parser";
 import {
   readAllBooks,
   addBook,
-  getEpubBuffer,
 } from "../lib/book-service";
 
 import type {
@@ -49,12 +48,6 @@ type PersistedLibraryEntry = {
 type PersistedLibraryFile = {
   version: number;
   books: Array<PersistedLibraryEntry | Book>;
-};
-
-type StoreHandle = {
-  set: (key: string, value: unknown) => Promise<void>;
-  get: <T>(key: string) => Promise<T | null | undefined>;
-  save: () => Promise<void>;
 };
 
 type IngestParams = {

@@ -92,8 +92,6 @@ export function BookDetailDialog({
         // Tauri: Use save dialog and write file
         const { save } = await import("@tauri-apps/plugin-dialog");
         const { writeFile } = await import("@tauri-apps/plugin-fs");
-        const { getEpub } = await import("../../lib/epub-store");
-
         if (book.sourcePath.startsWith("web://")) {
           toast.error("Cannot export web files", {
             description: "Web files cannot be exported. Please import from file system.",
@@ -102,8 +100,8 @@ export function BookDetailDialog({
         }
 
         // Get EPUB buffer from Rust backend
-        const { getEpubBuffer } = await import("../../lib/book-service");
-        const arrayBuffer = await getEpubBuffer(book.sourcePath);
+        const { getEpubBuffer: getEpubBufferService } = await import("../../lib/book-service");
+        const arrayBuffer = await getEpubBufferService(book.sourcePath);
         
         if (!arrayBuffer) {
           console.error("EPUB not found in store", {
