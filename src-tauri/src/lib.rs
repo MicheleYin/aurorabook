@@ -5,6 +5,7 @@ use tauri::Manager;
 mod kokoro_onnx_coreml;
 
 mod epub_converter;
+mod book_service;
 
 // Use kokoros crate directly on all platforms (it uses ONNX Runtime with CoreML EP on macOS/iOS)
 
@@ -622,7 +623,14 @@ pub fn run() {
             copy_directory,
             convert_pcm_to_mp3,
             convert_epub_to_audiobook,
-            read_resource_file
+            read_resource_file,
+            book_service::read_all_books,
+            book_service::read_one_book,
+            book_service::read_single_chapter,
+            book_service::read_single_audio_track,
+            book_service::delete_book,
+            book_service::add_book,
+            book_service::get_epub_buffer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

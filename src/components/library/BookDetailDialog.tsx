@@ -101,8 +101,9 @@ export function BookDetailDialog({
           return;
         }
 
-        // Get EPUB buffer from store (works for both original and converted EPUBs)
-        const arrayBuffer = await getEpub(book.sourcePath);
+        // Get EPUB buffer from Rust backend
+        const { getEpubBuffer } = await import("../../lib/book-service");
+        const arrayBuffer = await getEpubBuffer(book.sourcePath);
         
         if (!arrayBuffer) {
           console.error("EPUB not found in store", {

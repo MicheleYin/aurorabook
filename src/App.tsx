@@ -28,7 +28,7 @@ import { cn, getLibraryBookStatus } from "./lib/utils";
 import { animPatterns, viewTransition } from "./lib/animations";
 import { findChaptersForAudioTrack } from "./lib/epub";
 import { convertEpubToAudiobook } from "./lib/audiobook-converter";
-import { getEpub } from "./lib/epub-store";
+// EPUB operations now handled by Rust backend via book-service
 import type { VoiceId } from "./types/reader";
 import type { Book } from "./types/reader";
 
@@ -204,8 +204,13 @@ function App() {
         return;
       }
       
-      // Tauri environment - read from store
-      buffer = await getEpub(book.sourcePath);
+      // Tauri environment - read from Rust backend
+      const { getEpubBuffer } = await import("./lib/book-service");
+      const epubBytes = await getEpubBuffer(book.sourcePath);
+      if (!epubBytes) {
+        throw new Error(`EPUB not found: ${book.sourcePath}`);
+      }
+      buffer = epubBytes;
       if (!buffer) {
         throw new Error(`EPUB not found in store: ${book.sourcePath}`);
       }
@@ -460,20 +465,13 @@ function App() {
         // Get the EPUB buffer
         let buffer: ArrayBuffer | null = null;
         
-        // Try to get from store first (for converted audiobooks)
-        if (activeBook.audioState) {
-          const { getConvertedEpub } = await import("./lib/epub-store");
-          buffer = await getConvertedEpub(activeBook.sourcePath);
-        }
-        
-        // If not found in store, try to get from store (should always be there)
+        // Get EPUB from Rust backend
+        const { getEpubBuffer } = await import("./lib/book-service");
+        buffer = await getEpubBuffer(activeBook.sourcePath);
         if (!buffer) {
-          buffer = await getEpub(activeBook.sourcePath);
-          if (!buffer) {
-            console.warn("[App] Failed to read EPUB from store for sync map rebuild:", activeBook.sourcePath);
-            rebuildingSyncMapRef.current.delete(activeBook.id);
-            return;
-          }
+          console.warn("[App] Failed to read EPUB from Rust backend for sync map rebuild:", activeBook.sourcePath);
+          rebuildingSyncMapRef.current.delete(activeBook.id);
+          return;
         }
 
         // Re-ingest to rebuild sync map
@@ -1159,22 +1157,32 @@ function App() {
         });
       }
       
+      // Find the book first to get its sourcePath for cache cleanup
+      const bookToDelete = library.find((book) => book.id === bookId);
+      
+      // Delete from Rust backend
+      try {
+        const { deleteBook } = await import("./lib/book-service");
+        await deleteBook(bookId);
+      } catch (error) {
+        console.error("Failed to delete book from Rust backend:", error);
+        toast.error("Failed to delete book", {
+          description: error instanceof Error ? error.message : "An error occurred",
+        });
+        return;
+      }
+      
+      // Update local state
       setLibrary((prev) => prev.filter((book) => book.id !== bookId));
       setDetailBookId(null);
 
-      // Clean up stored converted EPUB if it exists
-      // Find the book first to get its sourcePath
-      const bookToDelete = library.find((book) => book.id === bookId);
+      // Clear lazy loader cache
       if (bookToDelete) {
         try {
-          const { removeConvertedEpub } = await import("./lib/epub-store");
-          await removeConvertedEpub(bookToDelete.sourcePath);
-          
-          // Clear lazy loader cache
           const { clearBookCache } = await import("./lib/lazy-chapter-loader");
           clearBookCache(bookToDelete.sourcePath);
         } catch (error) {
-          console.warn("Failed to remove stored EPUB:", error);
+          console.warn("Failed to clear book cache:", error);
         }
       }
 
@@ -1185,7 +1193,7 @@ function App() {
         setActiveView("library");
       }
     },
-    [activeBookId, setLibrary, pendingBookForConversion],
+    [activeBookId, setLibrary, pendingBookForConversion, library],
   );
 
   useEffect(() => {

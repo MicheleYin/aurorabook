@@ -3,7 +3,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { isIOS } from "../lib/is-tauri";
 import { parseEpub } from "../lib/epub-parser";
-import { getEpub, storeOriginalEpub } from "../lib/epub-store";
+import {
+  readAllBooks,
+  addBook,
+  getEpubBuffer,
+} from "../lib/book-service";
 
 import type {
   AudioTrack,
@@ -29,9 +33,6 @@ import {
 } from "../lib/utils";
 
 const WEB_LIBRARY_STORAGE_KEY = "tts-library-cache-v1";
-const LIBRARY_STORE_PATH = "library.store.json";
-const LIBRARY_STORE_KEY = "library";
-const LIBRARY_STORE_VERSION = 1;
 
 type PersistedLibraryEntry = {
   sourcePath: string;
@@ -257,24 +258,6 @@ export function usePersistentLibrary(): PersistentLibrary {
   const [library, setLibrary] = useState<Book[]>([]);
   const [isHydrated, setIsHydrated] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
-  const libraryStoreRef = useRef<StoreHandle | null>(null);
-
-  const ensureLibraryStore = useCallback(async (): Promise<StoreHandle | null> => {
-    if (!isTauriEnvironment()) return null;
-    if (libraryStoreRef.current) {
-      return libraryStoreRef.current;
-    }
-
-    try {
-      const { load } = await import("@tauri-apps/plugin-store");
-      const store = await load(LIBRARY_STORE_PATH);
-      libraryStoreRef.current = store as StoreHandle;
-      return libraryStoreRef.current;
-    } catch (error) {
-      console.warn("Reader library: unable to initialize store.", error);
-      return null;
-    }
-  }, []);
 
   const ingestEpub = useCallback(
     async ({
@@ -589,6 +572,21 @@ export function usePersistentLibrary(): PersistentLibrary {
 
       const normalizedBook = normalizeBookProgressShape(applyDerivedFields(newBook));
 
+      // Save to Rust backend
+      if (isTauriEnvironment()) {
+        try {
+          await addBook(normalizedBook, buffer);
+          console.debug(`${LIBRARY_LOG_PREFIX} saved book to Rust backend`, {
+            bookId: normalizedBook.id,
+            title: normalizedBook.title,
+          });
+        } catch (error) {
+          console.error(`${LIBRARY_LOG_PREFIX} failed to save book to Rust backend`, error);
+          throw error;
+        }
+      }
+
+      // Update local state for immediate UI update
       setLibrary((prev) => {
         // Check if book with same sourcePath already exists
         const existingIndex = prev.findIndex((book) => book.sourcePath === sourcePath);
@@ -620,53 +618,8 @@ export function usePersistentLibrary(): PersistentLibrary {
     [],
   );
 
-  const persistLibrary = useCallback(
-    async (books: Book[]) => {
-      try {
-        if (isTauriEnvironment()) {
-          console.debug(`${LIBRARY_LOG_PREFIX} persisting library to store`, {
-            count: books.length,
-          });
-          const store = await ensureLibraryStore();
-          if (store) {
-            const payload: PersistedLibraryFile = {
-              version: LIBRARY_STORE_VERSION,
-              books: books.map((book) => ({
-                sourcePath: book.sourcePath,
-                title: book.title,
-                author: book.author,
-                publisher: book.publisher,
-                publishedYear: book.publishedYear,
-                subjects: book.subjects,
-                progress: book.progress,
-                pageCount: book.pageCount,
-              audioState: book.audioState,
-              })),
-            };
-            await store.set(LIBRARY_STORE_KEY, payload);
-            await store.save();
-          }
-        } else if (typeof window !== "undefined") {
-          console.debug(`${LIBRARY_LOG_PREFIX} persisting library to localStorage`, {
-            count: books.length,
-          });
-          const payload: PersistedLibraryFile = {
-            version: LIBRARY_STORE_VERSION,
-            books,
-          };
-          window.localStorage.setItem(WEB_LIBRARY_STORAGE_KEY, JSON.stringify(payload));
-        }
-      } catch (error) {
-        console.warn("Reader library: failed to persist library state.", error);
-      }
-    },
-    [ensureLibraryStore],
-  );
-
-  useEffect(() => {
-    if (!isHydrated) return;
-    void persistLibrary(library);
-  }, [library, isHydrated, persistLibrary]);
+  // Library is now managed by Rust backend - no need for local persistence
+  // Updates are handled via Rust commands
 
   useEffect(() => {
     let cancelled = false;
@@ -674,69 +627,17 @@ export function usePersistentLibrary(): PersistentLibrary {
     const hydrateLibrary = async () => {
       if (isTauriEnvironment()) {
         try {
-          const store = await ensureLibraryStore();
-          const payload = await store?.get<PersistedLibraryFile>(LIBRARY_STORE_KEY);
-
-          if (payload?.version === LIBRARY_STORE_VERSION && Array.isArray(payload.books)) {
-            console.debug(`${LIBRARY_LOG_PREFIX} hydrating via store`, {
-              bookCount: payload.books.length,
-            });
-            for (const entry of payload.books) {
-              if (cancelled) {
-                return;
-              }
-              if (!entry?.sourcePath) {
-                continue;
-              }
-              if (entry.sourcePath.startsWith("web://")) {
-                console.debug(`${LIBRARY_LOG_PREFIX} skipping web entry during store hydrate`, {
-                  sourcePath: entry.sourcePath,
-                });
-                continue;
-              }
-
-              try {
-                const entryWithMeta = entry as PersistedLibraryEntry & Partial<Book>;
-                // Get EPUB buffer from store (works for both original and converted EPUBs)
-                const arrayBuffer = await getEpub(entry.sourcePath);
-                
-                if (!arrayBuffer) {
-                  console.warn(
-                    `${LIBRARY_LOG_PREFIX} EPUB not found in store`,
-                    { sourcePath: entry.sourcePath },
-                  );
-                  toast.error(
-                    `Couldn't restore ${entry.title ?? deriveTitleFromPath(entry.sourcePath)}. The EPUB is missing from store.`,
-                  );
-                  continue;
-                }
-                
-                const book = await ingestEpub({
-                  buffer: arrayBuffer,
-                  sourcePath: entry.sourcePath,
-                  fallbackTitle: entry.title,
-                  progress: entryWithMeta.progress,
-                  pageCountHint: entryWithMeta.pageCount,
-                  audioState: entryWithMeta.audioState,
-                });
-                
-                console.debug(`${LIBRARY_LOG_PREFIX} restored book from store`, {
-                  sourcePath: entry.sourcePath,
-                  bookId: book?.id,
-                });
-              } catch (restoreError) {
-                console.warn(
-                  `Reader library: failed to restore ${entry.sourcePath}.`,
-                  restoreError,
-                );
-                toast.error(
-                  `Couldn't restore ${entry.title ?? deriveTitleFromPath(entry.sourcePath)}.`,
-                );
-              }
-            }
-          }
+          // Load all books from Rust backend
+          const books = await readAllBooks();
+          if (cancelled) return;
+          
+          console.debug(`${LIBRARY_LOG_PREFIX} loaded books from Rust backend`, {
+            bookCount: books.length,
+          });
+          
+          setLibrary(books);
         } catch (error) {
-          console.warn("Reader library: failed to load stored library.", error);
+          console.warn("Reader library: failed to load books from Rust backend.", error);
         } finally {
           if (!cancelled) {
             setIsHydrated(true);
@@ -745,6 +646,7 @@ export function usePersistentLibrary(): PersistentLibrary {
         return;
       }
 
+      // Web environment - use localStorage as fallback
       if (typeof window !== "undefined") {
         try {
           const serialized = window.localStorage.getItem(WEB_LIBRARY_STORAGE_KEY);
@@ -786,7 +688,7 @@ export function usePersistentLibrary(): PersistentLibrary {
     return () => {
       cancelled = true;
     };
-  }, [ensureLibraryStore, ingestEpub]);
+  }, []);
 
   const importFromDialog = useCallback(async (): Promise<boolean | { book: Book; buffer: ArrayBuffer }> => {
     if (isImporting) return false;
@@ -835,9 +737,7 @@ export function usePersistentLibrary(): PersistentLibrary {
         binary.byteOffset + binary.byteLength,
       );
 
-      // Store the EPUB in the store for future access
-      await storeOriginalEpub(filePath, arrayBuffer);
-
+      // Ingest EPUB (will store via Rust backend)
       const book = await ingestEpub({
         buffer: arrayBuffer,
         sourcePath: filePath,

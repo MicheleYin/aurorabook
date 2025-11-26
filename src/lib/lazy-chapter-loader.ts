@@ -4,7 +4,7 @@
  */
 
 import { parseEpub, type EpubBook } from "./epub-parser";
-import { getEpub } from "./epub-store";
+import { getEpubBuffer } from "./book-service";
 import type { Chapter, AudioTrack } from "../types/reader";
 import {
   normalizeChapterContent,
@@ -109,8 +109,8 @@ async function getEpubBookMetadata(sourcePath: string): Promise<EpubBook | null>
   }
 
   try {
-    // Get EPUB buffer from store
-    const buffer = await getEpub(sourcePath);
+    // Get EPUB buffer from Rust backend
+    const buffer = await getEpubBuffer(sourcePath);
     if (!buffer) {
       console.warn(`${LOADER_LOG_PREFIX} EPUB not found in store`, { sourcePath });
       return null;
