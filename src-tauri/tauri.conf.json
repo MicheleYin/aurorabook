@@ -43,8 +43,7 @@
     "macOS": {
       "frameworks": [],
       "minimumSystemVersion": "10.13",
-      "exceptionDomain": "",
-      "signingIdentity": "Apple Development: Michele Yin (YOUR_TEAM_ID)"
+      "exceptionDomain": ""
     },
     "iOS": {
       "developmentTeam": "YOUR_TEAM_ID",

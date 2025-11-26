@@ -1127,27 +1127,6 @@ function App() {
   }, [importFromDialog, isImporting, isConverting]);
 
   const handleDeleteBook = useCallback(async (bookId: string) => {
-      // Show native confirmation dialog
-      const isTauri = typeof window !== "undefined" &&
-        typeof (window as typeof window & { __TAURI_INTERNALS__?: { invoke?: unknown } })
-          .__TAURI_INTERNALS__?.invoke === "function";
-      
-      if (isTauri) {
-        const { ask } = await import("@tauri-apps/plugin-dialog");
-        const bookToDelete = library.find((book) => book.id === bookId);
-        const confirmed = await ask(
-          `Are you sure you want to delete "${bookToDelete?.title ?? "this book"}"? This action cannot be undone.`,
-          {
-            title: "Delete Book",
-            kind: "warning",
-          }
-        );
-        
-        if (!confirmed) {
-          return;
-        }
-      }
-      
       // If this book is currently being converted, cancel the conversion
       if (convertingBookIdRef.current === bookId && conversionAbortControllerRef.current) {
         conversionAbortControllerRef.current.abort();
@@ -1313,7 +1292,7 @@ function App() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-6 pb-28 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 safe-area-top">
         <div 
           className={cn(
             "flex flex-1 min-h-0 flex-col",
@@ -1344,10 +1323,13 @@ function App() {
       ) : null}
       <div
         className={cn(
-          "pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-6 sm:px-6",
+          "pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-6 sm:px-6 safe-area-bottom",
           animPatterns.navBar,
           hideNavigation ? "nav-bar-exit" : "nav-bar-enter",
         )}
+        style={{
+          paddingBottom: `calc(1.5rem + env(safe-area-inset-bottom))`,
+        }}
       >
         <div
           className={cn(
