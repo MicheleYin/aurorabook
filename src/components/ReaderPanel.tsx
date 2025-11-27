@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Headphones } from "lucide-react";
 
 import type { ChapterProgressSnapshot, ChapterSelectionOptions, ReaderPanelBaseProps } from "./reader/types";
@@ -18,6 +18,7 @@ type ReaderPanelProps = ReaderPanelBaseProps & {
   currentAudioTrackHref?: string;
   autoScrollEnabled?: boolean;
   isAudioRestoring?: boolean;
+  onSaveProgress?: (saveFn: () => void) => void;
 };
 
 export function ReaderPanel({
@@ -38,6 +39,7 @@ export function ReaderPanel({
   currentAudioTrackHref,
   autoScrollEnabled,
   isAudioRestoring,
+  onSaveProgress,
 }: ReaderPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
@@ -46,35 +48,50 @@ export function ReaderPanel({
   const [shouldRenderAudioReopen, setShouldRenderAudioReopen] = useState(false);
   const preserveChromeNextSelectionRef = useRef(false);
   const scrollIntentRef = useRef<"top" | "bottom" | null>(null);
+  const previousBookIdRef = useRef<string | undefined>(activeBook?.id);
+  const previousChapterIdRef = useRef<string | undefined>(activeChapter?.id);
 
-  useEffect(() => {
+  // Consolidated handler for book/chapter changes
+  const handleBookOrChapterChange = useCallback(() => {
     setIsTocOpen(false);
-  }, [activeBook?.id]);
-
-  useEffect(() => {
+    
     if (preserveChromeNextSelectionRef.current) {
       preserveChromeNextSelectionRef.current = false;
       return;
     }
+    
     setIsImmersive(false);
-  }, [activeBook?.id, activeChapter?.id]);
+  }, []);
 
+  // Reset immersive state when book or chapter changes
   useEffect(() => {
-    setIsImmersive(false);
-  }, [activeBook?.id]);
+    const bookChanged = previousBookIdRef.current !== activeBook?.id;
+    const chapterChanged = previousChapterIdRef.current !== activeChapter?.id;
+    
+    if (bookChanged || chapterChanged) {
+      handleBookOrChapterChange();
+    }
+    
+    previousBookIdRef.current = activeBook?.id;
+    previousChapterIdRef.current = activeChapter?.id;
+  }, [activeBook?.id, activeChapter?.id, handleBookOrChapterChange]);
 
-  useEffect(() => {
-    onChromeVisibilityChange?.(!isImmersive);
-  }, [isImmersive, onChromeVisibilityChange]);
+  // Derived state for chrome visibility
+  const chromeVisible = !isImmersive;
 
+  // Notify parent of chrome visibility changes
   useEffect(() => {
+    onChromeVisibilityChange?.(chromeVisible);
     return () => {
       onChromeVisibilityChange?.(true);
     };
-  }, [onChromeVisibilityChange]);
+  }, [chromeVisible, onChromeVisibilityChange]);
 
-  useEffect(() => {
-    if (isImmersive) {
+  // Handle immersive toggle - close drawers when entering immersive mode
+  const handleToggleImmersive = useCallback(() => {
+    const newImmersive = !isImmersive;
+    setIsImmersive(newImmersive);
+    if (newImmersive) {
       setIsSettingsOpen(false);
       setIsTocOpen(false);
     }
@@ -82,6 +99,7 @@ export function ReaderPanel({
 
   const handleBack = () => {
     setIsImmersive(false);
+    // Note: Progress saving happens in App.tsx useEffect when view changes
     onNavigateLibrary?.();
   };
 
@@ -91,7 +109,6 @@ export function ReaderPanel({
   const hasAudioTracks = audioTracks.length > 0;
   const showAudioPlayer = audioPlayerVisible ?? hasAudioTracks;
   const showAudioReopen = Boolean(hasAudioTracks && !showAudioPlayer && onOpenAudioPlayer);
-  const chromeVisible = !isImmersive;
 
   // Handle audio reopen button animation
   useEffect(() => {
@@ -176,7 +193,9 @@ export function ReaderPanel({
                 currentAudioTrackHref={currentAudioTrackHref}
                 isOpen={isTocOpen}
                 onOpenChange={(open) => {
-                  setIsImmersive(false);
+                  if (open) {
+                    setIsImmersive(false);
+                  }
                   setIsTocOpen(open);
                 }}
                 onSelectChapter={handleChapterChange}
@@ -187,7 +206,9 @@ export function ReaderPanel({
               onPreferencesChange={onPreferencesChange}
               isOpen={isSettingsOpen}
               onOpenChange={(open) => {
-                setIsImmersive(false);
+                if (open) {
+                  setIsImmersive(false);
+                }
                 setIsSettingsOpen(open);
               }}
             />
@@ -229,7 +250,7 @@ export function ReaderPanel({
           onSelectChapter={handleChapterChange}
           chromeVisible={chromeVisible}
           resolvedTheme={appliedTheme}
-          onToggleChrome={() => setIsImmersive((prev) => !prev)}
+          onToggleChrome={handleToggleImmersive}
           audioPlayerVisible={showAudioPlayer}
           scrollIntent={scrollIntentRef.current}
           onScrollIntentConsumed={() => {
@@ -240,6 +261,7 @@ export function ReaderPanel({
           currentAudioTrackHref={currentAudioTrackHref}
           autoScrollEnabled={Boolean(activeBook?.audioTracks?.length) && autoScrollEnabled}
           isAudioRestoring={isAudioRestoring}
+          onSaveProgress={onSaveProgress}
         />
       </div>
     </section>

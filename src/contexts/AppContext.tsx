@@ -94,6 +94,53 @@ export function AppContextProvider({
     setPendingFragment(null);
   }, []);
 
+  // Helper to validate and get a valid chapter ID for a book
+  const getValidChapterId = useCallback((book: Book): string | undefined => {
+    let fallbackChapterId =
+      book.progress?.currentChapterId ??
+      book.chapters[book.progress?.currentChapterIndex ?? 0]?.id ??
+      book.chapters[0]?.id;
+    
+    // Validate the chapter exists
+    if (
+      fallbackChapterId &&
+      !book.chapters.some((chapter) => chapter.id === fallbackChapterId)
+    ) {
+      fallbackChapterId = book.chapters[0]?.id;
+    }
+    
+    return fallbackChapterId;
+  }, []);
+
+  // Helper to validate active book/chapter selection
+  const validateActiveSelection = useCallback(() => {
+    if (!library.length || !activeBookId) {
+      return;
+    }
+
+    const selectedBook = library.find((book) => book.id === activeBookId);
+    if (!selectedBook) {
+      // Book was deleted, clear selection
+      setActiveBookId(undefined);
+      setActiveChapterId(undefined);
+      return;
+    }
+
+    // Validate that the active chapter exists in the selected book
+    const hasActiveChapter = activeChapterId
+      ? selectedBook.chapters.some((chapter) => chapter.id === activeChapterId)
+      : false;
+
+    if (!hasActiveChapter && activeChapterId) {
+      // Chapter doesn't exist, find a valid one
+      const validChapterId = getValidChapterId(selectedBook);
+      setActiveChapterId(validChapterId);
+      if (validChapterId) {
+        updateBookProgress(selectedBook.id, { chapterId: validChapterId });
+      }
+    }
+  }, [library, activeBookId, activeChapterId, getValidChapterId, updateBookProgress]);
+
   const handleSelectBook = useCallback(
     async (bookId: string) => {
       console.debug("[AppContext] handleSelectBook called", { 
@@ -161,26 +208,39 @@ export function AppContextProvider({
       
       setActiveBookId(bookId);
       console.debug("[ReaderProgress] select book", { bookId });
-      let progressChapterId: string | undefined;
-      if (selectedBook?.progress?.currentChapterId) {
-        const candidate = selectedBook.progress.currentChapterId;
-        if (selectedBook.chapters.some((chapter) => chapter.id === candidate)) {
-          progressChapterId = candidate;
+      
+      // If this book is already active, preserve the current chapter if it's still valid
+      // Otherwise, use the saved progress or fallback to first chapter
+      let nextChapterId: string | undefined;
+      if (activeBookId === bookId && activeChapterId) {
+        // Check if current chapter is still valid for this book
+        const currentChapterValid = selectedBook.chapters.some(
+          (chapter) => chapter.id === activeChapterId
+        );
+        if (currentChapterValid) {
+          nextChapterId = activeChapterId;
+          console.debug("[AppContext] Preserving current chapter for already-active book", {
+            bookId,
+            chapterId: nextChapterId,
+          });
         }
       }
-      const indexFallbackId =
-        selectedBook?.chapters[selectedBook.progress?.currentChapterIndex ?? 0]?.id;
-      const nextChapterId = progressChapterId ?? indexFallbackId ?? selectedBook?.chapters[0]?.id;
+      
+      // If no valid current chapter, get from saved progress or fallback
+      if (!nextChapterId) {
+        nextChapterId = getValidChapterId(selectedBook);
+      }
+      
       setActiveChapterId(nextChapterId);
       if (nextChapterId) {
         await updateBookProgress(bookId, { chapterId: nextChapterId });
       }
       setPendingFragment(null);
     },
-    [library, setLibrary, updateBookProgress],
+    [library, setLibrary, updateBookProgress, getValidChapterId, activeBookId, activeChapterId],
   );
 
-  // Auto-select first book/chapter when library changes (but not when activeBookId changes)
+  // Auto-select first book/chapter when library changes
   useEffect(() => {
     if (!library.length) {
       setActiveBookId(undefined);
@@ -197,73 +257,16 @@ export function AppContextProvider({
       }
       const firstBook = library[0];
       setActiveBookId(firstBook.id);
-      let fallbackChapterId =
-        firstBook.progress?.currentChapterId ??
-        firstBook.chapters[firstBook.progress?.currentChapterIndex ?? 0]?.id ??
-        firstBook.chapters[0]?.id;
-      if (
-        fallbackChapterId &&
-        !firstBook.chapters.some((chapter) => chapter.id === fallbackChapterId)
-      ) {
-        fallbackChapterId = firstBook.chapters[0]?.id;
-      }
+      const fallbackChapterId = getValidChapterId(firstBook);
       setActiveChapterId(fallbackChapterId);
       if (fallbackChapterId) {
         updateBookProgress(firstBook.id, { chapterId: fallbackChapterId });
       }
+    } else {
+      // Validate existing selection when library changes
+      validateActiveSelection();
     }
-  }, [library, updateBookProgress]); // Only depend on library, not activeBookId
-
-  // Validate activeBookId and activeChapterId when they change
-  useEffect(() => {
-    // Skip validation if this is a manual selection
-    if (manualSelectionRef.current === activeBookId) {
-      // Clear the ref after validation to allow future validations
-      const timer = setTimeout(() => {
-        manualSelectionRef.current = null;
-      }, 200);
-      return () => clearTimeout(timer);
-    }
-
-    if (!library.length) {
-      return;
-    }
-
-    if (!activeBookId) {
-      return;
-    }
-
-    const selectedBook = library.find((book) => book.id === activeBookId);
-    if (!selectedBook) {
-      // Book was deleted, clear selection
-      setActiveBookId(undefined);
-      setActiveChapterId(undefined);
-      return;
-    }
-
-    // Validate that the active chapter exists in the selected book
-    const hasActiveChapter = activeChapterId
-      ? selectedBook.chapters.some((chapter) => chapter.id === activeChapterId)
-      : false;
-
-    if (!hasActiveChapter && activeChapterId) {
-      // Chapter doesn't exist, find a valid one
-      let fallbackChapterId =
-        selectedBook.progress?.currentChapterId ??
-        selectedBook.chapters[selectedBook.progress?.currentChapterIndex ?? 0]?.id ??
-        selectedBook.chapters[0]?.id;
-      if (
-        fallbackChapterId &&
-        !selectedBook.chapters.some((chapter) => chapter.id === fallbackChapterId)
-      ) {
-        fallbackChapterId = selectedBook.chapters[0]?.id;
-      }
-      setActiveChapterId(fallbackChapterId);
-      if (fallbackChapterId) {
-        updateBookProgress(selectedBook.id, { chapterId: fallbackChapterId });
-      }
-    }
-  }, [activeBookId, activeChapterId, library, updateBookProgress]);
+  }, [library, activeBookId, getValidChapterId, updateBookProgress, validateActiveSelection]);
 
   const value: AppContextType = {
     activeBookId,

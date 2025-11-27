@@ -17,7 +17,7 @@ import { useAudioPlayer } from "./hooks/useAudioPlayer";
 import { useAppNavigation } from "./hooks/useAppNavigation";
 import { useBookProgress } from "./hooks/useBookProgress";
 import { AppContextProvider, useAppContext } from "./contexts/AppContext";
-import type { UITheme } from "./types/ui";
+import { useResolvedTheme } from "./hooks/useResolvedTheme";
 import type { ChapterSelectionOptions } from "./components/reader/types";
 import { cn } from "./lib/utils";
 import { animPatterns, viewTransition } from "./lib/animations";
@@ -94,6 +94,7 @@ function AppContent() {
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
 
   const uiTheme = settings.theme;
+  const resolvedUiTheme = useResolvedTheme(uiTheme);
 
   // Load auto-scroll setting from persistent settings
   useEffect(() => {
@@ -102,56 +103,51 @@ function AppContent() {
     }
   }, [isSettingsHydrated, settings.autoScrollEnabled]);
 
-  useEffect(() => {
-    if (activeView !== "reader") {
-      setIsReaderChromeVisible(true);
-    }
-  }, [activeView, setIsReaderChromeVisible]);
-
-  const resolveTheme = (theme: UITheme): "light" | "dark" => {
-    if (theme === "system") {
-      if (
-        typeof window !== "undefined" &&
-        window.matchMedia("(prefers-color-scheme: dark)").matches
-      ) {
-        return "dark";
-      }
-      return "light";
-    }
-    return theme;
-  };
-
-  const resolvedUiTheme = useMemo(
-    () => resolveTheme(uiTheme),
-    [uiTheme],
-  );
-
+  // Apply theme to document
   useEffect(() => {
     if (typeof document === "undefined") return;
 
     const root = document.documentElement;
-    const applyTheme = (theme: UITheme) => {
-      const resolved = resolveTheme(theme);
-      root.classList.toggle("dark", resolved === "dark");
-    };
-
-    applyTheme(uiTheme);
+    root.classList.toggle("dark", resolvedUiTheme === "dark");
 
     if (uiTheme !== "system") {
       return;
     }
 
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const listener = () => applyTheme("system");
+    const listener = () => {
+      const systemResolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      root.classList.toggle("dark", systemResolved === "dark");
+    };
     media.addEventListener("change", listener);
     return () => media.removeEventListener("change", listener);
-  }, [uiTheme]);
+  }, [uiTheme, resolvedUiTheme]);
+
+  // Ref to save progress from ReaderViewport
+  const saveProgressRef = useRef<(() => void) | null>(null);
 
   const handleSelectChapter = useCallback((chapterId: string, options?: ChapterSelectionOptions) => {
     if (!activeBookId) return;
 
+    // Save progress before changing chapters
+    if (saveProgressRef.current && activeChapterId) {
+      console.log("[App] Saving progress before chapter change", {
+        bookId: activeBookId,
+        fromChapterId: activeChapterId,
+        toChapterId: chapterId,
+        source: options?.isManualSelection ? "manual" : "navigation",
+      });
+      saveProgressRef.current();
+    } else if (!saveProgressRef.current) {
+      console.debug("[App] No saveProgress function available", {
+        bookId: activeBookId,
+        chapterId,
+      });
+    }
+
     // Disable auto-scroll on manual selection
     if (options?.isManualSelection && autoScrollEnabled) {
+      console.log("[App] Disabling auto-scroll due to manual chapter selection");
       setAutoScrollEnabled(false);
       updateSettings({ autoScrollEnabled: false });
     }
@@ -171,12 +167,19 @@ function AppContent() {
       progressUpdate.percent = 1;
     }
 
+    console.log("[App] Updating progress for new chapter", {
+      bookId: activeBookId,
+      chapterId,
+      scrollPosition: requestedScrollPosition,
+      progressUpdate,
+    });
+
     updateBookProgress(activeBookId, progressUpdate);
 
     const fragment = options?.fragment;
     setPendingFragment(fragment && fragment.length > 0 ? fragment.replace(/^#/, "") : null);
     setActiveView("reader");
-  }, [activeBookId, autoScrollEnabled, setAutoScrollEnabled, updateSettings, setActiveChapterId, updateBookProgress, setPendingFragment, setActiveView]);
+  }, [activeBookId, activeChapterId, autoScrollEnabled, setAutoScrollEnabled, updateSettings, setActiveChapterId, updateBookProgress, setPendingFragment, setActiveView]);
 
   const {
     isAudioPlayerOpen,
@@ -281,31 +284,7 @@ function AppContent() {
     }
   };
 
-  // Show toast when auto-scroll state changes
-  const previousAutoScrollEnabledRef = useRef<boolean | null>(null);
-  useEffect(() => {
-    // Skip on initial mount
-    if (previousAutoScrollEnabledRef.current === null) {
-      previousAutoScrollEnabledRef.current = autoScrollEnabled;
-      return;
-    }
-
-    // Only show toast if state actually changed
-    if (previousAutoScrollEnabledRef.current !== autoScrollEnabled) {
-      if (autoScrollEnabled) {
-        toast.success("Auto-scroll enabled", {
-          description: "The page will automatically scroll to follow the audio",
-          duration: 2000,
-        });
-      } else {
-        toast.info("Auto-scroll disabled", {
-          description: "The page will no longer automatically scroll",
-          duration: 2000,
-        });
-      }
-      previousAutoScrollEnabledRef.current = autoScrollEnabled;
-    }
-  }, [autoScrollEnabled]);
+  // Auto-scroll toast is now shown in handleAutoScrollToggle (in useAudioPlayer)
 
   // Use library directly since filtering is done by backend
   const filteredLibrary = library;
@@ -340,7 +319,14 @@ function AppContent() {
       onSelectChapter={handleSelectChapter}
       pendingFragment={pendingFragment}
       onFragmentConsumed={handleFragmentConsumed}
-      onNavigateLibrary={() => setActiveView("library")}
+      onNavigateLibrary={() => {
+        // Save progress before navigating away
+        if (saveProgressRef.current && activeChapterId) {
+          console.log("[App] Saving progress before navigating to library");
+          saveProgressRef.current();
+        }
+        setActiveView("library");
+      }}
       resolvedUiTheme={resolvedUiTheme}
       onChapterProgress={handleChapterProgress}
       onChromeVisibilityChange={setIsReaderChromeVisible}
@@ -350,6 +336,9 @@ function AppContent() {
       currentAudioTrackHref={currentAudioTrackHref}
       autoScrollEnabled={autoScrollEnabled}
       isAudioRestoring={isAudioRestoring}
+      onSaveProgress={(saveFn) => {
+        saveProgressRef.current = saveFn;
+      }}
     />
   );
 
@@ -432,6 +421,11 @@ function AppContent() {
                 disabled={isDisabled}
                 onClick={() => {
                   if (isDisabled) return;
+                  // Save progress before navigating away from reader
+                  if (activeView === "reader" && item.id !== "reader" && saveProgressRef.current && activeChapterId) {
+                    console.log("[App] Saving progress before navigating to", item.id);
+                    saveProgressRef.current();
+                  }
                   setActiveView(item.id);
                 }}
                 className={cn(
