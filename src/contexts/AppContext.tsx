@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState, useCallback, useEffect } from "react";
+import { createContext, useContext, useMemo, useState, useCallback, useEffect, useRef } from "react";
 import type { Book } from "../types/reader";
 import type { ReaderPreferences } from "../types/reader";
 import { clearAllCachesExcept } from "../lib/lazy-chapter-loader";
@@ -60,6 +60,7 @@ export function AppContextProvider({
   const [pendingFragment, setPendingFragment] = useState<string | null>(null);
   const [isReaderChromeVisible, setIsReaderChromeVisible] = useState(true);
   const [detailBookId, setDetailBookId] = useState<string | null>(null);
+  const manualSelectionRef = useRef<string | null>(null);
 
   const activeBook = useMemo(() => {
     if (!activeBookId) return undefined;
@@ -90,6 +91,9 @@ export function AppContextProvider({
       const selectedBook = library.find((book) => book.id === bookId);
       if (!selectedBook) return;
       
+      // Mark this as a manual selection to prevent auto-selection from overriding it
+      manualSelectionRef.current = bookId;
+      
       // Clear cache for all books except the one being opened
       try {
         clearAllCachesExcept(selectedBook.sourcePath);
@@ -118,15 +122,21 @@ export function AppContextProvider({
     [library, updateBookProgress],
   );
 
-  // Auto-select first book/chapter when library changes
+  // Auto-select first book/chapter when library changes (but not when activeBookId changes)
   useEffect(() => {
     if (!library.length) {
       setActiveBookId(undefined);
       setActiveChapterId(undefined);
+      manualSelectionRef.current = null;
       return;
     }
 
+    // Only auto-select if no book is currently selected or the selected book doesn't exist
     if (!activeBookId || !library.some((book) => book.id === activeBookId)) {
+      // Don't auto-select if there's a pending manual selection
+      if (manualSelectionRef.current) {
+        return;
+      }
       const firstBook = library[0];
       setActiveBookId(firstBook.id);
       let fallbackChapterId =
@@ -143,21 +153,43 @@ export function AppContextProvider({
       if (fallbackChapterId) {
         updateBookProgress(firstBook.id, { chapterId: fallbackChapterId });
       }
+    }
+  }, [library, updateBookProgress]); // Only depend on library, not activeBookId
+
+  // Validate activeBookId and activeChapterId when they change
+  useEffect(() => {
+    // Skip validation if this is a manual selection
+    if (manualSelectionRef.current === activeBookId) {
+      // Clear the ref after validation to allow future validations
+      const timer = setTimeout(() => {
+        manualSelectionRef.current = null;
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+
+    if (!library.length) {
+      return;
+    }
+
+    if (!activeBookId) {
       return;
     }
 
     const selectedBook = library.find((book) => book.id === activeBookId);
     if (!selectedBook) {
+      // Book was deleted, clear selection
       setActiveBookId(undefined);
       setActiveChapterId(undefined);
       return;
     }
 
+    // Validate that the active chapter exists in the selected book
     const hasActiveChapter = activeChapterId
       ? selectedBook.chapters.some((chapter) => chapter.id === activeChapterId)
       : false;
 
-    if (!hasActiveChapter) {
+    if (!hasActiveChapter && activeChapterId) {
+      // Chapter doesn't exist, find a valid one
       let fallbackChapterId =
         selectedBook.progress?.currentChapterId ??
         selectedBook.chapters[selectedBook.progress?.currentChapterIndex ?? 0]?.id ??
@@ -173,7 +205,7 @@ export function AppContextProvider({
         updateBookProgress(selectedBook.id, { chapterId: fallbackChapterId });
       }
     }
-  }, [library, activeBookId, activeChapterId, updateBookProgress]);
+  }, [activeBookId, activeChapterId, library, updateBookProgress]);
 
   const value: AppContextType = {
     activeBookId,
