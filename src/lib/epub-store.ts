@@ -15,18 +15,9 @@ type StoreHandle = {
   delete: (key: string) => Promise<boolean>;
 };
 
-const isTauriEnvironment = () =>
-  typeof window !== "undefined" &&
-  typeof (window as typeof window & { __TAURI_INTERNALS__?: { invoke?: unknown } })
-    .__TAURI_INTERNALS__?.invoke === "function";
-
 let storeRef: StoreHandle | null = null;
 
 const getStore = async (): Promise<StoreHandle | null> => {
-  if (!isTauriEnvironment()) {
-    console.debug(`${EPUB_STORE_LOG_PREFIX} not in Tauri environment`);
-    return null;
-  }
   if (storeRef) {
     console.debug(`${EPUB_STORE_LOG_PREFIX} using cached store reference`);
     return storeRef;
@@ -42,7 +33,6 @@ const getStore = async (): Promise<StoreHandle | null> => {
     console.error(`${EPUB_STORE_LOG_PREFIX} failed to load store`, {
       error,
       storePath: STORE_PATH,
-      isTauri: isTauriEnvironment(),
     });
     return null;
   }

@@ -108,21 +108,14 @@ function App() {
         },
       });
       
-      // Determine the new sourcePath for the converted audiobook
-      const newSourcePath = book.sourcePath.replace(/\.epub$/, "-audiobook.epub");
-      
       // Remove the original book from library
       setLibrary((prev) => prev.filter((b) => b.id !== book.id));
       
       // Re-ingest the converted EPUB (backend has already stored it, just need to reload metadata)
-      const convertedBuffer = await getEpubBuffer(book.sourcePath); // Backend stored it with same sourcePath
-      if (!convertedBuffer) {
-        throw new Error("Converted EPUB not found in backend store");
-      }
-      
+      // No need to read buffer here, backend will read from sourcePath
       await ingestEpub({
-        buffer: convertedBuffer,
-        sourcePath: newSourcePath,
+        filePath: book.sourcePath,
+        sourcePath: book.sourcePath, // Keep same path - convert in place
         fallbackTitle: book.title,
         progress: book.progress,
         pageCountHint: book.pageCount,
@@ -236,8 +229,9 @@ function App() {
       }
       
       // Re-ingest to update audio tracks and other metadata
+      // Note: For converted EPUBs, the backend has already stored it, so we can use the sourcePath
       await ingestEpub({
-        buffer: convertedBuffer,
+        filePath: book.sourcePath,
         sourcePath: book.sourcePath, // Keep same path - convert in place
         fallbackTitle: book.title,
         progress: book.progress,
@@ -351,11 +345,8 @@ function App() {
     };
 
     applyTheme(uiTheme);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem("ui-theme", uiTheme);
-    }
 
-    if (uiTheme !== "system" || typeof window === "undefined") {
+    if (uiTheme !== "system") {
       return;
     }
 
@@ -414,20 +405,10 @@ function App() {
       rebuildingSyncMapRef.current.add(activeBook.id);
       try {
         console.log("[App] Rebuilding missing audio sync map for book:", activeBook.id);
-        // Get the EPUB buffer
-        let buffer: ArrayBuffer | null = null;
         
-        // Get EPUB from Rust backend
-        buffer = await getEpubBuffer(activeBook.sourcePath);
-        if (!buffer) {
-          console.warn("[App] Failed to read EPUB from Rust backend for sync map rebuild:", activeBook.sourcePath);
-          rebuildingSyncMapRef.current.delete(activeBook.id);
-          return;
-        }
-
-        // Re-ingest to rebuild sync map
+        // Re-ingest to rebuild sync map (backend will read from sourcePath)
         await ingestEpub({
-          buffer,
+          filePath: activeBook.sourcePath,
           sourcePath: activeBook.sourcePath,
           fallbackTitle: activeBook.title,
           progress: activeBook.progress,

@@ -541,7 +541,7 @@ export function ReaderViewport({
     if (shouldScroll) {
       // Check if element is already visible in the viewport (especially in bottom portion)
       const elementRect = element.getBoundingClientRect();
-      const viewportHeight = typeof window !== "undefined" ? window.innerHeight : root.clientHeight;
+      const viewportHeight = window.innerHeight;
       const viewportBottom = viewportHeight;
       
       // Consider element visible if it's in the bottom 70% of the viewport

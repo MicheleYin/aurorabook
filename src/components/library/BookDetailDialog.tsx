@@ -82,20 +82,9 @@ export function BookDetailDialog({
 
     try {
       // Check if we're in Tauri environment
-      const isTauri = typeof window !== "undefined" &&
-        typeof (window as typeof window & { __TAURI_INTERNALS__?: { invoke?: unknown } })
-          .__TAURI_INTERNALS__?.invoke === "function";
-
-      if (isTauri) {
-        // Tauri: Use save dialog and write file
-        const { save } = await import("@tauri-apps/plugin-dialog");
-        const { writeFile } = await import("@tauri-apps/plugin-fs");
-        if (book.sourcePath.startsWith("web://")) {
-          toast.error("Cannot export web files", {
-            description: "Web files cannot be exported. Please import from file system.",
-          });
-          return;
-        }
+      // Use save dialog and write file
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const { writeFile } = await import("@tauri-apps/plugin-fs");
 
         // Get EPUB buffer from Rust backend
         const { getEpubBuffer: getEpubBufferService } = await import("../../lib/book-service");
@@ -128,25 +117,10 @@ export function BookDetailDialog({
           filters: [{ name: "EPUB files", extensions: ["epub"] }],
         });
 
-        if (filePath) {
-          await writeFile(filePath, new Uint8Array(arrayBuffer));
-          toast.success("EPUB exported!", {
-            description: `Saved to ${filePath.split("/").pop()}`,
-          });
-        }
-      } else {
-        // Web: Create download link
-        if (book.sourcePath.startsWith("web://")) {
-          toast.error("Cannot export web files", {
-            description: "Web files cannot be exported in browser mode.",
-          });
-          return;
-        }
-
-        // For web, we'd need the buffer - but we don't have it stored
-        // We could fetch it if it's a URL, but for now show an error
-        toast.error("Export not available", {
-          description: "File export is only available in the desktop app.",
+      if (filePath) {
+        await writeFile(filePath, new Uint8Array(arrayBuffer));
+        toast.success("EPUB exported!", {
+          description: `Saved to ${filePath.split("/").pop()}`,
         });
       }
     } catch (error) {
@@ -166,7 +140,7 @@ export function BookDetailDialog({
   }, [book.id]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !book.audioTracks.length) {
+    if (!book.audioTracks.length) {
       return;
     }
     const pendingTracks = book.audioTracks.filter(

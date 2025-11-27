@@ -175,3 +175,23 @@ export async function updateBookAudioState(
   }
 }
 
+/**
+ * Ingest EPUB file from a given file path.
+ * The backend will read the file and parse its metadata.
+ */
+export async function ingestEpub(
+  filePath: string,
+  sourcePath: string
+): Promise<Book> {
+  try {
+    const book = await invoke<Book>("ingest_epub", {
+      epubPath: filePath, // Pass file path to backend
+      sourcePath,
+    });
+    return book;
+  } catch (error) {
+    console.error("Failed to ingest EPUB:", error);
+    throw error;
+  }
+}
+

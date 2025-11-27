@@ -1,4 +1,3 @@
-import { isTauriEnvironment } from "./is-tauri";
 
 const STORE_PATH = "kokoro-assets.store.json";
 const STORE_KEY = "kokoroAssets";
@@ -54,7 +53,6 @@ const shouldHandleUrl = (url?: string) =>
   typeof url === "string" && url.startsWith(KOKORO_MODEL_BASE);
 
 const getStore = async (): Promise<StoreHandle | null> => {
-  if (!isTauriEnvironment()) return null;
   if (storeRef) return storeRef;
   try {
     const { load } = await import("@tauri-apps/plugin-store");
@@ -130,10 +128,7 @@ export const ensureKokoroAssetFetchCache = () => {
   if (fetchPatched || typeof window === "undefined" || typeof fetch !== "function") {
     return;
   }
-  if (!isTauriEnvironment()) {
-    fetchPatched = true;
-    return;
-  }
+  fetchPatched = true;
 
   const originalFetch = window.fetch.bind(window);
 
@@ -163,8 +158,6 @@ export const ensureKokoroAssetFetchCache = () => {
 
     return response;
   };
-
-  fetchPatched = true;
 };
 
 export const getCachedAssetStats = async () => {
