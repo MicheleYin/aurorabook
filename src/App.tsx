@@ -531,6 +531,7 @@ function App() {
   return (
     <AppContextProvider
       library={library}
+      setLibrary={setLibrary}
       updateBookProgress={updateBookProgress}
     >
       <AppContent />

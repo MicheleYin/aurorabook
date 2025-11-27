@@ -231,7 +231,40 @@ export function usePersistentLibrary(): PersistentLibrary {
         filter,
       });
       
-      setLibrary(books);
+      // Use functional update to merge with any optimistic updates
+      // This ensures books added optimistically aren't lost
+      setLibrary((prevLibrary) => {
+        // Create a map of backend books by ID and sourcePath for quick lookup
+        const backendBooksMap = new Map<string, Book>();
+        books.forEach(book => {
+          backendBooksMap.set(book.id, book);
+          backendBooksMap.set(book.sourcePath, book);
+        });
+        
+        // Merge: use backend books, but preserve any books in prevLibrary that aren't in backend yet
+        // (this handles the case where a book was just added optimistically)
+        const mergedBooks: Book[] = [];
+        const processedIds = new Set<string>();
+        const processedPaths = new Set<string>();
+        
+        // First, add all backend books
+        books.forEach(book => {
+          mergedBooks.push(book);
+          processedIds.add(book.id);
+          processedPaths.add(book.sourcePath);
+        });
+        
+        // Then, add any optimistic books that aren't in backend yet
+        prevLibrary.forEach(book => {
+          if (!processedIds.has(book.id) && !processedPaths.has(book.sourcePath)) {
+            mergedBooks.push(book);
+            processedIds.add(book.id);
+            processedPaths.add(book.sourcePath);
+          }
+        });
+        
+        return mergedBooks;
+      });
     } catch (error) {
       console.warn("Reader library: failed to load books from Rust backend.", error);
     }
@@ -372,8 +405,9 @@ export function usePersistentLibrary(): PersistentLibrary {
         }
       }
 
-      // Refresh library from backend to get updated state
-      await refreshLibrary();
+      // Don't refresh library here - let the caller handle it after optimistic update
+      // This prevents race conditions where refreshLibrary overwrites the optimistic update
+      // The library will be refreshed naturally on next filter change or we can do it explicitly
       
       return normalizedBook;
     },
@@ -448,6 +482,43 @@ export function usePersistentLibrary(): PersistentLibrary {
       if (!book) {
         return true;
       }
+      
+      // Optimistically update library state immediately so the book can be opened right away
+      // This ensures the book is available in the library array immediately, before any async refresh
+      console.debug(`${LIBRARY_LOG_PREFIX} optimistically adding book to library`, {
+        bookId: book.id,
+        title: book.title,
+      });
+      setLibrary((prevLibrary) => {
+        // Check if book already exists to avoid duplicates
+        const existingIndex = prevLibrary.findIndex(
+          (b) => b.id === book.id || b.sourcePath === book.sourcePath
+        );
+        if (existingIndex !== -1) {
+          // Update existing book instead of adding duplicate
+          const updated = [...prevLibrary];
+          updated[existingIndex] = book;
+          console.debug(`${LIBRARY_LOG_PREFIX} updated existing book in library`, {
+            bookId: book.id,
+            librarySize: updated.length,
+          });
+          return updated;
+        }
+        const updated = [...prevLibrary, book];
+        console.debug(`${LIBRARY_LOG_PREFIX} added new book to library`, {
+          bookId: book.id,
+          librarySize: updated.length,
+        });
+        return updated;
+      });
+      
+      // Refresh library from backend to sync state (refreshLibrary now merges, so it won't overwrite our optimistic update)
+      // Use requestAnimationFrame to ensure the optimistic update is applied first
+      requestAnimationFrame(() => {
+        refreshLibrary().catch((error) => {
+          console.warn("Failed to refresh library after adding book:", error);
+        });
+      });
       
       // Return book and buffer for potential conversion (read buffer for conversion if needed)
       const { getEpubBuffer } = await import("../lib/book-service");

@@ -46,10 +46,12 @@ const AppContext = createContext<AppContextType | null>(null);
 export function AppContextProvider({
   children,
   library,
+  setLibrary,
   updateBookProgress,
 }: {
   children: React.ReactNode;
   library: Book[];
+  setLibrary: React.Dispatch<React.SetStateAction<Book[]>>;
   updateBookProgress: (bookId: string, payload: { chapterId: string }) => Promise<void>;
 }) {
   const [activeBookId, setActiveBookId] = useState<string | undefined>();
@@ -61,10 +63,16 @@ export function AppContextProvider({
   const [isReaderChromeVisible, setIsReaderChromeVisible] = useState(true);
   const [detailBookId, setDetailBookId] = useState<string | null>(null);
   const manualSelectionRef = useRef<string | null>(null);
+  // Store fetched books temporarily until they're in the library
+  const fetchedBooksRef = useRef<Map<string, Book>>(new Map());
 
   const activeBook = useMemo(() => {
     if (!activeBookId) return undefined;
-    return library.find((book) => book.id === activeBookId);
+    // First check the library
+    const bookInLibrary = library.find((book) => book.id === activeBookId);
+    if (bookInLibrary) return bookInLibrary;
+    // Fallback to fetched books ref (for books just fetched but not yet in library state)
+    return fetchedBooksRef.current.get(activeBookId);
   }, [library, activeBookId]);
 
   const activeChapter = useMemo(() => {
@@ -88,8 +96,58 @@ export function AppContextProvider({
 
   const handleSelectBook = useCallback(
     async (bookId: string) => {
-      const selectedBook = library.find((book) => book.id === bookId);
-      if (!selectedBook) return;
+      console.debug("[AppContext] handleSelectBook called", { 
+        bookId, 
+        librarySize: library.length,
+        libraryBookIds: library.map(b => b.id),
+      });
+      
+      let selectedBook = library.find((book) => book.id === bookId);
+      
+      // If book is not in library array, try fetching it from backend
+      // This can happen if the book was just added and the library state hasn't updated yet
+      if (!selectedBook) {
+        console.debug("[AppContext] Book not found in library, fetching from backend", { bookId });
+        try {
+          const { readOneBook } = await import("../lib/book-service");
+          const fetchedBook = await readOneBook(bookId);
+          if (fetchedBook) {
+            selectedBook = fetchedBook;
+            // Store in ref immediately so activeBook can find it right away
+            fetchedBooksRef.current.set(bookId, fetchedBook);
+            // Add the fetched book to the library state so it persists
+            setLibrary((prevLibrary) => {
+              // Check if book already exists to avoid duplicates
+              const existingIndex = prevLibrary.findIndex(
+                (b) => b.id === fetchedBook.id || b.sourcePath === fetchedBook.sourcePath
+              );
+              if (existingIndex !== -1) {
+                // Update existing book
+                const updated = [...prevLibrary];
+                updated[existingIndex] = fetchedBook;
+                // Remove from ref since it's now in library
+                fetchedBooksRef.current.delete(bookId);
+                return updated;
+              }
+              // Add new book
+              // Remove from ref once it's in library (on next render)
+              setTimeout(() => {
+                fetchedBooksRef.current.delete(bookId);
+              }, 0);
+              return [...prevLibrary, fetchedBook];
+            });
+            console.debug("[AppContext] Successfully fetched book from backend and added to library", { bookId });
+          } else {
+            console.warn(`[AppContext] Book ${bookId} not found in library or backend`);
+            return;
+          }
+        } catch (error) {
+          console.error(`[AppContext] Failed to fetch book ${bookId} from backend:`, error);
+          return;
+        }
+      } else {
+        console.debug("[AppContext] Book found in library", { bookId, title: selectedBook.title });
+      }
       
       // Mark this as a manual selection to prevent auto-selection from overriding it
       manualSelectionRef.current = bookId;
@@ -119,7 +177,7 @@ export function AppContextProvider({
       }
       setPendingFragment(null);
     },
-    [library, updateBookProgress],
+    [library, setLibrary, updateBookProgress],
   );
 
   // Auto-select first book/chapter when library changes (but not when activeBookId changes)
