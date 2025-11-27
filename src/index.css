@@ -157,6 +157,21 @@
     line-height: inherit !important;
   }
 
+  /* Remove underline from anchor tags in reader content */
+  .reader-prose a,
+  [data-reader-chapter-content="true"] a {
+    text-decoration: none !important;
+  }
+
+  .reader-prose a:hover,
+  .reader-prose a:focus,
+  .reader-prose a:visited,
+  [data-reader-chapter-content="true"] a:hover,
+  [data-reader-chapter-content="true"] a:focus,
+  [data-reader-chapter-content="true"] a:visited {
+    text-decoration: none !important;
+  }
+
   /* Audio highlight animations */
   @keyframes audio-highlight-fade-in {
     from {
