@@ -6,6 +6,7 @@ import { cn } from "../../lib/utils";
 import { anim, animPatterns } from "../../lib/animations";
 import { findCurrentAudioSegment } from "../../lib/epub";
 import { ensureChapterLoaded } from "../../lib/lazy-chapter-loader";
+import { computeScrollMetrics, calculateProgress, restoreScrollPosition, scrollToElement } from "../../lib/scroll-utils";
 import {
   contentPaddingConfigMap,
   fontClassMap,
@@ -74,50 +75,44 @@ export function ReaderViewport({
   const [chapterTransitionDirection, setChapterTransitionDirection] = useState<"left" | "right" | "fade" | null>(null);
   const [loadedChapter, setLoadedChapter] = useState<Chapter | null>(null);
   const [isLoadingChapter, setIsLoadingChapter] = useState(false);
-  const showAudioPlayer = audioPlayerVisible;
+  
+  // Refs for tracking state
   const lastHighlightedElementRef = useRef<string | null>(null);
   const lastScrolledElementRef = useRef<string | null>(null);
   const previousChapterIdRef = useRef<string | undefined>(activeChapter?.id);
   const highlightEnterTimeoutRef = useRef<number | null>(null);
+  const isRestoringScrollRef = useRef(false);
+  const restoredChapterIdRef = useRef<string | null>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const lastProgressRef = useRef<ChapterProgressSnapshot | null>(null);
 
-  // Lazy load chapter content when needed
+  // Lazy load chapter content
   useEffect(() => {
     if (!activeBook || !activeChapter) {
       setLoadedChapter(null);
       return;
     }
 
-    // If chapter already has content, use it directly
     if (activeChapter.contentHtml && activeChapter.plainText) {
       setLoadedChapter(activeChapter);
       return;
     }
 
-    // Load chapter content lazily
     setIsLoadingChapter(true);
     ensureChapterLoaded(activeBook.sourcePath, activeChapter)
       .then((loaded) => {
         setLoadedChapter(loaded);
         setIsLoadingChapter(false);
-        
-        // Update the chapter in the library if needed
-        // This ensures the loaded content is available for future use
-        if (activeBook && loaded.contentHtml && loaded.plainText) {
-          // The chapter is now loaded and cached
-        }
       })
       .catch((error) => {
         console.error("Failed to load chapter", error);
         setIsLoadingChapter(false);
-        // Keep the chapter even if loading failed
         setLoadedChapter(activeChapter);
       });
   }, [activeBook?.sourcePath, activeChapter?.id, activeChapter?.href]);
 
-  // Use loaded chapter if available, otherwise fall back to activeChapter
   const displayChapter = loadedChapter || activeChapter;
-  
-  // Early return if no chapter is available
+
   if (!displayChapter || !activeChapter) {
     return (
       <div className="flex h-full w-full items-center justify-center">
@@ -126,45 +121,18 @@ export function ReaderViewport({
     );
   }
 
-  const computeScrollMetrics = useCallback(() => {
-    const node = contentRef.current;
-    if (!node) {
-      return null;
-    }
-
-    const scrollHeight = Math.max(node.scrollHeight, 0);
-    const clientHeight = Math.max(node.clientHeight, 0);
-    const maxScroll = Math.max(scrollHeight - clientHeight, 0);
-    const scrollTop = Math.min(Math.max(node.scrollTop, 0), maxScroll);
-
-    return { scrollTop, scrollHeight, clientHeight, maxScroll };
-  }, []);
-
+  // Emit progress snapshot
   const emitChapterProgress = useCallback(() => {
-    const chapter = displayChapter || activeChapter;
-    if (!chapter || !onChapterProgress) {
+    if (!displayChapter || !onChapterProgress || isRestoringScrollRef.current) {
       return;
     }
 
-    const node = contentRef.current;
-    if (!node) {
-      return;
-    }
+    const metrics = computeScrollMetrics(contentRef.current);
+    if (!metrics) return;
 
-    const metrics = computeScrollMetrics();
-    if (!metrics) {
-      return;
-    }
-
-    let percent = 0;
-    if (metrics.maxScroll > 0) {
-      percent = Math.min(Math.max(metrics.scrollTop / metrics.maxScroll, 0), 1);
-    } else if (metrics.scrollTop > 0) {
-      percent = 1;
-    }
-
+    const percent = calculateProgress(metrics);
     const snapshot: ChapterProgressSnapshot = {
-      chapterId: chapter.id,
+      chapterId: displayChapter.id,
       scrollTop: metrics.scrollTop,
       scrollHeight: metrics.scrollHeight,
       clientHeight: metrics.clientHeight,
@@ -173,15 +141,27 @@ export function ReaderViewport({
       activeElementIndex: null,
     };
 
-    onChapterProgress(snapshot);
-  }, [displayChapter, activeChapter, computeScrollMetrics, onChapterProgress]);
-
-  const scheduleProgressEmit = useCallback(() => {
-    if (!activeChapter || !onChapterProgress) {
+    // Skip if unchanged
+    const last = lastProgressRef.current;
+    if (
+      last &&
+      last.chapterId === snapshot.chapterId &&
+      Math.abs(last.scrollTop - snapshot.scrollTop) < 1 &&
+      Math.abs(last.scrollHeight - snapshot.scrollHeight) < 1 &&
+      Math.abs(last.clientHeight - snapshot.clientHeight) < 1 &&
+      Math.abs(last.percent - snapshot.percent) < 0.002
+    ) {
       return;
     }
 
-    // Debounce progress emissions to reduce state sync calls
+    lastProgressRef.current = snapshot;
+    onChapterProgress(snapshot);
+  }, [displayChapter, onChapterProgress]);
+
+  // Schedule progress emission with debouncing
+  const scheduleProgressEmit = useCallback(() => {
+    if (!activeChapter || !onChapterProgress) return;
+
     if (progressDebounceTimeoutRef.current !== null) {
       clearTimeout(progressDebounceTimeoutRef.current);
     }
@@ -195,42 +175,36 @@ export function ReaderViewport({
         progressRafRef.current = null;
         emitChapterProgress();
       });
-    }, 150); // Debounce by 150ms
+    }, 150);
   }, [activeChapter, emitChapterProgress, onChapterProgress]);
 
-  useEffect(() => {
-    return () => {
-      if (progressRafRef.current !== null) {
-        cancelAnimationFrame(progressRafRef.current);
-        progressRafRef.current = null;
-      }
-      if (progressDebounceTimeoutRef.current !== null) {
-        clearTimeout(progressDebounceTimeoutRef.current);
-        progressDebounceTimeoutRef.current = null;
-      }
-    };
-  }, []);
+  // Handle scroll events
+  const handleScroll = useCallback(() => {
+    setIsScrolling(true);
+    if (scrollActivityTimeoutRef.current !== null) {
+      clearTimeout(scrollActivityTimeoutRef.current);
+    }
+    scrollActivityTimeoutRef.current = window.setTimeout(() => {
+      scrollActivityTimeoutRef.current = null;
+      setIsScrolling(false);
+    }, 200);
+    scheduleProgressEmit();
+  }, [scheduleProgressEmit]);
 
+  // Setup scroll listener and resize observer
   useEffect(() => {
     const node = contentRef.current;
-    if (!node) {
-      return;
-    }
-
-    const handleScroll = () => {
-      setIsScrolling(true);
-      if (scrollActivityTimeoutRef.current !== null) {
-        clearTimeout(scrollActivityTimeoutRef.current);
-      }
-      scrollActivityTimeoutRef.current = window.setTimeout(() => {
-        scrollActivityTimeoutRef.current = null;
-        setIsScrolling(false);
-      }, 200);
-
-      scheduleProgressEmit();
-    };
+    if (!node) return;
 
     node.addEventListener("scroll", handleScroll, { passive: true });
+
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserverRef.current = new ResizeObserver(() => {
+        scheduleProgressEmit();
+      });
+      resizeObserverRef.current.observe(node);
+    }
+
     return () => {
       node.removeEventListener("scroll", handleScroll);
       if (scrollActivityTimeoutRef.current !== null) {
@@ -238,51 +212,79 @@ export function ReaderViewport({
         scrollActivityTimeoutRef.current = null;
       }
       setIsScrolling(false);
+      if (resizeObserverRef.current) {
+        resizeObserverRef.current.disconnect();
+        resizeObserverRef.current = null;
+      }
     };
-  }, [scheduleProgressEmit]);
+  }, [handleScroll, scheduleProgressEmit]);
 
+  // Restore scroll position when chapter loads
   useEffect(() => {
-    if (!activeChapter || scrollIntent) {
+    if (!activeChapter || scrollIntent || !activeBook?.progress) {
+      restoredChapterIdRef.current = null;
+      return;
+    }
+
+    if (restoredChapterIdRef.current === activeChapter.id) {
       return;
     }
 
     const node = contentRef.current;
-    if (!node) {
+    if (!node) return;
+
+    const progress = activeBook.progress;
+    if (progress.currentChapterId !== activeChapter.id) {
       return;
     }
 
-    const progress = activeBook?.progress;
-    const rafId = requestAnimationFrame(() => {
-      const metrics = computeScrollMetrics();
-      if (!metrics) {
+    isRestoringScrollRef.current = true;
+
+    const attemptRestore = () => {
+      const metrics = computeScrollMetrics(node);
+      if (!metrics || metrics.scrollHeight <= 0) {
+        requestAnimationFrame(attemptRestore);
         return;
       }
 
-      const maxScroll = metrics.maxScroll;
-      const targetWithinChapter =
-        progress && progress.currentChapterId === activeChapter.id
-          ? Math.max(Math.min(progress.currentChapterScrollTop, maxScroll), 0)
-          : 0;
+      if (metrics.maxScroll <= 0) {
+        isRestoringScrollRef.current = false;
+        restoredChapterIdRef.current = activeChapter.id;
+        setTimeout(() => scheduleProgressEmit(), 100);
+        return;
+      }
 
-      node.scrollTop = targetWithinChapter;
-      scheduleProgressEmit();
-    });
+      const restored = restoreScrollPosition(node, {
+        scrollTop: progress.currentChapterScrollTop,
+        scrollHeight: progress.currentChapterScrollHeight,
+        clientHeight: progress.currentChapterClientHeight,
+        percent: progress.chapterProgressPercent,
+      });
 
-    return () => cancelAnimationFrame(rafId);
+      isRestoringScrollRef.current = false;
+      restoredChapterIdRef.current = activeChapter.id;
+
+      if (restored) {
+        setTimeout(() => scheduleProgressEmit(), 100);
+      } else {
+        scheduleProgressEmit();
+      }
+    };
+
+    requestAnimationFrame(attemptRestore);
   }, [
     activeBook?.id,
     activeBook?.progress?.updatedAt,
     displayChapter?.id,
     displayChapter?.contentHtml,
-    computeScrollMetrics,
     scheduleProgressEmit,
     scrollIntent,
+    activeChapter?.id,
   ]);
 
+  // Handle scroll intent (top/bottom)
   useEffect(() => {
-    if (!scrollIntent) {
-      return;
-    }
+    if (!scrollIntent) return;
 
     const node = contentRef.current;
     if (!node) {
@@ -291,18 +293,17 @@ export function ReaderViewport({
     }
 
     const rafId = requestAnimationFrame(() => {
-      const metrics = computeScrollMetrics();
+      const metrics = computeScrollMetrics(node);
       if (!metrics) {
         onScrollIntentConsumed?.();
         return;
       }
-      
+
       const target = scrollIntent === "bottom" ? metrics.maxScroll : 0;
       node.scrollTo({ top: target, behavior: "smooth" });
-      
-      // Wait for smooth scroll to complete before emitting progress
+
       const checkComplete = () => {
-        const currentMetrics = computeScrollMetrics();
+        const currentMetrics = computeScrollMetrics(node);
         if (currentMetrics && Math.abs(currentMetrics.scrollTop - target) <= 5) {
           scheduleProgressEmit();
           onScrollIntentConsumed?.();
@@ -310,25 +311,16 @@ export function ReaderViewport({
           requestAnimationFrame(checkComplete);
         }
       };
-      
-      setTimeout(() => {
-        checkComplete();
-      }, 100);
+
+      setTimeout(() => checkComplete(), 100);
     });
 
     return () => cancelAnimationFrame(rafId);
-  }, [
-    scrollIntent,
-    activeChapter?.id,
-    onScrollIntentConsumed,
-    scheduleProgressEmit,
-    computeScrollMetrics,
-  ]);
+  }, [scrollIntent, activeChapter?.id, onScrollIntentConsumed, scheduleProgressEmit]);
 
+  // Handle fragment navigation
   useEffect(() => {
-    if (!pendingFragment) {
-      return;
-    }
+    if (!pendingFragment) return;
 
     const node = contentRef.current;
     if (!node) {
@@ -338,43 +330,40 @@ export function ReaderViewport({
 
     const fragment = pendingFragment.replace(/^#/, "");
     const rafId = requestAnimationFrame(() => {
-      const selector =
-        typeof CSS !== "undefined" && CSS.escape
-          ? `#${CSS.escape(fragment)}`
-          : `#${fragment}`;
-      const chapterRoot =
-        node.querySelector<HTMLElement>(
-          `[data-reader-chapter-content="true"][data-chapter-id="${activeChapter?.id}"]`,
-        ) ?? node;
-      const target =
-        chapterRoot.querySelector<HTMLElement>(selector) ??
-        chapterRoot.querySelector<HTMLElement>(`a[name="${fragment}"]`);
-
-      if (target) {
-        target.scrollIntoView({ behavior: "smooth", block: "start" });
-        // Delay progress emit to allow scroll to complete
-        setTimeout(() => {
-          scheduleProgressEmit();
-        }, 300);
+      if (scrollToElement(node, fragment, "smooth")) {
+        setTimeout(() => scheduleProgressEmit(), 300);
       }
-
       onFragmentConsumed();
     });
 
     return () => cancelAnimationFrame(rafId);
   }, [pendingFragment, activeChapter?.id, onFragmentConsumed, scheduleProgressEmit]);
 
-  // Only emit progress on chapter change, not on preference/visibility changes
+  // Save scroll position on unmount or chapter change
   useEffect(() => {
-    if (activeChapter?.id) {
-      scheduleProgressEmit();
+    const currentChapter = activeChapter;
+    return () => {
+      if (currentChapter && onChapterProgress) {
+        if (progressDebounceTimeoutRef.current !== null) {
+          clearTimeout(progressDebounceTimeoutRef.current);
+          progressDebounceTimeoutRef.current = null;
+        }
+        if (progressRafRef.current !== null) {
+          cancelAnimationFrame(progressRafRef.current);
+          progressRafRef.current = null;
+        }
+        emitChapterProgress();
+      }
+    };
+  }, [activeChapter?.id, displayChapter, onChapterProgress, emitChapterProgress]);
+
+  // Emit progress on chapter change (after restoration)
+  useEffect(() => {
+    if (activeChapter?.id && restoredChapterIdRef.current !== activeChapter.id) {
+      const timer = setTimeout(() => scheduleProgressEmit(), 200);
+      return () => clearTimeout(timer);
     }
   }, [activeChapter?.id, scheduleProgressEmit]);
-
-  // Reset scroll tracking when chapter changes
-  useEffect(() => {
-    lastScrolledElementRef.current = null;
-  }, [activeChapter?.id]);
 
   // Handle chapter transitions
   useEffect(() => {
@@ -384,19 +373,12 @@ export function ReaderViewport({
     }
 
     if (previousChapterIdRef.current !== activeChapter.id) {
-      // Determine transition direction based on chapter order
       if (activeBook) {
         const prevIndex = activeBook.chapters.findIndex(ch => ch.id === previousChapterIdRef.current);
         const currentIndex = activeBook.chapters.findIndex(ch => ch.id === activeChapter.id);
         
         if (prevIndex !== -1 && currentIndex !== -1) {
-          if (currentIndex > prevIndex) {
-            // Moving forward - slide left
-            setChapterTransitionDirection("left");
-          } else {
-            // Moving backward - slide right
-            setChapterTransitionDirection("right");
-          }
+          setChapterTransitionDirection(currentIndex > prevIndex ? "left" : "right");
         } else {
           setChapterTransitionDirection("fade");
         }
@@ -404,47 +386,15 @@ export function ReaderViewport({
         setChapterTransitionDirection("fade");
       }
 
-      const timer = setTimeout(() => {
-        setChapterTransitionDirection(null);
-      }, 300); // Match animation duration
-
+      const timer = setTimeout(() => setChapterTransitionDirection(null), 300);
       previousChapterIdRef.current = activeChapter.id;
       return () => clearTimeout(timer);
     }
   }, [activeChapter?.id, activeBook]);
 
-  // Save scroll position when audio player closes
-  const previousAudioPlayerVisibleRef = useRef(audioPlayerVisible);
-  useEffect(() => {
-    // When audio player transitions from visible to hidden, save scroll position
-    if (previousAudioPlayerVisibleRef.current && !audioPlayerVisible && activeChapter && onChapterProgress) {
-      // Small delay to ensure any pending audio progress is saved first
-      const timer = setTimeout(() => {
-        scheduleProgressEmit();
-      }, 150);
-      previousAudioPlayerVisibleRef.current = audioPlayerVisible;
-      return () => clearTimeout(timer);
-    }
-    previousAudioPlayerVisibleRef.current = audioPlayerVisible;
-  }, [audioPlayerVisible, activeChapter, onChapterProgress, scheduleProgressEmit]);
-
   // Handle audio sync highlighting
   useEffect(() => {
-    console.debug("[Audio Sync] Effect running:", {
-      hasSyncMap: !!activeBook?.audioSyncMap,
-      currentAudioTrackHref,
-      currentAudioTime,
-      hasActiveChapter: !!activeChapter,
-      activeChapterHref: activeChapter?.href,
-      isAudioRestoring,
-      showAudioPlayer,
-    });
-
-    // Wait for audio restoration to complete before syncing scroll
-    if (isAudioRestoring) {
-      console.debug("[Audio Sync] Waiting for audio restoration to complete");
-      return;
-    }
+    if (isAudioRestoring) return;
 
     if (
       !activeBook?.audioSyncMap ||
@@ -452,9 +402,9 @@ export function ReaderViewport({
       typeof currentAudioTime !== "number" ||
       !activeChapter
     ) {
-      console.debug("[Audio Sync] Early return - missing prerequisites");
       setHighlightedElementId(null);
       lastHighlightedElementRef.current = null;
+      lastScrolledElementRef.current = null;
       return;
     }
 
@@ -464,116 +414,62 @@ export function ReaderViewport({
       currentAudioTime,
     );
 
-    console.debug("[Audio Sync] Segment lookup result:", {
-      found: !!segment,
-      currentTime: currentAudioTime,
-      trackHref: currentAudioTrackHref,
-      segment: segment ? {
-        elementId: segment.textElementId,
-        chapterHref: segment.chapterHref,
-        audioTrackHref: segment.audioTrackHref,
-        clipBegin: segment.clipBegin,
-        clipEnd: segment.clipEnd,
-      } : null,
-    });
-
     if (!segment) {
-      console.debug("[Audio Sync] No segment found for current time");
       setHighlightedElementId(null);
       lastHighlightedElementRef.current = null;
-      lastScrolledElementRef.current = null; // Reset scroll tracking when no segment
+      lastScrolledElementRef.current = null;
       return;
     }
 
-    // Only highlight if the segment belongs to the current chapter
     const chapterHref = activeChapter.href.split("#")[0];
-    console.debug("[Audio Sync] Chapter comparison:", {
-      segmentChapterHref: segment.chapterHref,
-      currentChapterHref: chapterHref,
-      matches: segment.chapterHref === chapterHref,
-    });
-
     if (segment.chapterHref !== chapterHref) {
-      console.debug("[Audio Sync] Segment doesn't match current chapter", {
-        segmentChapterHref: segment.chapterHref,
-        currentChapterHref: chapterHref,
-      });
       setHighlightedElementId(null);
       lastHighlightedElementRef.current = null;
-      lastScrolledElementRef.current = null; // Reset scroll tracking when chapter changes
+      lastScrolledElementRef.current = null;
       return;
     }
 
     const elementId = segment.textElementId;
     
-    // Log warning when highlighted SMIL segment changes
     if (lastHighlightedElementRef.current !== elementId) {
       console.warn("[Audio Sync] Highlighted SMIL segment changed:", {
         previousElementId: lastHighlightedElementRef.current,
         newElementId: elementId,
-        chapterHref: segment.chapterHref,
-        audioTrackHref: segment.audioTrackHref,
-        clipBegin: segment.clipBegin,
-        clipEnd: segment.clipEnd,
         currentTime: currentAudioTime,
-        timeInSegment: (currentAudioTime - segment.clipBegin).toFixed(2),
       });
-    } else {
-      console.debug("[Audio Sync] Same segment, no change:", elementId);
     }
     
     setHighlightedElementId(elementId);
     lastHighlightedElementRef.current = elementId;
 
-    // Scroll to highlighted element if it's not already visible
+    // Auto-scroll to highlighted element
     const root = contentRef.current;
     if (!root) return;
 
-    const selector =
+    const shouldScroll = elementId && autoScrollEnabled && lastScrolledElementRef.current !== elementId;
+    if (!shouldScroll) return;
+
+    const element = root.querySelector<HTMLElement>(
       typeof CSS !== "undefined" && CSS.escape
         ? `#${CSS.escape(elementId)}`
-        : `#${elementId}`;
-    const element = root.querySelector<HTMLElement>(selector);
+        : `#${elementId}`
+    );
 
-    // Only scroll if this is a new element (not already scrolled to)
-    const shouldScroll = element && autoScrollEnabled && lastScrolledElementRef.current !== elementId;
-
-    if (shouldScroll) {
-      // Check if element is already visible in the viewport (especially in bottom portion)
+    if (element) {
       const elementRect = element.getBoundingClientRect();
       const viewportHeight = window.innerHeight;
-      const viewportBottom = viewportHeight;
-      
-      // Consider element visible if it's in the bottom 70% of the viewport
-      // This prevents scrolling when element is already near the bottom
       const visibleThreshold = viewportHeight * 0.7;
       const isInBottomPortion = elementRect.top >= 0 && 
                                  elementRect.top <= visibleThreshold &&
-                                 elementRect.bottom <= viewportBottom;
+                                 elementRect.bottom <= viewportHeight;
       
       if (isInBottomPortion) {
-        console.debug("[Auto-Scroll] Element already visible in bottom portion, skipping scroll:", {
-          elementId,
-          elementTop: elementRect.top,
-          viewportHeight,
-          visibleThreshold,
-        });
-        // Mark as scrolled even though we didn't scroll, to prevent repeated checks
         lastScrolledElementRef.current = elementId;
         return;
       }
       
-      // Mark this element as scrolled to prevent multiple scrolls
       lastScrolledElementRef.current = elementId;
-      
-      // Use native scrollIntoView for simplicity
       element.scrollIntoView({ behavior: "smooth", block: "start" });
-    } else if (element && !autoScrollEnabled) {
-      console.debug("[Auto-Scroll] Auto-scroll disabled, skipping scroll to:", elementId);
-    } else if (element && lastScrolledElementRef.current === elementId) {
-      console.debug("[Auto-Scroll] Already scrolled to this element, skipping:", elementId);
-    } else if (!element) {
-      console.warn("[Auto-Scroll] Element not found:", selector, "in root:", root);
     }
   }, [
     activeBook?.audioSyncMap,
@@ -583,15 +479,14 @@ export function ReaderViewport({
     activeChapter?.href,
     autoScrollEnabled,
     isAudioRestoring,
-    showAudioPlayer, // Re-run when audio player becomes visible to ensure sync on first load
+    audioPlayerVisible,
   ]);
 
-  // Apply highlighting styles to elements with smooth transitions
+  // Apply highlighting styles
   useEffect(() => {
     const root = contentRef.current;
     if (!root) return;
 
-    // Clear any pending enter timeout
     if (highlightEnterTimeoutRef.current !== null) {
       clearTimeout(highlightEnterTimeoutRef.current);
       highlightEnterTimeoutRef.current = null;
@@ -601,35 +496,27 @@ export function ReaderViewport({
     const isNewHighlight = highlightedElementId !== previousHighlightedId;
     const exitTimeouts: number[] = [];
 
-    // First, remove ALL existing highlights (in case multiple are somehow highlighted)
+    // Remove existing highlights
     const allHighlighted = root.querySelectorAll(".audio-highlight, .audio-highlight-enter, .audio-highlight-active");
     allHighlighted.forEach((el) => {
       const element = el as HTMLElement;
-      // Skip if this is the element we're about to highlight
       if (highlightedElementId && element.id === highlightedElementId) {
         return;
       }
       
-      // Remove modifier classes but keep base class for exit animation
       element.classList.remove("audio-highlight-enter", "audio-highlight-active");
-      
-      // Ensure base class exists for exit animation
       if (!element.classList.contains("audio-highlight")) {
         element.classList.add("audio-highlight");
       }
-      
-      // Add exit animation class
       element.classList.add("audio-highlight-exit");
       
-      // Remove all highlight classes after exit animation completes
       const exitTimeout = window.setTimeout(() => {
         element.classList.remove("audio-highlight", "audio-highlight-exit");
-      }, 200); // Match animation duration
-      
+      }, 200);
       exitTimeouts.push(exitTimeout);
     });
 
-    // Apply new highlighting with animations
+    // Apply new highlighting
     if (highlightedElementId) {
       const selector =
         typeof CSS !== "undefined" && CSS.escape
@@ -638,38 +525,26 @@ export function ReaderViewport({
       const element = root.querySelector<HTMLElement>(selector);
       
       if (element) {
-        // Remove any existing exit animation first
         element.classList.remove("audio-highlight-exit");
-        
-        // Remove any existing modifier classes
         element.classList.remove("audio-highlight-enter", "audio-highlight-active");
-        
-        // Add base highlight class
         element.classList.add("audio-highlight");
         
-        // If this is a new highlight (different from previous), add enter animation
         if (isNewHighlight) {
-          // Small delay to ensure DOM is ready and exit animation can start first
           requestAnimationFrame(() => {
             element.classList.add("audio-highlight-enter");
-            
-            // After enter animation completes, switch to active state
             highlightEnterTimeoutRef.current = window.setTimeout(() => {
               element.classList.remove("audio-highlight-enter");
               element.classList.add("audio-highlight-active");
-            }, 200); // Match fade-in animation duration
+            }, 200);
           });
         } else {
-          // If same element, just ensure active state
           element.classList.add("audio-highlight-active");
         }
       }
     }
 
-    // Update ref for next comparison
     lastHighlightedElementRef.current = highlightedElementId;
 
-    // Cleanup function
     return () => {
       if (highlightEnterTimeoutRef.current !== null) {
         clearTimeout(highlightEnterTimeoutRef.current);
@@ -679,6 +554,7 @@ export function ReaderViewport({
     };
   }, [highlightedElementId]);
 
+  // Navigation helpers
   const { previousChapter, nextChapter } = useMemo(() => {
     if (!activeBook || !activeChapter) {
       return { previousChapter: undefined, nextChapter: undefined };
@@ -777,6 +653,7 @@ export function ReaderViewport({
     </div>
   );
 
+  // Handle link clicks
   useEffect(() => {
     const root = contentRef.current;
     if (!root || !activeBook) return;
@@ -786,9 +663,7 @@ export function ReaderViewport({
       if (!(element instanceof HTMLAnchorElement)) return;
 
       const href = element.getAttribute("href");
-      if (!href) return;
-
-      if (href.startsWith("http") || href.startsWith("mailto:")) {
+      if (!href || href.startsWith("http") || href.startsWith("mailto:")) {
         return;
       }
 
@@ -796,15 +671,7 @@ export function ReaderViewport({
 
       if (href.startsWith("#")) {
         const fragment = href.slice(1);
-        const selector =
-          typeof CSS !== "undefined" && CSS.escape
-            ? `#${CSS.escape(fragment)}`
-            : `#${fragment}`;
-        const target =
-          root.querySelector<HTMLElement>(selector) ??
-          root.querySelector<HTMLElement>(`a[name="${fragment}"]`);
-        if (target) {
-          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (scrollToElement(root, fragment, "smooth")) {
           scheduleProgressEmit();
         }
         return;
@@ -829,7 +696,7 @@ export function ReaderViewport({
 
     root.addEventListener("click", handler);
     return () => root.removeEventListener("click", handler);
-  }, [activeBook, onSelectChapter, activeChapter?.id]);
+  }, [activeBook, onSelectChapter, activeChapter?.id, scheduleProgressEmit]);
 
   if (!activeBook || !activeChapter) {
     return (
@@ -865,9 +732,7 @@ export function ReaderViewport({
           lineHeightClass,
           fontClassMap[preferences.fontFamily],
           paddingConfig.outer,
-          // Visual indicator when auto-scroll is active (with smooth transition)
           autoScrollEnabled && "auto-scroll-active",
-          // Smooth transition when auto-scroll is toggled
           "transition-all duration-300 ease-in-out",
         )}
         data-reader-scrolling={isScrolling ? "true" : "false"}
@@ -885,7 +750,7 @@ export function ReaderViewport({
             anim("normal", "padding"),
             paddingConfig.innerBase,
             innerVerticalPaddingClass,
-            showAudioPlayer && "pb-32",
+            audioPlayerVisible && "pb-32",
           )}
         >
           {renderNavigation()}
@@ -901,7 +766,6 @@ export function ReaderViewport({
               fontSizeClass,
               lineHeightClass,
               fontSizeTokenClass,
-              // Chapter transition animation
               chapterTransitionDirection === "left" && animPatterns.chapterSlideLeft,
               chapterTransitionDirection === "right" && animPatterns.chapterSlideRight,
               chapterTransitionDirection === "fade" && animPatterns.chapterCrossFade,
@@ -934,5 +798,3 @@ export function ReaderViewport({
     </div>
   );
 }
-
-

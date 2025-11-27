@@ -150,34 +150,15 @@ function AppContent() {
   const handleSelectChapter = useCallback((chapterId: string, options?: ChapterSelectionOptions) => {
     if (!activeBookId) return;
 
-    // If this is a manual selection (e.g., from TOC), track it and disable auto-scroll
-    if (options?.isManualSelection) {
-      console.log("[Chapter Selection] Manual chapter selection detected:", {
-        chapterId,
-        currentAutoScrollEnabled: autoScrollEnabled,
-      });
-      
-      // Track manual selection FIRST to prevent auto-switch from overriding it
-      // Always update the ref, even if it was already set, to allow selecting different chapters
-      if (manualChapterSelectionRef) {
-        manualChapterSelectionRef.current = {
-          chapterId,
-          timestamp: Date.now(),
-        };
-      }
-      
-      // Disable auto-scroll if it's currently enabled (don't re-enable automatically)
-      // This allows manual chapter selection to work regardless of auto-scroll state
-      if (autoScrollEnabled) {
-        console.log("[Chapter Selection] Disabling auto-scroll due to manual selection");
-        setAutoScrollEnabled(false);
-        // Persist the setting so it remains disabled
-        updateSettings({ autoScrollEnabled: false });
-      }
+    // Disable auto-scroll on manual selection
+    if (options?.isManualSelection && autoScrollEnabled) {
+      setAutoScrollEnabled(false);
+      updateSettings({ autoScrollEnabled: false });
     }
 
     setActiveChapterId(chapterId);
 
+    // Update progress based on scroll position request
     const requestedScrollPosition = options?.scrollPosition ?? "maintain";
     const progressUpdate: { chapterId: string; scrollTop?: number; scrollHeight?: number; clientHeight?: number; percent?: number } = { chapterId };
 
@@ -189,14 +170,6 @@ function AppContent() {
     } else if (requestedScrollPosition === "bottom") {
       progressUpdate.percent = 1;
     }
-
-    console.debug("[ReaderProgress] select chapter", {
-      bookId: activeBookId,
-      chapterId,
-      requestedScrollPosition,
-      progressUpdate,
-      isManualSelection: options?.isManualSelection,
-    });
 
     updateBookProgress(activeBookId, progressUpdate);
 
@@ -216,7 +189,6 @@ function AppContent() {
     handleAudioPlayerClose,
     handleProgress,
     handleAutoScrollToggle,
-    manualChapterSelectionRef,
   } = useAudioPlayer(
     activeBook,
     activeChapterId,

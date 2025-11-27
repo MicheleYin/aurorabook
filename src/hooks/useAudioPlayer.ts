@@ -10,7 +10,7 @@ export function useAudioPlayer(
   autoScrollEnabled: boolean,
   setAutoScrollEnabled: (enabled: boolean) => void,
   updateSettings: (settings: { autoScrollEnabled: boolean }) => void,
-  handleSelectChapter: (chapterId: string, options?: ChapterSelectionOptions) => void,
+  handleSelectChapterBase: (chapterId: string, options?: ChapterSelectionOptions) => void,
   ingestEpub: (params: {
     filePath: string;
     sourcePath: string;
@@ -33,6 +33,19 @@ export function useAudioPlayer(
   const lastAudioBookIdRef = useRef<string | null>(null);
   const rebuildingSyncMapRef = useRef<Set<string>>(new Set());
   const previousViewRef = useRef<"library" | "reader" | "settings">(activeView);
+
+  // Wrap handleSelectChapter to track manual selections
+  const handleSelectChapter = useCallback((chapterId: string, options?: ChapterSelectionOptions) => {
+    // If this is a manual selection, track it
+    if (options?.isManualSelection) {
+      manualChapterSelectionRef.current = {
+        chapterId,
+        timestamp: Date.now(),
+      };
+    }
+    // Call the base handler
+    handleSelectChapterBase(chapterId, options);
+  }, [handleSelectChapterBase]);
 
   const audioTrackCount = activeBook?.audioTracks?.length ?? 0;
   const hasAudioTracks = audioTrackCount > 0;
