@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { Plus, Loader2 } from "lucide-react";
 
 import type { Book } from "../types/reader";
 import type { ConversionProgress } from "../lib/audiobook-converter";
@@ -59,7 +59,10 @@ export function LibraryPanel({
         actionSlot={
           <Button onClick={onAddEbook} disabled={isImporting} className="w-full sm:w-auto">
             {isImporting ? (
-              "Adding…"
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Adding…
+              </>
             ) : (
               <>
                 <Plus className="mr-2 h-4 w-4" />

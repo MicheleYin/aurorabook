@@ -21,6 +21,7 @@ import {
 import { cn, formatDurationShort, getBookProgressSummary } from "../../lib/utils";
 import { dialogSectionStagger } from "../../lib/animations";
 import { useAnimatedNumber } from "../../hooks/use-animated-number";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 
 type BookDetailDialogProps = {
   book: Book;
@@ -28,6 +29,7 @@ type BookDetailDialogProps = {
   onClose: () => void;
   onOpenBook: () => void;
   onDeleteBook: () => void;
+  isDeleting?: boolean;
   conversionProgress?: ConversionProgress;
   onConvertToAudiobook?: (book: Book, voiceId: VoiceId) => Promise<void>;
 };
@@ -55,6 +57,7 @@ export function BookDetailDialog({
   onClose,
   onOpenBook,
   onDeleteBook,
+  isDeleting = false,
   conversionProgress,
   onConvertToAudiobook,
 }: BookDetailDialogProps) {
@@ -65,6 +68,7 @@ export function BookDetailDialog({
   const genres = (book.subjects ?? []).filter(Boolean);
   const hasAudio = book.audioTracks.length > 0;
   const isConverting = Boolean(conversionProgress);
+  const isDesktop = useMediaQuery("(min-width: 640px)");
   
   const handleConvertClick = useCallback(() => {
     setShowConvertDialog(true);
@@ -432,9 +436,22 @@ export function BookDetailDialog({
         <Share2 className="h-4 w-4" />
         {isConverting ? "Exporting..." : "Export EPUB"}
       </Button>
-      <Button onClick={onOpenBook}>Open book</Button>
-      <Button variant="destructive" onClick={() => setConfirmOpen(true)}>
-        Delete book
+      <Button onClick={onOpenBook} disabled={isDeleting}>
+        Open book
+      </Button>
+      <Button
+        variant="destructive"
+        onClick={() => setConfirmOpen(true)}
+        disabled={isDeleting}
+      >
+        {isDeleting ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Deleting…
+          </>
+        ) : (
+          "Delete book"
+        )}
       </Button>
     </div>
   );
@@ -450,7 +467,11 @@ export function BookDetailDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={() => setConfirmOpen(false)}>
+          <Button
+            variant="outline"
+            onClick={() => setConfirmOpen(false)}
+            disabled={isDeleting}
+          >
             Cancel
           </Button>
           <Button
@@ -459,8 +480,16 @@ export function BookDetailDialog({
               setConfirmOpen(false);
               onDeleteBook();
             }}
+            disabled={isDeleting}
           >
-            Delete
+            {isDeleting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Deleting…
+              </>
+            ) : (
+              "Delete"
+            )}
           </Button>
         </div>
       </DialogContent>
@@ -469,31 +498,44 @@ export function BookDetailDialog({
 
     return (
       <>
-      <style>{`
-        /* Hide drawer overlay and content on desktop */
-        @media (min-width: 640px) {
-          [data-vaul-overlay],
-          [data-vaul-content] {
-            display: none !important;
-          }
-        }
-        /* Hide dialog overlay and content on mobile */
-        @media (max-width: 639px) {
-          [data-radix-dialog-overlay],
-          [data-radix-dialog-content] {
-            display: none !important;
-          }
-        }
-      `}</style>
-      
-      {/* Mobile: Drawer */}
+      {isDesktop ? (
+        /* Desktop: Dialog */
+        <Dialog
+          open={open}
+          onOpenChange={(next) => {
+            if (!next) onClose();
+          }}
+        >
+          <DialogContent className="max-w-2xl [&>button]:hidden">
+            <DialogHeader className="gap-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex flex-col gap-1 text-left sm:text-left">
+                  <DialogTitle>{book.title}</DialogTitle>
+                  <DialogDescription>Book overview and metadata</DialogDescription>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Close book details"
+                  onClick={onClose}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </DialogHeader>
+            {detailFields}
+            <Actions layout="dialog" />
+          </DialogContent>
+        </Dialog>
+      ) : (
+        /* Mobile: Drawer */
         <Drawer
           open={open}
           onOpenChange={(next) => {
             if (!next) onClose();
           }}
         >
-        <DrawerContent>
+          <DrawerContent>
             <DrawerHandle className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-muted" />
             <div className="flex flex-1 flex-col gap-6 overflow-y-auto">
               <DrawerHeader className="gap-3 text-left">
@@ -516,35 +558,7 @@ export function BookDetailDialog({
             </div>
           </DrawerContent>
         </Drawer>
-      
-      {/* Desktop: Dialog */}
-      <Dialog
-        open={open}
-        onOpenChange={(next) => {
-          if (!next) onClose();
-        }}
-      >
-        <DialogContent className="max-w-2xl [&>button]:hidden">
-          <DialogHeader className="gap-3">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex flex-col gap-1 text-left sm:text-left">
-                <DialogTitle>{book.title}</DialogTitle>
-                <DialogDescription>Book overview and metadata</DialogDescription>
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Close book details"
-                onClick={onClose}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          </DialogHeader>
-          {detailFields}
-          <Actions layout="dialog" />
-        </DialogContent>
-      </Dialog>
+      )}
       
       {confirmDialog}
       {onConvertToAudiobook && (

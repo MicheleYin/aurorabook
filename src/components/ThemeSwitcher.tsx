@@ -34,7 +34,7 @@ export function ThemeSwitcher({ value, onChange }: ThemeSwitcherProps) {
   }, [value, previousValue]);
 
   return (
-    <div className="inline-flex items-center gap-1 rounded-md border border-border bg-card/60 p-1 backdrop-blur">
+    <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-card/60 p-1 backdrop-blur">
       {options.map((option) => {
         const isActive = option.id === value;
         return (

@@ -261,44 +261,51 @@ function AppContent() {
     }
   };
 
+  const [deletingBookId, setDeletingBookId] = useState<string | null>(null);
+
   const handleDeleteBook = async (bookId: string) => {
-    // If this book is currently being converted, cancel the conversion
-    cancelConversionForBook(bookId);
+    // Set deleting state
+    setDeletingBookId(bookId);
     
-    // Find the book first to get its sourcePath for cache cleanup
-    const bookToDelete = library.find((book) => book.id === bookId);
-    
-    // Delete from Rust backend
     try {
+      // If this book is currently being converted, cancel the conversion
+      cancelConversionForBook(bookId);
+      
+      // Find the book first to get its sourcePath for cache cleanup
+      const bookToDelete = library.find((book) => book.id === bookId);
+      
+      // Delete from Rust backend
       const { deleteBook } = await import("./lib/book-service");
       await deleteBook(bookId);
+      
+      // Update local state
+      setLibrary((prev) => prev.filter((book) => book.id !== bookId));
+      setDetailBookId(null);
+
+      // Clear lazy loader cache
+      if (bookToDelete) {
+        try {
+          const { clearBookCache } = await import("./lib/lazy-chapter-loader");
+          clearBookCache(bookToDelete.sourcePath);
+        } catch (error) {
+          console.warn("Failed to clear book cache:", error);
+        }
+      }
+
+      if (activeBookId === bookId) {
+        setActiveBookId(undefined);
+        setActiveChapterId(undefined);
+        setPendingFragment(null);
+        setActiveView("library");
+      }
     } catch (error) {
       console.error("Failed to delete book from Rust backend:", error);
       toast.error("Failed to delete book", {
         description: error instanceof Error ? error.message : "An error occurred",
       });
-      return;
-    }
-    
-    // Update local state
-    setLibrary((prev) => prev.filter((book) => book.id !== bookId));
-    setDetailBookId(null);
-
-    // Clear lazy loader cache
-    if (bookToDelete) {
-      try {
-        const { clearBookCache } = await import("./lib/lazy-chapter-loader");
-        clearBookCache(bookToDelete.sourcePath);
-      } catch (error) {
-        console.warn("Failed to clear book cache:", error);
-      }
-    }
-
-    if (activeBookId === bookId) {
-      setActiveBookId(undefined);
-      setActiveChapterId(undefined);
-      setPendingFragment(null);
-      setActiveView("library");
+    } finally {
+      // Clear deleting state
+      setDeletingBookId(null);
     }
   };
 
@@ -481,6 +488,7 @@ function AppContent() {
             handleSelectBook(detailBook.id);
           }}
           onDeleteBook={() => handleDeleteBook(detailBook.id)}
+          isDeleting={deletingBookId === detailBook.id}
           conversionProgress={bookConversionProgress[detailBook.id]}
           onConvertToAudiobook={handleConvertBookFromDetail}
         />
