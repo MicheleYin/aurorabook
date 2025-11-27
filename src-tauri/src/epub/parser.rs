@@ -220,7 +220,7 @@ pub fn parse_opf_content(opf_content: &str) -> Result<(EpubMetadata, HashMap<Str
     let mut event_count = 0;
     loop {
         match reader.read_event() {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+            Ok(Event::Start(e)) => {
                 event_count += 1;
                 let name_vec: Vec<u8> = e.name().as_ref().to_vec();
                 let name_bytes = name_vec.as_slice();
@@ -386,6 +386,7 @@ pub fn parse_opf_content(opf_content: &str) -> Result<(EpubMetadata, HashMap<Str
                     
                     if !item.id.is_empty() {
                         debug!("  Storing manifest item: id='{}', href='{}'", item.id, item.href);
+                        // For Event::Start, store in current_item to be finalized on Event::End
                         current_item = Some(item);
                     } else {
                         warn!("  Item has empty id, skipping");
@@ -411,6 +412,96 @@ pub fn parse_opf_content(opf_content: &str) -> Result<(EpubMetadata, HashMap<Str
                         }
                     } else {
                         warn!("  itemref has empty idref");
+                    }
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                // Handle self-closing elements (like <item ... />)
+                event_count += 1;
+                let name_vec: Vec<u8> = e.name().as_ref().to_vec();
+                let name_bytes = name_vec.as_slice();
+                let element_name = String::from_utf8_lossy(name_bytes);
+                
+                // Handle namespaced elements by checking local name
+                let local_name = if let Some(colon_pos) = element_name.find(':') {
+                    &element_name[colon_pos + 1..]
+                } else {
+                    &element_name
+                };
+                let local_name_bytes = local_name.as_bytes();
+                
+                if name_bytes == b"metadata" || local_name == "metadata" {
+                    in_metadata = true;
+                    debug!("Entered <metadata> section (empty)");
+                } else if name_bytes == b"manifest" || local_name == "manifest" {
+                    in_manifest = true;
+                    debug!("Entered <manifest> section (empty)");
+                } else if name_bytes == b"spine" || local_name == "spine" {
+                    in_spine = true;
+                    debug!("Entered <spine> section (empty)");
+                } else if in_manifest && (name_bytes == b"item" || local_name == "item") {
+                    // Handle self-closing <item /> elements - store immediately
+                    debug!("Found self-closing <item> in manifest");
+                    let mut item = ManifestItem {
+                        id: String::new(),
+                        href: String::new(),
+                        media_type: None,
+                        properties: None,
+                    };
+                    
+                    for attr in e.attributes() {
+                        if let Ok(attr) = attr {
+                            let attr_value = String::from_utf8_lossy(&attr.value);
+                            match attr.key.as_ref() {
+                                b"id" => {
+                                    item.id = attr_value.to_string();
+                                    debug!("  item id: {}", item.id);
+                                }
+                                b"href" => {
+                                    item.href = attr_value.to_string();
+                                    debug!("  item href: {}", item.href);
+                                }
+                                b"media-type" => {
+                                    item.media_type = Some(attr_value.to_string());
+                                    debug!("  item media-type: {}", attr_value);
+                                }
+                                b"properties" => {
+                                    item.properties = Some(attr_value.to_string());
+                                    debug!("  item properties: {}", attr_value);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    
+                    if !item.id.is_empty() {
+                        debug!("  Storing self-closing manifest item: id='{}', href='{}'", item.id, item.href);
+                        manifest_items.insert(item.id.clone(), item);
+                    } else {
+                        warn!("  Self-closing item has empty id, skipping");
+                    }
+                } else if in_spine && (name_bytes == b"itemref" || local_name == "itemref") {
+                    // Handle self-closing <itemref /> elements
+                    debug!("Found self-closing <itemref> in spine");
+                    let mut idref = String::new();
+                    for attr in e.attributes() {
+                        if let Ok(attr) = attr {
+                            if attr.key.as_ref() == b"idref" {
+                                idref = String::from_utf8_lossy(&attr.value).to_string();
+                                debug!("  itemref idref: {}", idref);
+                                break;
+                            }
+                        }
+                    }
+                    if !idref.is_empty() {
+                        if let Some(item) = manifest_items.get(&idref) {
+                            debug!("  Found manifest item for idref '{}', adding to spine", idref);
+                            spine_items.push((idref.clone(), item.href.clone()));
+                        } else {
+                            warn!("  No manifest item found for idref '{}' (manifest has {} items)", idref, manifest_items.len());
+                        }
+                    } else {
+                        warn!("  Self-closing itemref has empty idref");
                     }
                 }
             }

@@ -6,7 +6,7 @@ mod book_service;
 mod resources;
 mod tts_commands;
 mod tts;
-mod epub;
+pub mod epub;  // Made public for testing
 mod utils;
 
 // Use kokoros crate directly on all platforms (it uses ONNX Runtime with CoreML EP on macOS/iOS)
