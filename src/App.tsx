@@ -2,54 +2,27 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { LibraryPanel } from "./components/LibraryPanel";
-import type {
-  LibraryFilterOption,
-  LibraryViewMode,
-} from "./components/library/types";
 import { ReaderPanel } from "./components/ReaderPanel";
 import { ReaderAudioPlayer } from "./components/reader/ReaderAudioPlayer";
 import { BookDetailDialog } from "./components/library/BookDetailDialog";
 import { ConvertToAudiobookDialog } from "./components/library/ConvertToAudiobookDialog";
 import { ConversionProgressDialog } from "./components/library/ConversionProgressDialog";
-import type { ConversionProgress } from "./lib/audiobook-converter";
 import { Toaster } from "./components/ui/sonner";
 import { LoadingScreen } from "./components/app/LoadingScreen";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { usePersistentLibrary } from "./hooks/usePersistentLibrary";
 import { usePersistentSettings } from "./hooks/usePersistentSettings";
-import type { ReaderPreferences } from "./types/reader";
+import { useBookConversion } from "./hooks/useBookConversion";
+import { useAudioPlayer } from "./hooks/useAudioPlayer";
+import { useAppNavigation } from "./hooks/useAppNavigation";
+import { useBookProgress } from "./hooks/useBookProgress";
+import { AppContextProvider, useAppContext } from "./contexts/AppContext";
 import type { UITheme } from "./types/ui";
-import type {
-  AudioProgressSnapshot,
-  ChapterProgressSnapshot,
-  ChapterSelectionOptions,
-} from "./components/reader/types";
+import type { ChapterSelectionOptions } from "./components/reader/types";
 import { cn } from "./lib/utils";
 import { animPatterns, viewTransition } from "./lib/animations";
-import { findChaptersForAudioTrack } from "./lib/epub";
-import { convertEpubToAudiobook } from "./lib/audiobook-converter";
-// EPUB operations now handled by Rust backend via book-service
-import { 
-  updateBookProgress as updateBookProgressBackend, 
-  updateBookAudioState as updateBookAudioStateBackend,
-  getEpubBuffer,
-  type LibraryFilter,
-} from "./lib/book-service";
-import type { VoiceId } from "./types/reader";
-import type { Book } from "./types/reader";
 
-const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
-  theme: "system",
-  fontFamily: "merriweather",
-  contentPadding: "comfortable",
-  fontSize: "medium",
-};
-
-const PROGRESS_LOG_PREFIX = "[ReaderProgress]";
-
-type AppView = "library" | "reader" | "settings";
-
-function App() {
+function AppContent() {
   const {
     library,
     setLibrary,
@@ -60,248 +33,66 @@ function App() {
     refreshLibrary,
   } = usePersistentLibrary();
 
-  const [showConvertDialog, setShowConvertDialog] = useState(false);
-  const [pendingBookForConversion, setPendingBookForConversion] = useState<{
-    book: Book;
-    buffer: ArrayBuffer;
-  } | null>(null);
-  const [isConverting, setIsConverting] = useState(false);
-  const [conversionProgress, setConversionProgress] = useState<ConversionProgress | null>(null);
-  const [bookConversionProgress, setBookConversionProgress] = useState<Record<string, ConversionProgress>>({});
-  const conversionAbortControllerRef = useRef<AbortController | null>(null);
-  const convertingBookIdRef = useRef<string | null>(null);
-
-  const handleConvertToAudiobook = useCallback(async (voiceId: VoiceId) => {
-    if (!pendingBookForConversion || isConverting) return;
-    
-    // Create abort controller for this conversion
-    const abortController = new AbortController();
-    conversionAbortControllerRef.current = abortController;
-    convertingBookIdRef.current = pendingBookForConversion.book.id;
-    
-    setIsConverting(true);
-    setShowConvertDialog(false);
-    setConversionProgress(null);
-    const bookId = pendingBookForConversion.book.id;
-    
-    try {
-      const { book } = pendingBookForConversion;
-      
-      // Load EPUB buffer before conversion
-      const epubBuffer = await getEpubBuffer(book.sourcePath);
-      if (!epubBuffer) {
-        throw new Error("Failed to load EPUB file for conversion");
-      }
-      
-      // Convert EPUB to audiobook - backend handles everything
-      await convertEpubToAudiobook({
-        sourcePath: book.sourcePath,
-        epubData: epubBuffer,
-        voiceId,
-        signal: abortController.signal,
-        onProgress: (progress) => {
-          setConversionProgress(progress);
-          setBookConversionProgress((prev) => ({
-            ...prev,
-            [bookId]: progress,
-          }));
-        },
-      });
-      
-      // Remove the original book from library
-      setLibrary((prev) => prev.filter((b) => b.id !== book.id));
-      
-      // Re-ingest the converted EPUB (backend has already stored it, just need to reload metadata)
-      // No need to read buffer here, backend will read from sourcePath
-      await ingestEpub({
-        filePath: book.sourcePath,
-        sourcePath: book.sourcePath, // Keep same path - convert in place
-        fallbackTitle: book.title,
-        progress: book.progress,
-        pageCountHint: book.pageCount,
-      });
-      
-      setPendingBookForConversion(null);
-      setConversionProgress(null);
-      setBookConversionProgress((prev) => {
-        const next = { ...prev };
-        delete next[bookId];
-        return next;
-      });
-      toast.success("Audiobook ready!", {
-        description: "Your ebook has been converted to an audiobook.",
-      });
-    } catch (error) {
-      // Don't show error toast if conversion was cancelled
-      if (error instanceof Error && error.message === "Conversion cancelled") {
-        console.log("Conversion cancelled by user");
-      } else {
-        console.error("Conversion error:", error);
-        toast.error("Conversion failed", {
-          description: error instanceof Error ? error.message : "An error occurred during conversion",
-        });
-      }
-      setConversionProgress(null);
-      setBookConversionProgress((prev) => {
-        const next = { ...prev };
-        delete next[bookId];
-        return next;
-      });
-    } finally {
-      setIsConverting(false);
-      conversionAbortControllerRef.current = null;
-      convertingBookIdRef.current = null;
-    }
-  }, [pendingBookForConversion, isConverting, setLibrary, ingestEpub]);
-
-  const handleConvertBookFromDetail = useCallback(async (book: Book, voiceId: VoiceId) => {
-    if (book.audioTracks.length > 0) return;
-    
-    // Show warning if already converting
-    if (isConverting) {
-      toast.warning("Conversion in progress", {
-        description: "Please wait for the current conversion to complete before starting another one.",
-      });
-      return;
-    }
-    
-    // Create abort controller for this conversion
-    const abortController = new AbortController();
-    conversionAbortControllerRef.current = abortController;
-    convertingBookIdRef.current = book.id;
-    
-    setIsConverting(true);
-    setConversionProgress(null);
-    const bookId = book.id;
-    
-    try {
-      if (book.sourcePath.startsWith("web://")) {
-        // Web file - we can't reload it, show error
-        toast.error("Cannot convert web files", {
-          description: "Please re-import the file to convert it.",
-        });
-        setIsConverting(false);
-        conversionAbortControllerRef.current = null;
-        convertingBookIdRef.current = null;
-        return;
-      }
-      
-      // Load EPUB buffer before conversion
-      const epubBuffer = await getEpubBuffer(book.sourcePath);
-      if (!epubBuffer) {
-        throw new Error("Failed to load EPUB file for conversion");
-      }
-      
-      // Convert EPUB to audiobook - backend handles everything (extracts chapters, generates audio, stores result)
-      console.debug("Starting EPUB conversion", {
-        sourcePath: book.sourcePath,
-        voiceId,
-        epubSize: epubBuffer.byteLength,
-      });
-      
-      try {
-        await convertEpubToAudiobook({
-          sourcePath: book.sourcePath,
-          epubData: epubBuffer,
-          voiceId,
-          signal: abortController.signal,
-          onProgress: (progress) => {
-            setConversionProgress(progress);
-            setBookConversionProgress((prev) => ({
-              ...prev,
-              [bookId]: progress,
-            }));
-          },
-        });
-      } catch (conversionError) {
-        console.error("EPUB conversion failed", conversionError);
-        throw conversionError; // Re-throw to be caught by outer catch
-      }
-      
-      console.debug("Conversion completed, reloading book from backend", {
-        sourcePath: book.sourcePath,
-      });
-      
-      // Backend has stored the converted EPUB, reload it to update metadata
-      const convertedBuffer = await getEpubBuffer(book.sourcePath);
-      if (!convertedBuffer) {
-        throw new Error("Converted EPUB not found in backend store");
-      }
-      
-      // Re-ingest to update audio tracks and other metadata
-      // Note: For converted EPUBs, the backend has already stored it, so we can use the sourcePath
-      await ingestEpub({
-        filePath: book.sourcePath,
-        sourcePath: book.sourcePath, // Keep same path - convert in place
-        fallbackTitle: book.title,
-        progress: book.progress,
-        pageCountHint: book.pageCount,
-      });
-      
-      // The book will be updated in the library by ingestEpub
-      
-      setConversionProgress(null);
-      setBookConversionProgress((prev) => {
-        const next = { ...prev };
-        delete next[bookId];
-        return next;
-      });
-      toast.success("Audiobook ready!", {
-        description: "Your ebook has been converted to an audiobook.",
-      });
-    } catch (error) {
-      // Don't show error toast if conversion was cancelled
-      if (error instanceof Error && error.message === "Conversion cancelled") {
-        console.log("Conversion cancelled by user");
-      } else {
-        console.error("Conversion error:", error);
-        toast.error("Conversion failed", {
-          description: error instanceof Error ? error.message : "An error occurred during conversion",
-        });
-      }
-      setConversionProgress(null);
-      setBookConversionProgress((prev) => {
-        const next = { ...prev };
-        delete next[bookId];
-        return next;
-      });
-    } finally {
-      setIsConverting(false);
-      conversionAbortControllerRef.current = null;
-      convertingBookIdRef.current = null;
-    }
-  }, [isConverting, setLibrary, ingestEpub]);
-
-  const [activeBookId, setActiveBookId] = useState<string | undefined>();
-  const [activeChapterId, setActiveChapterId] = useState<string | undefined>();
-  const [activeView, setActiveView] = useState<AppView>("library");
-  const [librarySearchTerm, setLibrarySearchTerm] = useState("");
-  const [libraryFilter, setLibraryFilter] = useState<LibraryFilterOption>("all");
-  const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("grid");
-  const [readerPreferences, setReaderPreferences] = useState<ReaderPreferences>(
-    DEFAULT_READER_PREFERENCES,
-  );
-  const [pendingFragment, setPendingFragment] = useState<string | null>(null);
-  const [detailBookId, setDetailBookId] = useState<string | null>(null);
-  const [isReaderChromeVisible, setIsReaderChromeVisible] = useState(true);
-  const [isAudioPlayerOpen, setIsAudioPlayerOpen] = useState(false);
-  const [isAudioPlayerDismissing, setIsAudioPlayerDismissing] = useState(false);
-  const [currentAudioTime, setCurrentAudioTime] = useState<number | undefined>(undefined);
-  const [currentAudioTrackHref, setCurrentAudioTrackHref] = useState<string | undefined>(undefined);
-  const [isAudioRestoring, setIsAudioRestoring] = useState(false);
-  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
-  const manualSelectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const manualChapterSelectionRef = useRef<{ chapterId: string; timestamp: number } | null>(null);
-  const previousAutoScrollEnabledRef = useRef<boolean | null>(null);
-  const explicitlyDisabledRef = useRef<boolean>(false);
-  const lastAudioBookIdRef = useRef<string | null>(null);
-  const rebuildingSyncMapRef = useRef<Set<string>>(new Set());
-  const previousViewRef = useRef<AppView>(activeView);
   const {
     settings,
     updateSettings,
     isHydrated: isSettingsHydrated,
   } = usePersistentSettings();
+
+  const {
+    activeBookId,
+    setActiveBookId,
+    activeChapterId,
+    setActiveChapterId,
+    activeBook,
+    activeChapter,
+    readerPreferences,
+    updateReaderPreferences,
+    pendingFragment,
+    setPendingFragment,
+    handleFragmentConsumed,
+    isReaderChromeVisible,
+    setIsReaderChromeVisible,
+    detailBookId,
+    setDetailBookId,
+    handleSelectBook: handleSelectBookContext,
+  } = useAppContext();
+
+  const {
+    updateBookProgress,
+    updateBookAudioState,
+    handleChapterProgress,
+  } = useBookProgress(library, setLibrary);
+
+  const {
+    showConvertDialog,
+    setShowConvertDialog,
+    pendingBookForConversion,
+    setPendingBookForConversion,
+    isConverting,
+    conversionProgress,
+    bookConversionProgress,
+    convertingBookIdRef,
+    handleConvertToAudiobook,
+    handleConvertBookFromDetail,
+    cancelConversionForBook,
+  } = useBookConversion(setLibrary, ingestEpub);
+
+  const {
+    activeView,
+    setActiveView,
+    librarySearchTerm,
+    setLibrarySearchTerm,
+    libraryFilter,
+    setLibraryFilter,
+    libraryViewMode,
+    setLibraryViewMode,
+    navigationItems,
+    previousViewRef,
+  } = useAppNavigation(library, refreshLibrary, isHydrated);
+
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+
   const uiTheme = settings.theme;
 
   // Load auto-scroll setting from persistent settings
@@ -315,24 +106,24 @@ function App() {
     if (activeView !== "reader") {
       setIsReaderChromeVisible(true);
     }
-  }, [activeView]);
+  }, [activeView, setIsReaderChromeVisible]);
 
-  const resolveTheme = useCallback((theme: UITheme) => {
+  const resolveTheme = (theme: UITheme): "light" | "dark" => {
     if (theme === "system") {
       if (
         typeof window !== "undefined" &&
         window.matchMedia("(prefers-color-scheme: dark)").matches
       ) {
-        return "dark" as const;
+        return "dark";
       }
-      return "light" as const;
+      return "light";
     }
     return theme;
-  }, []);
+  };
 
   const resolvedUiTheme = useMemo(
     () => resolveTheme(uiTheme),
-    [uiTheme, resolveTheme],
+    [uiTheme],
   );
 
   useEffect(() => {
@@ -354,668 +145,165 @@ function App() {
     const listener = () => applyTheme("system");
     media.addEventListener("change", listener);
     return () => media.removeEventListener("change", listener);
-  }, [uiTheme, resolveTheme]);
+  }, [uiTheme]);
 
-  const activeBook = useMemo(() => {
-    if (!activeBookId) return undefined;
-    return library.find((book) => book.id === activeBookId);
-  }, [library, activeBookId]);
+  const handleSelectChapter = useCallback((chapterId: string, options?: ChapterSelectionOptions) => {
+    if (!activeBookId) return;
 
-  const activeChapter = useMemo(() => {
-    if (!activeBook || !activeChapterId) return undefined;
-    return activeBook.chapters.find((chapter) => chapter.id === activeChapterId);
-  }, [activeBook, activeChapterId]);
-
-  const audioTrackCount = activeBook?.audioTracks?.length ?? 0;
-  const hasAudioTracks = audioTrackCount > 0;
-
-  useEffect(() => {
-    if (!activeBook?.id || audioTrackCount === 0) {
-      setIsAudioPlayerOpen(false);
-      setCurrentAudioTime(undefined);
-      setCurrentAudioTrackHref(undefined);
-      lastAudioBookIdRef.current = null;
-      return;
-    }
-
-    // Update lastAudioBookIdRef but don't automatically open audio player
-    if (lastAudioBookIdRef.current !== activeBook.id) {
-      lastAudioBookIdRef.current = activeBook.id;
-      // Don't automatically open audio player - let user open it manually
-    }
-  }, [activeBook?.id, audioTrackCount]);
-
-  // Rebuild audio sync map if missing when audio player opens
-  useEffect(() => {
-    if (!activeBook || !hasAudioTracks || activeBook.audioSyncMap) {
-      // Clear rebuild flag if sync map is now present
-      if (activeBook?.audioSyncMap && rebuildingSyncMapRef.current.has(activeBook.id)) {
-        rebuildingSyncMapRef.current.delete(activeBook.id);
-      }
-      return;
-    }
-
-    // Prevent multiple rebuilds for the same book
-    if (rebuildingSyncMapRef.current.has(activeBook.id)) {
-      return;
-    }
-
-    // Book has audio tracks but no sync map - rebuild it
-    const rebuildSyncMap = async () => {
-      rebuildingSyncMapRef.current.add(activeBook.id);
-      try {
-        console.log("[App] Rebuilding missing audio sync map for book:", activeBook.id);
-        
-        // Re-ingest to rebuild sync map (backend will read from sourcePath)
-        await ingestEpub({
-          filePath: activeBook.sourcePath,
-          sourcePath: activeBook.sourcePath,
-          fallbackTitle: activeBook.title,
-          progress: activeBook.progress,
-          pageCountHint: activeBook.pageCount,
-          audioState: activeBook.audioState,
-        });
-        
-        console.log("[App] Successfully rebuilt audio sync map");
-        // Don't delete from ref here - let the effect cleanup handle it when sync map is detected
-      } catch (error) {
-        console.error("[App] Failed to rebuild audio sync map:", error);
-        rebuildingSyncMapRef.current.delete(activeBook.id);
-      }
-    };
-
-    rebuildSyncMap();
-  }, [activeBook?.id, hasAudioTracks, activeBook?.audioSyncMap, ingestEpub]);
-
-
-  useEffect(() => {
-    const previousView = previousViewRef.current;
-    // Auto-open audio player when switching to reader view if book has audio tracks
-    if (activeView === "reader" && previousView !== "reader" && hasAudioTracks) {
-      setIsAudioPlayerOpen(true);
-    }
-    previousViewRef.current = activeView;
-  }, [activeView, hasAudioTracks]);
-
-  type ProgressUpdatePayload = {
-    chapterId: string;
-    scrollTop?: number;
-    scrollHeight?: number;
-    clientHeight?: number;
-    percent?: number;
-    elementId?: string | null;
-    elementIndex?: number | null;
-  };
-
-  const updateBookProgress = useCallback(
-    async (bookId: string, payload: ProgressUpdatePayload) => {
-      if (!payload?.chapterId) return;
-
-      console.debug(`${PROGRESS_LOG_PREFIX} update requested`, { bookId, payload });
-
-      const book = library.find((b) => b.id === bookId);
-      if (!book) return;
-
-      const chapterIndex = book.chapters.findIndex(
-        (chapter) => chapter.id === payload.chapterId,
-      );
-      if (chapterIndex === -1) return;
-
-      const chapter = book.chapters[chapterIndex];
-      const existingProgress = book.progress;
-      const chapterMatchesExisting =
-        existingProgress?.currentChapterId === chapter.id &&
-        existingProgress.currentChapterIndex === chapterIndex;
-
-      const previousScrollTop =
-        typeof existingProgress?.currentChapterScrollTop === "number" &&
-        Number.isFinite(existingProgress.currentChapterScrollTop)
-          ? Math.max(existingProgress.currentChapterScrollTop, 0)
-          : 0;
-      const previousScrollHeight =
-        typeof existingProgress?.currentChapterScrollHeight === "number" &&
-        Number.isFinite(existingProgress.currentChapterScrollHeight)
-          ? Math.max(existingProgress.currentChapterScrollHeight, 0)
-          : 0;
-      const previousClientHeight =
-        typeof existingProgress?.currentChapterClientHeight === "number" &&
-        Number.isFinite(existingProgress.currentChapterClientHeight)
-          ? Math.max(existingProgress.currentChapterClientHeight, 0)
-          : 0;
-      const previousPercent =
-        typeof existingProgress?.chapterProgressPercent === "number" &&
-        Number.isFinite(existingProgress.chapterProgressPercent)
-          ? existingProgress.chapterProgressPercent
-          : 0;
-
-      const previousElementId =
-        typeof existingProgress?.currentChapterElementId === "string" &&
-        existingProgress.currentChapterElementId.length > 0
-          ? existingProgress.currentChapterElementId
-          : null;
-      const previousElementIndex =
-        typeof existingProgress?.currentChapterElementIndex === "number" &&
-        Number.isFinite(existingProgress.currentChapterElementIndex)
-          ? Math.max(Math.round(existingProgress.currentChapterElementIndex), 0)
-          : null;
-
-      const resolvedScrollTop =
-        typeof payload.scrollTop === "number" && Number.isFinite(payload.scrollTop)
-          ? Math.max(payload.scrollTop, 0)
-          : chapterMatchesExisting
-            ? previousScrollTop
-            : 0;
-
-      const resolvedScrollHeight =
-        typeof payload.scrollHeight === "number" && Number.isFinite(payload.scrollHeight)
-          ? Math.max(payload.scrollHeight, 0)
-          : chapterMatchesExisting
-            ? previousScrollHeight
-            : 0;
-
-      const resolvedClientHeight =
-        typeof payload.clientHeight === "number" && Number.isFinite(payload.clientHeight)
-          ? Math.max(payload.clientHeight, 0)
-          : chapterMatchesExisting
-            ? previousClientHeight
-            : 0;
-
-      const percentSource =
-        typeof payload.percent === "number" && Number.isFinite(payload.percent)
-          ? payload.percent
-          : chapterMatchesExisting
-            ? previousPercent
-            : 0;
-
-      const percent = Number(Math.min(Math.max(percentSource ?? 0, 0), 1).toFixed(4));
-
-      const resolvedElementId =
-        payload.elementId === undefined
-          ? (chapterMatchesExisting ? previousElementId : null)
-          : payload.elementId && payload.elementId.length > 0
-            ? payload.elementId
-            : null;
-
-      let resolvedElementIndex: number | null = null;
-      if (payload.elementIndex === undefined) {
-        resolvedElementIndex = chapterMatchesExisting ? previousElementIndex : null;
-      } else if (payload.elementIndex === null) {
-        resolvedElementIndex = null;
-      } else if (typeof payload.elementIndex === "number" && Number.isFinite(payload.elementIndex)) {
-        resolvedElementIndex = Math.max(Math.round(payload.elementIndex), 0);
-      } else if (chapterMatchesExisting) {
-        resolvedElementIndex = previousElementIndex;
-      }
-
-      const nextProgress = {
-        currentChapterId: chapter.id,
-        currentChapterHref: chapter.href,
-        currentChapterIndex: chapterIndex,
-        currentChapterElementId: resolvedElementId ?? null,
-        currentChapterElementIndex: resolvedElementIndex ?? null,
-        currentChapterScrollTop: resolvedScrollTop,
-        currentChapterScrollHeight: resolvedScrollHeight,
-        currentChapterClientHeight: resolvedClientHeight,
-        chapterProgressPercent: percent,
-        updatedAt: new Date().toISOString(),
-      };
-
-      const isUnchanged =
-        existingProgress &&
-        existingProgress.currentChapterId === nextProgress.currentChapterId &&
-        existingProgress.currentChapterIndex === nextProgress.currentChapterIndex &&
-        Math.abs(
-          (typeof existingProgress.currentChapterScrollTop === "number"
-            ? existingProgress.currentChapterScrollTop
-            : 0) - nextProgress.currentChapterScrollTop,
-        ) < 1 &&
-        Math.abs(
-          (typeof existingProgress.currentChapterScrollHeight === "number"
-            ? existingProgress.currentChapterScrollHeight
-            : 0) - nextProgress.currentChapterScrollHeight,
-        ) < 1 &&
-        Math.abs(
-          (typeof existingProgress.currentChapterClientHeight === "number"
-            ? existingProgress.currentChapterClientHeight
-            : 0) - nextProgress.currentChapterClientHeight,
-        ) < 1 &&
-        Math.abs(existingProgress.chapterProgressPercent - nextProgress.chapterProgressPercent) <
-          0.002 &&
-        ((existingProgress.currentChapterElementId ?? null) ===
-          (nextProgress.currentChapterElementId ?? null)) &&
-        ((existingProgress.currentChapterElementIndex ?? null) ===
-          (nextProgress.currentChapterElementIndex ?? null));
-
-      if (isUnchanged) {
-        console.debug(`${PROGRESS_LOG_PREFIX} unchanged progress, skipping persist`, {
-          bookId,
-          chapterId: chapter.id,
-        });
-        return;
-      }
-
-      // Update local state optimistically
-      setLibrary((prev) =>
-        prev.map((b) => (b.id === bookId ? { ...b, progress: nextProgress } : b))
-      );
-
-      // Sync to backend
-      try {
-        const updatedBook = await updateBookProgressBackend(bookId, nextProgress);
-        // Update local state with backend response
-        setLibrary((prev) =>
-          prev.map((b) => (b.id === bookId ? updatedBook : b))
-        );
-        console.debug(`${PROGRESS_LOG_PREFIX} synced progress to backend`, {
-          bookId,
-          chapterId: chapter.id,
-        });
-      } catch (error) {
-        console.error(`${PROGRESS_LOG_PREFIX} failed to sync progress to backend`, error);
-        // Revert optimistic update on error
-        setLibrary((prev) =>
-          prev.map((b) => (b.id === bookId ? book : b))
-        );
-      }
-    },
-    [library, setLibrary],
-  );
-
-  const updateBookAudioState = useCallback(
-    async (bookId: string, snapshot: AudioProgressSnapshot) => {
-      if (!bookId) {
-        return;
-      }
-      if (
-        typeof snapshot?.currentTimeSeconds !== "number" ||
-        !Number.isFinite(snapshot.currentTimeSeconds) ||
-        snapshot.currentTimeSeconds < 0
-      ) {
-        return;
-      }
-
-      const book = library.find((b) => b.id === bookId);
-      if (!book || !book.audioTracks.length) {
-        return;
-      }
-
-      const resolvedTrack =
-        book.audioTracks.find((track) => track.id === snapshot.trackId) ??
-        book.audioTracks.find((track) => track.href === snapshot.trackHref) ??
-        book.audioTracks[snapshot.trackIndex];
-
-      if (!resolvedTrack) {
-        return;
-      }
-
-      const resolvedIndex = book.audioTracks.findIndex((track) => track.id === resolvedTrack.id);
-      const normalizedSeconds = Number(snapshot.currentTimeSeconds.toFixed(3));
-      const existing = book.audioState;
-
-      // Skip if change is too small (throttle updates)
-      if (
-        existing &&
-        existing.currentTrackId === resolvedTrack.id &&
-        Math.abs(existing.currentTimeSeconds - normalizedSeconds) < 0.25
-      ) {
-        return;
-      }
-
-      const nextAudioState = {
-        currentTrackId: resolvedTrack.id,
-        currentTrackHref: resolvedTrack.href,
-        currentTrackIndex: resolvedIndex === -1 ? snapshot.trackIndex : resolvedIndex,
-        currentTimeSeconds: normalizedSeconds,
-        updatedAt: snapshot.updatedAt ?? new Date().toISOString(),
-      };
-
-      // Update local state optimistically
-      setLibrary((prev) =>
-        prev.map((b) => (b.id === bookId ? { ...b, audioState: nextAudioState } : b))
-      );
-
-      // Sync to backend (debounced/throttled in practice via the 0.25s check above)
-      try {
-        const updatedBook = await updateBookAudioStateBackend(bookId, nextAudioState);
-        // Update local state with backend response
-        setLibrary((prev) =>
-          prev.map((b) => (b.id === bookId ? updatedBook : b))
-        );
-      } catch (error) {
-        console.error("[Audio State] failed to sync audio state to backend", error);
-        // Revert optimistic update on error
-        setLibrary((prev) =>
-          prev.map((b) => (b.id === bookId ? book : b))
-        );
-      }
-    },
-    [library, setLibrary],
-  );
-
-  useEffect(() => {
-    if (!library.length) {
-      setActiveBookId(undefined);
-      setActiveChapterId(undefined);
-      return;
-    }
-
-    if (!activeBookId || !library.some((book) => book.id === activeBookId)) {
-      const firstBook = library[0];
-      setActiveBookId(firstBook.id);
-      let fallbackChapterId =
-        firstBook.progress?.currentChapterId ??
-        firstBook.chapters[firstBook.progress?.currentChapterIndex ?? 0]?.id ??
-        firstBook.chapters[0]?.id;
-      if (
-        fallbackChapterId &&
-        !firstBook.chapters.some((chapter) => chapter.id === fallbackChapterId)
-      ) {
-        fallbackChapterId = firstBook.chapters[0]?.id;
-      }
-      setActiveChapterId(fallbackChapterId);
-      if (fallbackChapterId) {
-        updateBookProgress(firstBook.id, { chapterId: fallbackChapterId });
-      }
-      return;
-    }
-
-    const selectedBook = library.find((book) => book.id === activeBookId);
-    if (!selectedBook) {
-      setActiveBookId(undefined);
-      setActiveChapterId(undefined);
-      return;
-    }
-
-    const hasActiveChapter = activeChapterId
-      ? selectedBook.chapters.some((chapter) => chapter.id === activeChapterId)
-      : false;
-
-    if (!hasActiveChapter) {
-      let fallbackChapterId =
-        selectedBook.progress?.currentChapterId ??
-        selectedBook.chapters[selectedBook.progress?.currentChapterIndex ?? 0]?.id ??
-        selectedBook.chapters[0]?.id;
-      if (
-        fallbackChapterId &&
-        !selectedBook.chapters.some((chapter) => chapter.id === fallbackChapterId)
-      ) {
-        fallbackChapterId = selectedBook.chapters[0]?.id;
-      }
-      setActiveChapterId(fallbackChapterId);
-      if (fallbackChapterId) {
-        updateBookProgress(selectedBook.id, { chapterId: fallbackChapterId });
-      }
-    }
-  }, [library, activeBookId, activeChapterId, updateBookProgress]);
-
-  const updateReaderPreferences = useCallback(
-    (update: Partial<ReaderPreferences>) => {
-      setReaderPreferences((prev) => ({
-        ...prev,
-        ...update,
-      }));
-    },
-    [],
-  );
-
-  const handleFragmentConsumed = useCallback(() => {
-    setPendingFragment(null);
-  }, []);
-
-  const handleSelectBook = useCallback(
-    async (bookId: string) => {
-      const selectedBook = library.find((book) => book.id === bookId);
-      if (!selectedBook) return;
+    // If this is a manual selection (e.g., from TOC), track it and disable auto-scroll
+    if (options?.isManualSelection) {
+      console.log("[Chapter Selection] Manual chapter selection detected:", {
+        chapterId,
+        currentAutoScrollEnabled: autoScrollEnabled,
+      });
       
-      // Clear cache for all books except the one being opened
-      try {
-        const { clearAllCachesExcept } = await import("./lib/lazy-chapter-loader");
-        clearAllCachesExcept(selectedBook.sourcePath);
-      } catch (error) {
-        console.warn("Failed to clear book caches", error);
-      }
-      
-      setActiveBookId(bookId);
-      console.debug(`${PROGRESS_LOG_PREFIX} select book`, { bookId });
-      let progressChapterId: string | undefined;
-      if (selectedBook?.progress?.currentChapterId) {
-        const candidate = selectedBook.progress.currentChapterId;
-        if (selectedBook.chapters.some((chapter) => chapter.id === candidate)) {
-          progressChapterId = candidate;
-        }
-      }
-      const indexFallbackId =
-        selectedBook?.chapters[selectedBook.progress?.currentChapterIndex ?? 0]?.id;
-      const nextChapterId = progressChapterId ?? indexFallbackId ?? selectedBook?.chapters[0]?.id;
-      setActiveChapterId(nextChapterId);
-      if (nextChapterId) {
-        updateBookProgress(bookId, { chapterId: nextChapterId });
-      }
-      setPendingFragment(null);
-      setActiveView("reader");
-    },
-    [library, updateBookProgress],
-  );
-
-  const handleSelectChapter = useCallback(
-    (chapterId: string, options?: ChapterSelectionOptions) => {
-      if (!activeBookId) return;
-
-      // If this is a manual selection (e.g., from TOC), track it and disable auto-scroll
-      if (options?.isManualSelection) {
-        console.log("[Chapter Selection] Manual chapter selection detected:", {
-          chapterId,
-          currentAutoScrollEnabled: autoScrollEnabled,
-        });
-        
-        // Track manual selection FIRST to prevent auto-switch from overriding it
-        // Always update the ref, even if it was already set, to allow selecting different chapters
+      // Track manual selection FIRST to prevent auto-switch from overriding it
+      // Always update the ref, even if it was already set, to allow selecting different chapters
+      if (manualChapterSelectionRef) {
         manualChapterSelectionRef.current = {
           chapterId,
           timestamp: Date.now(),
         };
-        
-        // Disable auto-scroll if it's currently enabled (don't re-enable automatically)
-        // This allows manual chapter selection to work regardless of auto-scroll state
-        if (autoScrollEnabled) {
-          console.log("[Chapter Selection] Disabling auto-scroll due to manual selection");
-          setAutoScrollEnabled(false);
-          // Persist the setting so it remains disabled
-          updateSettings({ autoScrollEnabled: false });
-        }
-        
-        // Clear any existing timeout that would re-enable auto-scroll
-        if (manualSelectionTimeoutRef.current) {
-          clearTimeout(manualSelectionTimeoutRef.current);
-          manualSelectionTimeoutRef.current = null;
-        }
-      }
-
-      setActiveChapterId(chapterId);
-
-      const requestedScrollPosition = options?.scrollPosition ?? "maintain";
-      const progressUpdate: ProgressUpdatePayload = { chapterId };
-
-      if (requestedScrollPosition === "top") {
-        progressUpdate.scrollTop = 0;
-        progressUpdate.scrollHeight = 0;
-        progressUpdate.clientHeight = 0;
-        progressUpdate.percent = 0;
-      } else if (requestedScrollPosition === "bottom") {
-        progressUpdate.percent = 1;
-      }
-
-      console.debug(`${PROGRESS_LOG_PREFIX} select chapter`, {
-        bookId: activeBookId,
-        chapterId,
-        requestedScrollPosition,
-        progressUpdate,
-        isManualSelection: options?.isManualSelection,
-      });
-
-      updateBookProgress(activeBookId, progressUpdate);
-
-      const fragment = options?.fragment;
-      setPendingFragment(fragment && fragment.length > 0 ? fragment.replace(/^#/, "") : null);
-      setActiveView("reader");
-    },
-    [activeBookId, updateBookProgress, autoScrollEnabled, updateSettings],
-  );
-
-  const handleChapterProgress = useCallback(
-    (bookId: string, snapshot: ChapterProgressSnapshot) => {
-      console.debug(`${PROGRESS_LOG_PREFIX} received progress snapshot`, { bookId, snapshot });
-      updateBookProgress(bookId, {
-        chapterId: snapshot.chapterId,
-        scrollTop: snapshot.scrollTop,
-        scrollHeight: snapshot.scrollHeight,
-        clientHeight: snapshot.clientHeight,
-        percent: snapshot.percent,
-        elementId: snapshot.activeElementId,
-        elementIndex: snapshot.activeElementIndex,
-      });
-    },
-    [updateBookProgress],
-  );
-
-  // Auto-switch chapter when audio track changes
-  useEffect(() => {
-    if (!activeBook || !currentAudioTrackHref || !activeBook.audioSyncMap) {
-      return;
-    }
-
-    // Don't auto-switch if auto-scroll is disabled
-    if (!autoScrollEnabled) {
-      console.log("[Auto-Chapter] Skipping auto-switch because auto-scroll is disabled");
-      return;
-    }
-
-    // Don't auto-switch if there was a recent manual chapter selection
-    if (manualChapterSelectionRef.current) {
-      const timeSinceManualSelection = Date.now() - manualChapterSelectionRef.current.timestamp;
-      const isRecentManualSelection = timeSinceManualSelection < 10000; // Increased to 10 seconds
-      const isCurrentChapterManuallySelected = 
-        manualChapterSelectionRef.current.chapterId === activeChapterId;
-      
-      // Prevent auto-switch if:
-      // 1. Manual selection was recent (within 10 seconds), OR
-      // 2. Current chapter is the one that was manually selected (regardless of time)
-      if (isRecentManualSelection || isCurrentChapterManuallySelected) {
-        console.log("[Auto-Chapter] Skipping auto-switch due to manual selection:", {
-          manualChapterId: manualChapterSelectionRef.current.chapterId,
-          currentChapterId: activeChapterId,
-          timeSinceSelection: timeSinceManualSelection,
-          isRecentManualSelection,
-          isCurrentChapterManuallySelected,
-        });
-        return;
       }
       
-      // If manual selection was older than 10 seconds and current chapter doesn't match,
-      // clear the ref to allow auto-switch again
-      if (!isRecentManualSelection && !isCurrentChapterManuallySelected) {
-        console.log("[Auto-Chapter] Clearing old manual selection ref, allowing auto-switch");
-        manualChapterSelectionRef.current = null;
+      // Disable auto-scroll if it's currently enabled (don't re-enable automatically)
+      // This allows manual chapter selection to work regardless of auto-scroll state
+      if (autoScrollEnabled) {
+        console.log("[Chapter Selection] Disabling auto-scroll due to manual selection");
+        setAutoScrollEnabled(false);
+        // Persist the setting so it remains disabled
+        updateSettings({ autoScrollEnabled: false });
       }
     }
 
-    const chaptersForTrack = findChaptersForAudioTrack(
-      activeBook.audioSyncMap,
-      currentAudioTrackHref,
-    );
+    setActiveChapterId(chapterId);
 
-    if (chaptersForTrack.length === 0) {
-      return;
+    const requestedScrollPosition = options?.scrollPosition ?? "maintain";
+    const progressUpdate: { chapterId: string; scrollTop?: number; scrollHeight?: number; clientHeight?: number; percent?: number } = { chapterId };
+
+    if (requestedScrollPosition === "top") {
+      progressUpdate.scrollTop = 0;
+      progressUpdate.scrollHeight = 0;
+      progressUpdate.clientHeight = 0;
+      progressUpdate.percent = 0;
+    } else if (requestedScrollPosition === "bottom") {
+      progressUpdate.percent = 1;
     }
 
-    // Find the first chapter that matches one of the chapter hrefs for this track
-    const matchingChapter = activeBook.chapters.find((chapter) => {
-      const chapterHref = chapter.href.split("#")[0];
-      return chaptersForTrack.includes(chapterHref);
+    console.debug("[ReaderProgress] select chapter", {
+      bookId: activeBookId,
+      chapterId,
+      requestedScrollPosition,
+      progressUpdate,
+      isManualSelection: options?.isManualSelection,
     });
 
-    if (matchingChapter && matchingChapter.id !== activeChapterId) {
-      console.log("[Auto-Chapter] Switching to chapter for audio track:", {
-        trackHref: currentAudioTrackHref,
-        chapterId: matchingChapter.id,
-        chapterTitle: matchingChapter.title,
-        chapterHref: matchingChapter.href,
-      });
-      // Note: isManualSelection is NOT set here, so auto-scroll remains enabled
-      handleSelectChapter(matchingChapter.id, {
-        scrollPosition: "top",
-      });
-    }
-  }, [activeBook, currentAudioTrackHref, activeChapterId, autoScrollEnabled, handleSelectChapter]);
+    updateBookProgress(activeBookId, progressUpdate);
 
-  // Helper function to find and switch to chapter matching current audio track
-  const switchToMatchingChapter = useCallback(() => {
-    if (!activeBook || !currentAudioTrackHref || !activeBook.audioSyncMap) {
+    const fragment = options?.fragment;
+    setPendingFragment(fragment && fragment.length > 0 ? fragment.replace(/^#/, "") : null);
+    setActiveView("reader");
+  }, [activeBookId, autoScrollEnabled, setAutoScrollEnabled, updateSettings, setActiveChapterId, updateBookProgress, setPendingFragment, setActiveView]);
+
+  const {
+    isAudioPlayerOpen,
+    setIsAudioPlayerOpen,
+    currentAudioTime,
+    currentAudioTrackHref,
+    isAudioRestoring,
+    setIsAudioRestoring,
+    showAudioPlayer,
+    handleAudioPlayerClose,
+    handleProgress,
+    handleAutoScrollToggle,
+    manualChapterSelectionRef,
+  } = useAudioPlayer(
+    activeBook,
+    activeChapterId,
+    autoScrollEnabled,
+    setAutoScrollEnabled,
+    updateSettings,
+    handleSelectChapter,
+    ingestEpub,
+    activeView,
+  );
+
+  const handleSelectBook = async (bookId: string) => {
+    await handleSelectBookContext(bookId);
+    setActiveView("reader");
+  };
+
+  const handleAddEbook = async () => {
+    if (isImporting) return;
+    
+    const result = await importFromDialog();
+    if (!result) {
+      // User cancelled or not in Tauri environment
       return;
     }
+    
+    // Check if result contains book info (for conversion check)
+    if (typeof result === "object" && "book" in result && "buffer" in result) {
+      const { book } = result;
+      // Check if book needs conversion (no audio tracks)
+      if (book.audioTracks.length === 0) {
+        // Only show conversion dialog if not already converting
+        if (!isConverting) {
+          setPendingBookForConversion({ book, buffer: result.buffer });
+          setShowConvertDialog(true);
+        } else {
+          // Book is imported, but conversion dialog is skipped while another conversion is in progress
+          toast.info("Ebook imported", {
+            description: "You can convert it to an audiobook after the current conversion completes.",
+          });
+        }
+      }
+    }
+  };
 
-    const chaptersForTrack = findChaptersForAudioTrack(
-      activeBook.audioSyncMap,
-      currentAudioTrackHref,
-    );
-
-    if (chaptersForTrack.length === 0) {
+  const handleDeleteBook = async (bookId: string) => {
+    // If this book is currently being converted, cancel the conversion
+    cancelConversionForBook(bookId);
+    
+    // Find the book first to get its sourcePath for cache cleanup
+    const bookToDelete = library.find((book) => book.id === bookId);
+    
+    // Delete from Rust backend
+    try {
+      const { deleteBook } = await import("./lib/book-service");
+      await deleteBook(bookId);
+    } catch (error) {
+      console.error("Failed to delete book from Rust backend:", error);
+      toast.error("Failed to delete book", {
+        description: error instanceof Error ? error.message : "An error occurred",
+      });
       return;
     }
-
-    // Find the first chapter that matches one of the chapter hrefs for this track
-    const matchingChapter = activeBook.chapters.find((chapter) => {
-      const chapterHref = chapter.href.split("#")[0];
-      return chaptersForTrack.includes(chapterHref);
-    });
-
-    if (matchingChapter && matchingChapter.id !== activeChapterId) {
-      console.log("[Auto-Scroll] Re-enabling auto-scroll, switching to matching chapter:", {
-        trackHref: currentAudioTrackHref,
-        chapterId: matchingChapter.id,
-        chapterTitle: matchingChapter.title,
-        currentChapterId: activeChapterId,
-      });
-      handleSelectChapter(matchingChapter.id, {
-        scrollPosition: "top",
-      });
-    }
-  }, [activeBook, currentAudioTrackHref, activeChapterId, handleSelectChapter]);
-
-  // Wrapper function to handle explicit user toggles
-  const handleAutoScrollToggle = useCallback((enabled: boolean) => {
-    setAutoScrollEnabled(enabled);
     
-    // Persist the setting
-    updateSettings({ autoScrollEnabled: enabled });
-    
-    // Track if user explicitly disabled it
-    if (!enabled) {
-      explicitlyDisabledRef.current = true;
-      // Clear any pending re-enable timeout from manual selection
-      if (manualSelectionTimeoutRef.current) {
-        clearTimeout(manualSelectionTimeoutRef.current);
-        manualSelectionTimeoutRef.current = null;
+    // Update local state
+    setLibrary((prev) => prev.filter((book) => book.id !== bookId));
+    setDetailBookId(null);
+
+    // Clear lazy loader cache
+    if (bookToDelete) {
+      try {
+        const { clearBookCache } = await import("./lib/lazy-chapter-loader");
+        clearBookCache(bookToDelete.sourcePath);
+      } catch (error) {
+        console.warn("Failed to clear book cache:", error);
       }
-    } else {
-      // User explicitly enabled it, clear the explicit disable flag
-      explicitlyDisabledRef.current = false;
-      
-      // Clear manual selection ref to allow auto-switch again
-      if (manualChapterSelectionRef.current) {
-        console.log("[Auto-Scroll] Clearing manual selection ref, allowing auto-switch");
-        manualChapterSelectionRef.current = null;
-      }
-      
-      // If current chapter doesn't match audio track, switch to matching chapter
-      // Use setTimeout to ensure state update has completed
-      setTimeout(() => {
-        switchToMatchingChapter();
-      }, 0);
     }
-  }, [switchToMatchingChapter, updateSettings]);
+
+    if (activeBookId === bookId) {
+      setActiveBookId(undefined);
+      setActiveChapterId(undefined);
+      setPendingFragment(null);
+      setActiveView("library");
+    }
+  };
 
   // Show toast when auto-scroll state changes
+  const previousAutoScrollEnabledRef = useRef<boolean | null>(null);
   useEffect(() => {
     // Skip on initial mount
     if (previousAutoScrollEnabledRef.current === null) {
@@ -1040,140 +328,10 @@ function App() {
     }
   }, [autoScrollEnabled]);
 
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (manualSelectionTimeoutRef.current) {
-        clearTimeout(manualSelectionTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  const handleAddEbook = useCallback(async () => {
-    if (isImporting) return;
-    
-    const result = await importFromDialog();
-    if (!result) {
-      // User cancelled or not in Tauri environment
-      return;
-    }
-    
-    // Check if result contains book info (for conversion check)
-    if (typeof result === "object" && "book" in result && "buffer" in result) {
-      const { book, buffer } = result;
-      // Check if book needs conversion (no audio tracks)
-      if (book.audioTracks.length === 0) {
-        // Only show conversion dialog if not already converting
-        if (!isConverting) {
-          setPendingBookForConversion({ book, buffer });
-          setShowConvertDialog(true);
-        } else {
-          // Book is imported, but conversion dialog is skipped while another conversion is in progress
-          toast.info("Ebook imported", {
-            description: "You can convert it to an audiobook after the current conversion completes.",
-          });
-        }
-      }
-    }
-  }, [importFromDialog, isImporting, isConverting]);
-
-  const handleDeleteBook = useCallback(async (bookId: string) => {
-      // If this book is currently being converted, cancel the conversion
-      if (convertingBookIdRef.current === bookId && conversionAbortControllerRef.current) {
-        conversionAbortControllerRef.current.abort();
-        conversionAbortControllerRef.current = null;
-        convertingBookIdRef.current = null;
-        setIsConverting(false);
-        setConversionProgress(null);
-        setBookConversionProgress((prev) => {
-          const next = { ...prev };
-          delete next[bookId];
-          return next;
-        });
-        // If it was pending conversion, clear that too
-        if (pendingBookForConversion?.book.id === bookId) {
-          setPendingBookForConversion(null);
-          setShowConvertDialog(false);
-        }
-        toast.info("Conversion cancelled", {
-          description: "The conversion has been cancelled and the book has been removed.",
-        });
-      }
-      
-      // Find the book first to get its sourcePath for cache cleanup
-      const bookToDelete = library.find((book) => book.id === bookId);
-      
-      // Delete from Rust backend
-      try {
-        const { deleteBook } = await import("./lib/book-service");
-        await deleteBook(bookId);
-      } catch (error) {
-        console.error("Failed to delete book from Rust backend:", error);
-        toast.error("Failed to delete book", {
-          description: error instanceof Error ? error.message : "An error occurred",
-        });
-        return;
-      }
-      
-      // Update local state
-      setLibrary((prev) => prev.filter((book) => book.id !== bookId));
-      setDetailBookId(null);
-
-      // Clear lazy loader cache
-      if (bookToDelete) {
-        try {
-          const { clearBookCache } = await import("./lib/lazy-chapter-loader");
-          clearBookCache(bookToDelete.sourcePath);
-        } catch (error) {
-          console.warn("Failed to clear book cache:", error);
-        }
-      }
-
-      if (activeBookId === bookId) {
-        setActiveBookId(undefined);
-        setActiveChapterId(undefined);
-        setPendingFragment(null);
-        setActiveView("library");
-      }
-    },
-    [activeBookId, setLibrary, pendingBookForConversion, library],
-  );
-
-  useEffect(() => {
-    if (!library.length) {
-      setActiveView("library");
-    }
-  }, [library.length]);
-
-  // Use backend filtering/search - refresh library when filter or search changes
-  useEffect(() => {
-    if (!isHydrated) return;
-    
-    const filter: LibraryFilter = {
-      filter: libraryFilter !== "all" ? libraryFilter : undefined,
-      search: librarySearchTerm.trim() || undefined,
-    };
-    
-    refreshLibrary(filter).catch((error) => {
-      console.error("Failed to refresh library with filter:", error);
-    });
-  }, [libraryFilter, librarySearchTerm, isHydrated, refreshLibrary]);
-
   // Use library directly since filtering is done by backend
   const filteredLibrary = library;
 
-  const showAudioPlayer = hasAudioTracks && (isAudioPlayerOpen || isAudioPlayerDismissing);
   const audioPlayerChromeVisible = activeView === "reader" ? isReaderChromeVisible : true;
-
-  const handleAudioPlayerClose = useCallback(() => {
-    setIsAudioPlayerDismissing(true);
-    // Wait for exit animation to complete before hiding
-    // Audio progress is saved in handleDismiss, scroll progress is saved in ReaderViewport effect
-    setTimeout(() => {
-      setIsAudioPlayerOpen(false);
-      setIsAudioPlayerDismissing(false);
-    }, 300);
-  }, []);
 
   const libraryView = (
     <LibraryPanel
@@ -1221,12 +379,6 @@ function App() {
     return library.find((book) => book.id === detailBookId);
   }, [detailBookId, library]);
 
-  const canOpenReader = Boolean(activeBook);
-  const navigationItems: Array<{ id: AppView; label: string; disabled?: boolean }> = [
-    { id: "library", label: "Library" },
-    { id: "reader", label: "Reader", disabled: !canOpenReader },
-    { id: "settings", label: "Settings" },
-  ];
   const settingsView = <SettingsPanel settings={settings} onSettingsChange={updateSettings} />;
   const currentView =
     activeView === "settings"
@@ -1262,8 +414,7 @@ function App() {
           initialAudioState={activeBook.audioState}
           onProgress={(snapshot) => {
             updateBookAudioState(activeBook.id, snapshot);
-            setCurrentAudioTime(snapshot.currentTimeSeconds);
-            setCurrentAudioTrackHref(snapshot.trackHref);
+            handleProgress(snapshot);
           }}
           chromeVisible={audioPlayerChromeVisible}
           onClose={handleAudioPlayerClose}
@@ -1358,6 +509,24 @@ function App() {
       ) : null}
       <Toaster position="top-center" richColors />
     </div>
+  );
+}
+
+function App() {
+  const {
+    library,
+    setLibrary,
+  } = usePersistentLibrary();
+
+  const { updateBookProgress } = useBookProgress(library, setLibrary);
+
+  return (
+    <AppContextProvider
+      library={library}
+      updateBookProgress={updateBookProgress}
+    >
+      <AppContent />
+    </AppContextProvider>
   );
 }
 

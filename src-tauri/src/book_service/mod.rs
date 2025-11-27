@@ -8,6 +8,7 @@ use filters::*;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::path_validation::validate_file_size;
+use crate::epub::parser::extract_audio_tracks_from_manifest;
 
 /// Read all books with optional filtering and search
 #[tauri::command]
@@ -229,7 +230,7 @@ pub async fn ingest_epub(
     
     // Extract metadata from OPF in a separate blocking task
     let epub_data_for_metadata = epub_data.clone();
-    let (metadata, manifest_items, _spine_items) = tokio::task::spawn_blocking(move || {
+    let (metadata, manifest_items, _spine_items, opf_path) = tokio::task::spawn_blocking(move || {
         let epub_bytes = epub_data_for_metadata;
         let mut archive = ZipArchive::new(Cursor::new(epub_bytes.as_slice()))
             .map_err(|e| format!("Failed to open EPUB: {}", e))?;
@@ -242,17 +243,41 @@ pub async fn ingest_epub(
         opf_file.read_to_string(&mut opf_content)
             .map_err(|e| format!("Failed to read OPF: {}", e))?;
         
-        parse_opf_content(&opf_content)
+        let (metadata, manifest_items, spine_items) = parse_opf_content(&opf_content)?;
+        Ok((metadata, manifest_items, spine_items, opf_path))
     })
     .await
     .map_err(|e| AppError::EpubParse(format!("Failed to extract metadata: {}", e)))?
     .map_err(|e| AppError::EpubParse(e).with_context("Failed to parse OPF content"))?;
     
-    // Extract cover image URL
-    let cover_url = find_cover_image(metadata.cover_id.as_ref(), &manifest_items);
+    // Find cover image href
+    let cover_href = find_cover_image(metadata.cover_id.as_ref(), &manifest_items);
+    
+    // Extract cover image as data URL if found
+    let cover_url = if let Some(href) = cover_href {
+        let epub_data_for_cover = epub_data.clone();
+        let opf_path_for_cover = opf_path.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::epub::parser::extract_cover_image_as_data_url(
+                &epub_data_for_cover,
+                &href,
+                &opf_path_for_cover,
+            )
+        })
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!("Failed to extract cover image: {}", e);
+            None
+        })
+    } else {
+        None
+    };
     
     // Extract published year from date
     let published_year = extract_year(metadata.pubdate.as_ref());
+    
+    // Extract audio tracks from manifest
+    let audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
     
     // Generate book ID
     let book_id = Uuid::new_v4().to_string();
@@ -277,7 +302,7 @@ pub async fn ingest_epub(
             Some(metadata.subjects)
         },
         file_size_bytes: Some(epub_data.len()),
-        audio_tracks: Vec::new(),
+        audio_tracks,
         audio_state: None,
         audio_sync_map: None,
         progress: None,
