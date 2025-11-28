@@ -8,6 +8,7 @@ import { ReaderViewport } from "./reader/ReaderViewport";
 import { cn } from "../lib/utils";
 import { animPatterns, enterExit, anim } from "../lib/animations";
 import { Button } from "./ui/button";
+import { computeScrollMetrics } from "../lib/scroll-utils";
 
 type ReaderPanelProps = ReaderPanelBaseProps & {
   resolvedUiTheme: "light" | "dark";
@@ -147,6 +148,8 @@ export function ReaderPanel({
     }
     onChapterProgress?.(activeBook.id, snapshot);
   };
+
+  
 
   return (
     <section className="flex flex-1 min-h-0 flex-col">

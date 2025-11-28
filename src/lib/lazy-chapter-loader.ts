@@ -422,3 +422,70 @@ export async function ensureAudioTrackLoaded(
   }
 }
 
+/**
+ * Preload all chapters and audio tracks for a book
+ * This replaces lazy loading by loading everything upfront
+ */
+export async function preloadBookContent(
+  sourcePath: string,
+  chapters: Chapter[],
+  audioTracks: AudioTrack[],
+): Promise<{ chapters: Chapter[]; audioTracks: AudioTrack[] }> {
+  console.debug(`${LOADER_LOG_PREFIX} preloading all content for book`, {
+    sourcePath,
+    chapterCount: chapters.length,
+    audioTrackCount: audioTracks.length,
+  });
+
+  // Load all chapters in parallel
+  const loadedChapters = await Promise.all(
+    chapters.map(async (chapter) => {
+      // Skip if already loaded
+      if (chapter.contentHtml && chapter.plainText) {
+        return chapter;
+      }
+      try {
+        return await ensureChapterLoaded(sourcePath, chapter);
+      } catch (error) {
+        console.error(`${LOADER_LOG_PREFIX} failed to preload chapter`, {
+          sourcePath,
+          href: chapter.href,
+          error,
+        });
+        return chapter;
+      }
+    }),
+  );
+
+  // Load all audio tracks in parallel
+  const loadedAudioTracks = await Promise.all(
+    audioTracks.map(async (track) => {
+      // Skip if already loaded
+      if (track.url) {
+        return track;
+      }
+      try {
+        return await ensureAudioTrackLoaded(sourcePath, track);
+      } catch (error) {
+        console.error(`${LOADER_LOG_PREFIX} failed to preload audio track`, {
+          sourcePath,
+          href: track.href,
+          error,
+        });
+        return track;
+      }
+    }),
+  );
+
+  console.debug(`${LOADER_LOG_PREFIX} finished preloading book content`, {
+    sourcePath,
+    loadedChapters: loadedChapters.filter(c => c.contentHtml && c.plainText).length,
+    loadedAudioTracks: loadedAudioTracks.filter(t => t.url).length,
+  });
+
+  return {
+    chapters: loadedChapters,
+    audioTracks: loadedAudioTracks,
+  };
+}
+

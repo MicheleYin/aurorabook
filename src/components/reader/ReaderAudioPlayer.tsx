@@ -3,7 +3,6 @@ import { MoveVertical, Pause, Play, SkipBack, SkipForward, StepBack, StepForward
 
 import type { AudioTrack, BookAudioState } from "../../types/reader";
 import type { AudioProgressSnapshot } from "./types";
-import { ensureAudioTrackLoaded } from "../../lib/lazy-chapter-loader";
 import { Button } from "../ui/button";
 import {
   Select,
@@ -14,7 +13,8 @@ import {
 } from "../ui/select";
 import { Slider } from "../ui/slider";
 import { cn } from "../../lib/utils";
-import { useAudioStateSync } from "../../hooks/useAudioStateSync";
+// useAudioStateSync is now accessed via useLibrary hook
+import { useLibrary } from "../../hooks/useLibrary";
 import { animPatterns, enterExit } from "../../lib/animations";
 
 const formatTime = (value: number) => {
@@ -40,7 +40,7 @@ type ReaderAudioPlayerProps = {
   bookId?: string;
   tracks: AudioTrack[];
   bookTitle?: string;
-  sourcePath?: string; // Needed for lazy loading audio tracks
+  sourcePath?: string;
   initialAudioState?: BookAudioState;
   onProgress?: (snapshot: AudioProgressSnapshot) => void;
   onRestorationStateChange?: (isRestoring: boolean) => void;
@@ -63,7 +63,8 @@ export function ReaderAudioPlayer({
   autoScrollEnabled = true,
   onAutoScrollToggle,
 }: ReaderAudioPlayerProps) {
-  // Use custom hook for state sync and restoration
+  // Use custom hook for state sync and restoration from useLibrary
+  const libraryHook = useLibrary();
   const {
     currentIndex,
     setCurrentIndex,
@@ -72,7 +73,7 @@ export function ReaderAudioPlayer({
     onTrackLoaded,
     onTrackChanged,
     emitProgress,
-  } = useAudioStateSync({
+  } = libraryHook.useAudioStateSync({
     bookId,
     tracks,
     initialAudioState,
@@ -85,6 +86,18 @@ export function ReaderAudioPlayer({
     onRestorationStateChange?.(isRestoring);
   }, [isRestoring, onRestorationStateChange]);
 
+  // Store stable refs for callbacks to avoid effect re-runs
+  const onTrackLoadedRef = useRef(onTrackLoaded);
+  const emitProgressRef = useRef(emitProgress);
+  
+  useEffect(() => {
+    onTrackLoadedRef.current = onTrackLoaded;
+  }, [onTrackLoaded]);
+  
+  useEffect(() => {
+    emitProgressRef.current = emitProgress;
+  }, [emitProgress]);
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -93,8 +106,6 @@ export function ReaderAudioPlayer({
   const [scrubTime, setScrubTime] = useState<number | null>(null);
   const [isDismissing, setIsDismissing] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
-  const [loadedTracks, setLoadedTracks] = useState<Map<string, AudioTrack>>(new Map());
-  const [isLoadingTrack, setIsLoadingTrack] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isPlayingRef = useRef(false);
@@ -143,12 +154,12 @@ export function ReaderAudioPlayer({
         const appliedTime = audio.currentTime || normalized;
         setCurrentTime(appliedTime);
         currentTimeRef.current = appliedTime;
-        emitProgress(appliedTime);
+        emitProgressRef.current(appliedTime);
       } catch (error) {
         console.warn("[Audio Player] Failed to seek:", error);
       }
     },
-    [emitProgress],
+    [],
   );
 
   // Emit progress on unmount
@@ -156,10 +167,10 @@ export function ReaderAudioPlayer({
     return () => {
       const audio = audioRef.current;
       if (audio && Number.isFinite(audio.currentTime)) {
-        emitProgress(audio.currentTime);
+        emitProgressRef.current(audio.currentTime);
       }
     };
-  }, [emitProgress]);
+  }, []);
 
   // Handle empty tracks
   useEffect(() => {
@@ -203,7 +214,7 @@ export function ReaderAudioPlayer({
         isPlayingRef.current = audioIsPlaying;
         // If paused externally, emit progress to save state
         if (!audioIsPlaying) {
-          emitProgress(seconds);
+          emitProgressRef.current(seconds);
         }
       }
       
@@ -219,7 +230,7 @@ export function ReaderAudioPlayer({
       // Throttle progress emissions to at most once per second
       const timeSinceLastEmit = now - lastEmitTimestampRef.current;
       if (timeSinceLastEmit >= 1000) {
-        emitProgress(seconds);
+        emitProgressRef.current(seconds);
         lastEmitTimestampRef.current = now;
         lastEmittedSecondsRef.current = seconds;
       }
@@ -237,12 +248,8 @@ export function ReaderAudioPlayer({
       
       const newDuration = Number.isFinite(audio.duration) ? audio.duration : 0;
       setDuration(newDuration);
-      // Clear loading state once we have duration
-      if (newDuration > 0) {
-        setIsLoadingTrack(false);
-      }
       // Hook handles restoration via onTrackLoaded
-      onTrackLoaded(audio);
+      onTrackLoadedRef.current(audio);
       
       // Update current time from audio element
       const audioTime = audio.currentTime || 0;
@@ -277,14 +284,14 @@ export function ReaderAudioPlayer({
         }, 100);
       }
       
-      // If we just restored, emit progress to ensure parent state is updated
-      // This is important for paused audio where timeupdate might not fire
-      if (!isRestoring && audioTime > 0) {
-        // Small delay to ensure restoration completed
-        setTimeout(() => {
-          emitProgress(audioTime);
-        }, 50);
-      }
+        // If we just restored, emit progress to ensure parent state is updated
+        // This is important for paused audio where timeupdate might not fire
+        if (!isRestoring && audioTime > 0) {
+          // Small delay to ensure restoration completed
+          setTimeout(() => {
+            emitProgressRef.current(audioTime);
+          }, 50);
+        }
     };
     
     const handleCanPlay = () => {
@@ -298,14 +305,14 @@ export function ReaderAudioPlayer({
       // This prevents double restoration (loadedmetadata already calls it)
       if (trackLoadedForRestorationRef.current) {
         // onTrackLoaded will check if restoration is needed and prevent double application
-        onTrackLoaded(audio);
+        onTrackLoadedRef.current(audio);
         // Clear the flag after attempting restoration
         trackLoadedForRestorationRef.current = false;
       } else {
         // After restoration completes or for normal playback, ensure progress is emitted
         const audioTime = audio.currentTime || 0;
         if (audioTime > 0) {
-          emitProgress(audioTime);
+          emitProgressRef.current(audioTime);
         }
       }
     };
@@ -335,10 +342,15 @@ export function ReaderAudioPlayer({
           isPlayingRef: isPlayingRef.current,
         });
         
+        // Emit progress before changing track
+        emitProgressRef.current(audio.currentTime || 0);
+        
         // Change track - the track loading effect will handle autoplay
         setCurrentIndex(nextIndex);
       } else {
         console.log("[Audio Player] Last track ended, stopping playback");
+        // Emit final progress
+        emitProgressRef.current(audio.currentTime || 0);
         audio.pause();
         audio.currentTime = 0;
         setCurrentTime(0);
@@ -359,7 +371,7 @@ export function ReaderAudioPlayer({
       audio.removeEventListener("canplay", handleCanPlay);
       audio.removeEventListener("ended", handleEnded);
     };
-  }, [currentIndex, tracks.length, isRestoring, restoreTime, onTrackLoaded, emitProgress]);
+  }, [currentIndex, tracks.length, isRestoring, restoreTime]);
 
   const currentTrack = tracks[currentIndex];
 
@@ -378,7 +390,7 @@ export function ReaderAudioPlayer({
         // If paused externally, emit progress to save state
         if (!audioIsPlaying) {
           const audioTime = audio.currentTime || currentTimeRef.current;
-          emitProgress(audioTime);
+          emitProgressRef.current(audioTime);
         }
       }
     };
@@ -392,47 +404,30 @@ export function ReaderAudioPlayer({
     return () => {
       clearInterval(interval);
     };
-  }, [currentTrack, emitProgress]);
+  }, [currentTrack]);
 
   // Track if we've loaded a track for restoration to prevent resetting time after restoration
   const trackLoadedForRestorationRef = useRef(false);
 
-  // Load track when currentIndex changes
+  // Setup track when currentIndex changes
+  // Audio tracks are now preloaded, so they should already have URLs
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || !currentTrack || !sourcePath) {
+    if (!audio || !currentTrack) {
       return;
     }
 
-    // Check if track is already loaded
-    const loadedTrack = loadedTracks.get(currentTrack.id);
-    const trackToUse = loadedTrack || currentTrack;
-
-    // If track doesn't have a URL, load it lazily
-    if (!trackToUse.url) {
-      setIsLoadingTrack(true);
-      ensureAudioTrackLoaded(sourcePath, currentTrack)
-        .then((loaded) => {
-          setLoadedTracks((prev) => {
-            const next = new Map(prev);
-            next.set(loaded.id, loaded);
-            return next;
-          });
-          setIsLoadingTrack(false);
-          
-          // Now set the audio source with the loaded URL
-          const finalTrack = loaded;
-          setupAudioSource(audio, finalTrack);
-        })
-        .catch((error) => {
-          console.error("[Audio Player] Failed to load audio track", error);
-          setIsLoadingTrack(false);
-        });
+    // Track should already have a URL since it's preloaded
+    if (!currentTrack.url) {
+      console.warn("[Audio Player] Track missing URL, this should not happen with preloading", {
+        trackId: currentTrack.id,
+        trackTitle: currentTrack.title,
+      });
       return;
     }
 
-    // Track already has URL, proceed with setup
-    setupAudioSource(audio, trackToUse);
+    // Setup audio source with preloaded track
+    setupAudioSource(audio, currentTrack);
 
     function setupAudioSource(audio: HTMLAudioElement, track: AudioTrack) {
       // Check if audio was playing BEFORE we change the source
@@ -633,7 +628,7 @@ export function ReaderAudioPlayer({
       isPlayingRef.current = false;
     }
     }
-  }, [currentIndex, currentTrack, sourcePath, loadedTracks, playbackRate, isPlaying, onTrackChanged]);
+  }, [currentIndex, currentTrack, playbackRate, isPlaying, onTrackChanged]);
 
   useEffect(() => {
     setIsScrubbing(false);
@@ -664,7 +659,7 @@ export function ReaderAudioPlayer({
     if (isPlayingRef.current) {
       console.log("[Audio Player] Pausing playback");
       audio.pause();
-      emitProgress(audio.currentTime || currentTimeRef.current);
+      emitProgressRef.current(audio.currentTime || currentTimeRef.current);
       setIsPlaying(false);
       isPlayingRef.current = false;
       return;
@@ -683,7 +678,7 @@ export function ReaderAudioPlayer({
         setIsPlaying(false);
         isPlayingRef.current = false;
       });
-  }, [currentTrack, emitProgress, isPlaying]);
+      }, [currentTrack, isPlaying]);
 
   const playTrackAt = useCallback(
     (nextIndex: number) => {
@@ -798,22 +793,22 @@ export function ReaderAudioPlayer({
     const audio = audioRef.current;
     // Ensure progress is saved before closing
     if (audio && Number.isFinite(audio.currentTime)) {
-      emitProgress(audio.currentTime);
+      emitProgressRef.current(audio.currentTime);
     } else {
       // Even if audio isn't ready, emit current time from ref
-      emitProgress(currentTimeRef.current);
+      emitProgressRef.current(currentTimeRef.current);
     }
     // Mark as dismissed to prevent re-animation
     hasBeenDismissedRef.current = true;
     // Start exit animation - set both states immediately
     setIsDismissing(true);
     setIsVisible(false);
-    // Wait for exit animation to complete before notifying parent
-    setTimeout(() => {
-      // Parent component will handle unmounting after animation
-      onClose?.();
-    }, 300); // Match animation duration
-  }, [emitProgress, onClose]);
+      // Wait for exit animation to complete before notifying parent
+      setTimeout(() => {
+        // Parent component will handle unmounting after animation
+        onClose?.();
+      }, 300); // Match animation duration
+  }, [onClose]);
 
   // Save progress when component becomes hidden (not just on unmount)
   const previousVisibleRef = useRef(isVisible);
@@ -823,13 +818,13 @@ export function ReaderAudioPlayer({
       // Component became hidden - save progress
       const audio = audioRef.current;
       if (audio && Number.isFinite(audio.currentTime)) {
-        emitProgress(audio.currentTime);
+        emitProgressRef.current(audio.currentTime);
       } else if (currentTimeRef.current > 0) {
-        emitProgress(currentTimeRef.current);
+        emitProgressRef.current(currentTimeRef.current);
       }
     }
     previousVisibleRef.current = isVisible;
-  }, [isVisible, isDismissing, emitProgress]);
+  }, [isVisible, isDismissing]);
 
 
   if (!currentTrack) {
@@ -1098,14 +1093,7 @@ export function ReaderAudioPlayer({
             aria-label="Seek audio"
             />
           <span className="text-xs tabular-nums text-muted-foreground min-w-[5rem] relative">
-            {(isLoadingTrack || (duration === 0 && currentTrack && !currentTrack.url)) ? (
-              <span 
-                key="loading"
-                className="opacity-50 inline-block transition-opacity duration-300 ease-in-out"
-              >
-                --:--
-              </span>
-            ) : duration > 0 ? (
+            {duration > 0 ? (
               <span
                 key="duration"
                 className="inline-block transition-opacity duration-300 ease-in-out animate-in fade-in"

@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { Loader2 } from "lucide-react";
 
 import { cn } from "../../lib/utils";
 import { anim, animPatterns } from "../../lib/animations";
 import { findCurrentAudioSegment } from "../../lib/epub";
-import { ensureChapterLoaded } from "../../lib/lazy-chapter-loader";
-import { computeScrollMetrics, restoreScrollPosition, scrollToElement } from "../../lib/scroll-utils";
+import { computeScrollMetrics, computeWindowScrollMetrics, restoreWindowScrollPosition, scrollToElement } from "../../lib/scroll-utils";
 import { usePrevious } from "../../hooks/usePrevious";
-import { useChapterProgress } from "../../hooks/useChapterProgress";
+import { useLibrary } from "../../hooks/useLibrary";
 import {
   contentPaddingConfigMap,
   fontClassMap,
@@ -22,7 +20,7 @@ import type {
   ChapterSelectionOptions,
   ReaderPanelBaseProps,
 } from "./types";
-import type { Chapter, ReaderTheme } from "../../types/reader";
+import type { ReaderTheme } from "../../types/reader";
 import { Button } from "../ui/button";
 
 type ResolvedReaderTheme = Exclude<ReaderTheme, "system">;
@@ -76,6 +74,9 @@ export function ReaderViewport({
   const scrollStateRef = useRef({
     rafId: null as number | null,
     activityTimeout: null as number | null,
+    restoreRafId: null as number | null,
+    scrollIntentRafId: null as number | null,
+    cancelled: false,
   });
   
   // Consolidated highlight state
@@ -89,49 +90,24 @@ export function ReaderViewport({
   const scrollRestoreStateRef = useRef({
     isRestoring: false,
     restoredChapterId: null as string | null,
+    restoredBookId: null as string | null,
   });
   
   const [isScrolling, setIsScrolling] = useState(false);
   const [highlightedElementId, setHighlightedElementId] = useState<string | null>(null);
   const [chapterTransitionDirection, setChapterTransitionDirection] = useState<"left" | "right" | "fade" | null>(null);
-  const [loadedChapter, setLoadedChapter] = useState<Chapter | null>(null);
-  const [isLoadingChapter, setIsLoadingChapter] = useState(false);
   
-  // Lazy load chapter content
-  useEffect(() => {
-    if (!activeBook || !activeChapter) {
-      setLoadedChapter(null);
-      return;
-    }
-
-    if (activeChapter.contentHtml && activeChapter.plainText) {
-      setLoadedChapter(activeChapter);
-      return;
-    }
-
-    setIsLoadingChapter(true);
-    ensureChapterLoaded(activeBook.sourcePath, activeChapter)
-      .then((loaded) => {
-        setLoadedChapter(loaded);
-        setIsLoadingChapter(false);
-      })
-      .catch((error) => {
-        console.error("Failed to load chapter", error);
-        setIsLoadingChapter(false);
-        setLoadedChapter(activeChapter);
-      });
-  }, [activeBook?.sourcePath, activeChapter?.id, activeChapter?.href]);
-
-  const displayChapter = loadedChapter || activeChapter || null;
+  // Chapter content is now preloaded, so we can use activeChapter directly
+  const displayChapter = activeChapter || null;
 
   // Use usePrevious hook for chapter tracking
   const previousChapterId = usePrevious(activeChapter?.id);
 
-  // Use consolidated progress tracking hook
+  // useChapterProgress is now accessed via useLibrary hook
+  const libraryHook = useLibrary();
   const {
-    saveProgress: _saveProgress, // Exposed via onSaveProgress callback
     updateMetricsOnScroll,
-  } = useChapterProgress({
+  } = libraryHook.useChapterProgress({
     activeChapter: displayChapter,
     contentRef: contentRef as React.RefObject<HTMLElement>,
     onProgress: onChapterProgress ? (snapshot: ChapterProgressSnapshot) => {
@@ -170,6 +146,52 @@ export function ReaderViewport({
     }, 200);
   }, [updateMetricsOnScroll]);
 
+  // // Track scrollTop changes - window is scrolling, not the container
+  // useEffect(() => {
+  //   const node = contentRef.current;
+    
+  //   // Check both window and container scroll
+  //   const handleWindowScroll = () => {
+  //     const windowScrollY = window.scrollY;
+  //     const documentScrollTop = document.documentElement.scrollTop;
+  //     const bodyScrollTop = document.body.scrollTop;
+      
+  //     // Also check the container in case it's also scrolling
+  //     const containerScrollTop = node?.scrollTop ?? 0;
+  //     const containerScrollHeight = node?.scrollHeight ?? 0;
+  //     const containerClientHeight = node?.clientHeight ?? 0;
+  //     const containerMaxScroll = containerScrollHeight - containerClientHeight;
+  //     const containerPercent = containerMaxScroll > 0 ? containerScrollTop / containerMaxScroll : 0;
+      
+  //     // Calculate window-based metrics
+  //     const windowMaxScroll = Math.max(
+  //       document.documentElement.scrollHeight - window.innerHeight,
+  //       document.body.scrollHeight - window.innerHeight,
+  //       0
+  //     );
+  //     const windowPercent = windowMaxScroll > 0 ? windowScrollY / windowMaxScroll : 0;
+
+  //     console.log("[ReaderViewport] scrollTop changed (window scroll)", {
+  //       windowScrollY,
+  //       documentScrollTop,
+  //       bodyScrollTop,
+  //       windowMaxScroll,
+  //       windowPercent: Number(windowPercent.toFixed(4)),
+  //       containerScrollTop,
+  //       containerScrollHeight,
+  //       containerClientHeight,
+  //       containerMaxScroll,
+  //       containerPercent: Number(containerPercent.toFixed(4)),
+  //       chapterId: activeChapter?.id,
+  //     });
+  //   };
+
+  //   // Listen to window scroll events (this is what's actually scrolling)
+  //   window.addEventListener("scroll", handleWindowScroll, { passive: true });
+    
+    
+  // }, [activeChapter?.id]);
+
   // Unified scroll management: listener setup, restoration, and intent handling
   useEffect(() => {
     const node = contentRef.current;
@@ -180,7 +202,10 @@ export function ReaderViewport({
 
     // Handle scroll intent (top/bottom) - takes priority over restoration
     if (scrollIntent) {
+      scrollStateRef.current.cancelled = false;
       const rafId = requestAnimationFrame(() => {
+        if (scrollStateRef.current.cancelled) return;
+        
         const metrics = computeScrollMetrics(node);
         if (!metrics) {
           onScrollIntentConsumed?.();
@@ -191,51 +216,116 @@ export function ReaderViewport({
         node.scrollTo({ top: target, behavior: "smooth" });
 
         const checkComplete = () => {
+          if (scrollStateRef.current.cancelled) return;
+          
           const currentMetrics = computeScrollMetrics(node);
           if (currentMetrics && Math.abs(currentMetrics.scrollTop - target) <= 5) {
             onScrollIntentConsumed?.();
+            scrollStateRef.current.scrollIntentRafId = null;
           } else {
-            requestAnimationFrame(checkComplete);
+            const nextRafId = requestAnimationFrame(checkComplete);
+            scrollStateRef.current.scrollIntentRafId = nextRafId;
           }
         };
 
-        setTimeout(() => checkComplete(), 100);
+        setTimeout(() => {
+          if (!scrollStateRef.current.cancelled) {
+            const nextRafId = requestAnimationFrame(checkComplete);
+            scrollStateRef.current.scrollIntentRafId = nextRafId;
+          }
+        }, 100);
       });
       scrollStateRef.current.rafId = rafId;
     }
 
+    // Reset restoration state when book changes
+    if (activeBook && scrollRestoreStateRef.current.restoredBookId !== activeBook.id) {
+      scrollRestoreStateRef.current.restoredBookId = activeBook.id;
+      scrollRestoreStateRef.current.restoredChapterId = null;
+    }
+
     // Restore scroll position when chapter loads (only if no scroll intent)
-    if (!scrollIntent && activeChapter && activeBook?.progress) {
+    // Chapter content is now preloaded, so we can restore immediately
+    if (!scrollIntent && activeChapter && activeBook?.progress && displayChapter) {
       if (scrollRestoreStateRef.current.restoredChapterId !== activeChapter.id) {
         const progress = activeBook.progress;
         if (progress.currentChapterId === activeChapter.id) {
           scrollRestoreStateRef.current.isRestoring = true;
+          scrollStateRef.current.cancelled = false;
 
+          let attemptCount = 0;
+          const maxAttempts = 50; // ~3 seconds at 60fps
+          
           const attemptRestore = () => {
-            const metrics = computeScrollMetrics(node);
-            if (!metrics || metrics.scrollHeight <= 0) {
-              requestAnimationFrame(attemptRestore);
-              return;
-            }
-
-            if (metrics.maxScroll <= 0) {
+            // Check if cancelled before proceeding
+            if (scrollStateRef.current.cancelled) {
               scrollRestoreStateRef.current.isRestoring = false;
-              scrollRestoreStateRef.current.restoredChapterId = activeChapter.id;
+              scrollStateRef.current.restoreRafId = null;
+              return;
+            }
+            
+            // Use window scroll metrics (window is what's actually scrolling)
+            const metrics = computeWindowScrollMetrics();
+            
+            // Wait for content to be rendered and scrollable
+            if (metrics.scrollHeight <= 0 || metrics.maxScroll <= 0) {
+              attemptCount++;
+              if (attemptCount < maxAttempts) {
+                const nextRafId = requestAnimationFrame(attemptRestore);
+                scrollStateRef.current.restoreRafId = nextRafId;
+              } else {
+                console.warn("[ReaderViewport] Failed to restore scroll - content not loaded after max attempts", {
+                  scrollHeight: metrics.scrollHeight,
+                  maxScroll: metrics.maxScroll,
+                  chapterId: activeChapter.id,
+                });
+                scrollRestoreStateRef.current.isRestoring = false;
+                scrollRestoreStateRef.current.restoredChapterId = activeChapter.id;
+                scrollStateRef.current.restoreRafId = null;
+              }
               return;
             }
 
-            restoreScrollPosition(node, {
+            // Content is loaded and scrollable, attempt to restore window scroll position
+            const restored = restoreWindowScrollPosition({
               scrollTop: progress.currentChapterScrollTop,
               scrollHeight: progress.currentChapterScrollHeight,
               clientHeight: progress.currentChapterClientHeight,
               percent: progress.chapterProgressPercent,
             });
 
-            scrollRestoreStateRef.current.isRestoring = false;
-            scrollRestoreStateRef.current.restoredChapterId = activeChapter.id;
+            if (restored) {
+              console.log("[ReaderViewport] Successfully restored window scroll position", {
+                chapterId: activeChapter.id,
+                scrollTop: progress.currentChapterScrollTop,
+                percent: progress.chapterProgressPercent,
+              });
+              scrollRestoreStateRef.current.isRestoring = false;
+              scrollRestoreStateRef.current.restoredChapterId = activeChapter.id;
+              scrollStateRef.current.restoreRafId = null;
+            } else {
+              // Restoration failed - retry if we haven't exceeded max attempts
+              attemptCount++;
+              if (attemptCount < maxAttempts) {
+                const nextRafId = requestAnimationFrame(attemptRestore);
+                scrollStateRef.current.restoreRafId = nextRafId;
+              } else {
+                console.warn("[ReaderViewport] Failed to restore window scroll position after max attempts", {
+                  chapterId: activeChapter.id,
+                  savedScrollTop: progress.currentChapterScrollTop,
+                  savedPercent: progress.chapterProgressPercent,
+                  currentMaxScroll: metrics.maxScroll,
+                  currentScrollTop: metrics.scrollTop,
+                });
+                scrollRestoreStateRef.current.isRestoring = false;
+                scrollRestoreStateRef.current.restoredChapterId = activeChapter.id;
+                scrollStateRef.current.restoreRafId = null;
+              }
+            }
           };
 
-          requestAnimationFrame(attemptRestore);
+          const initialRafId = requestAnimationFrame(attemptRestore);
+          scrollStateRef.current.restoreRafId = initialRafId;
         }
       }
     } else if (!activeChapter || scrollIntent) {
@@ -244,6 +334,9 @@ export function ReaderViewport({
 
     return () => {
       node.removeEventListener("scroll", handleScroll);
+      
+      // Mark as cancelled to stop any running RAF loops
+      scrollStateRef.current.cancelled = true;
       
       // Cleanup timeouts and RAF
       if (scrollStateRef.current.activityTimeout !== null) {
@@ -254,6 +347,14 @@ export function ReaderViewport({
         cancelAnimationFrame(scrollStateRef.current.rafId);
         scrollStateRef.current.rafId = null;
       }
+      if (scrollStateRef.current.restoreRafId !== null) {
+        cancelAnimationFrame(scrollStateRef.current.restoreRafId);
+        scrollStateRef.current.restoreRafId = null;
+      }
+      if (scrollStateRef.current.scrollIntentRafId !== null) {
+        cancelAnimationFrame(scrollStateRef.current.scrollIntentRafId);
+        scrollStateRef.current.scrollIntentRafId = null;
+      }
       
       setIsScrolling(false);
     };
@@ -262,9 +363,9 @@ export function ReaderViewport({
     scrollIntent,
     activeChapter?.id,
     activeBook?.id,
-    activeBook?.progress?.updatedAt,
+    activeBook?.progress?.currentChapterId,
+    activeBook?.progress?.currentChapterScrollTop,
     displayChapter?.id,
-    displayChapter?.contentHtml,
     onScrollIntentConsumed,
   ]);
 
@@ -692,12 +793,7 @@ export function ReaderViewport({
             )}
           >
             <h2 className="text-2xl font-semibold">{displayChapter.title}</h2>
-            {isLoadingChapter ? (
-              <div className="flex flex-col items-center justify-center py-24">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                <p className="mt-4 text-sm text-muted-foreground">Loading chapter…</p>
-              </div>
-            ) : displayChapter.contentHtml ? (
+            {displayChapter.contentHtml ? (
               <div
                 data-reader-chapter-content="true"
                 data-chapter-id={displayChapter.id}

@@ -10,19 +10,17 @@ import { ConversionProgressDialog } from "./components/library/ConversionProgres
 import { Toaster } from "./components/ui/sonner";
 import { LoadingScreen } from "./components/app/LoadingScreen";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { usePersistentLibrary } from "./hooks/usePersistentLibrary";
+import { useLibrary } from "./hooks/useLibrary";
 import { usePersistentSettings } from "./hooks/usePersistentSettings";
 import { useBookConversion } from "./hooks/useBookConversion";
-import { useAudioPlayer } from "./hooks/useAudioPlayer";
 import { useAppNavigation } from "./hooks/useAppNavigation";
-import { useBookProgress } from "./hooks/useBookProgress";
 import { AppContextProvider, useAppContext } from "./contexts/AppContext";
 import { useResolvedTheme } from "./hooks/useResolvedTheme";
-import type { ChapterSelectionOptions } from "./components/reader/types";
+import type { ChapterSelectionOptions, AudioProgressSnapshot } from "./components/reader/types";
 import { cn } from "./lib/utils";
 import { animPatterns, viewTransition } from "./lib/animations";
 
-function AppContent() {
+function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary> }) {
   const {
     library,
     setLibrary,
@@ -31,7 +29,10 @@ function AppContent() {
     importFromDialog,
     ingestEpub,
     refreshLibrary,
-  } = usePersistentLibrary();
+    updateBookProgress,
+    updateBookAudioState,
+    handleChapterProgress,
+  } = libraryHook;
 
   const {
     settings,
@@ -57,12 +58,6 @@ function AppContent() {
     setDetailBookId,
     handleSelectBook: handleSelectBookContext,
   } = useAppContext();
-
-  const {
-    updateBookProgress,
-    updateBookAudioState,
-    handleChapterProgress,
-  } = useBookProgress(library, setLibrary);
 
   const {
     showConvertDialog,
@@ -102,6 +97,7 @@ function AppContent() {
       setAutoScrollEnabled(settings.autoScrollEnabled);
     }
   }, [isSettingsHydrated, settings.autoScrollEnabled]);
+
 
   // Apply theme to document
   useEffect(() => {
@@ -154,6 +150,8 @@ function AppContent() {
 
     setActiveChapterId(chapterId);
 
+    
+  
     // Update progress based on scroll position request
     const requestedScrollPosition = options?.scrollPosition ?? "maintain";
     const progressUpdate: { chapterId: string; scrollTop?: number; scrollHeight?: number; clientHeight?: number; percent?: number } = { chapterId };
@@ -181,27 +179,50 @@ function AppContent() {
     setActiveView("reader");
   }, [activeBookId, activeChapterId, autoScrollEnabled, setAutoScrollEnabled, updateSettings, setActiveChapterId, updateBookProgress, setPendingFragment, setActiveView]);
 
-  const {
-    isAudioPlayerOpen,
-    setIsAudioPlayerOpen,
-    currentAudioTime,
-    currentAudioTrackHref,
-    isAudioRestoring,
-    setIsAudioRestoring,
-    showAudioPlayer,
-    handleAudioPlayerClose,
-    handleProgress,
-    handleAutoScrollToggle,
-  } = useAudioPlayer(
-    activeBook,
-    activeChapterId,
-    autoScrollEnabled,
-    setAutoScrollEnabled,
-    updateSettings,
-    handleSelectChapter,
-    ingestEpub,
-    activeView,
-  );
+  // Inline useAudioPlayer functionality (UI state management)
+  const [isAudioPlayerOpen, setIsAudioPlayerOpen] = useState(false);
+  const [isAudioPlayerDismissing, setIsAudioPlayerDismissing] = useState(false);
+  const [currentAudioTime, setCurrentAudioTime] = useState<number | undefined>(undefined);
+  const [currentAudioTrackHref, setCurrentAudioTrackHref] = useState<string | undefined>(undefined);
+  const [isAudioRestoring, setIsAudioRestoring] = useState(false);
+  const hasAudioTracks = (activeBook?.audioTracks?.length ?? 0) > 0;
+  const showAudioPlayer = hasAudioTracks && (isAudioPlayerOpen || isAudioPlayerDismissing);
+
+  const handleAudioPlayerClose = useCallback(() => {
+    setIsAudioPlayerDismissing(true);
+    setTimeout(() => {
+      setIsAudioPlayerOpen(false);
+      setIsAudioPlayerDismissing(false);
+    }, 300);
+  }, []);
+
+  const handleProgress = useCallback((snapshot: AudioProgressSnapshot) => {
+    setCurrentAudioTime(snapshot.currentTimeSeconds);
+    setCurrentAudioTrackHref(snapshot.trackHref);
+  }, []);
+
+  const handleAutoScrollToggle = useCallback((enabled: boolean) => {
+    setAutoScrollEnabled(enabled);
+    updateSettings({ autoScrollEnabled: enabled });
+    if (enabled) {
+      toast.success("Auto-scroll enabled", {
+        description: "The page will automatically scroll to follow the audio",
+        duration: 2000,
+      });
+    } else {
+      toast.info("Auto-scroll disabled", {
+        description: "The page will no longer automatically scroll",
+        duration: 2000,
+      });
+    }
+  }, [setAutoScrollEnabled, updateSettings]);
+
+  // Auto-open audio player when switching to reader view
+  useEffect(() => {
+    if (activeView === "reader" && hasAudioTracks) {
+      setIsAudioPlayerOpen(true);
+    }
+  }, [activeView, hasAudioTracks]);
 
   const handleSelectBook = async (bookId: string) => {
     await handleSelectBookContext(bookId);
@@ -487,20 +508,15 @@ function AppContent() {
 }
 
 function App() {
-  const {
-    library,
-    setLibrary,
-  } = usePersistentLibrary();
-
-  const { updateBookProgress } = useBookProgress(library, setLibrary);
+  const libraryHook = useLibrary();
 
   return (
     <AppContextProvider
-      library={library}
-      setLibrary={setLibrary}
-      updateBookProgress={updateBookProgress}
+      library={libraryHook.library}
+      setLibrary={libraryHook.setLibrary}
+      updateBookProgress={libraryHook.updateBookProgress}
     >
-      <AppContent />
+      <AppContent libraryHook={libraryHook} />
     </AppContextProvider>
   );
 }

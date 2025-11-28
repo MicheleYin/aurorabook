@@ -5,6 +5,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type { Book, Chapter, AudioTrack } from "../types/reader";
+import { preloadBookContent } from "./lazy-chapter-loader";
 
 export interface LibraryFilter {
   filter?: "all" | "new" | "resume" | "finished" | "recent" | "author";
@@ -13,13 +14,36 @@ export interface LibraryFilter {
 
 /**
  * Read all books with optional filtering and search
+ * Preloads all chapter content and audio track URLs
  */
 export async function readAllBooks(
   filter?: LibraryFilter
 ): Promise<Book[]> {
   try {
     const books = await invoke<Book[]>("read_all_books", { filter });
-    return books;
+    
+    // Preload all content for all books
+    const preloadedBooks = await Promise.all(
+      books.map(async (book) => {
+        try {
+          const { chapters, audioTracks } = await preloadBookContent(
+            book.sourcePath,
+            book.chapters,
+            book.audioTracks,
+          );
+          return {
+            ...book,
+            chapters,
+            audioTracks,
+          };
+        } catch (error) {
+          console.error(`Failed to preload content for book ${book.id}:`, error);
+          return book;
+        }
+      }),
+    );
+    
+    return preloadedBooks;
   } catch (error) {
     console.error("Failed to read all books:", error);
     throw error;
@@ -28,11 +52,31 @@ export async function readAllBooks(
 
 /**
  * Read a single complete book by ID
+ * Preloads all chapter content and audio track URLs
  */
 export async function readOneBook(bookId: string): Promise<Book | null> {
   try {
     const book = await invoke<Book | null>("read_one_book", { bookId });
-    return book;
+    if (!book) {
+      return null;
+    }
+    
+    // Preload all content for the book
+    try {
+      const { chapters, audioTracks } = await preloadBookContent(
+        book.sourcePath,
+        book.chapters,
+        book.audioTracks,
+      );
+      return {
+        ...book,
+        chapters,
+        audioTracks,
+      };
+    } catch (error) {
+      console.error(`Failed to preload content for book ${bookId}:`, error);
+      return book;
+    }
   } catch (error) {
     console.error("Failed to read book:", error);
     throw error;

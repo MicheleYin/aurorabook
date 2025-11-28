@@ -1,7 +1,6 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect, useRef } from "react";
 import type { Book } from "../types/reader";
 import type { ReaderPreferences } from "../types/reader";
-import { clearAllCachesExcept } from "../lib/lazy-chapter-loader";
 
 const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   theme: "system",
@@ -199,19 +198,13 @@ export function AppContextProvider({
       // Mark this as a manual selection to prevent auto-selection from overriding it
       manualSelectionRef.current = bookId;
       
-      // Clear cache for all books except the one being opened
-      try {
-        clearAllCachesExcept(selectedBook.sourcePath);
-      } catch (error) {
-        console.warn("Failed to clear book caches", error);
-      }
-      
       setActiveBookId(bookId);
       console.debug("[ReaderProgress] select book", { bookId });
       
       // If this book is already active, preserve the current chapter if it's still valid
       // Otherwise, use the saved progress or fallback to first chapter
       let nextChapterId: string | undefined;
+      
       if (activeBookId === bookId && activeChapterId) {
         // Check if current chapter is still valid for this book
         const currentChapterValid = selectedBook.chapters.some(
@@ -223,6 +216,10 @@ export function AppContextProvider({
             bookId,
             chapterId: nextChapterId,
           });
+          // Don't update progress - preserve existing scroll position
+          setActiveChapterId(nextChapterId);
+          setPendingFragment(null);
+          return;
         }
       }
       
@@ -232,8 +229,21 @@ export function AppContextProvider({
       }
       
       setActiveChapterId(nextChapterId);
+      
+      // Only update progress if chapter is different from existing progress
+      // This prevents overwriting saved scroll position when just selecting the same book/chapter
       if (nextChapterId) {
-        await updateBookProgress(bookId, { chapterId: nextChapterId });
+        const existingChapterId = selectedBook.progress?.currentChapterId;
+        if (existingChapterId !== nextChapterId) {
+          // Chapter changed or no existing progress - update progress
+          await updateBookProgress(bookId, { chapterId: nextChapterId });
+        } else {
+          // Same chapter - don't update progress to preserve scroll position
+          console.debug("[AppContext] Same chapter, preserving existing progress", {
+            bookId,
+            chapterId: nextChapterId,
+          });
+        }
       }
       setPendingFragment(null);
     },
