@@ -5,7 +5,6 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type { Book, Chapter, AudioTrack } from "../types/reader";
-import { preloadBookContent } from "./lazy-chapter-loader";
 
 export interface LibraryFilter {
   filter?: "all" | "new" | "resume" | "finished" | "recent" | "author";
@@ -14,36 +13,15 @@ export interface LibraryFilter {
 
 /**
  * Read all books with optional filtering and search
- * Preloads all chapter content and audio track URLs
+ * Does NOT preload chapter content - chapters are loaded lazily when needed
  */
 export async function readAllBooks(
   filter?: LibraryFilter
 ): Promise<Book[]> {
   try {
     const books = await invoke<Book[]>("read_all_books", { filter });
-    
-    // Preload all content for all books
-    const preloadedBooks = await Promise.all(
-      books.map(async (book) => {
-        try {
-          const { chapters, audioTracks } = await preloadBookContent(
-            book.sourcePath,
-            book.chapters,
-            book.audioTracks,
-          );
-          return {
-            ...book,
-            chapters,
-            audioTracks,
-          };
-        } catch (error) {
-          console.error(`Failed to preload content for book ${book.id}:`, error);
-          return book;
-        }
-      }),
-    );
-    
-    return preloadedBooks;
+    // Return books without preloading - chapters will be loaded on-demand
+    return books;
   } catch (error) {
     console.error("Failed to read all books:", error);
     throw error;
@@ -52,7 +30,8 @@ export async function readAllBooks(
 
 /**
  * Read a single complete book by ID
- * Preloads all chapter content and audio track URLs
+ * Does NOT preload all chapters - only loads the active chapter and adjacent ones
+ * This prevents slow loading for large books
  */
 export async function readOneBook(bookId: string): Promise<Book | null> {
   try {
@@ -61,22 +40,9 @@ export async function readOneBook(bookId: string): Promise<Book | null> {
       return null;
     }
     
-    // Preload all content for the book
-    try {
-      const { chapters, audioTracks } = await preloadBookContent(
-        book.sourcePath,
-        book.chapters,
-        book.audioTracks,
-      );
-      return {
-        ...book,
-        chapters,
-        audioTracks,
-      };
-    } catch (error) {
-      console.error(`Failed to preload content for book ${bookId}:`, error);
-      return book;
-    }
+    // Don't preload all chapters - they'll be loaded lazily when needed
+    // This significantly improves performance for large books
+    return book;
   } catch (error) {
     console.error("Failed to read book:", error);
     throw error;

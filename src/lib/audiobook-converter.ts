@@ -49,7 +49,7 @@ export async function convertEpubToAudiobook(
     const epubBytes = Array.from(new Uint8Array(epubData));
     
     // Call backend conversion function - backend handles everything
-    await invoke("convert_epub_to_audiobook", {
+    await invoke("convert_epub_to_audiobook_command", {
       sourcePath,
       epubData: epubBytes,
       voiceId,

@@ -7,6 +7,7 @@ import { findCurrentAudioSegment } from "../../lib/epub";
 import { computeScrollMetrics, computeWindowScrollMetrics, restoreWindowScrollPosition, scrollToElement } from "../../lib/scroll-utils";
 import { usePrevious } from "../../hooks/usePrevious";
 import { useLibrary } from "../../hooks/useLibrary";
+import { ensureChapterLoaded } from "../../lib/lazy-chapter-loader";
 import {
   contentPaddingConfigMap,
   fontClassMap,
@@ -20,7 +21,8 @@ import type {
   ChapterSelectionOptions,
   ReaderPanelBaseProps,
 } from "./types";
-import type { ReaderTheme } from "../../types/reader";
+import React from "react";
+import type { ReaderTheme, Chapter } from "../../types/reader";
 import { Button } from "../ui/button";
 
 type ResolvedReaderTheme = Exclude<ReaderTheme, "system">;
@@ -97,18 +99,88 @@ export function ReaderViewport({
   const [highlightedElementId, setHighlightedElementId] = useState<string | null>(null);
   const [chapterTransitionDirection, setChapterTransitionDirection] = useState<"left" | "right" | "fade" | null>(null);
   
-  // Chapter content is now preloaded, so we can use activeChapter directly
-  const displayChapter = activeChapter || null;
+  // useChapterProgress is now accessed via useLibrary hook - must be called before useEffect
+  const libraryHook = useLibrary();
+  const { setLibrary, library } = libraryHook;
+  
+  // Chapter content is now loaded lazily - load it if missing
+  const [loadedChapter, setLoadedChapter] = useState<Chapter | undefined>(undefined);
+  const [isLoadingChapter, setIsLoadingChapter] = useState(false);
+  
+  // Always use activeChapter as base, but prefer loadedChapter if it has content
+  const displayChapter = (loadedChapter?.id === activeChapter?.id && loadedChapter?.contentHtml) 
+    ? loadedChapter 
+    : activeChapter || null;
 
   // Use usePrevious hook for chapter tracking
   const previousChapterId = usePrevious(activeChapter?.id);
+  
+  // Lazy load chapter content when needed
+  useEffect(() => {
+    if (!activeChapter || !activeBook) {
+      setLoadedChapter(undefined);
+      setIsLoadingChapter(false);
+      return;
+    }
+    
+    // If chapter already has content, we're done
+    if (activeChapter.contentHtml && activeChapter.plainText) {
+      setLoadedChapter(activeChapter);
+      setIsLoadingChapter(false);
+      return;
+    }
+    
+    // Check if this chapter is already loaded in the library
+    const bookInLibrary = library.find((b) => b.id === activeBook.id);
+    const chapterInLibrary = bookInLibrary?.chapters.find((ch) => ch.id === activeChapter.id);
+    if (chapterInLibrary?.contentHtml && chapterInLibrary?.plainText) {
+      setLoadedChapter(chapterInLibrary);
+      setIsLoadingChapter(false);
+      return;
+    }
+    
+    // Don't reload if we're already loading this chapter
+    if (isLoadingChapter && loadedChapter?.id === activeChapter.id) {
+      return;
+    }
+    
+    // Load the chapter content
+    setIsLoadingChapter(true);
+    ensureChapterLoaded(activeBook.sourcePath, activeChapter)
+      .then((loaded) => {
+        // Only update if this is still the active chapter
+        if (loaded.id === activeChapter.id) {
+          setLoadedChapter(loaded);
+          setIsLoadingChapter(false);
+          
+          // Update library state with loaded chapter
+          // This ensures the chapter content persists in the library
+          setLibrary((prevLibrary) => {
+            return prevLibrary.map((book) => {
+              if (book.id === activeBook.id) {
+                return {
+                  ...book,
+                  chapters: book.chapters.map((ch) =>
+                    ch.id === loaded.id ? loaded : ch
+                  ),
+                };
+              }
+              return book;
+            });
+          });
+        }
+      })
+      .catch((error) => {
+        console.error("[ReaderViewport] Failed to load chapter content:", error);
+        setIsLoadingChapter(false);
+        setLoadedChapter(undefined);
+      });
+  }, [activeChapter?.id, activeBook?.id, activeBook?.sourcePath, setLibrary, library]);
 
-  // useChapterProgress is now accessed via useLibrary hook
-  const libraryHook = useLibrary();
   const {
     updateMetricsOnScroll,
   } = libraryHook.useChapterProgress({
-    activeChapter: displayChapter,
+    activeChapter: displayChapter || activeChapter,
     contentRef: contentRef as React.RefObject<HTMLElement>,
     onProgress: onChapterProgress ? (snapshot: ChapterProgressSnapshot) => {
       onChapterProgress(snapshot);
@@ -117,13 +189,16 @@ export function ReaderViewport({
     isRestoringScroll: scrollRestoreStateRef.current.isRestoring,
   });
 
-  if (!displayChapter || !activeChapter) {
+  if (!activeChapter) {
     return (
       <div className="flex h-full w-full items-center justify-center">
         <div className="text-muted-foreground">No chapter selected</div>
       </div>
     );
   }
+  
+  // Ensure we have a displayChapter (fallback to activeChapter)
+  const chapterToDisplay = displayChapter || activeChapter;
 
   // Progress tracking is now handled by useChapterProgress hook
 
@@ -776,10 +851,10 @@ export function ReaderViewport({
         >
           {renderNavigation()}
           <article
-            id={displayChapter.id}
-            data-chapter-id={displayChapter.id}
+            id={chapterToDisplay.id}
+            data-chapter-id={chapterToDisplay.id}
             data-reader-chapter-root="true"
-            key={displayChapter.id}
+            key={chapterToDisplay.id}
             className={cn(
               "prose reader-prose max-w-none space-y-4",
               anim("normal", "colors"),
@@ -792,14 +867,18 @@ export function ReaderViewport({
               chapterTransitionDirection === "fade" && animPatterns.chapterCrossFade,
             )}
           >
-            <h2 className="text-2xl font-semibold">{displayChapter.title}</h2>
-            {displayChapter.contentHtml ? (
+            <h2 className="text-2xl font-semibold">{chapterToDisplay.title}</h2>
+            {isLoadingChapter ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-muted-foreground">Loading chapter content...</div>
+              </div>
+            ) : chapterToDisplay.contentHtml ? (
               <div
                 data-reader-chapter-content="true"
-                data-chapter-id={displayChapter.id}
+                data-chapter-id={chapterToDisplay.id}
                 className="animate-in fade-in duration-300"
                 dangerouslySetInnerHTML={{
-                  __html: displayChapter.contentHtml,
+                  __html: chapterToDisplay.contentHtml,
                 }}
               />
             ) : (
