@@ -781,7 +781,32 @@ pub async fn ingest_epub(
     let published_year = extract_year(metadata.pubdate.as_ref());
     
     // Extract audio tracks from manifest
-    let audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
+    let mut audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
+    
+    // Compute durations for audio tracks
+    if !audio_tracks.is_empty() {
+        let epub_data_for_durations = epub_data.clone();
+        let opf_path_for_durations = opf_path.clone();
+        let audio_tracks_clone = audio_tracks.clone();
+        audio_tracks = match tokio::task::spawn_blocking(move || {
+            use crate::epub::parser::compute_audio_track_durations;
+            let mut tracks = audio_tracks_clone;
+            compute_audio_track_durations(
+                &epub_data_for_durations,
+                &mut tracks,
+                &opf_path_for_durations,
+            );
+            tracks
+        })
+        .await
+        {
+            Ok(tracks) => tracks,
+            Err(e) => {
+                log::warn!("Failed to compute audio track durations in background task: {}", e);
+                audio_tracks
+            }
+        };
+    }
     
     // Build audio sync map from SMIL files if audio tracks exist
     let audio_sync_map = if !audio_tracks.is_empty() {

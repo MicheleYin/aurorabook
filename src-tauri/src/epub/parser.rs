@@ -831,6 +831,70 @@ pub fn generate_audio_track_title(filename: &str, index: usize) -> String {
     }
 }
 
+/// Compute audio duration from audio bytes using symphonia
+fn compute_audio_duration(audio_bytes: &[u8], mime_type: &str) -> Option<f64> {
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+    use symphonia::default::get_probe;
+    
+    // Create a hint based on MIME type
+    let mut hint = Hint::new();
+    if mime_type.contains("mpeg") || mime_type.contains("mp3") {
+        hint.with_extension("mp3");
+    } else if mime_type.contains("wav") {
+        hint.with_extension("wav");
+    } else if mime_type.contains("mp4") || mime_type.contains("m4a") {
+        hint.with_extension("m4a");
+    } else if mime_type.contains("ogg") {
+        hint.with_extension("ogg");
+    } else if mime_type.contains("opus") {
+        hint.with_extension("opus");
+    }
+    
+    // Create a media source stream from the bytes
+    // Clone bytes to ensure we own them for 'static lifetime
+    let audio_bytes_owned = audio_bytes.to_vec();
+    let mss = MediaSourceStream::new(
+        Box::new(std::io::Cursor::new(audio_bytes_owned)),
+        Default::default(),
+    );
+    
+    // Probe the format
+    match get_probe().format(
+        &hint,
+        mss,
+        &FormatOptions::default(),
+        &MetadataOptions::default(),
+    ) {
+        Ok(mut probed) => {
+            // Get the format
+            let format = probed.format;
+            
+            // Get the first track
+            let track = format.tracks().first()?;
+            
+            // Get the codec parameters
+            let params = &track.codec_params;
+            
+            // Calculate duration from codec parameters
+            if let (Some(time_base), Some(n_frames)) = (params.time_base, params.n_frames) {
+                let duration_secs = time_base.calc_time(n_frames).seconds as f64;
+                Some(duration_secs)
+            } else {
+                // If we can't get duration from codec params, return None
+                // The duration will need to be computed when the track is actually played
+                None
+            }
+        }
+        Err(e) => {
+            log::debug!("Failed to compute audio duration: {}", e);
+            None
+        }
+    }
+}
+
 /// Extract audio tracks from EPUB manifest items.
 ///
 /// This function scans the manifest for items with audio media types
@@ -875,6 +939,112 @@ pub fn extract_audio_tracks_from_manifest(
     audio_tracks.sort_by(|a, b| a.href.cmp(&b.href));
     
     audio_tracks
+}
+
+/// Compute durations for audio tracks by reading them from the EPUB archive
+pub fn compute_audio_track_durations(
+    epub_data: &[u8],
+    audio_tracks: &mut [crate::book_service::models::AudioTrack],
+    opf_path: &str,
+) {
+    use std::io::Cursor;
+    use log::debug;
+    
+    let mut archive = match ZipArchive::new(Cursor::new(epub_data)) {
+        Ok(archive) => archive,
+        Err(e) => {
+            log::warn!("Failed to open EPUB for duration computation: {}", e);
+            return;
+        }
+    };
+    
+    // Determine OEBPS base path
+    let oebps_base = if opf_path.contains("/") {
+        opf_path.rfind("/")
+            .map(|pos| opf_path[..pos + 1].to_string())
+            .unwrap_or_else(|| "OEBPS/".to_string())
+    } else {
+        "OEBPS/".to_string()
+    };
+    
+    for track in audio_tracks.iter_mut() {
+        // Resolve audio path relative to OPF location
+        let audio_path = if track.href.starts_with("/") {
+            track.href[1..].to_string()
+        } else {
+            let mut resolved_parts: Vec<&str> = oebps_base.split("/").filter(|s| !s.is_empty()).collect();
+            let audio_parts: Vec<&str> = track.href.split("/").collect();
+            
+            for part in audio_parts {
+                if part == ".." {
+                    resolved_parts.pop();
+                } else if part != "." && !part.is_empty() {
+                    resolved_parts.push(part);
+                }
+            }
+            
+            resolved_parts.join("/")
+        };
+        
+        // Try to read the audio file
+        let mut audio_bytes = Vec::new();
+        let mut found_audio = false;
+        
+        // Try primary path first
+        if let Ok(mut file) = archive.by_name(&audio_path) {
+            if file.read_to_end(&mut audio_bytes).is_ok() && !audio_bytes.is_empty() {
+                found_audio = true;
+            }
+        }
+        
+        // Try alternative paths if primary didn't work
+        if !found_audio {
+            let alt_paths = [
+                format!("OEBPS/{}", audio_path),
+                format!("OPS/{}", audio_path),
+                track.href.clone(),
+                format!("OEBPS/{}", track.href),
+                format!("OPS/{}", track.href),
+            ];
+            
+            for alt_path in &alt_paths {
+                if let Ok(mut file) = archive.by_name(alt_path) {
+                    audio_bytes.clear();
+                    if file.read_to_end(&mut audio_bytes).is_ok() && !audio_bytes.is_empty() {
+                        found_audio = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if found_audio && !audio_bytes.is_empty() {
+            // Determine MIME type from file extension
+            let mime_type = if track.href.ends_with(".mp3") {
+                "audio/mpeg"
+            } else if track.href.ends_with(".wav") {
+                "audio/wav"
+            } else if track.href.ends_with(".m4a") {
+                "audio/mp4"
+            } else if track.href.ends_with(".ogg") {
+                "audio/ogg"
+            } else if track.href.ends_with(".opus") {
+                "audio/opus"
+            } else {
+                "audio/mpeg" // Default fallback
+            };
+            
+            // Compute duration
+            if let Some(duration) = compute_audio_duration(&audio_bytes, mime_type) {
+                track.duration = Some(duration);
+                debug!("Computed duration for track '{}': {:.2}s", track.href, duration);
+            } else {
+                debug!("Failed to compute duration for track '{}'", track.href);
+            }
+        } else {
+            debug!("Could not find audio file for track '{}'", track.href);
+        }
+    }
 }
 
 /// Extract chapters from EPUB data
