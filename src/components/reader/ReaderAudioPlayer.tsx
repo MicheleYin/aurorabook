@@ -528,15 +528,18 @@ export function ReaderAudioPlayer({
     
     // Determine if we should autoplay after loading
     // Check isPlayingRef first (most reliable) - this is set before track changes
-    // Also check if we're auto-advancing (track ended and moving to next)
+    // Also check if we're auto-advancing (track ended and moving to next) or manually changing tracks
     const shouldAutoplay = isPlayingRef.current || isAutoAdvancingRef.current;
     
     // Clear auto-advancing flag once we've set up the source
+    // This flag is set both for auto-advance (track ended) and manual track changes
     if (isAutoAdvancingRef.current) {
       isAutoAdvancingRef.current = false;
-      // Ensure playing state is set
-      isPlayingRef.current = true;
-      setIsPlaying(true);
+      // Ensure playing state is set if we were trying to continue playing
+      if (shouldAutoplay) {
+        isPlayingRef.current = true;
+        setIsPlaying(true);
+      }
     }
     
     console.log("[Audio Player] Setting up audio source", {
@@ -764,10 +767,14 @@ export function ReaderAudioPlayer({
       const wasPlaying = isPlayingRef.current || (audio && !audio.paused);
       
       if (wasPlaying) {
+        // Set flag to prevent timeupdate from resetting playing state during track change
+        // Similar to auto-advancing, but for manual track changes
+        isAutoAdvancingRef.current = true;
+        
         // Preserve playing state so autoplay happens when new track loads
         isPlayingRef.current = true;
         setIsPlaying(true);
-        console.log("[Audio Player] Preserving playing state for track change", {
+        console.log("[Audio Player] Preserving playing state for manual track change", {
           nextIndex,
           wasPlaying,
         });
