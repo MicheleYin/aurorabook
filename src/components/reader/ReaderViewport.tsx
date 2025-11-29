@@ -353,22 +353,57 @@ export function ReaderViewport({
     // Handle scroll intent (top/bottom) - takes priority over restoration
     if (scrollIntent) {
       scrollStateRef.current.cancelled = false;
-      const rafId = requestAnimationFrame(() => {
+      
+      let attemptCount = 0;
+      const maxAttempts = 50; // ~3 seconds at 60fps
+      
+      const attemptScrollIntent = () => {
         if (scrollStateRef.current.cancelled) return;
         
-        const metrics = computeScrollMetrics(node);
-        if (!metrics) {
+        // Try both container and window to see which is scrollable
+        const containerMetrics = computeScrollMetrics(node);
+        const windowMetrics = computeWindowScrollMetrics();
+        
+        // Use whichever is actually scrollable (prefer container if both are)
+        const useContainer = containerMetrics && containerMetrics.maxScroll > 0;
+        const useWindow = !useContainer && windowMetrics && windowMetrics.maxScroll > 0;
+        
+        const metrics = useContainer ? containerMetrics : (useWindow ? windowMetrics : null);
+        
+        // Wait for content to be loaded and scrollable
+        if (!metrics || !metrics.maxScroll) {
+          attemptCount++;
+          if (attemptCount < maxAttempts) {
+            const nextRafId = requestAnimationFrame(attemptScrollIntent);
+            scrollStateRef.current.rafId = nextRafId;
+            return;
+          } else {
+            // Give up after max attempts
+            onScrollIntentConsumed?.();
+            return;
+          }
+        }
+
+        const target = scrollIntent === "bottom" ? metrics.maxScroll : 0;
+        
+        // Scroll the appropriate container
+        if (useContainer && node) {
+          node.scrollTo({ top: target, behavior: "smooth" });
+        } else if (useWindow) {
+          window.scrollTo({ top: target, behavior: "smooth" });
+        } else {
           onScrollIntentConsumed?.();
           return;
         }
 
-        const target = scrollIntent === "bottom" ? metrics.maxScroll : 0;
-        node.scrollTo({ top: target, behavior: "smooth" });
-
         const checkComplete = () => {
           if (scrollStateRef.current.cancelled) return;
           
-          const currentMetrics = computeScrollMetrics(node);
+          // Check the same container we scrolled
+          const currentMetrics = useContainer 
+            ? computeScrollMetrics(node)
+            : (useWindow ? computeWindowScrollMetrics() : null);
+            
           if (currentMetrics && Math.abs(currentMetrics.scrollTop - target) <= 5) {
             onScrollIntentConsumed?.();
             scrollStateRef.current.scrollIntentRafId = null;
@@ -384,8 +419,15 @@ export function ReaderViewport({
             scrollStateRef.current.scrollIntentRafId = nextRafId;
           }
         }, 100);
-      });
-      scrollStateRef.current.rafId = rafId;
+      };
+      
+      // Add a small delay to allow content to render
+      setTimeout(() => {
+        if (!scrollStateRef.current.cancelled) {
+          const initialRafId = requestAnimationFrame(attemptScrollIntent);
+          scrollStateRef.current.rafId = initialRafId;
+        }
+      }, 50);
     }
 
     // Reset restoration state when book changes
