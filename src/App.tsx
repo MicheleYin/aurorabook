@@ -147,6 +147,10 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       console.log("[App] Disabling auto-scroll due to manual chapter selection");
       setAutoScrollEnabled(false);
       updateSettings({ autoScrollEnabled: false });
+      toast.info("Auto-scroll disabled", {
+        description: "Auto-scroll was disabled because you manually selected a chapter",
+        duration: 3000,
+      });
     }
 
     setActiveChapterId(chapterId);
