@@ -115,49 +115,79 @@ export function ReaderViewport({
   // Use usePrevious hook for chapter tracking
   const previousChapterId = usePrevious(activeChapter?.id);
   
+  // Track the current loading request to prevent race conditions
+  const loadingRequestRef = useRef<{ bookId: string; chapterId: string } | null>(null);
+  const isLoadingRef = useRef(false);
+  
   // Lazy load chapter content when needed
   useEffect(() => {
     if (!activeChapter || !activeBook) {
       setLoadedChapter(undefined);
       setIsLoadingChapter(false);
+      isLoadingRef.current = false;
+      loadingRequestRef.current = null;
       return;
     }
+    
+    const currentBookId = activeBook.id;
+    const currentChapterId = activeChapter.id;
     
     // If chapter already has content, we're done
     if (activeChapter.contentHtml && activeChapter.plainText) {
       setLoadedChapter(activeChapter);
       setIsLoadingChapter(false);
+      isLoadingRef.current = false;
+      loadingRequestRef.current = null;
       return;
     }
     
     // Check if this chapter is already loaded in the library
-    const bookInLibrary = library.find((b) => b.id === activeBook.id);
-    const chapterInLibrary = bookInLibrary?.chapters.find((ch) => ch.id === activeChapter.id);
+    const bookInLibrary = library.find((b) => b.id === currentBookId);
+    const chapterInLibrary = bookInLibrary?.chapters.find((ch) => ch.id === currentChapterId);
     if (chapterInLibrary?.contentHtml && chapterInLibrary?.plainText) {
       setLoadedChapter(chapterInLibrary);
       setIsLoadingChapter(false);
+      isLoadingRef.current = false;
+      loadingRequestRef.current = null;
       return;
     }
     
-    // Don't reload if we're already loading this chapter
-    if (isLoadingChapter && loadedChapter?.id === activeChapter.id) {
+    // Don't reload if we're already loading this exact chapter
+    if (isLoadingRef.current && 
+        loadingRequestRef.current?.bookId === currentBookId &&
+        loadingRequestRef.current?.chapterId === currentChapterId) {
       return;
     }
+    
+    // Mark that we're starting a new load
+    loadingRequestRef.current = { bookId: currentBookId, chapterId: currentChapterId };
+    isLoadingRef.current = true;
     
     // Load the chapter content
     setIsLoadingChapter(true);
-    ensureChapterLoaded(activeBook.sourcePath, activeChapter)
+    let isCancelled = false;
+    
+    ensureChapterLoaded(currentBookId, activeChapter)
       .then((loaded) => {
-        // Only update if this is still the active chapter
-        if (loaded.id === activeChapter.id) {
+        // Check if this request is still valid
+        if (isCancelled) {
+          return;
+        }
+        
+        // Only update if this is still the active chapter and this is the current request
+        if (loaded && 
+            loaded.id === currentChapterId &&
+            loadingRequestRef.current?.bookId === currentBookId &&
+            loadingRequestRef.current?.chapterId === currentChapterId) {
           setLoadedChapter(loaded);
           setIsLoadingChapter(false);
+          isLoadingRef.current = false;
           
           // Update library state with loaded chapter
           // This ensures the chapter content persists in the library
           setLibrary((prevLibrary) => {
             return prevLibrary.map((book) => {
-              if (book.id === activeBook.id) {
+              if (book.id === currentBookId) {
                 return {
                   ...book,
                   chapters: book.chapters.map((ch) =>
@@ -168,19 +198,37 @@ export function ReaderViewport({
               return book;
             });
           });
+        } else {
+          // Request is stale, just clear loading state
+          setIsLoadingChapter(false);
+          isLoadingRef.current = false;
         }
+        loadingRequestRef.current = null;
       })
       .catch((error) => {
+        if (isCancelled) {
+          return;
+        }
         console.error("[ReaderViewport] Failed to load chapter content:", error);
         setIsLoadingChapter(false);
+        isLoadingRef.current = false;
         setLoadedChapter(undefined);
+        loadingRequestRef.current = null;
       });
-  }, [activeChapter?.id, activeBook?.id, activeBook?.sourcePath, setLibrary, library]);
+    
+    // Cleanup function to cancel the request if component unmounts or dependencies change
+    return () => {
+      isCancelled = true;
+      setIsLoadingChapter(false);
+      isLoadingRef.current = false;
+      // Don't clear loadingRequestRef here - let the next effect handle it
+    };
+  }, [activeChapter?.id, activeBook?.id, setLibrary, library]);
 
   const {
     updateMetricsOnScroll,
   } = libraryHook.useChapterProgress({
-    activeChapter: displayChapter || activeChapter,
+    activeChapter: displayChapter ?? activeChapter ?? null,
     contentRef: contentRef as React.RefObject<HTMLElement>,
     onProgress: onChapterProgress ? (snapshot: ChapterProgressSnapshot) => {
       onChapterProgress(snapshot);

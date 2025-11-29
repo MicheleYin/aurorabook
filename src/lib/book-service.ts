@@ -51,6 +51,7 @@ export async function readOneBook(bookId: string): Promise<Book | null> {
 
 /**
  * Read a single chapter by book ID and chapter ID
+ * Returns chapter metadata only (no content)
  */
 export async function readSingleChapter(
   bookId: string,
@@ -64,6 +65,26 @@ export async function readSingleChapter(
     return chapter;
   } catch (error) {
     console.error("Failed to read chapter:", error);
+    throw error;
+  }
+}
+
+/**
+ * Load chapter content from EPUB file
+ * This loads the actual chapter HTML content from the EPUB file stored in the backend
+ */
+export async function loadChapterContent(
+  bookId: string,
+  chapterHref: string
+): Promise<Chapter | null> {
+  try {
+    const chapter = await invoke<Chapter | null>("load_chapter_content", {
+      bookId,
+      chapterHref,
+    });
+    return chapter;
+  } catch (error) {
+    console.error("Failed to load chapter content:", error);
     throw error;
   }
 }

@@ -1,10 +1,9 @@
 /**
- * Lazy chapter loader - loads chapter content from EPUB buffer on demand
+ * Lazy chapter loader - loads chapter content from Rust backend on demand
  * This prevents keeping all chapter content in memory at once
  */
 
-import { parseEpub, type EpubBook } from "./epub-parser";
-import { getEpubBuffer } from "./book-service";
+import { loadChapterContent as loadChapterContentFromBackend } from "./book-service";
 import type { Chapter, AudioTrack } from "../types/reader";
 import {
   normalizeChapterContent,
@@ -20,9 +19,6 @@ const chapterCache = new Map<string, { contentHtml: string; plainText: string; w
 
 // Cache for loaded audio track URLs
 const audioTrackCache = new Map<string, string>();
-
-// Cache for parsed EPUB books (only metadata, not full content)
-const epubBookCache = new Map<string, EpubBook>();
 
 /**
  * Clear cache for a book (useful when book is deleted or updated)
@@ -47,7 +43,6 @@ export function clearBookCache(sourcePath: string): void {
   });
   audioKeysToDelete.forEach((key) => audioTrackCache.delete(key));
   
-  epubBookCache.delete(bookId);
   console.debug(`${LOADER_LOG_PREFIX} cleared cache for book`, {
     sourcePath,
     clearedChapters: keysToDelete.length,
@@ -62,7 +57,6 @@ export function clearBookCache(sourcePath: string): void {
 export function clearAllCachesExcept(sourcePath: string): void {
   const keepBookId = sourcePath;
   let clearedChapters = 0;
-  let clearedBooks = 0;
   
   // Clear all chapters except those for the specified book
   const keysToDelete: string[] = [];
@@ -83,197 +77,70 @@ export function clearAllCachesExcept(sourcePath: string): void {
   });
   audioKeysToDelete.forEach((key) => audioTrackCache.delete(key));
   
-  // Clear all EPUB book caches except the specified one
-  epubBookCache.forEach((_, bookId) => {
-    if (bookId !== keepBookId) {
-      epubBookCache.delete(bookId);
-      clearedBooks++;
-    }
-  });
-  
   console.debug(`${LOADER_LOG_PREFIX} cleared all caches except book`, {
     keepSourcePath: sourcePath,
     clearedChapters,
     clearedAudioTracks: audioKeysToDelete.length,
-    clearedBooks,
   });
 }
 
-/**
- * Get or parse EPUB metadata (without loading chapter content)
- */
-async function getEpubBookMetadata(sourcePath: string): Promise<EpubBook | null> {
-  // Check cache first
-  if (epubBookCache.has(sourcePath)) {
-    return epubBookCache.get(sourcePath)!;
-  }
-
-  try {
-    // Get EPUB buffer from Rust backend
-    const buffer = await getEpubBuffer(sourcePath);
-    if (!buffer) {
-      console.warn(`${LOADER_LOG_PREFIX} EPUB not found in store`, { sourcePath });
-      return null;
-    }
-
-    // Parse EPUB (this loads JSZip but we'll clear it after extracting metadata)
-    const epubBook = await parseEpub(buffer);
-    
-    // Cache the book object (it has zip but we'll use it lazily)
-    epubBookCache.set(sourcePath, epubBook);
-    
-    return epubBook;
-  } catch (error) {
-    console.error(`${LOADER_LOG_PREFIX} failed to load EPUB metadata`, { sourcePath, error });
-    return null;
-  }
-}
 
 /**
- * Load a single chapter's content from EPUB
+ * Load a single chapter's content from Rust backend
  */
 export async function loadChapterContent(
-  sourcePath: string,
+  bookId: string,
   chapter: Chapter,
 ): Promise<{ contentHtml: string; plainText: string; wordCount: number }> {
-  const cacheKey = `${sourcePath}:${chapter.href}`;
+  const cacheKey = `${bookId}:${chapter.href}`;
   
   // Check cache first
   if (chapterCache.has(cacheKey)) {
     const cached = chapterCache.get(cacheKey)!;
-    console.debug(`${LOADER_LOG_PREFIX} using cached chapter`, { sourcePath, href: chapter.href });
+    console.debug(`${LOADER_LOG_PREFIX} using cached chapter`, { bookId, href: chapter.href });
     return cached;
   }
 
   try {
-    // Get EPUB book metadata
-    const epubBook = await getEpubBookMetadata(sourcePath);
-    if (!epubBook) {
-      throw new Error(`EPUB not found: ${sourcePath}`);
+    // Load chapter content from Rust backend
+    // Try alternative href formats if primary load fails
+    const alternatives = [
+      chapter.href,
+      chapter.href.replace(/^\/+/, ""),
+      chapter.href.replace(/^OEBPS\//, ""),
+      `OEBPS/${chapter.href.replace(/^\/+/, "").replace(/^OEBPS\//, "")}`,
+    ];
+    
+    let loadedChapter: Chapter | null = null;
+    for (const altHref of alternatives) {
+      try {
+        loadedChapter = await loadChapterContentFromBackend(bookId, altHref);
+        if (loadedChapter && loadedChapter.contentHtml) {
+          if (altHref !== chapter.href) {
+            console.debug(`${LOADER_LOG_PREFIX} loaded chapter using alternative href: ${altHref} (original: ${chapter.href})`);
+          }
+          break;
+        }
+      } catch (error) {
+        // Continue to next alternative
+        console.debug(`${LOADER_LOG_PREFIX} failed to load with href ${altHref}, trying next`, { error });
+      }
     }
-
-    // Load chapter HTML
-    const rawHtml = await epubBook.load(chapter.href);
+    
+    if (!loadedChapter || !loadedChapter.contentHtml) {
+      throw new Error(`Failed to load chapter content: ${chapter.href}`);
+    }
+    
+    const rawHtml = loadedChapter.contentHtml;
     const normalizedHtml = await normalizeChapterContent(rawHtml);
     if (!normalizedHtml) {
       throw new Error(`Failed to normalize chapter: ${chapter.href}`);
     }
 
-    // Get manifest item for image resolution
-    const manifestItem = Object.values(epubBook.manifest).find(
-      (entry) => entry.href === chapter.href || entry.id === chapter.id.split("-").pop(),
-    );
-    const chapterHref = manifestItem?.href ?? chapter.href;
-
-    // Resolve images
+    // Note: Image and CSS resolution will be handled separately
+    // For now, we just sanitize the HTML
     const parser = new DOMParser();
     const doc = parser.parseFromString(normalizedHtml, "text/html");
-    
-    // Resolve image URLs
-    const images = doc.querySelectorAll("img[src]");
-    await Promise.all(
-      Array.from(images).map(async (img) => {
-        const src = img.getAttribute("src");
-        if (!src) return;
-        
-        if (src.startsWith("data:") || src.startsWith("http://") || src.startsWith("https://")) {
-          return;
-        }
-        
-        try {
-          let normalizedChapterHref = chapterHref;
-          if (normalizedChapterHref.startsWith("OEBPS/")) {
-            normalizedChapterHref = normalizedChapterHref.substring(6);
-          }
-          
-          let resolvedPath: string;
-          if (!src.startsWith("/") && !src.startsWith("OEBPS/") && !src.startsWith("http://") && !src.startsWith("https://")) {
-            const chapterParts = normalizedChapterHref.split("/");
-            const imageParts = src.split("/");
-            const chapterDirParts = chapterParts.slice(0, -1);
-            
-            const resolvedParts = [...chapterDirParts];
-            for (const part of imageParts) {
-              if (part === "..") {
-                if (resolvedParts.length > 0) {
-                  resolvedParts.pop();
-                }
-              } else if (part !== "." && part !== "") {
-                resolvedParts.push(part);
-              }
-            }
-            
-            resolvedPath = resolvedParts.join("/");
-          } else {
-            resolvedPath = src;
-          }
-          
-          resolvedPath = epubBook.resolve(resolvedPath);
-          const imageUrl = await epubBook.createUrl(resolvedPath);
-          img.setAttribute("src", imageUrl);
-        } catch (error) {
-          console.error(`Could not resolve image ${src} in chapter ${chapterHref}:`, error);
-          img.setAttribute("data-image-error", "true");
-        }
-      }),
-    );
-
-    // Handle CSS background images
-    const elementsWithBackground = doc.querySelectorAll("[style*='background']");
-    await Promise.all(
-      Array.from(elementsWithBackground).map(async (el) => {
-        const style = el.getAttribute("style");
-        if (!style) return;
-        
-        const urlMatches = style.match(/url\(['"]?([^'")]+)['"]?\)/gi);
-        if (!urlMatches) return;
-        
-        let updatedStyle = style;
-        for (const urlMatch of urlMatches) {
-          const urlMatchContent = urlMatch.match(/url\(['"]?([^'")]+)['"]?\)/i);
-          if (!urlMatchContent || !urlMatchContent[1]) continue;
-          
-          const imageSrc = urlMatchContent[1];
-          if (imageSrc.startsWith("data:") || imageSrc.startsWith("http://") || imageSrc.startsWith("https://")) {
-            continue;
-          }
-          
-          try {
-            let imagePath = imageSrc;
-            let normalizedChapterHref = chapterHref;
-            if (normalizedChapterHref.startsWith("OEBPS/")) {
-              normalizedChapterHref = normalizedChapterHref.substring(6);
-            }
-            
-            if (!imagePath.startsWith("/") && !imagePath.startsWith("OEBPS/") && !imagePath.startsWith("http://") && !imagePath.startsWith("https://")) {
-              const chapterParts = normalizedChapterHref.split("/");
-              const imageParts = imagePath.split("/");
-              const chapterDirParts = chapterParts.slice(0, -1);
-              
-              const resolvedParts = [...chapterDirParts];
-              for (const part of imageParts) {
-                if (part === "..") {
-                  resolvedParts.pop();
-                } else if (part !== "." && part !== "") {
-                  resolvedParts.push(part);
-                }
-              }
-              
-              imagePath = resolvedParts.join("/");
-            }
-            
-            const imageUrl = await epubBook.createUrl(imagePath);
-            updatedStyle = updatedStyle.replace(urlMatch, `url('${imageUrl}')`);
-          } catch (error) {
-            console.warn(`Could not resolve background image ${imageSrc} in chapter ${chapterHref}:`, error);
-          }
-        }
-        
-        if (updatedStyle !== style) {
-          el.setAttribute("style", updatedStyle);
-        }
-      }),
-    );
 
     const substitutedHtml = new XMLSerializer().serializeToString(doc);
     const sanitized = sanitizeChapterHtml(substitutedHtml);
@@ -290,7 +157,7 @@ export async function loadChapterContent(
     chapterCache.set(cacheKey, result);
     
     console.debug(`${LOADER_LOG_PREFIX} loaded chapter`, {
-      sourcePath,
+      bookId,
       href: chapter.href,
       wordCount,
     });
@@ -298,7 +165,7 @@ export async function loadChapterContent(
     return result;
   } catch (error) {
     console.error(`${LOADER_LOG_PREFIX} failed to load chapter`, {
-      sourcePath,
+      bookId,
       href: chapter.href,
       error,
     });
@@ -310,7 +177,7 @@ export async function loadChapterContent(
  * Ensure a chapter is loaded, loading it if necessary
  */
 export async function ensureChapterLoaded(
-  sourcePath: string,
+  bookId: string,
   chapter: Chapter,
 ): Promise<Chapter> {
   // If already loaded, return as-is
@@ -319,7 +186,7 @@ export async function ensureChapterLoaded(
   }
 
   try {
-    const { contentHtml, plainText, wordCount } = await loadChapterContent(sourcePath, chapter);
+    const { contentHtml, plainText, wordCount } = await loadChapterContent(bookId, chapter);
     
     return {
       ...chapter,
@@ -331,7 +198,7 @@ export async function ensureChapterLoaded(
     };
   } catch (error) {
     console.error(`${LOADER_LOG_PREFIX} failed to ensure chapter loaded`, {
-      sourcePath,
+      bookId,
       href: chapter.href,
       error,
     });
@@ -344,58 +211,31 @@ export async function ensureChapterLoaded(
  * Load an audio track URL from EPUB
  */
 export async function loadAudioTrackUrl(
-  sourcePath: string,
+  bookId: string,
   track: AudioTrack,
 ): Promise<string> {
-  const cacheKey = `${sourcePath}:${track.href}`;
+  const cacheKey = `${bookId}:${track.href}`;
   
   // Check cache first
   if (audioTrackCache.has(cacheKey)) {
     const cachedUrl = audioTrackCache.get(cacheKey)!;
     console.debug(`${LOADER_LOG_PREFIX} using cached audio track URL`, {
-      sourcePath,
+      bookId,
       href: track.href,
     });
     return cachedUrl;
   }
 
-  try {
-    // Get EPUB book metadata
-    const epubBook = await getEpubBookMetadata(sourcePath);
-    if (!epubBook) {
-      throw new Error(`EPUB not found: ${sourcePath}`);
-    }
-
-    // Load audio file and create blob URL
-    const url = await epubBook.createUrl(track.href);
-    if (typeof url !== "string") {
-      throw new Error(`Failed to create URL for audio track: ${track.href}`);
-    }
-
-    // Cache the URL
-    audioTrackCache.set(cacheKey, url);
-    
-    console.debug(`${LOADER_LOG_PREFIX} loaded audio track URL`, {
-      sourcePath,
-      href: track.href,
-    });
-
-    return url;
-  } catch (error) {
-    console.error(`${LOADER_LOG_PREFIX} failed to load audio track URL`, {
-      sourcePath,
-      href: track.href,
-      error,
-    });
-    throw error;
-  }
+  // TODO: Implement audio track loading from Rust backend
+  // For now, throw an error indicating this needs to be implemented
+  throw new Error("Audio track loading from Rust backend not yet implemented");
 }
 
 /**
  * Ensure an audio track URL is loaded, loading it if necessary
  */
 export async function ensureAudioTrackLoaded(
-  sourcePath: string,
+  bookId: string,
   track: AudioTrack,
 ): Promise<AudioTrack> {
   // If already loaded, return as-is
@@ -404,7 +244,7 @@ export async function ensureAudioTrackLoaded(
   }
 
   try {
-    const url = await loadAudioTrackUrl(sourcePath, track);
+    const url = await loadAudioTrackUrl(bookId, track);
     
     return {
       ...track,
@@ -413,7 +253,7 @@ export async function ensureAudioTrackLoaded(
     };
   } catch (error) {
     console.error(`${LOADER_LOG_PREFIX} failed to ensure audio track loaded`, {
-      sourcePath,
+      bookId,
       href: track.href,
       error,
     });
@@ -427,12 +267,12 @@ export async function ensureAudioTrackLoaded(
  * This replaces lazy loading by loading everything upfront
  */
 export async function preloadBookContent(
-  sourcePath: string,
+  bookId: string,
   chapters: Chapter[],
   audioTracks: AudioTrack[],
 ): Promise<{ chapters: Chapter[]; audioTracks: AudioTrack[] }> {
   console.debug(`${LOADER_LOG_PREFIX} preloading all content for book`, {
-    sourcePath,
+    bookId,
     chapterCount: chapters.length,
     audioTrackCount: audioTracks.length,
   });
@@ -445,10 +285,10 @@ export async function preloadBookContent(
         return chapter;
       }
       try {
-        return await ensureChapterLoaded(sourcePath, chapter);
+        return await ensureChapterLoaded(bookId, chapter);
       } catch (error) {
         console.error(`${LOADER_LOG_PREFIX} failed to preload chapter`, {
-          sourcePath,
+          bookId,
           href: chapter.href,
           error,
         });
@@ -465,10 +305,10 @@ export async function preloadBookContent(
         return track;
       }
       try {
-        return await ensureAudioTrackLoaded(sourcePath, track);
+        return await ensureAudioTrackLoaded(bookId, track);
       } catch (error) {
         console.error(`${LOADER_LOG_PREFIX} failed to preload audio track`, {
-          sourcePath,
+          bookId,
           href: track.href,
           error,
         });
@@ -478,7 +318,7 @@ export async function preloadBookContent(
   );
 
   console.debug(`${LOADER_LOG_PREFIX} finished preloading book content`, {
-    sourcePath,
+    bookId,
     loadedChapters: loadedChapters.filter(c => c.contentHtml && c.plainText).length,
     loadedAudioTracks: loadedAudioTracks.filter(t => t.url).length,
   });

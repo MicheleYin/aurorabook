@@ -18,6 +18,7 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "../ui/drawer";
+import React from "react";
 import { cn, formatDurationShort, getBookProgressSummary } from "../../lib/utils";
 import { dialogSectionStagger } from "../../lib/animations";
 import { useAnimatedNumber } from "../../hooks/use-animated-number";
@@ -63,11 +64,13 @@ export function BookDetailDialog({
 }: BookDetailDialogProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [showConvertDialog, setShowConvertDialog] = useState(false);
+  const [isConvertingLocally, setIsConvertingLocally] = useState(false);
   const [durationMap, setDurationMap] = useState<Record<string, number>>({});
   const durationMapRef = useRef<Record<string, number>>({});
+  const hadProgressRef = useRef(false);
   const genres = (book.subjects ?? []).filter(Boolean);
   const hasAudio = book.audioTracks.length > 0;
-  const isConverting = Boolean(conversionProgress);
+  const isConverting = Boolean(conversionProgress) || isConvertingLocally;
   const isDesktop = useMediaQuery("(min-width: 640px)");
   
   const handleConvertClick = useCallback(() => {
@@ -76,10 +79,31 @@ export function BookDetailDialog({
   
   const handleConvertConfirm = useCallback(async (voiceId: VoiceId) => {
     setShowConvertDialog(false);
+    setIsConvertingLocally(true); // Set loading state immediately
+    hadProgressRef.current = false;
     if (onConvertToAudiobook) {
-      await onConvertToAudiobook(book, voiceId);
+      try {
+        await onConvertToAudiobook(book, voiceId);
+      } finally {
+        // Clear local state once conversion completes
+        setIsConvertingLocally(false);
+        hadProgressRef.current = false;
+      }
     }
   }, [book, onConvertToAudiobook]);
+  
+  // Clear local converting state when conversionProgress becomes available from backend
+  // or when conversion completes (progress becomes null after having progress)
+  useEffect(() => {
+    if (conversionProgress) {
+      hadProgressRef.current = true;
+      setIsConvertingLocally(false);
+    } else if (hadProgressRef.current && !conversionProgress) {
+      // Conversion completed (had progress, now it's null)
+      hadProgressRef.current = false;
+      setIsConvertingLocally(false);
+    }
+  }, [conversionProgress]);
 
   const handleExportEpub = useCallback(async () => {
     if (isConverting) return;
@@ -417,14 +441,24 @@ export function BookDetailDialog({
 
   const Actions = ({ layout }: { layout: "dialog" | "drawer" }) => (
     <div className={cn("flex gap-2 pt-4", layout === "dialog" ? "justify-end" : "flex-col")}>
-      {!hasAudio && onConvertToAudiobook && !isConverting && (
+      {!hasAudio && onConvertToAudiobook && (
         <Button
           variant="outline"
           onClick={handleConvertClick}
+          disabled={isConverting}
           className="gap-2"
         >
-          <Headphones className="h-4 w-4" />
-          Convert to Audiobook
+          {isConverting ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Converting…
+            </>
+          ) : (
+            <>
+              <Headphones className="h-4 w-4" />
+              Convert to Audiobook
+            </>
+          )}
         </Button>
       )}
       <Button

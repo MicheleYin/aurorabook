@@ -73,6 +73,7 @@ pub fn run() {
             book_service::read_all_books,
             book_service::read_one_book,
             book_service::read_single_chapter,
+            book_service::load_chapter_content,
             book_service::read_single_audio_track,
             book_service::delete_book,
             book_service::add_book,

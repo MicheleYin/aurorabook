@@ -33,6 +33,7 @@ pub async fn read_one_book(
 }
 
 /// Read a single chapter by book ID and chapter ID
+/// This returns the chapter metadata only (no content)
 #[tauri::command]
 pub async fn read_single_chapter(
     book_id: String,
@@ -46,6 +47,88 @@ pub async fn read_single_chapter(
     } else {
         Ok(None)
     }
+}
+
+/// Load chapter content from EPUB file
+/// This function reads the EPUB from storage and extracts the chapter content
+#[tauri::command]
+pub async fn load_chapter_content(
+    book_id: String,
+    chapter_href: String,
+    app: tauri::AppHandle,
+) -> AppResult<Option<Chapter>> {
+    use crate::epub::parser::find_opf_path;
+    use crate::utils::path_validation::validate_epub_path;
+    use std::io::{Cursor, Read};
+    use zip::ZipArchive;
+    
+    // Find the book to get source_path
+    let books = load_all_books(&app)
+        .map_err(|e| AppError::Store(e))?;
+    let book = books.into_iter()
+        .find(|b| b.id == book_id)
+        .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
+    
+    // Get EPUB buffer from store
+    let epub_data = get_epub_buffer_from_store(&app, &book.source_path)
+        .map_err(|e| AppError::Store(e))?
+        .ok_or_else(|| AppError::Store("EPUB not found in store".to_string()))?;
+    
+    // Load chapter content in a blocking task with timeout
+    let epub_data_clone = epub_data.clone();
+    let chapter_href_clone = chapter_href.clone();
+    let chapter_content = tokio::time::timeout(
+        std::time::Duration::from_secs(30), // 30 second timeout
+        tokio::task::spawn_blocking(move || {
+            let mut archive = ZipArchive::new(Cursor::new(epub_data_clone.as_slice()))
+                .map_err(|e| format!("Failed to open EPUB: {}", e))?;
+            
+            // Find OPF path to determine OEBPS base
+            let opf_path = find_opf_path(&mut archive)?;
+            let oebps_base = if opf_path.contains("/") {
+                opf_path.rfind("/")
+                    .map(|pos| opf_path[..pos + 1].to_string())
+                    .unwrap_or_else(|| "OEBPS/".to_string())
+            } else {
+                "OEBPS/".to_string()
+            };
+            
+            // Resolve chapter path
+            let validated_href = validate_epub_path(&chapter_href_clone)
+                .map_err(|e| format!("Invalid chapter path: {}", e))?;
+            
+            let chapter_path = if validated_href.starts_with("/") {
+                validated_href[1..].to_string()
+            } else if validated_href.starts_with("OEBPS/") {
+                validated_href.clone()
+            } else {
+                format!("{}{}", oebps_base, validated_href)
+            };
+            
+            // Try to read the chapter file
+            let mut content = String::new();
+            let mut file = archive.by_name(&chapter_path)
+                .map_err(|e| format!("Failed to find chapter at path '{}': {}", chapter_path, e))?;
+            file.read_to_string(&mut content)
+                .map_err(|e| format!("Failed to read chapter content: {}", e))?;
+            
+            Ok::<String, String>(content)
+        })
+    )
+    .await
+    .map_err(|_| AppError::EpubParse("Chapter loading timed out after 30 seconds".to_string()))?
+    .map_err(|e| AppError::EpubParse(format!("Failed to load chapter: {}", e)))?
+    .map_err(|e| AppError::EpubParse(e))?;
+    
+    // Find the chapter in the book to get metadata
+    let mut chapter = book.chapters.into_iter()
+        .find(|c| c.href == chapter_href || c.href == chapter_href.replace("OEBPS/", ""))
+        .ok_or_else(|| AppError::Store("Chapter not found in book".to_string()))?;
+    
+    // Set the content
+    chapter.content_html = Some(chapter_content);
+    
+    Ok(Some(chapter))
 }
 
 /// Read a single audio track by book ID and track ID

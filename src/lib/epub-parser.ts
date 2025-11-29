@@ -468,9 +468,36 @@ export async function parseEpub(buffer: ArrayBuffer): Promise<EpubBook> {
         ? normalizedHref 
         : `${oebpsBase}${normalizedHref}`;
       
-      const file = zip.file(fullPath);
+      let file = zip.file(fullPath);
+      
+      // Try alternative paths if primary path fails
       if (!file) {
-        throw new Error(`File not found in EPUB: ${fullPath} (resolved from ${href})`);
+        const alternatives = [
+          `OEBPS/${normalizedHref}`,
+          normalizedHref,
+          href,
+          href.replace(/^\/+/, ""),
+        ];
+        
+        for (const alt of alternatives) {
+          file = zip.file(alt);
+          if (file) {
+            console.debug(`[EPUB Parser] File found at alternative path: ${alt} (requested: ${href}, primary: ${fullPath})`);
+            break;
+          }
+        }
+      }
+      
+      if (!file) {
+        // Log available files for debugging (first 20 files that contain the href)
+        const availableFiles = Object.keys(zip.files)
+          .filter(name => name.toLowerCase().includes(normalizedHref.toLowerCase()))
+          .slice(0, 20);
+        
+        throw new Error(
+          `File not found in EPUB: ${fullPath} (resolved from ${href}). ` +
+          `Available similar files: ${availableFiles.join(", ")}`
+        );
       }
       
       return await file.async("string");

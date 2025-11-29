@@ -607,6 +607,14 @@ pub async fn convert_epub_to_audiobook(
         emit_progress(&app_progress, progress);
     });
     
+    // Emit initial progress event when conversion starts
+    progress_callback(ConversionProgress {
+        current_chapter: 0,
+        total_chapters: options.chapters.len(),
+        current_step: "initializing".to_string(),
+        message: format!("Starting conversion of {} chapters...", options.chapters.len()),
+    });
+    
     // Find model files
     let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(Some(&app))?;
     
@@ -628,6 +636,14 @@ pub async fn convert_epub_to_audiobook(
     .map_err(|e| AppError::TtsGeneration(format!("Failed to create TTS engine pool: {}", e)))?;
     
     log::info!("Created TTS engine pool with {} instances for parallel processing", parallelism);
+    
+    // Emit progress event for engine pool creation
+    progress_callback(ConversionProgress {
+        current_chapter: 0,
+        total_chapters: options.chapters.len(),
+        current_step: "initializing".to_string(),
+        message: format!("TTS engine pool created with {} instances", parallelism),
+    });
     
     // Create TTS generator that uses the shared engine pool
     let engine_pool_arc = std::sync::Arc::new(engine_pool);
