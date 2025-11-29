@@ -31,6 +31,14 @@ export async function convertEpubToAudiobook(
     throw new Error("Conversion cancelled");
   }
   
+  // Emit immediate progress update for responsive UI
+  onProgress?.({
+    currentChapter: 0,
+    totalChapters: 0,
+    currentStep: "initializing",
+    message: "Starting conversion...",
+  });
+  
   // Set up event listener for progress updates
   const unlisten = await listen<any>("conversion-progress", (event) => {
     // Convert snake_case to camelCase if needed (Tauri should handle this, but just in case)

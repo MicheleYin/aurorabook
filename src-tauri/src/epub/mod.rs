@@ -5,7 +5,6 @@ pub use parser::*;
 pub use converter::*;
 
 use tauri::AppHandle;
-use crate::epub::converter::{extract_chapters, convert_epub_to_audiobook, ConversionOptions, ConversionChapter};
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::path_validation::validate_file_size;
@@ -56,6 +55,15 @@ pub async fn convert_epub_to_audiobook_command(
     app: AppHandle,
 ) -> AppResult<()> {
     use base64::{engine::general_purpose, Engine as _};
+    use crate::epub::converter::{ConversionProgress, emit_progress};
+    
+    // Emit immediate progress update for responsive UI
+    emit_progress(&app, ConversionProgress {
+        current_chapter: 0,
+        total_chapters: 0,
+        current_step: "initializing".to_string(),
+        message: "Starting conversion...".to_string(),
+    });
     
     // Validate EPUB file size before processing
     validate_file_size(epub_data.len(), MAX_EPUB_SIZE, "EPUB")?;
@@ -70,6 +78,14 @@ pub async fn convert_epub_to_audiobook_command(
     epub_store.set(&key, serde_json::Value::String(base64_data));
     epub_store.save()
         .map_err(|e| AppError::Store(format!("Failed to save EPUB store: {}", e)))?;
+    
+    // Emit progress for chapter extraction
+    emit_progress(&app, ConversionProgress {
+        current_chapter: 0,
+        total_chapters: 0,
+        current_step: "initializing".to_string(),
+        message: "Extracting chapters from EPUB...".to_string(),
+    });
     
     // Extract chapters
     let (chapters, stats) = extract_chapters(epub_data.clone())
@@ -94,8 +110,16 @@ pub async fn convert_epub_to_audiobook_command(
     
     let options = ConversionOptions {
         voice_id,
-        chapters: conversion_chapters,
+        chapters: conversion_chapters.clone(),
     };
+    
+    // Emit progress with chapter count before starting conversion
+    emit_progress(&app, ConversionProgress {
+        current_chapter: 0,
+        total_chapters: conversion_chapters.len(),
+        current_step: "initializing".to_string(),
+        message: format!("Found {} chapters. Preparing conversion...", conversion_chapters.len()),
+    });
     
     // Perform conversion
     let converted_epub = convert_epub_to_audiobook(epub_data, options, app.clone())

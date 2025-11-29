@@ -65,7 +65,7 @@ pub struct ConversionOptions {
 }
 
 /// Emit progress update to frontend
-fn emit_progress(app: &AppHandle, progress: ConversionProgress) {
+pub fn emit_progress(app: &AppHandle, progress: ConversionProgress) {
     let _ = app.emit("conversion-progress", progress);
 }
 

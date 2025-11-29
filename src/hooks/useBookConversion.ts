@@ -47,17 +47,17 @@ export function useBookConversion(
     try {
       const { book } = pendingBookForConversion;
       
-      // Load EPUB buffer before conversion
-      const epubBuffer = await getEpubBuffer(book.sourcePath);
-      if (!epubBuffer) {
-        throw new Error("Failed to load EPUB file for conversion");
-      }
       setConversionProgress({
         currentChapter: 0,
         totalChapters: 1,
         currentStep: "initializing",
         message: "Starting conversion...",
       });
+      // Load EPUB buffer before conversion
+      const epubBuffer = await getEpubBuffer(book.sourcePath);
+      if (!epubBuffer) {
+        throw new Error("Failed to load EPUB file for conversion");
+      }
       
       // Convert EPUB to audiobook - backend handles everything
       await convertEpubToAudiobook({
