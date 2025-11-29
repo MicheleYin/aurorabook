@@ -386,36 +386,48 @@ export function useLibrary(): UseLibraryReturn {
     async (filter?: LibraryFilter) => {
       try {
         const books = await readAllBooks(filter);
-        setLibrary((prevLibrary) => {
-          const backendBooksMap = new Map<string, Book>();
-          books.forEach((book) => {
-            backendBooksMap.set(book.id, book);
-            backendBooksMap.set(book.sourcePath, book);
-          });
+        
+        // If a filter is applied, replace the library entirely with filtered results
+        // Otherwise, merge with existing library to preserve any in-memory updates
+        if (filter?.filter || filter?.search) {
+          // Filter is active - replace library with filtered results
+          setLibrary(books);
+        } else {
+          // No filter - merge to preserve any in-memory updates (like loaded chapter content)
+          setLibrary((prevLibrary) => {
+            const backendBooksMap = new Map<string, Book>();
+            books.forEach((book) => {
+              backendBooksMap.set(book.id, book);
+              backendBooksMap.set(book.sourcePath, book);
+            });
 
-          const mergedBooks: Book[] = [];
-          const processedIds = new Set<string>();
-          const processedPaths = new Set<string>();
+            const mergedBooks: Book[] = [];
+            const processedIds = new Set<string>();
+            const processedPaths = new Set<string>();
 
-          books.forEach((book) => {
-            mergedBooks.push(book);
-            processedIds.add(book.id);
-            processedPaths.add(book.sourcePath);
-          });
-
-          prevLibrary.forEach((book) => {
-            if (
-              !processedIds.has(book.id) &&
-              !processedPaths.has(book.sourcePath)
-            ) {
+            // Start with backend books (source of truth)
+            books.forEach((book) => {
               mergedBooks.push(book);
               processedIds.add(book.id);
               processedPaths.add(book.sourcePath);
-            }
-          });
+            });
 
-          return mergedBooks;
-        });
+            // Add any books from prevLibrary that have in-memory updates (like loaded chapters)
+            // but aren't in the backend results (shouldn't happen, but safe to check)
+            prevLibrary.forEach((book) => {
+              if (
+                !processedIds.has(book.id) &&
+                !processedPaths.has(book.sourcePath)
+              ) {
+                mergedBooks.push(book);
+                processedIds.add(book.id);
+                processedPaths.add(book.sourcePath);
+              }
+            });
+
+            return mergedBooks;
+          });
+        }
       } catch (error) {
         console.warn("Failed to load books from Rust backend.", error);
       }
