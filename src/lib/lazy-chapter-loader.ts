@@ -3,7 +3,7 @@
  * This prevents keeping all chapter content in memory at once
  */
 
-import { loadChapterContent as loadChapterContentFromBackend, loadEpubImage } from "./book-service";
+import { loadChapterContent as loadChapterContentFromBackend, loadEpubImage, loadEpubAudio } from "./book-service";
 import type { Chapter, AudioTrack } from "../types/reader";
 import {
   normalizeChapterContent,
@@ -11,11 +11,15 @@ import {
   extractPlainText,
 } from "./epub";
 import { countWords, estimatePagesFromWords } from "./utils";
+import { LRUCache } from "lru-cache";
 
 const LOADER_LOG_PREFIX = "[LazyChapterLoader]";
 
 // Cache for loaded chapters to avoid reloading
-const chapterCache = new Map<string, { contentHtml: string; plainText: string; wordCount: number }>();
+const chapterCache = new LRUCache<string, { contentHtml: string; plainText: string; wordCount: number }>({
+  max: 50, // Keep max 50 chapters in memory
+  ttl: 1000 * 60 * 30, // 30 minutes TTL
+});
 
 // Cache for loaded audio track URLs
 const audioTrackCache = new Map<string, string>();
@@ -272,9 +276,53 @@ export async function loadAudioTrackUrl(
     return cachedUrl;
   }
 
-  // TODO: Implement audio track loading from Rust backend
-  // For now, throw an error indicating this needs to be implemented
-  throw new Error("Audio track loading from Rust backend not yet implemented");
+  try {
+    // Load audio track from Rust backend
+    // Try alternative href formats if primary load fails
+    const alternatives = [
+      track.href,
+      track.href.replace(/^\/+/, ""),
+      track.href.replace(/^OEBPS\//, ""),
+      `OEBPS/${track.href.replace(/^\/+/, "").replace(/^OEBPS\//, "")}`,
+    ];
+    
+    let dataUrl: string | null = null;
+    for (const altHref of alternatives) {
+      try {
+        dataUrl = await loadEpubAudio(bookId, altHref);
+        if (dataUrl) {
+          if (altHref !== track.href) {
+            console.debug(`${LOADER_LOG_PREFIX} loaded audio track using alternative href: ${altHref} (original: ${track.href})`);
+          }
+          break;
+        }
+      } catch (error) {
+        // Continue to next alternative
+        console.debug(`${LOADER_LOG_PREFIX} failed to load with href ${altHref}, trying next`, { error });
+      }
+    }
+    
+    if (!dataUrl) {
+      throw new Error(`Failed to load audio track: ${track.href}`);
+    }
+    
+    // Cache the result
+    audioTrackCache.set(cacheKey, dataUrl);
+    
+    console.debug(`${LOADER_LOG_PREFIX} loaded audio track URL`, {
+      bookId,
+      href: track.href,
+    });
+    
+    return dataUrl;
+  } catch (error) {
+    console.error(`${LOADER_LOG_PREFIX} failed to load audio track URL`, {
+      bookId,
+      href: track.href,
+      error,
+    });
+    throw error;
+  }
 }
 
 /**

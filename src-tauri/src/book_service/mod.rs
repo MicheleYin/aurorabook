@@ -328,6 +328,146 @@ pub async fn load_epub_image(
     Ok(image_data_url)
 }
 
+/// Load an audio track from EPUB file and return as base64 data URL
+/// This resolves relative audio paths relative to the OPF location
+#[tauri::command]
+pub async fn load_epub_audio(
+    book_id: String,
+    audio_href: String,
+    app: tauri::AppHandle,
+) -> AppResult<Option<String>> {
+    use crate::epub::parser::find_opf_path;
+    use std::io::{Cursor, Read};
+    use zip::ZipArchive;
+    use base64::{Engine as _, engine::general_purpose};
+    use log::{debug, warn};
+    
+    // Find the book to get source_path
+    let books = load_all_books(&app)
+        .map_err(|e| AppError::Store(e))?;
+    let book = books.into_iter()
+        .find(|b| b.id == book_id)
+        .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
+    
+    // Get EPUB buffer from store
+    let epub_data = get_epub_buffer_from_store(&app, &book.source_path)
+        .map_err(|e| AppError::Store(e))?
+        .ok_or_else(|| AppError::Store("EPUB not found in store".to_string()))?;
+    
+    // Load audio in a blocking task
+    let epub_data_clone = epub_data.clone();
+    let audio_href_clone = audio_href.clone();
+    let audio_data_url = tokio::time::timeout(
+        std::time::Duration::from_secs(30), // 30 second timeout for audio files
+        tokio::task::spawn_blocking(move || {
+            let mut archive = ZipArchive::new(Cursor::new(epub_data_clone.as_slice()))
+                .map_err(|e| format!("Failed to open EPUB: {}", e))?;
+            
+            // Find OPF path to determine OEBPS base
+            let opf_path = find_opf_path(&mut archive)?;
+            let oebps_base = if opf_path.contains("/") {
+                opf_path.rfind("/")
+                    .map(|pos| opf_path[..pos + 1].to_string())
+                    .unwrap_or_else(|| "OEBPS/".to_string())
+            } else {
+                "OEBPS/".to_string()
+            };
+            
+            // Resolve audio path relative to OPF location
+            let audio_path = if audio_href_clone.starts_with("/") {
+                // Absolute path from EPUB root
+                audio_href_clone[1..].to_string()
+            } else {
+                // Resolve relative to OPF location
+                let mut resolved_parts: Vec<&str> = oebps_base.split("/").filter(|s| !s.is_empty()).collect();
+                let audio_parts: Vec<&str> = audio_href_clone.split("/").collect();
+                
+                for part in audio_parts {
+                    if part == ".." {
+                        resolved_parts.pop();
+                    } else if part != "." && !part.is_empty() {
+                        resolved_parts.push(part);
+                    }
+                }
+                
+                resolved_parts.join("/")
+            };
+            
+            debug!("Attempting to load audio from path: '{}' (resolved from '{}')", audio_path, audio_href_clone);
+            
+            // Try to read the audio from the archive
+            let mut audio_bytes = Vec::new();
+            let mut found_audio = false;
+            
+            // Try primary path first
+            if let Ok(mut file) = archive.by_name(&audio_path) {
+                if file.read_to_end(&mut audio_bytes).is_ok() && !audio_bytes.is_empty() {
+                    found_audio = true;
+                    debug!("Found audio at primary path: '{}'", audio_path);
+                }
+            }
+            
+            // Try alternative paths if primary didn't work
+            if !found_audio {
+                let alt_paths = [
+                    format!("OEBPS/{}", audio_path),
+                    format!("OPS/{}", audio_path),
+                    audio_href_clone.clone(),
+                    format!("OEBPS/{}", audio_href_clone),
+                    format!("OPS/{}", audio_href_clone),
+                ];
+                
+                for alt_path in &alt_paths {
+                    if let Ok(mut file) = archive.by_name(alt_path) {
+                        audio_bytes.clear();
+                        if file.read_to_end(&mut audio_bytes).is_ok() && !audio_bytes.is_empty() {
+                            debug!("Found audio at alternative path: '{}'", alt_path);
+                            found_audio = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if !found_audio || audio_bytes.is_empty() {
+                warn!("Audio not found at path '{}' or alternatives", audio_path);
+                return Ok::<Option<String>, String>(None);
+            }
+            
+            // Determine MIME type from file extension
+            let mime_type = if audio_path.ends_with(".mp3") || audio_href_clone.ends_with(".mp3") {
+                "audio/mpeg"
+            } else if audio_path.ends_with(".wav") || audio_href_clone.ends_with(".wav") {
+                "audio/wav"
+            } else if audio_path.ends_with(".m4a") || audio_href_clone.ends_with(".m4a") {
+                "audio/mp4"
+            } else if audio_path.ends_with(".ogg") || audio_href_clone.ends_with(".ogg") {
+                "audio/ogg"
+            } else if audio_path.ends_with(".opus") || audio_href_clone.ends_with(".opus") {
+                "audio/opus"
+            } else {
+                "audio/mpeg" // Default fallback
+            };
+            
+            // Encode to base64
+            let base64_data = general_purpose::STANDARD.encode(&audio_bytes);
+            
+            // Create data URL
+            let data_url = format!("data:{};base64,{}", mime_type, base64_data);
+            
+            debug!("Successfully loaded audio ({} bytes, type: {})", audio_bytes.len(), mime_type);
+            
+            Ok(Some(data_url))
+        })
+    )
+    .await
+    .map_err(|_| AppError::EpubParse("Audio loading timed out after 30 seconds".to_string()))?
+    .map_err(|e| AppError::EpubParse(format!("Failed to load audio: {}", e)))?
+    .map_err(|e| AppError::EpubParse(e))?;
+    
+    Ok(audio_data_url)
+}
+
 /// Read a single audio track by book ID and track ID
 #[tauri::command]
 pub async fn read_single_audio_track(

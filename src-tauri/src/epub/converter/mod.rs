@@ -84,8 +84,18 @@ fn emit_progress(app: &AppHandle, progress: ConversionProgress) {
 /// ```
 pub fn get_parallelism() -> usize {
     use num_cpus;
-    let cores = num_cpus::get();
-    cores.max(1)
+    let logical = num_cpus::get();
+
+    // Reserve at least one core for the OS / UI thread / real-time tasks.
+    let mut workers = logical.saturating_sub(1);
+
+    // If the machine has many cores, avoid taking *all* of them.
+    // Example: 32-core machines → use 24 cores.
+    if logical >= 8 {
+        workers = workers.min((logical as f64 * 0.75).round() as usize);
+    }
+
+    workers.max(1)
 }
 
 /// Extract chapters from EPUB data for conversion.

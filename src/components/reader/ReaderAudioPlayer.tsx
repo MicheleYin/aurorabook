@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MoveVertical, Pause, Play, SkipBack, SkipForward, StepBack, StepForward, X } from "lucide-react";
 
 import type { AudioTrack, BookAudioState } from "../../types/reader";
@@ -16,6 +16,7 @@ import { cn } from "../../lib/utils";
 // useAudioStateSync is now accessed via useLibrary hook
 import { useLibrary } from "../../hooks/useLibrary";
 import { animPatterns, enterExit } from "../../lib/animations";
+import { ensureAudioTrackLoaded } from "../../lib/lazy-chapter-loader";
 
 const formatTime = (value: number) => {
   if (!Number.isFinite(value) || value < 0) {
@@ -63,6 +64,8 @@ export function ReaderAudioPlayer({
   autoScrollEnabled = true,
   onAutoScrollToggle,
 }: ReaderAudioPlayerProps) {
+  // sourcePath is part of the interface but not currently used
+  void sourcePath;
   // Use custom hook for state sync and restoration from useLibrary
   const libraryHook = useLibrary();
   const {
@@ -106,6 +109,7 @@ export function ReaderAudioPlayer({
   const [scrubTime, setScrubTime] = useState<number | null>(null);
   const [isDismissing, setIsDismissing] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [loadedTracks, setLoadedTracks] = useState<AudioTrack[]>(tracks);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isPlayingRef = useRef(false);
@@ -171,6 +175,11 @@ export function ReaderAudioPlayer({
       }
     };
   }, []);
+
+  // Update loaded tracks when tracks prop changes
+  useEffect(() => {
+    setLoadedTracks(tracks);
+  }, [tracks]);
 
   // Handle empty tracks
   useEffect(() => {
@@ -328,7 +337,7 @@ export function ReaderAudioPlayer({
       
       const nextIndex = currentIndex + 1;
       if (nextIndex < tracks.length) {
-        const nextTrack = tracks[nextIndex];
+        const nextTrack = loadedTracks[nextIndex];
         console.log("[Audio Player] Moving to next track", {
           nextIndex,
           nextTrackId: nextTrack?.id,
@@ -373,7 +382,7 @@ export function ReaderAudioPlayer({
     };
   }, [currentIndex, tracks.length, isRestoring, restoreTime]);
 
-  const currentTrack = tracks[currentIndex];
+  const currentTrack = loadedTracks[currentIndex];
 
   // Periodically check audio state to detect external pause/play
   useEffect(() => {
@@ -410,23 +419,45 @@ export function ReaderAudioPlayer({
   const trackLoadedForRestorationRef = useRef(false);
 
   // Setup track when currentIndex changes
-  // Audio tracks are now preloaded, so they should already have URLs
+  // Load track URL on-demand if missing
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || !currentTrack) {
+    if (!audio || !currentTrack || !bookId) {
       return;
     }
 
-    // Track should already have a URL since it's preloaded
+    // Load track URL if missing
     if (!currentTrack.url) {
-      console.warn("[Audio Player] Track missing URL, this should not happen with preloading", {
+      console.log("[Audio Player] Track missing URL, loading on-demand", {
         trackId: currentTrack.id,
         trackTitle: currentTrack.title,
+        href: currentTrack.href,
       });
+      
+      // Load the track asynchronously
+      ensureAudioTrackLoaded(bookId, currentTrack)
+        .then((loadedTrack) => {
+          // Update the loaded tracks state
+          setLoadedTracks((prev) => {
+            const updated = [...prev];
+            const index = updated.findIndex((t) => t.id === loadedTrack.id);
+            if (index !== -1) {
+              updated[index] = loadedTrack;
+            }
+            return updated;
+          });
+        })
+        .catch((error) => {
+          console.error("[Audio Player] Failed to load audio track", {
+            trackId: currentTrack.id,
+            trackTitle: currentTrack.title,
+            error,
+          });
+        });
       return;
     }
 
-    // Setup audio source with preloaded track
+    // Setup audio source with loaded track
     setupAudioSource(audio, currentTrack);
 
     function setupAudioSource(audio: HTMLAudioElement, track: AudioTrack) {
@@ -682,7 +713,7 @@ export function ReaderAudioPlayer({
 
   const playTrackAt = useCallback(
     (nextIndex: number) => {
-      if (!tracks[nextIndex]) return;
+      if (!loadedTracks[nextIndex]) return;
       // Just change the track index - the useEffect that loads tracks will handle
       // autoplay based on isPlayingRef.current
       setCurrentIndex(nextIndex);

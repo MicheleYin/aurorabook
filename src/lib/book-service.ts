@@ -112,6 +112,26 @@ export async function loadEpubImage(
 }
 
 /**
+ * Load an audio track from EPUB file and return as base64 data URL
+ * This resolves relative audio paths relative to the OPF location
+ */
+export async function loadEpubAudio(
+  bookId: string,
+  audioHref: string
+): Promise<string | null> {
+  try {
+    const dataUrl = await invoke<string | null>("load_epub_audio", {
+      bookId,
+      audioHref,
+    });
+    return dataUrl;
+  } catch (error) {
+    console.error("Failed to load EPUB audio:", error);
+    throw error;
+  }
+}
+
+/**
  * Read a single audio track by book ID and track ID
  */
 export async function readSingleAudioTrack(
