@@ -547,7 +547,7 @@ where
         current_chapter: options.chapters.len(),
         total_chapters: options.chapters.len(),
         current_step: "complete".to_string(),
-        message: "Conversion complete!".to_string(),
+        message: "Completing conversion...".to_string(),
     });
     
     Ok(zip_data.into_inner())
