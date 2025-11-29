@@ -121,6 +121,7 @@ export function ReaderAudioPlayer({
   const lastCurrentTimeUpdateRef = useRef(0);
   const isRestoringRef = useRef(false);
   const hasBeenDismissedRef = useRef(false);
+  const isAutoAdvancingRef = useRef(false);
 
   // Handle enter animation - only run if not dismissing and not previously dismissed
   useEffect(() => {
@@ -224,8 +225,9 @@ export function ReaderAudioPlayer({
       currentTimeRef.current = seconds;
       
       // Sync play state with audio element to handle external pause/play
+      // BUT: Don't sync if we're auto-advancing (track ended and moving to next)
       const audioIsPlaying = !audio.paused;
-      if (audioIsPlaying !== isPlayingRef.current) {
+      if (audioIsPlaying !== isPlayingRef.current && !isAutoAdvancingRef.current) {
         console.log("[Audio Player] Play state mismatch detected in timeupdate", {
           audioIsPlaying,
           isPlayingRef: isPlayingRef.current,
@@ -332,12 +334,16 @@ export function ReaderAudioPlayer({
           nextTrackTitle: nextTrack?.title,
         });
         
+        // Set flag to prevent timeupdate from resetting playing state
+        // This flag will be cleared in setupAudioSource once the new track is set up
+        isAutoAdvancingRef.current = true;
+        
         // IMPORTANT: Set playing state BEFORE changing track
         // This ensures setupAudioSource knows we want to continue playing
         isPlayingRef.current = true;
         setIsPlaying(true);
         
-        // Change track - setupAudioSource will detect isPlayingRef and autoplay
+        // Change track - setupAudioSource will detect isAutoAdvancingRef and autoplay
         setCurrentIndex(nextIndex);
       } else {
         console.log("[Audio Player] Last track ended, stopping playback");
@@ -383,6 +389,11 @@ export function ReaderAudioPlayer({
     }
 
     const checkAudioState = () => {
+      // Don't sync state if we're auto-advancing (track ended and moving to next)
+      if (isAutoAdvancingRef.current) {
+        return;
+      }
+      
       const audioIsPlaying = !audio.paused;
       if (audioIsPlaying !== isPlayingRef.current) {
         setIsPlaying(audioIsPlaying);
@@ -517,14 +528,23 @@ export function ReaderAudioPlayer({
     
     // Determine if we should autoplay after loading
     // Check isPlayingRef first (most reliable) - this is set before track changes
-    // Also check audio.paused as fallback (though it may be true after track ends)
-    const shouldAutoplay = isPlayingRef.current;
+    // Also check if we're auto-advancing (track ended and moving to next)
+    const shouldAutoplay = isPlayingRef.current || isAutoAdvancingRef.current;
+    
+    // Clear auto-advancing flag once we've set up the source
+    if (isAutoAdvancingRef.current) {
+      isAutoAdvancingRef.current = false;
+      // Ensure playing state is set
+      isPlayingRef.current = true;
+      setIsPlaying(true);
+    }
     
     console.log("[Audio Player] Setting up audio source", {
       trackId: track.id,
       trackTitle: track.title,
       isPlayingRef: isPlayingRef.current,
       audioPaused: audio.paused,
+      isAutoAdvancing: isAutoAdvancingRef.current,
       shouldAutoplay,
       isRestoring: isRestoringRef.current,
     });
