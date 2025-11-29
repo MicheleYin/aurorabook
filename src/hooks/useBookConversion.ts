@@ -50,6 +50,9 @@ export function useBookConversion(
       setConversionProgress({
         currentChapter: 0,
         totalChapters: 1,
+        wordsProcessed: 0,
+        totalWords: 0,
+        wordsInCurrentChapter: 0,
         currentStep: "initializing",
         message: "Starting conversion...",
       });
