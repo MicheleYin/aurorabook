@@ -90,6 +90,28 @@ export async function loadChapterContent(
 }
 
 /**
+ * Load an image from EPUB file and return as base64 data URL
+ * This resolves relative image paths relative to the chapter location
+ */
+export async function loadEpubImage(
+  bookId: string,
+  imageHref: string,
+  chapterHref?: string
+): Promise<string | null> {
+  try {
+    const dataUrl = await invoke<string | null>("load_epub_image", {
+      bookId,
+      imageHref,
+      chapterHref,
+    });
+    return dataUrl;
+  } catch (error) {
+    console.error("Failed to load EPUB image:", error);
+    throw error;
+  }
+}
+
+/**
  * Read a single audio track by book ID and track ID
  */
 export async function readSingleAudioTrack(

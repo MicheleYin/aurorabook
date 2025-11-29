@@ -131,6 +131,203 @@ pub async fn load_chapter_content(
     Ok(Some(chapter))
 }
 
+/// Load an image from EPUB file and return as base64 data URL
+/// This function resolves relative image paths relative to the chapter location
+#[tauri::command]
+pub async fn load_epub_image(
+    book_id: String,
+    image_href: String,
+    chapter_href: Option<String>,
+    app: tauri::AppHandle,
+) -> AppResult<Option<String>> {
+    use crate::epub::parser::find_opf_path;
+    use crate::utils::path_validation::validate_epub_path;
+    use std::io::{Cursor, Read};
+    use zip::ZipArchive;
+    use base64::{Engine as _, engine::general_purpose};
+    use log::{debug, warn};
+    
+    // Find the book to get source_path
+    let books = load_all_books(&app)
+        .map_err(|e| AppError::Store(e))?;
+    let book = books.into_iter()
+        .find(|b| b.id == book_id)
+        .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
+    
+    // Get EPUB buffer from store
+    let epub_data = get_epub_buffer_from_store(&app, &book.source_path)
+        .map_err(|e| AppError::Store(e))?
+        .ok_or_else(|| AppError::Store("EPUB not found in store".to_string()))?;
+    
+    // Load image in a blocking task
+    let epub_data_clone = epub_data.clone();
+    let image_href_clone = image_href.clone();
+    let chapter_href_clone = chapter_href.clone();
+    let image_data_url = tokio::time::timeout(
+        std::time::Duration::from_secs(10), // 10 second timeout
+        tokio::task::spawn_blocking(move || {
+            let mut archive = ZipArchive::new(Cursor::new(epub_data_clone.as_slice()))
+                .map_err(|e| format!("Failed to open EPUB: {}", e))?;
+            
+            // Find OPF path to determine OEBPS base
+            let opf_path = find_opf_path(&mut archive)?;
+            let oebps_base = if opf_path.contains("/") {
+                opf_path.rfind("/")
+                    .map(|pos| opf_path[..pos + 1].to_string())
+                    .unwrap_or_else(|| "OEBPS/".to_string())
+            } else {
+                "OEBPS/".to_string()
+            };
+            
+            // Resolve image path relative to chapter if provided, otherwise relative to OPF
+            let image_path = if image_href_clone.starts_with("/") {
+                // Absolute path from EPUB root
+                image_href_clone[1..].to_string()
+            } else if let Some(chapter) = &chapter_href_clone {
+                // Resolve relative to chapter location
+                let validated_chapter = validate_epub_path(chapter)
+                    .map_err(|e| format!("Invalid chapter path: {}", e))?;
+                
+                let chapter_path = if validated_chapter.starts_with("/") {
+                    validated_chapter[1..].to_string()
+                } else if validated_chapter.starts_with("OEBPS/") {
+                    validated_chapter.clone()
+                } else {
+                    format!("{}{}", oebps_base, validated_chapter)
+                };
+                
+                // Get chapter directory
+                let chapter_dir = if chapter_path.contains("/") {
+                    chapter_path.rfind("/")
+                        .map(|pos| chapter_path[..pos + 1].to_string())
+                        .unwrap_or_else(|| oebps_base.clone())
+                } else {
+                    oebps_base.clone()
+                };
+                
+                // Resolve image path relative to chapter directory
+                let mut resolved_parts: Vec<&str> = chapter_dir.split("/").filter(|s| !s.is_empty()).collect();
+                let image_parts: Vec<&str> = image_href_clone.split("/").collect();
+                
+                for part in image_parts {
+                    if part == ".." {
+                        resolved_parts.pop();
+                    } else if part != "." && !part.is_empty() {
+                        resolved_parts.push(part);
+                    }
+                }
+                
+                resolved_parts.join("/")
+            } else {
+                // Resolve relative to OPF location
+                let opf_dir = if opf_path.contains("/") {
+                    opf_path.rfind("/")
+                        .map(|pos| opf_path[..pos + 1].to_string())
+                        .unwrap_or_else(|| "OEBPS/".to_string())
+                } else {
+                    "OEBPS/".to_string()
+                };
+                
+                let mut resolved_parts: Vec<&str> = opf_dir.split("/").filter(|s| !s.is_empty()).collect();
+                let image_parts: Vec<&str> = image_href_clone.split("/").collect();
+                
+                for part in image_parts {
+                    if part == ".." {
+                        resolved_parts.pop();
+                    } else if part != "." && !part.is_empty() {
+                        resolved_parts.push(part);
+                    }
+                }
+                
+                resolved_parts.join("/")
+            };
+            
+            debug!("Attempting to load image from path: '{}' (resolved from '{}')", image_path, image_href_clone);
+            
+            // Try to read the image from the archive
+            let mut image_bytes = Vec::new();
+            let mut found_image = false;
+            
+            // Try primary path first
+            if let Ok(mut file) = archive.by_name(&image_path) {
+                if file.read_to_end(&mut image_bytes).is_ok() && !image_bytes.is_empty() {
+                    found_image = true;
+                    debug!("Found image at primary path: '{}'", image_path);
+                }
+            }
+            
+            // Try alternative paths if primary didn't work
+            if !found_image {
+                let alt_paths = [
+                    format!("OEBPS/{}", image_path),
+                    format!("OPS/{}", image_path),
+                    image_href_clone.clone(),
+                    format!("OEBPS/{}", image_href_clone),
+                    format!("OPS/{}", image_href_clone),
+                ];
+                
+                for alt_path in &alt_paths {
+                    if let Ok(mut file) = archive.by_name(alt_path) {
+                        image_bytes.clear();
+                        if file.read_to_end(&mut image_bytes).is_ok() && !image_bytes.is_empty() {
+                            debug!("Found image at alternative path: '{}'", alt_path);
+                            found_image = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if !found_image || image_bytes.is_empty() {
+                warn!("Image not found at path '{}' or alternatives", image_path);
+                return Ok::<Option<String>, String>(None);
+            }
+            
+            // Determine MIME type from file extension or magic bytes
+            let mime_type = if image_path.ends_with(".png") || image_href_clone.ends_with(".png") {
+                "image/png"
+            } else if image_path.ends_with(".jpg") || image_path.ends_with(".jpeg") ||
+                      image_href_clone.ends_with(".jpg") || image_href_clone.ends_with(".jpeg") {
+                "image/jpeg"
+            } else if image_path.ends_with(".gif") || image_href_clone.ends_with(".gif") {
+                "image/gif"
+            } else if image_path.ends_with(".webp") || image_href_clone.ends_with(".webp") {
+                "image/webp"
+            } else if image_path.ends_with(".svg") || image_href_clone.ends_with(".svg") {
+                "image/svg+xml"
+            } else {
+                // Try to detect from magic bytes
+                if image_bytes.len() >= 4 {
+                    match &image_bytes[0..4] {
+                        [0x89, 0x50, 0x4E, 0x47] => "image/png",
+                        [0xFF, 0xD8, 0xFF, _] => "image/jpeg",
+                        [0x47, 0x49, 0x46, 0x38] => "image/gif",
+                        _ => "image/jpeg", // Default fallback
+                    }
+                } else {
+                    "image/jpeg"
+                }
+            };
+            
+            // Encode to base64
+            let base64_data = general_purpose::STANDARD.encode(&image_bytes);
+            
+            // Create data URL
+            let data_url = format!("data:{};base64,{}", mime_type, base64_data);
+            
+            debug!("Successfully loaded image ({} bytes, type: {})", image_bytes.len(), mime_type);
+            
+            Ok(Some(data_url))
+        })
+    )
+    .await
+    .map_err(|_| AppError::EpubParse("Image loading timed out after 10 seconds".to_string()))?
+    .map_err(|e| AppError::EpubParse(format!("Failed to load image: {}", e)))?
+    .map_err(|e| AppError::EpubParse(e))?;
+    
+    Ok(image_data_url)
+}
+
 /// Read a single audio track by book ID and track ID
 #[tauri::command]
 pub async fn read_single_audio_track(

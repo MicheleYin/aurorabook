@@ -3,7 +3,7 @@
  * This prevents keeping all chapter content in memory at once
  */
 
-import { loadChapterContent as loadChapterContentFromBackend } from "./book-service";
+import { loadChapterContent as loadChapterContentFromBackend, loadEpubImage } from "./book-service";
 import type { Chapter, AudioTrack } from "../types/reader";
 import {
   normalizeChapterContent,
@@ -137,10 +137,56 @@ export async function loadChapterContent(
       throw new Error(`Failed to normalize chapter: ${chapter.href}`);
     }
 
-    // Note: Image and CSS resolution will be handled separately
-    // For now, we just sanitize the HTML
+    // Process images: resolve relative paths and load from EPUB
     const parser = new DOMParser();
     const doc = parser.parseFromString(normalizedHtml, "text/html");
+    
+    // Find all img tags and resolve their src attributes
+    const imgTags = doc.querySelectorAll("img");
+    const imagePromises: Promise<void>[] = [];
+    
+    for (const img of Array.from(imgTags)) {
+      const src = img.getAttribute("src");
+      if (!src) continue;
+      
+      // Skip if already a data URL or absolute URL
+      if (src.startsWith("data:") || src.startsWith("http://") || src.startsWith("https://") || src.startsWith("blob:")) {
+        continue;
+      }
+      
+      // Load image from EPUB
+      const imagePromise = (async () => {
+        try {
+          const dataUrl = await loadEpubImage(bookId, src, chapter.href);
+          if (dataUrl) {
+            img.setAttribute("src", dataUrl);
+            console.debug(`${LOADER_LOG_PREFIX} resolved image`, {
+              bookId,
+              originalSrc: src,
+              chapterHref: chapter.href,
+            });
+          } else {
+            console.warn(`${LOADER_LOG_PREFIX} failed to load image`, {
+              bookId,
+              src,
+              chapterHref: chapter.href,
+            });
+          }
+        } catch (error) {
+          console.warn(`${LOADER_LOG_PREFIX} error loading image`, {
+            bookId,
+            src,
+            chapterHref: chapter.href,
+            error,
+          });
+        }
+      })();
+      
+      imagePromises.push(imagePromise);
+    }
+    
+    // Wait for all images to load
+    await Promise.all(imagePromises);
 
     const substitutedHtml = new XMLSerializer().serializeToString(doc);
     const sanitized = sanitizeChapterHtml(substitutedHtml);
