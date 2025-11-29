@@ -22,7 +22,6 @@ import { cn, formatDurationShort, getBookProgressSummary } from "../../lib/utils
 import { dialogSectionStagger } from "../../lib/animations";
 import { useAnimatedNumber } from "../../hooks/use-animated-number";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
-import { ensureAudioTrackLoaded } from "../../lib/lazy-chapter-loader";
 
 type BookDetailDialogProps = {
   book: Book;
