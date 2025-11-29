@@ -65,6 +65,7 @@ export function BookDetailDialog({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [showConvertDialog, setShowConvertDialog] = useState(false);
   const [isConvertingLocally, setIsConvertingLocally] = useState(false);
+  const [localProgress, setLocalProgress] = useState<ConversionProgress | null>(null);
   const [durationMap, setDurationMap] = useState<Record<string, number>>({});
   const durationMapRef = useRef<Record<string, number>>({});
   const hadProgressRef = useRef(false);
@@ -81,12 +82,23 @@ export function BookDetailDialog({
     setShowConvertDialog(false);
     setIsConvertingLocally(true); // Set loading state immediately
     hadProgressRef.current = false;
+    
+    // Show initial progress immediately
+    const totalChapters = book.chapters.length || 1;
+    setLocalProgress({
+      currentChapter: 0,
+      totalChapters,
+      currentStep: "initializing",
+      message: "Starting conversion...",
+    });
+    
     if (onConvertToAudiobook) {
       try {
         await onConvertToAudiobook(book, voiceId);
       } finally {
         // Clear local state once conversion completes
         setIsConvertingLocally(false);
+        setLocalProgress(null);
         hadProgressRef.current = false;
       }
     }
@@ -98,10 +110,12 @@ export function BookDetailDialog({
     if (conversionProgress) {
       hadProgressRef.current = true;
       setIsConvertingLocally(false);
+      setLocalProgress(null); // Clear local progress once backend progress arrives
     } else if (hadProgressRef.current && !conversionProgress) {
       // Conversion completed (had progress, now it's null)
       hadProgressRef.current = false;
       setIsConvertingLocally(false);
+      setLocalProgress(null);
     }
   }, [conversionProgress]);
 
@@ -287,9 +301,12 @@ export function BookDetailDialog({
   const audioProgressPercentDisplay =
     typeof audioProgressPercent === "number" ? Math.round(audioProgressPercent * 100) : undefined;
   
+  // Use backend progress if available, otherwise use local progress
+  const displayProgress = conversionProgress || localProgress;
+  
   // Animate conversion progress percentage
-  const targetConversionPercent = conversionProgress
-    ? Math.round((conversionProgress.currentChapter / conversionProgress.totalChapters) * 100)
+  const targetConversionPercent = displayProgress
+    ? Math.round((displayProgress.currentChapter / displayProgress.totalChapters) * 100)
     : 0;
   const animatedConversionPercent = useAnimatedNumber(targetConversionPercent, 500);
   
@@ -330,7 +347,7 @@ export function BookDetailDialog({
         ) : null}
       </div>
       <div className="grid gap-4">
-        {conversionProgress ? (
+        {displayProgress ? (
           <div className={cn("grid gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3", dialogSectionStagger(1))}>
             <div className="flex items-center justify-between">
               <span className="text-xs uppercase text-muted-foreground">Converting to Audiobook</span>
@@ -345,7 +362,7 @@ export function BookDetailDialog({
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
               <span>
-                Chapter {conversionProgress.currentChapter} of {conversionProgress.totalChapters}: {conversionProgress.message}
+                Chapter {displayProgress.currentChapter} of {displayProgress.totalChapters}: {displayProgress.message}
               </span>
             </div>
           </div>
