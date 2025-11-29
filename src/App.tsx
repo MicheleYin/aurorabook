@@ -73,7 +73,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     handleConvertToAudiobook,
     handleConvertBookFromDetail,
     cancelConversionForBook,
-  } = useBookConversion(setLibrary, ingestEpub);
+  } = useBookConversion(setLibrary, ingestEpub, refreshLibrary);
 
   const {
     activeView,

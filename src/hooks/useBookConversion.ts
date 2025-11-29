@@ -5,6 +5,7 @@ import type { VoiceId } from "../types/reader";
 import type { ConversionProgress } from "../lib/audiobook-converter";
 import { convertEpubToAudiobook } from "../lib/audiobook-converter";
 import { getEpubBuffer } from "../lib/book-service";
+import { clearBookCache } from "../lib/lazy-chapter-loader";
 
 export type PendingBookForConversion = {
   book: Book;
@@ -20,6 +21,7 @@ export function useBookConversion(
     progress?: Book["progress"];
     pageCountHint?: number;
   }) => Promise<Book | null>,
+  refreshLibrary?: () => Promise<void>,
 ) {
   const [showConvertDialog, setShowConvertDialog] = useState(false);
   const [pendingBookForConversion, setPendingBookForConversion] = useState<PendingBookForConversion | null>(null);
@@ -50,6 +52,12 @@ export function useBookConversion(
       if (!epubBuffer) {
         throw new Error("Failed to load EPUB file for conversion");
       }
+      setConversionProgress({
+        currentChapter: 0,
+        totalChapters: 1,
+        currentStep: "initializing",
+        message: "Starting conversion...",
+      });
       
       // Convert EPUB to audiobook - backend handles everything
       await convertEpubToAudiobook({
@@ -69,6 +77,9 @@ export function useBookConversion(
       // Remove the original book from library
       setLibrary((prev) => prev.filter((b) => b.id !== book.id));
       
+      // Clear book cache to force fresh data from backend
+      clearBookCache(book.sourcePath);
+      
       // Re-ingest the converted EPUB (backend has already stored it, just need to reload metadata)
       // No need to read buffer here, backend will read from sourcePath
       await ingestEpub({
@@ -78,6 +89,11 @@ export function useBookConversion(
         progress: book.progress,
         pageCountHint: book.pageCount,
       });
+      
+      // Refetch library from backend to ensure we have the latest data
+      if (refreshLibrary) {
+        await refreshLibrary();
+      }
       
       setPendingBookForConversion(null);
       setConversionProgress(null);
@@ -110,7 +126,7 @@ export function useBookConversion(
       conversionAbortControllerRef.current = null;
       convertingBookIdRef.current = null;
     }
-  }, [pendingBookForConversion, isConverting, setLibrary, ingestEpub]);
+  }, [pendingBookForConversion, isConverting, setLibrary, ingestEpub, refreshLibrary]);
 
   const handleConvertBookFromDetail = useCallback(async (book: Book, voiceId: VoiceId) => {
     if (book.audioTracks.length > 0) return;
@@ -180,6 +196,9 @@ export function useBookConversion(
         sourcePath: book.sourcePath,
       });
       
+      // Clear book cache to force fresh data from backend
+      clearBookCache(book.sourcePath);
+      
       // Backend has stored the converted EPUB, reload it to update metadata
       const convertedBuffer = await getEpubBuffer(book.sourcePath);
       if (!convertedBuffer) {
@@ -196,7 +215,10 @@ export function useBookConversion(
         pageCountHint: book.pageCount,
       });
       
-      // The book will be updated in the library by ingestEpub
+      // Refetch library from backend to ensure we have the latest data
+      if (refreshLibrary) {
+        await refreshLibrary();
+      }
       
       setConversionProgress(null);
       setBookConversionProgress((prev) => {
@@ -228,7 +250,7 @@ export function useBookConversion(
       conversionAbortControllerRef.current = null;
       convertingBookIdRef.current = null;
     }
-  }, [isConverting, setLibrary, ingestEpub]);
+  }, [isConverting, setLibrary, ingestEpub, refreshLibrary]);
 
   const cancelConversionForBook = useCallback((bookId: string) => {
     if (convertingBookIdRef.current === bookId && conversionAbortControllerRef.current) {

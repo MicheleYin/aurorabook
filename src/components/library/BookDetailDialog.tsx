@@ -63,14 +63,11 @@ export function BookDetailDialog({
 }: BookDetailDialogProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [showConvertDialog, setShowConvertDialog] = useState(false);
-  const [isConvertingLocally, setIsConvertingLocally] = useState(false);
-  const [localProgress, setLocalProgress] = useState<ConversionProgress | null>(null);
   const [durationMap, setDurationMap] = useState<Record<string, number>>({});
   const durationMapRef = useRef<Record<string, number>>({});
-  const hadProgressRef = useRef(false);
   const genres = (book.subjects ?? []).filter(Boolean);
   const hasAudio = book.audioTracks.length > 0;
-  const isConverting = Boolean(conversionProgress) || isConvertingLocally;
+  const isConverting = Boolean(conversionProgress);
   const isDesktop = useMediaQuery("(min-width: 640px)");
   
   const handleConvertClick = useCallback(() => {
@@ -79,44 +76,11 @@ export function BookDetailDialog({
   
   const handleConvertConfirm = useCallback(async (voiceId: VoiceId) => {
     setShowConvertDialog(false);
-    setIsConvertingLocally(true); // Set loading state immediately
-    hadProgressRef.current = false;
-    
-    // Show initial progress immediately
-    const totalChapters = book.chapters.length || 1;
-    setLocalProgress({
-      currentChapter: 0,
-      totalChapters,
-      currentStep: "initializing",
-      message: "Starting conversion...",
-    });
     
     if (onConvertToAudiobook) {
-      try {
-        await onConvertToAudiobook(book, voiceId);
-      } finally {
-        // Clear local state once conversion completes
-        setIsConvertingLocally(false);
-        setLocalProgress(null);
-        hadProgressRef.current = false;
-      }
+      await onConvertToAudiobook(book, voiceId);
     }
   }, [book, onConvertToAudiobook]);
-  
-  // Clear local converting state when conversionProgress becomes available from backend
-  // or when conversion completes (progress becomes null after having progress)
-  useEffect(() => {
-    if (conversionProgress) {
-      hadProgressRef.current = true;
-      setIsConvertingLocally(false);
-      setLocalProgress(null); // Clear local progress once backend progress arrives
-    } else if (hadProgressRef.current && !conversionProgress) {
-      // Conversion completed (had progress, now it's null)
-      hadProgressRef.current = false;
-      setIsConvertingLocally(false);
-      setLocalProgress(null);
-    }
-  }, [conversionProgress]);
 
   const handleExportEpub = useCallback(async () => {
     if (isConverting) return;
@@ -300,8 +264,7 @@ export function BookDetailDialog({
   const audioProgressPercentDisplay =
     typeof audioProgressPercent === "number" ? Math.round(audioProgressPercent * 100) : undefined;
   
-  // Use backend progress if available, otherwise use local progress
-  const displayProgress = conversionProgress || localProgress;
+  const displayProgress = conversionProgress;
   
   // Animate conversion progress percentage
   const targetConversionPercent = displayProgress
