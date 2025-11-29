@@ -22,8 +22,8 @@ export type AudioSyncSegment = {
 
 export type AudioSyncMap = {
   segments: AudioSyncSegment[];
-  // Map from audioTrackHref + time to segment index for quick lookup
-  lookup: Map<string, number>;
+  // Map from audioTrackHref + time to segment index for quick lookup (optional, not used by findCurrentAudioSegment)
+  lookup?: Map<string, number>;
 };
 
 export type BookAudioState = {

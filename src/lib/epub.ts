@@ -491,22 +491,55 @@ export const findCurrentAudioSegment = (
   currentTimeSeconds: number,
 ): AudioSyncSegment | undefined => {
   if (!syncMap) {
+    console.debug("[Audio Sync] No sync map available");
     return undefined;
   }
 
   const normalizedTrackHref = normalizeAudioHref(audioTrackHref);
+  console.debug("[Audio Sync] Finding segment", {
+    audioTrackHref,
+    normalizedTrackHref,
+    currentTimeSeconds,
+    totalSegments: syncMap.segments.length,
+  });
 
   // Find segment where currentTime falls within clipBegin and clipEnd
   const segment = syncMap.segments.find(
     (seg) => {
       const normalizedSegHref = normalizeAudioHref(seg.audioTrackHref);
-      return (
+      const matches = (
         normalizedSegHref === normalizedTrackHref &&
         currentTimeSeconds >= seg.clipBegin &&
         currentTimeSeconds < seg.clipEnd
       );
+      
+      if (matches) {
+        console.debug("[Audio Sync] Found matching segment", {
+          textElementId: seg.textElementId,
+          chapterHref: seg.chapterHref,
+          audioTrackHref: seg.audioTrackHref,
+          clipBegin: seg.clipBegin,
+          clipEnd: seg.clipEnd,
+          currentTime: currentTimeSeconds,
+        });
+      }
+      
+      return matches;
     },
   );
+
+  if (!segment) {
+    console.debug("[Audio Sync] No segment found for", {
+      normalizedTrackHref,
+      currentTimeSeconds,
+      availableSegments: syncMap.segments
+        .filter(seg => normalizeAudioHref(seg.audioTrackHref) === normalizedTrackHref)
+        .map(seg => ({
+          textElementId: seg.textElementId,
+          timeRange: `${seg.clipBegin.toFixed(3)}-${seg.clipEnd.toFixed(3)}s`,
+        })),
+    });
+  }
 
   return segment;
 };

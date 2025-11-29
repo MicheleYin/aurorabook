@@ -526,14 +526,24 @@ pub async fn add_book(
         // Update existing book instead, but preserve progress and state
         if let Some(existing_index) = books.iter().position(|b| b.source_path == book.source_path) {
             let existing_book = &books[existing_index];
-            // Preserve progress, audio_state, audio_sync_map, and page_count from existing book
+            // Preserve progress, audio_state, and page_count from existing book
             let mut updated_book = book.clone();
             updated_book.progress = existing_book.progress.clone();
             updated_book.audio_state = existing_book.audio_state.clone();
-            updated_book.audio_sync_map = existing_book.audio_sync_map.clone();
             updated_book.page_count = existing_book.page_count;
             // Preserve the existing book ID to maintain continuity
             updated_book.id = existing_book.id.clone();
+            
+            // If audio_sync_map is missing but we have audio tracks, use the new one
+            // This allows books imported before SMIL parsing to get sync maps
+            if updated_book.audio_sync_map.is_none() && !updated_book.audio_tracks.is_empty() {
+                log::info!("Rebuilding audio sync map for existing book (was missing)");
+                // Keep the new audio_sync_map from the parsed book
+            } else if existing_book.audio_sync_map.is_some() {
+                // Preserve existing sync map if it exists
+                updated_book.audio_sync_map = existing_book.audio_sync_map.clone();
+            }
+            
             books[existing_index] = updated_book.clone();
             updated_book
         } else {
@@ -564,6 +574,67 @@ pub async fn get_epub_buffer(
 ) -> AppResult<Option<Vec<u8>>> {
     get_epub_buffer_from_store(&app, &source_path)
         .map_err(|e| AppError::Store(e))
+}
+
+/// Rebuild audio sync map for an existing book
+/// This is useful for books that were imported before SMIL parsing was added
+#[tauri::command]
+pub async fn rebuild_audio_sync_map(
+    book_id: String,
+    app: tauri::AppHandle,
+) -> AppResult<Option<AudioSyncMap>> {
+    use std::io::Cursor;
+    use zip::ZipArchive;
+    use crate::epub::converter::smil::build_audio_sync_map;
+    
+    let mut books = load_all_books(&app)
+        .map_err(|e| AppError::Store(e))?;
+    
+    let book = books.iter()
+        .find(|b| b.id == book_id)
+        .ok_or_else(|| AppError::Store(format!("Book with ID {} not found", book_id)))?;
+    
+    if book.audio_tracks.is_empty() {
+        log::warn!("Cannot rebuild audio sync map - book has no audio tracks");
+        return Ok(None);
+    }
+    
+    log::info!("Rebuilding audio sync map for book: {} ({} audio tracks)", book.title, book.audio_tracks.len());
+    
+    // Clone data needed for the blocking task
+    let source_path = book.source_path.clone();
+    let chapters = book.chapters.clone();
+    
+    // Get EPUB data from store
+    let epub_data = get_epub_buffer_from_store(&app, &source_path)
+        .map_err(|e| AppError::Store(e))?
+        .ok_or_else(|| AppError::Store("EPUB data not found in store".to_string()))?;
+    
+    // Build audio sync map
+    let audio_sync_map = tokio::task::spawn_blocking(move || {
+        let mut archive = ZipArchive::new(Cursor::new(epub_data.as_slice()))
+            .map_err(|e| format!("Failed to open EPUB: {}", e))?;
+        
+        build_audio_sync_map(&mut archive, &chapters)
+            .map_err(|e| format!("Failed to build audio sync map: {}", e))
+    })
+    .await
+    .map_err(|e| AppError::EpubParse(format!("Background task failed: {}", e)))?
+    .map_err(|e| AppError::EpubParse(e))?;
+    
+    if let Some(ref sync_map) = audio_sync_map {
+        log::info!("Successfully rebuilt audio sync map with {} segments", sync_map.segments.len());
+        // Update the book in the books vector
+        if let Some(book) = books.iter_mut().find(|b| b.id == book_id) {
+            book.audio_sync_map = audio_sync_map.clone();
+            save_all_books(&app, &books)
+                .map_err(|e| AppError::Store(e))?;
+        }
+    } else {
+        log::warn!("No audio sync segments found in SMIL files");
+    }
+    
+    Ok(audio_sync_map)
 }
 
 /// Update book progress
@@ -712,6 +783,42 @@ pub async fn ingest_epub(
     // Extract audio tracks from manifest
     let audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
     
+    // Build audio sync map from SMIL files if audio tracks exist
+    let audio_sync_map = if !audio_tracks.is_empty() {
+        log::info!("Building audio sync map for book with {} audio tracks", audio_tracks.len());
+        let epub_data_for_smil = epub_data.clone();
+        let chapters_for_smil = chapters.clone();
+        tokio::task::spawn_blocking(move || {
+            use std::io::Cursor;
+            use zip::ZipArchive;
+            use crate::epub::converter::smil::build_audio_sync_map;
+            
+            let mut archive = ZipArchive::new(Cursor::new(epub_data_for_smil.as_slice()))
+                .map_err(|e| format!("Failed to open EPUB for SMIL parsing: {}", e))?;
+            
+            build_audio_sync_map(&mut archive, &chapters_for_smil)
+                .map_err(|e| format!("Failed to build audio sync map: {}", e))
+        })
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!("Failed to parse SMIL files in background task: {}", e);
+            Ok(None)
+        })
+        .unwrap_or_else(|e| {
+            log::warn!("Failed to build audio sync map: {}", e);
+            None
+        })
+    } else {
+        log::debug!("Skipping audio sync map - no audio tracks found");
+        None
+    };
+    
+    if let Some(ref sync_map) = audio_sync_map {
+        log::info!("Successfully built audio sync map with {} segments", sync_map.segments.len());
+    } else {
+        log::debug!("No audio sync map available for this book");
+    }
+    
     // Generate book ID
     let book_id = Uuid::new_v4().to_string();
     
@@ -737,7 +844,7 @@ pub async fn ingest_epub(
         file_size_bytes: Some(epub_data.len()),
         audio_tracks,
         audio_state: None,
-        audio_sync_map: None,
+        audio_sync_map,
         progress: None,
         page_count: None,
     };

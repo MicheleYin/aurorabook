@@ -657,7 +657,10 @@ export function ReaderViewport({
 
   // Handle audio sync highlighting
   useEffect(() => {
-    if (isAudioRestoring) return;
+    if (isAudioRestoring) {
+      console.debug("[Audio Sync] Skipping highlight update - audio is restoring");
+      return;
+    }
 
     if (
       !activeBook?.audioSyncMap ||
@@ -665,11 +668,31 @@ export function ReaderViewport({
       typeof currentAudioTime !== "number" ||
       !activeChapter
     ) {
+      if (!activeBook?.audioSyncMap) {
+        console.debug("[Audio Sync] No audioSyncMap available");
+      }
+      if (!currentAudioTrackHref) {
+        console.debug("[Audio Sync] No currentAudioTrackHref");
+      }
+      if (typeof currentAudioTime !== "number") {
+        console.debug("[Audio Sync] Invalid currentAudioTime:", currentAudioTime);
+      }
+      if (!activeChapter) {
+        console.debug("[Audio Sync] No activeChapter");
+      }
       setHighlightedElementId(null);
       highlightStateRef.current.lastHighlightedElement = null;
       highlightStateRef.current.lastScrolledElement = null;
       return;
     }
+
+    console.debug("[Audio Sync] Looking for segment", {
+      trackHref: currentAudioTrackHref,
+      currentTime: currentAudioTime,
+      chapterId: activeChapter.id,
+      chapterHref: activeChapter.href,
+      syncMapSegments: activeBook.audioSyncMap.segments.length,
+    });
 
     const segment = findCurrentAudioSegment(
       activeBook.audioSyncMap,
@@ -678,6 +701,7 @@ export function ReaderViewport({
     );
 
     if (!segment) {
+      console.debug("[Audio Sync] No segment found for current time");
       setHighlightedElementId(null);
       highlightStateRef.current.lastHighlightedElement = null;
       highlightStateRef.current.lastScrolledElement = null;
@@ -686,6 +710,11 @@ export function ReaderViewport({
 
     const chapterHref = activeChapter.href.split("#")[0];
     if (segment.chapterHref !== chapterHref) {
+      console.debug("[Audio Sync] Segment chapter mismatch", {
+        segmentChapterHref: segment.chapterHref,
+        activeChapterHref: chapterHref,
+        segmentTextElementId: segment.textElementId,
+      });
       setHighlightedElementId(null);
       highlightStateRef.current.lastHighlightedElement = null;
       highlightStateRef.current.lastScrolledElement = null;
@@ -695,10 +724,11 @@ export function ReaderViewport({
     const elementId = segment.textElementId;
     
     if (highlightStateRef.current.lastHighlightedElement !== elementId) {
-      console.warn("[Audio Sync] Highlighted SMIL segment changed:", {
+      console.log("[Audio Sync] Highlighted segment changed", {
         previousElementId: highlightStateRef.current.lastHighlightedElement,
         newElementId: elementId,
         currentTime: currentAudioTime,
+        segmentTimeRange: `${segment.clipBegin.toFixed(3)}-${segment.clipEnd.toFixed(3)}s`,
       });
     }
     
@@ -707,10 +737,22 @@ export function ReaderViewport({
 
     // Auto-scroll to highlighted element
     const root = contentRef.current;
-    if (!root) return;
+    if (!root) {
+      console.debug("[Audio Sync] No content root element for scrolling");
+      return;
+    }
 
     const shouldScroll = elementId && autoScrollEnabled && highlightStateRef.current.lastScrolledElement !== elementId;
-    if (!shouldScroll) return;
+    if (!shouldScroll) {
+      if (!elementId) {
+        console.debug("[Audio Sync] No elementId for scrolling");
+      } else if (!autoScrollEnabled) {
+        console.debug("[Audio Sync] Auto-scroll disabled");
+      } else if (highlightStateRef.current.lastScrolledElement === elementId) {
+        console.debug("[Audio Sync] Already scrolled to element:", elementId);
+      }
+      return;
+    }
 
     const element = root.querySelector<HTMLElement>(
       typeof CSS !== "undefined" && CSS.escape
@@ -727,12 +769,31 @@ export function ReaderViewport({
                                  elementRect.bottom <= viewportHeight;
       
       if (isInBottomPortion) {
+        console.debug("[Audio Sync] Element already visible, skipping scroll", {
+          elementId,
+          elementTop: elementRect.top,
+          visibleThreshold,
+        });
         highlightStateRef.current.lastScrolledElement = elementId;
         return;
       }
       
+      console.log("[Audio Sync] Scrolling to element", {
+        elementId,
+        elementTop: elementRect.top,
+        viewportHeight,
+        visibleThreshold,
+      });
+      
       highlightStateRef.current.lastScrolledElement = elementId;
       element.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else {
+      console.warn("[Audio Sync] Element not found in DOM", {
+        elementId,
+        searchSelector: typeof CSS !== "undefined" && CSS.escape
+          ? `#${CSS.escape(elementId)}`
+          : `#${elementId}`,
+      });
     }
   }, [
     activeBook?.audioSyncMap,
