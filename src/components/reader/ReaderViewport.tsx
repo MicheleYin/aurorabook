@@ -183,20 +183,28 @@ export function ReaderViewport({
           setIsLoadingChapter(false);
           isLoadingRef.current = false;
           
-          // Update library state with loaded chapter
-          // This ensures the chapter content persists in the library
+          // Update library state with loaded chapter only if it's not already there
+          // This ensures the chapter content persists in the library without unnecessary updates
           setLibrary((prevLibrary) => {
-            return prevLibrary.map((book) => {
-              if (book.id === currentBookId) {
-                return {
-                  ...book,
-                  chapters: book.chapters.map((ch) =>
-                    ch.id === loaded.id ? loaded : ch
-                  ),
-                };
-              }
-              return book;
-            });
+            const book = prevLibrary.find((b) => b.id === currentBookId);
+            if (!book) return prevLibrary;
+            
+            const existingChapter = book.chapters.find((ch) => ch.id === loaded.id);
+            // Only update if chapter doesn't have content or content is different
+            if (!existingChapter?.contentHtml || existingChapter.contentHtml !== loaded.contentHtml) {
+              return prevLibrary.map((b) => {
+                if (b.id === currentBookId) {
+                  return {
+                    ...b,
+                    chapters: b.chapters.map((ch) =>
+                      ch.id === loaded.id ? loaded : ch
+                    ),
+                  };
+                }
+                return b;
+              });
+            }
+            return prevLibrary;
           });
         } else {
           // Request is stale, just clear loading state
@@ -320,6 +328,20 @@ export function ReaderViewport({
     const node = contentRef.current;
     if (!node) return;
 
+    // Cancel any existing restoration loops before starting new ones
+    if (scrollStateRef.current.restoreRafId !== null) {
+      cancelAnimationFrame(scrollStateRef.current.restoreRafId);
+      scrollStateRef.current.restoreRafId = null;
+    }
+    if (scrollStateRef.current.scrollIntentRafId !== null) {
+      cancelAnimationFrame(scrollStateRef.current.scrollIntentRafId);
+      scrollStateRef.current.scrollIntentRafId = null;
+    }
+    if (scrollStateRef.current.rafId !== null) {
+      cancelAnimationFrame(scrollStateRef.current.rafId);
+      scrollStateRef.current.rafId = null;
+    }
+
     // Setup scroll listener for UI state tracking
     node.addEventListener("scroll", handleScroll, { passive: true });
 
@@ -368,11 +390,14 @@ export function ReaderViewport({
     }
 
     // Restore scroll position when chapter loads (only if no scroll intent)
-    // Chapter content is now preloaded, so we can restore immediately
-    if (!scrollIntent && activeChapter && activeBook?.progress && displayChapter) {
+    // Check if chapter content is loaded before attempting restoration
+    const chapterHasContent = displayChapter?.contentHtml || activeChapter?.contentHtml;
+    if (!scrollIntent && activeChapter && activeBook?.progress && chapterHasContent) {
       if (scrollRestoreStateRef.current.restoredChapterId !== activeChapter.id) {
         const progress = activeBook.progress;
         if (progress.currentChapterId === activeChapter.id) {
+          // Store chapter ID in ref to prevent stale closures
+          const targetChapterId = activeChapter.id;
           scrollRestoreStateRef.current.isRestoring = true;
           scrollStateRef.current.cancelled = false;
 
@@ -380,8 +405,8 @@ export function ReaderViewport({
           const maxAttempts = 50; // ~3 seconds at 60fps
           
           const attemptRestore = () => {
-            // Check if cancelled before proceeding
-            if (scrollStateRef.current.cancelled) {
+            // Check if cancelled or chapter changed before proceeding
+            if (scrollStateRef.current.cancelled || activeChapter?.id !== targetChapterId) {
               scrollRestoreStateRef.current.isRestoring = false;
               scrollStateRef.current.restoreRafId = null;
               return;
@@ -400,10 +425,10 @@ export function ReaderViewport({
                 console.warn("[ReaderViewport] Failed to restore scroll - content not loaded after max attempts", {
                   scrollHeight: metrics.scrollHeight,
                   maxScroll: metrics.maxScroll,
-                  chapterId: activeChapter.id,
+                  chapterId: targetChapterId,
                 });
                 scrollRestoreStateRef.current.isRestoring = false;
-                scrollRestoreStateRef.current.restoredChapterId = activeChapter.id;
+                scrollRestoreStateRef.current.restoredChapterId = targetChapterId;
                 scrollStateRef.current.restoreRafId = null;
               }
               return;
@@ -419,12 +444,12 @@ export function ReaderViewport({
 
             if (restored) {
               console.log("[ReaderViewport] Successfully restored window scroll position", {
-                chapterId: activeChapter.id,
+                chapterId: targetChapterId,
                 scrollTop: progress.currentChapterScrollTop,
                 percent: progress.chapterProgressPercent,
               });
               scrollRestoreStateRef.current.isRestoring = false;
-              scrollRestoreStateRef.current.restoredChapterId = activeChapter.id;
+              scrollRestoreStateRef.current.restoredChapterId = targetChapterId;
               scrollStateRef.current.restoreRafId = null;
             } else {
               // Restoration failed - retry if we haven't exceeded max attempts
@@ -434,14 +459,14 @@ export function ReaderViewport({
                 scrollStateRef.current.restoreRafId = nextRafId;
               } else {
                 console.warn("[ReaderViewport] Failed to restore window scroll position after max attempts", {
-                  chapterId: activeChapter.id,
+                  chapterId: targetChapterId,
                   savedScrollTop: progress.currentChapterScrollTop,
                   savedPercent: progress.chapterProgressPercent,
                   currentMaxScroll: metrics.maxScroll,
                   currentScrollTop: metrics.scrollTop,
                 });
                 scrollRestoreStateRef.current.isRestoring = false;
-                scrollRestoreStateRef.current.restoredChapterId = activeChapter.id;
+                scrollRestoreStateRef.current.restoredChapterId = targetChapterId;
                 scrollStateRef.current.restoreRafId = null;
               }
             }
@@ -488,7 +513,8 @@ export function ReaderViewport({
     activeBook?.id,
     activeBook?.progress?.currentChapterId,
     activeBook?.progress?.currentChapterScrollTop,
-    displayChapter?.id,
+    displayChapter?.contentHtml,
+    activeChapter?.contentHtml,
     onScrollIntentConsumed,
   ]);
 
