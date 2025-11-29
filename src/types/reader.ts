@@ -56,6 +56,8 @@ export type BookProgress = {
   currentChapterScrollHeight: number;
   currentChapterClientHeight: number;
   chapterProgressPercent: number;
+  /** Overall book progress across all chapters (0.0 to 1.0) */
+  bookProgressPercent: number;
   updatedAt: string;
 };
 

@@ -330,7 +330,24 @@ const normalizeBookProgressShape = (book: Book): Book => {
     }
   }
 
-  const normalizedPercent = Number(Math.min(Math.max(percent ?? 0, 0), 1).toFixed(4));
+  let normalizedPercent = Number(Math.min(Math.max(percent ?? 0, 0), 1).toFixed(4));
+
+  // If we're on the last chapter and near the bottom, treat it as 100% complete
+  const totalChapters = book.chapters.length;
+  const isLastChapter = normalizedIndex === totalChapters - 1;
+  if (isLastChapter && normalizedPercent >= 0.95) {
+    // If user is at 95%+ of the last chapter, consider it finished
+    normalizedPercent = 1.0;
+  }
+
+  // Calculate overall book progress across all chapters
+  // Use existing bookProgressPercent if available, otherwise calculate it
+  const bookProgressPercent = typeof progress.bookProgressPercent === "number" &&
+    Number.isFinite(progress.bookProgressPercent)
+    ? Math.min(Math.max(progress.bookProgressPercent, 0), 1)
+    : totalChapters > 0
+    ? Math.min(Math.max((normalizedIndex + normalizedPercent) / totalChapters, 0), 1)
+    : 0;
 
   return {
     ...book,
@@ -344,6 +361,7 @@ const normalizeBookProgressShape = (book: Book): Book => {
       currentChapterScrollHeight: scrollHeight,
       currentChapterClientHeight: clientHeight,
       chapterProgressPercent: normalizedPercent,
+      bookProgressPercent,
       updatedAt: progress.updatedAt ?? new Date().toISOString(),
     },
   };
@@ -360,7 +378,17 @@ export function useLibrary(): UseLibraryReturn {
   const [isHydrated, setIsHydrated] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
 
-  // Progress update debouncers
+  // Progress update debouncers - store pending updates
+  const pendingProgressUpdateRef = useRef<{
+    bookId: string;
+    progress: NonNullable<Book["progress"]>;
+    book: Book;
+  } | null>(null);
+  const pendingAudioUpdateRef = useRef<{
+    bookId: string;
+    audioState: BookAudioState;
+    book: Book;
+  } | null>(null);
   const progressUpdateDebouncerRef = useRef<
     ReturnType<typeof createDebounce> | null
   >(null);
@@ -368,13 +396,61 @@ export function useLibrary(): UseLibraryReturn {
     ReturnType<typeof createDebounce> | null
   >(null);
 
-  // Initialize debouncers
+  // Initialize debouncers with functions that use the pending refs
   useEffect(() => {
-    progressUpdateDebouncerRef.current = createDebounce(() => {}, 200);
-    audioUpdateDebouncerRef.current = createDebounce(() => {}, 150);
+    const progressDebouncer = createDebounce(async () => {
+      const pending = pendingProgressUpdateRef.current;
+      if (!pending) return;
+      
+      try {
+        const updatedBook = await updateBookProgressBackend(
+          pending.bookId,
+          pending.progress,
+        );
+        setLibrary((prev) =>
+          prev.map((b) => (b.id === pending.bookId ? updatedBook : b)),
+        );
+      } catch (error) {
+        console.error("Failed to sync progress to backend", {
+          bookId: pending.bookId,
+          error,
+        });
+        setLibrary((prev) =>
+          prev.map((b) => (b.id === pending.bookId ? pending.book : b)),
+        );
+      } finally {
+        pendingProgressUpdateRef.current = null;
+      }
+    }, 200);
+
+    const audioDebouncer = createDebounce(async () => {
+      const pending = pendingAudioUpdateRef.current;
+      if (!pending) return;
+      
+      try {
+        const updatedBook = await updateBookAudioStateBackend(
+          pending.bookId,
+          pending.audioState,
+        );
+        setLibrary((prev) =>
+          prev.map((b) => (b.id === pending.bookId ? updatedBook : b)),
+        );
+      } catch (error) {
+        console.error("Failed to sync audio state to backend", error);
+        setLibrary((prev) =>
+          prev.map((b) => (b.id === pending.bookId ? pending.book : b)),
+        );
+      } finally {
+        pendingAudioUpdateRef.current = null;
+      }
+    }, 150);
+
+    progressUpdateDebouncerRef.current = progressDebouncer;
+    audioUpdateDebouncerRef.current = audioDebouncer;
+    
     return () => {
-      progressUpdateDebouncerRef.current?.cancel();
-      audioUpdateDebouncerRef.current?.cancel();
+      progressDebouncer.cancel();
+      audioDebouncer.cancel();
     };
   }, []);
 
@@ -512,6 +588,13 @@ export function useLibrary(): UseLibraryReturn {
             percentSource = 0;
           }
 
+          const chapterProgressPercent = getPercentValue(percentSource, 0);
+          // Calculate overall book progress across all chapters
+          const totalChapters = book.chapters.length;
+          const bookProgressPercent = totalChapters > 0
+            ? Math.min(Math.max((chapterIndex + chapterProgressPercent) / totalChapters, 0), 1)
+            : 0;
+
           book = {
             ...book,
             progress: {
@@ -521,7 +604,8 @@ export function useLibrary(): UseLibraryReturn {
               currentChapterScrollTop: storedScrollTop,
               currentChapterScrollHeight: storedScrollHeight,
               currentChapterClientHeight: storedClientHeight,
-              chapterProgressPercent: getPercentValue(percentSource, 0),
+              chapterProgressPercent,
+              bookProgressPercent,
               updatedAt: savedProgress.updatedAt ?? new Date().toISOString(),
             },
           };
@@ -700,6 +784,27 @@ export function useLibrary(): UseLibraryReturn {
         existingProgress?.currentChapterId === chapter.id &&
         existingProgress.currentChapterIndex === chapterIndex;
 
+      let chapterProgressPercent = getPercentValue(
+        payload.percent,
+        chapterMatchesExisting
+          ? getPercentValue(existingProgress?.chapterProgressPercent, 0)
+          : 0,
+      );
+
+      // If we're on the last chapter and near the bottom, treat it as 100% complete
+      const totalChapters = book.chapters.length;
+      const isLastChapter = chapterIndex === totalChapters - 1;
+      if (isLastChapter && chapterProgressPercent >= 0.95) {
+        // If user is at 95%+ of the last chapter, consider it finished
+        chapterProgressPercent = 1.0;
+      }
+
+      // Calculate overall book progress across all chapters
+      // Formula: (completed chapters + current chapter progress) / total chapters
+      const bookProgressPercent = totalChapters > 0
+        ? Math.min(Math.max((chapterIndex + chapterProgressPercent) / totalChapters, 0), 1)
+        : 0;
+
       const nextProgress: NonNullable<Book["progress"]> = {
         currentChapterId: chapter.id,
         currentChapterHref: chapter.href,
@@ -737,12 +842,8 @@ export function useLibrary(): UseLibraryReturn {
             ? getNumberValue(existingProgress?.currentChapterClientHeight, 0)
             : 0,
         ),
-        chapterProgressPercent: getPercentValue(
-          payload.percent,
-          chapterMatchesExisting
-            ? getPercentValue(existingProgress?.chapterProgressPercent, 0)
-            : 0,
-        ),
+        chapterProgressPercent,
+        bookProgressPercent,
         updatedAt: new Date().toISOString(),
       };
 
@@ -754,29 +855,17 @@ export function useLibrary(): UseLibraryReturn {
         prev.map((b) => (b.id === bookId ? { ...b, progress: nextProgress } : b)),
       );
 
+      // Store pending update and trigger debounced backend sync
+      pendingProgressUpdateRef.current = {
+        bookId,
+        progress: nextProgress,
+        book,
+      };
+      
       const debouncer = progressUpdateDebouncerRef.current;
       if (debouncer) {
         debouncer.cancel();
-        debouncer.call(async () => {
-          try {
-            const updatedBook = await updateBookProgressBackend(
-              bookId,
-              nextProgress,
-            );
-            setLibrary((prev) =>
-              prev.map((b) => (b.id === bookId ? updatedBook : b)),
-            );
-          } catch (error) {
-            console.error("Failed to sync progress to backend", {
-              bookId,
-              chapterId: chapter.id,
-              error,
-            });
-            setLibrary((prev) =>
-              prev.map((b) => (b.id === bookId ? book : b)),
-            );
-          }
-        });
+        debouncer.call();
       }
     },
     [library],
@@ -840,25 +929,17 @@ export function useLibrary(): UseLibraryReturn {
         ),
       );
 
+      // Store pending update and trigger debounced backend sync
+      pendingAudioUpdateRef.current = {
+        bookId,
+        audioState: nextAudioState,
+        book,
+      };
+      
       const debouncer = audioUpdateDebouncerRef.current;
       if (debouncer) {
         debouncer.cancel();
-        debouncer.call(async () => {
-          try {
-            const updatedBook = await updateBookAudioStateBackend(
-              bookId,
-              nextAudioState,
-            );
-            setLibrary((prev) =>
-              prev.map((b) => (b.id === bookId ? updatedBook : b)),
-            );
-          } catch (error) {
-            console.error("Failed to sync audio state to backend", error);
-            setLibrary((prev) =>
-              prev.map((b) => (b.id === bookId ? book : b)),
-            );
-          }
-        });
+        debouncer.call();
       }
     },
     [library],

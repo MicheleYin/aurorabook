@@ -6,7 +6,6 @@ pub use converter::*;
 
 use tauri::AppHandle;
 use crate::epub::converter::{extract_chapters, convert_epub_to_audiobook, ConversionOptions, ConversionChapter};
-use crate::book_service::models::Chapter;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::path_validation::validate_file_size;
@@ -99,14 +98,73 @@ pub async fn convert_epub_to_audiobook_command(
     };
     
     // Perform conversion
-    let converted_epub = convert_epub_to_audiobook(epub_data, options, app)
+    let converted_epub = convert_epub_to_audiobook(epub_data, options, app.clone())
         .await
         .map_err(|e| AppError::EpubParse(e.to_string()).with_context("Conversion failed"))?;
     
     // Store converted EPUB
     let converted_base64 = general_purpose::STANDARD.encode(&converted_epub);
     epub_store.set(&key, serde_json::Value::String(converted_base64));
-    epub_store.save();
+    epub_store.save()
+        .map_err(|e| AppError::Store(format!("Failed to save converted EPUB: {}", e)))?;
+    
+    // Extract audio tracks from converted EPUB and update book in library
+    update_book_audio_tracks(&converted_epub, &source_path, &app)
+        .map_err(|e| AppError::Store(format!("Failed to update book audio tracks: {}", e)))?;
+    
+    Ok(())
+}
+
+/// Update book audio tracks after conversion
+/// 
+/// This function parses the converted EPUB to extract audio tracks from the manifest
+/// and updates the corresponding book in the library store.
+fn update_book_audio_tracks(
+    converted_epub: &[u8],
+    source_path: &str,
+    app: &AppHandle,
+) -> Result<(), String> {
+    use crate::book_service::storage::{load_all_books, save_all_books};
+    use crate::epub::parser::{find_opf_path, parse_opf_content, extract_audio_tracks_from_manifest};
+    use std::io::{Cursor, Read};
+    use zip::ZipArchive;
+    
+    // Parse the converted EPUB to extract audio tracks
+    let mut archive = ZipArchive::new(Cursor::new(converted_epub))
+        .map_err(|e| format!("Failed to open converted EPUB: {}", e))?;
+    
+    let opf_path = find_opf_path(&mut archive)
+        .map_err(|e| format!("Failed to find OPF path: {}", e))?;
+    
+    let opf_content = {
+        let mut opf_file = archive.by_name(&opf_path)
+            .map_err(|e| format!("Failed to find OPF at path '{}': {}", opf_path, e))?;
+        let mut content = String::new();
+        opf_file.read_to_string(&mut content)
+            .map_err(|e| format!("Failed to read OPF: {}", e))?;
+        content
+    };
+    
+    let (_metadata, manifest_items, _spine_items) = parse_opf_content(&opf_content)
+        .map_err(|e| format!("Failed to parse OPF content: {}", e))?;
+    
+    let audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
+    
+    // Update book in library
+    let mut books = load_all_books(app)
+        .map_err(|e| format!("Failed to load books: {}", e))?;
+    
+    if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
+        book.audio_tracks = audio_tracks;
+        log::info!("Updated audio tracks for book '{}' ({} tracks)", book.title, book.audio_tracks.len());
+    } else {
+        log::warn!("Book with source_path '{}' not found in library, skipping audio track update", source_path);
+        // Don't return error - book might not be in library yet
+        return Ok(());
+    }
+    
+    save_all_books(app, &books)
+        .map_err(|e| format!("Failed to save books: {}", e))?;
     
     Ok(())
 }

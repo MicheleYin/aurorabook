@@ -382,14 +382,27 @@ pub async fn add_book(
         .map_err(|e| AppError::Store(e))?;
     
     // Check if book with same source_path already exists
-    if books.iter().any(|b| b.source_path == book.source_path) {
-        // Update existing book instead
+    let result_book = if books.iter().any(|b| b.source_path == book.source_path) {
+        // Update existing book instead, but preserve progress and state
         if let Some(existing_index) = books.iter().position(|b| b.source_path == book.source_path) {
-            books[existing_index] = book.clone();
+            let existing_book = &books[existing_index];
+            // Preserve progress, audio_state, audio_sync_map, and page_count from existing book
+            let mut updated_book = book.clone();
+            updated_book.progress = existing_book.progress.clone();
+            updated_book.audio_state = existing_book.audio_state.clone();
+            updated_book.audio_sync_map = existing_book.audio_sync_map.clone();
+            updated_book.page_count = existing_book.page_count;
+            // Preserve the existing book ID to maintain continuity
+            updated_book.id = existing_book.id.clone();
+            books[existing_index] = updated_book.clone();
+            updated_book
+        } else {
+            book.clone()
         }
     } else {
         books.push(book.clone());
-    }
+        book.clone()
+    };
     
     // Store EPUB data if provided
     if let Some(data) = epub_data {
@@ -400,7 +413,7 @@ pub async fn add_book(
     save_all_books(&app, &books)
         .map_err(|e| AppError::Store(e))?;
     
-    Ok(book)
+    Ok(result_book)
 }
 
 /// Get EPUB buffer for a book

@@ -75,6 +75,9 @@ pub struct BookProgress {
     pub current_chapter_scroll_height: f64,
     pub current_chapter_client_height: f64,
     pub chapter_progress_percent: f64,
+    /// Overall book progress across all chapters (0.0 to 1.0)
+    /// Calculated as: (current_chapter_index + chapter_progress_percent) / total_chapters
+    pub book_progress_percent: f64,
     pub updated_at: String,
 }
 

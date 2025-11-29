@@ -25,8 +25,9 @@ pub fn filter_books(books: Vec<Book>, filter: Option<LibraryFilter>) -> Vec<Book
                     filtered
                         .into_iter()
                         .filter(|book| {
-                            book.progress.is_none()
-                                || book.progress.as_ref().unwrap().chapter_progress_percent < MIN_PROGRESS_THRESHOLD
+                            book.progress.as_ref()
+                                .map(|p| p.book_progress_percent < MIN_PROGRESS_THRESHOLD)
+                                .unwrap_or(true) // No progress means "new"
                         })
                         .collect()
                 }
@@ -34,9 +35,12 @@ pub fn filter_books(books: Vec<Book>, filter: Option<LibraryFilter>) -> Vec<Book
                     filtered
                         .into_iter()
                         .filter(|book| {
-                            book.progress.is_some()
-                                && book.progress.as_ref().unwrap().chapter_progress_percent >= MIN_PROGRESS_THRESHOLD
-                                && book.progress.as_ref().unwrap().chapter_progress_percent < MAX_PROGRESS_THRESHOLD
+                            book.progress.as_ref()
+                                .map(|p| {
+                                    p.book_progress_percent >= MIN_PROGRESS_THRESHOLD
+                                        && p.book_progress_percent < MAX_PROGRESS_THRESHOLD
+                                })
+                                .unwrap_or(false)
                         })
                         .collect()
                 }
@@ -44,8 +48,9 @@ pub fn filter_books(books: Vec<Book>, filter: Option<LibraryFilter>) -> Vec<Book
                     filtered
                         .into_iter()
                         .filter(|book| {
-                            book.progress.is_some()
-                                && book.progress.as_ref().unwrap().chapter_progress_percent >= MAX_PROGRESS_THRESHOLD
+                            book.progress.as_ref()
+                                .map(|p| p.book_progress_percent >= MAX_PROGRESS_THRESHOLD)
+                                .unwrap_or(false)
                         })
                         .collect()
                 }
