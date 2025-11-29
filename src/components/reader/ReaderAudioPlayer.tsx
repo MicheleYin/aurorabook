@@ -320,31 +320,28 @@ export function ReaderAudioPlayer({
         isPlayingState: isPlaying,
       });
       
+      // Emit final progress for the ended track
+      emitProgressRef.current(audio.currentTime || 0);
+      
       const nextIndex = currentIndex + 1;
       if (nextIndex < tracks.length) {
         const nextTrack = tracks[nextIndex];
-        console.log("[Audio Player] Moving to next track", {
+        console.log("[Audio Player] Auto-advancing to next track", {
           nextIndex,
           nextTrackId: nextTrack?.id,
           nextTrackTitle: nextTrack?.title,
         });
         
-        // Set playing state BEFORE changing track so the track loading effect sees it
+        // IMPORTANT: Set playing state BEFORE changing track
+        // This ensures setupAudioSource knows we want to continue playing
         isPlayingRef.current = true;
         setIsPlaying(true);
-        console.log("[Audio Player] Set playing state to true before track change", {
-          isPlayingRef: isPlayingRef.current,
-        });
         
-        // Emit progress before changing track
-        emitProgressRef.current(audio.currentTime || 0);
-        
-        // Change track - the track loading effect will handle autoplay
+        // Change track - setupAudioSource will detect isPlayingRef and autoplay
         setCurrentIndex(nextIndex);
       } else {
         console.log("[Audio Player] Last track ended, stopping playback");
-        // Emit final progress
-        emitProgressRef.current(audio.currentTime || 0);
+        // Last track - stop playback
         audio.pause();
         audio.currentTime = 0;
         setCurrentTime(0);
@@ -519,13 +516,15 @@ export function ReaderAudioPlayer({
     lastSetupTrackIdRef.current = track.id;
     
     // Determine if we should autoplay after loading
-    const wasPlaying = isPlayingRef.current || !audio.paused;
-    const shouldAutoplay = wasPlaying;
+    // Check isPlayingRef first (most reliable) - this is set before track changes
+    // Also check audio.paused as fallback (though it may be true after track ends)
+    const shouldAutoplay = isPlayingRef.current;
     
     console.log("[Audio Player] Setting up audio source", {
       trackId: track.id,
       trackTitle: track.title,
-      wasPlaying,
+      isPlayingRef: isPlayingRef.current,
+      audioPaused: audio.paused,
       shouldAutoplay,
       isRestoring: isRestoringRef.current,
     });
@@ -536,13 +535,18 @@ export function ReaderAudioPlayer({
     // Reset restoration flag
     trackLoadedForRestorationRef.current = isRestoringRef.current;
     
-    // Update playing state if we were playing
+    // Update playing state to match shouldAutoplay
+    // Only update if state doesn't match (avoid unnecessary re-renders)
     if (shouldAutoplay) {
-      isPlayingRef.current = true;
-      setIsPlaying(true);
+      if (!isPlayingRef.current) {
+        isPlayingRef.current = true;
+        setIsPlaying(true);
+      }
     } else {
-      setIsPlaying(false);
-      isPlayingRef.current = false;
+      if (isPlayingRef.current) {
+        setIsPlaying(false);
+        isPlayingRef.current = false;
+      }
     }
     
     // Set audio source
@@ -598,14 +602,19 @@ export function ReaderAudioPlayer({
 
     // Prevent duplicate setup
     if (lastSetupTrackIdRef.current === trackWithUrl.id && audio.src === trackUrl) {
+      // Already set up, but check if we need to autoplay (e.g., track just loaded)
+      if (isPlayingRef.current && audio.paused) {
+        console.log("[Audio Player] Track already set up but paused, attempting autoplay");
+        attemptAutoplay(audio, true);
+      }
       return;
     }
 
-    // Setup audio source
+    // Setup audio source (will handle autoplay if isPlayingRef is true)
     const cleanup = setupAudioSource(audio, trackWithUrl);
     
     return cleanup;
-  }, [currentIndex, currentTrack?.id, bookId, setupAudioSource]);
+  }, [currentIndex, currentTrack?.id, bookId, setupAudioSource, loadedCount, attemptAutoplay]);
 
   // Reset setup tracking when track index changes
   useEffect(() => {
@@ -728,14 +737,37 @@ export function ReaderAudioPlayer({
   const playTrackAt = useCallback(
     (nextIndex: number) => {
       if (!tracks[nextIndex]) return;
-      // Just change the track index - the useEffect that loads tracks will handle
+      
+      const audio = audioRef.current;
+      // IMPORTANT: Preserve playing state before changing tracks
+      // Check both the ref and the actual audio element state
+      const wasPlaying = isPlayingRef.current || (audio && !audio.paused);
+      
+      if (wasPlaying) {
+        // Preserve playing state so autoplay happens when new track loads
+        isPlayingRef.current = true;
+        setIsPlaying(true);
+        console.log("[Audio Player] Preserving playing state for track change", {
+          nextIndex,
+          wasPlaying,
+        });
+      } else {
+        // Ensure paused state is maintained
+        isPlayingRef.current = false;
+        setIsPlaying(false);
+      }
+      
+      // Emit progress for current track before changing
+      if (audio && Number.isFinite(audio.currentTime)) {
+        emitProgressRef.current(audio.currentTime);
+      }
+      
+      // Change the track index - the useEffect that loads tracks will handle
       // autoplay based on isPlayingRef.current
       setCurrentIndex(nextIndex);
       // Reset time and duration will be handled by the track loading effect
       setCurrentTime(0);
       setDuration(0);
-      // Don't try to play here - let the track loading effect handle it
-      // The effect will check isPlayingRef.current and autoplay if needed
     },
     [setCurrentIndex, tracks],
   );

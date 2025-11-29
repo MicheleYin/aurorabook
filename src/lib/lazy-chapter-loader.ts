@@ -21,8 +21,11 @@ const chapterCache = new LRUCache<string, { contentHtml: string; plainText: stri
   ttl: 1000 * 60 * 30, // 30 minutes TTL
 });
 
-// Cache for loaded audio track URLs
-const audioTrackCache = new Map<string, string>();
+// Cache for loaded audio track URLs - using LRU cache like chapters
+const audioTrackCache = new LRUCache<string, string>({
+  max: 100, // Keep max 100 audio tracks in memory (more than chapters since they're just URLs)
+  ttl: 1000 * 60 * 30, // 30 minutes TTL
+});
 
 /**
  * Clear cache for a book (useful when book is deleted or updated)
@@ -40,11 +43,11 @@ export function clearBookCache(sourcePath: string): void {
   
   // Clear all audio tracks for this book
   const audioKeysToDelete: string[] = [];
-  audioTrackCache.forEach((_, key) => {
+  for (const key of audioTrackCache.keys()) {
     if (key.startsWith(`${bookId}:`)) {
       audioKeysToDelete.push(key);
     }
-  });
+  }
   audioKeysToDelete.forEach((key) => audioTrackCache.delete(key));
   
   console.debug(`${LOADER_LOG_PREFIX} cleared cache for book`, {
@@ -74,11 +77,11 @@ export function clearAllCachesExcept(sourcePath: string): void {
   
   // Clear all audio track URLs except those for the specified book
   const audioKeysToDelete: string[] = [];
-  audioTrackCache.forEach((_, key) => {
+  for (const key of audioTrackCache.keys()) {
     if (!key.startsWith(`${keepBookId}:`)) {
       audioKeysToDelete.push(key);
     }
-  });
+  }
   audioKeysToDelete.forEach((key) => audioTrackCache.delete(key));
   
   console.debug(`${LOADER_LOG_PREFIX} cleared all caches except book`, {
