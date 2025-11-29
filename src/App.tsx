@@ -259,7 +259,14 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
 
   const handleTrackChange = useCallback((trackHref: string) => {
     // Only change chapters if auto-scroll (sync) is enabled
+    // When auto-scroll is disabled (e.g., after manual chapter selection),
+    // audio should continue playing without changing chapters
     if (!autoScrollEnabled || !activeBook) {
+      console.debug("[App] Track change ignored - auto-scroll disabled or no active book", {
+        trackHref,
+        autoScrollEnabled,
+        hasActiveBook: !!activeBook,
+      });
       return;
     }
 
@@ -477,6 +484,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       </div>
       {showAudioPlayer && activeBook ? (
         <ReaderAudioPlayer
+          key={activeBook.id}
           bookId={activeBook.id}
           tracks={activeBook.audioTracks}
           bookTitle={activeBook.title}
