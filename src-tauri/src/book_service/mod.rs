@@ -700,16 +700,25 @@ pub async fn ingest_epub(
     use uuid::Uuid;
     use std::fs;
     
-    // Handle file:// URL prefix
-    let actual_path = if epub_path.starts_with("file://") {
-        epub_path.replacen("file://", "", 1)
+    // First, try to get EPUB from store (might be converted audiobook)
+    let epub_data = if let Some(stored_data) = get_epub_buffer_from_store(&app, &source_path)
+        .map_err(|e| AppError::Store(format!("Failed to check EPUB store: {}", e)))?
+    {
+        log::info!("Using EPUB from store for source_path: {}", source_path);
+        stored_data
     } else {
-        epub_path.clone()
+        // Fall back to reading from file system
+        // Handle file:// URL prefix
+        let actual_path = if epub_path.starts_with("file://") {
+            epub_path.replacen("file://", "", 1)
+        } else {
+            epub_path.clone()
+        };
+        
+        log::info!("Reading EPUB from file system: {}", actual_path);
+        fs::read(&actual_path)
+            .map_err(|e| AppError::Io(e).with_context(format!("Failed to read EPUB file from path '{}'", actual_path)))?
     };
-    
-    // Read the EPUB file from the file path
-    let epub_data = fs::read(&actual_path)
-        .map_err(|e| AppError::Io(e).with_context(format!("Failed to read EPUB file from path '{}'", actual_path)))?;
     
     // Validate EPUB file size
     validate_file_size(epub_data.len(), MAX_EPUB_SIZE, "EPUB")?;

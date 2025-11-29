@@ -115,17 +115,19 @@ pub async fn convert_epub_to_audiobook_command(
     Ok(())
 }
 
-/// Update book audio tracks after conversion
+/// Update book audio tracks and audio sync map after conversion
 /// 
 /// This function parses the converted EPUB to extract audio tracks from the manifest
-/// and updates the corresponding book in the library store.
+/// and builds the audio sync map from SMIL files, then updates the corresponding book
+/// in the library store.
 fn update_book_audio_tracks(
     converted_epub: &[u8],
     source_path: &str,
     app: &AppHandle,
 ) -> Result<(), String> {
     use crate::book_service::storage::{load_all_books, save_all_books};
-    use crate::epub::parser::{find_opf_path, parse_opf_content, extract_audio_tracks_from_manifest};
+    use crate::epub::parser::{find_opf_path, parse_opf_content, extract_audio_tracks_from_manifest, extract_chapters_from_epub};
+    use crate::epub::converter::smil::build_audio_sync_map;
     use std::io::{Cursor, Read};
     use zip::ZipArchive;
     
@@ -150,13 +152,31 @@ fn update_book_audio_tracks(
     
     let audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
     
+    // Extract chapters from converted EPUB for building audio sync map
+    let (chapters, _) = extract_chapters_from_epub(converted_epub)
+        .map_err(|e| format!("Failed to extract chapters from converted EPUB: {}", e))?;
+    
+    // Build audio sync map from SMIL files
+    let mut archive_for_smil = ZipArchive::new(Cursor::new(converted_epub))
+        .map_err(|e| format!("Failed to open converted EPUB for SMIL parsing: {}", e))?;
+    
+    let audio_sync_map = build_audio_sync_map(&mut archive_for_smil, &chapters)
+        .map_err(|e| format!("Failed to build audio sync map: {}", e))?;
+    
+    if let Some(ref sync_map) = audio_sync_map {
+        log::info!("Built audio sync map with {} segments", sync_map.segments.len());
+    } else {
+        log::warn!("No audio sync map built - no SMIL files found or no segments parsed");
+    }
+    
     // Update book in library
     let mut books = load_all_books(app)
         .map_err(|e| format!("Failed to load books: {}", e))?;
     
     if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
         book.audio_tracks = audio_tracks;
-        log::info!("Updated audio tracks for book '{}' ({} tracks)", book.title, book.audio_tracks.len());
+        book.audio_sync_map = audio_sync_map;
+        log::info!("Updated audio tracks for book '{}' ({} tracks) and audio sync map", book.title, book.audio_tracks.len());
     } else {
         log::warn!("Book with source_path '{}' not found in library, skipping audio track update", source_path);
         // Don't return error - book might not be in library yet
