@@ -49,6 +49,7 @@ type ReaderAudioPlayerProps = {
   onClose?: () => void;
   autoScrollEnabled?: boolean;
   onAutoScrollToggle?: (enabled: boolean) => void;
+  onTrackChange?: (trackHref: string) => void;
 };
 
 export function ReaderAudioPlayer({
@@ -63,6 +64,7 @@ export function ReaderAudioPlayer({
   onClose,
   autoScrollEnabled = true,
   onAutoScrollToggle,
+  onTrackChange,
 }: ReaderAudioPlayerProps) {
   // sourcePath is part of the interface but not currently used
   void sourcePath;
@@ -555,6 +557,11 @@ export function ReaderAudioPlayer({
     // Notify hook about track change
     onTrackChanged(track.id);
     
+    // Notify parent about track change (for chapter sync)
+    if (onTrackChange) {
+      onTrackChange(track.href);
+    }
+    
     // Reset restoration flag
     trackLoadedForRestorationRef.current = isRestoringRef.current;
     
@@ -603,7 +610,7 @@ export function ReaderAudioPlayer({
     return () => {
       audio.removeEventListener("canplay", handleCanPlay);
     };
-  }, [playbackRate, onTrackChanged, tryPlayIfReady, attemptAutoplay]);
+  }, [playbackRate, onTrackChanged, onTrackChange, tryPlayIfReady, attemptAutoplay]);
 
   // Simplified: Main track loading effect - only runs when track or index changes
   useEffect(() => {

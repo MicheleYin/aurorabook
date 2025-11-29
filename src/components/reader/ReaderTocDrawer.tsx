@@ -16,6 +16,7 @@ import { cn } from "../../lib/utils";
 import { anim } from "../../lib/animations";
 import { ScrollArea } from "../ui/scroll-area";
 import { ChapterList } from "./ChapterList";
+import React from "react";
 
 type ReaderTocDrawerProps = {
   book: Book;

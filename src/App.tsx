@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { LibraryPanel } from "./components/LibraryPanel";
@@ -19,6 +19,7 @@ import { useResolvedTheme } from "./hooks/useResolvedTheme";
 import type { ChapterSelectionOptions, AudioProgressSnapshot } from "./components/reader/types";
 import { cn } from "./lib/utils";
 import { animPatterns, viewTransition } from "./lib/animations";
+import { findChaptersForAudioTrack } from "./lib/epub";
 
 function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary> }) {
   const {
@@ -204,6 +205,41 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   const handleAutoScrollToggle = useCallback((enabled: boolean) => {
     setAutoScrollEnabled(enabled);
     updateSettings({ autoScrollEnabled: enabled });
+    
+    // When enabling sync, sync the chapter to the current audio track
+    if (enabled && currentAudioTrackHref && activeBook) {
+      // Find chapters that use this audio track
+      const chapterHrefs = findChaptersForAudioTrack(activeBook.audioSyncMap, currentAudioTrackHref);
+      if (chapterHrefs.length > 0) {
+        // Find the first matching chapter by comparing hrefs
+        // Normalize hrefs by removing fragment identifiers for comparison
+        const normalizedChapterHrefs = chapterHrefs.map(href => href.split("#")[0]);
+        
+        const matchingChapter = activeBook.chapters.find((chapter) => {
+          const chapterBaseHref = chapter.href.split("#")[0];
+          return normalizedChapterHrefs.some(normalizedHref => {
+            // Compare with and without OEBPS prefix
+            return chapterBaseHref === normalizedHref ||
+                   chapterBaseHref === normalizedHref.replace(/^OEBPS\//, "") ||
+                   chapterBaseHref === `OEBPS/${normalizedHref}` ||
+                   `OEBPS/${chapterBaseHref}` === normalizedHref;
+          });
+        });
+
+        if (matchingChapter && matchingChapter.id !== activeChapterId) {
+          console.log("[App] Syncing chapter to current audio track", {
+            trackHref: currentAudioTrackHref,
+            chapterId: matchingChapter.id,
+            chapterTitle: matchingChapter.title,
+          });
+          handleSelectChapter(matchingChapter.id, {
+            scrollPosition: "top",
+            isManualSelection: false,
+          });
+        }
+      }
+    }
+    
     if (enabled) {
       toast.success("Auto-scroll enabled", {
         description: "The page will automatically scroll to follow the audio",
@@ -215,7 +251,48 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
         duration: 2000,
       });
     }
-  }, [setAutoScrollEnabled, updateSettings]);
+  }, [setAutoScrollEnabled, updateSettings, currentAudioTrackHref, activeBook, activeChapterId, handleSelectChapter]);
+
+  const handleTrackChange = useCallback((trackHref: string) => {
+    // Only change chapters if auto-scroll (sync) is enabled
+    if (!autoScrollEnabled || !activeBook) {
+      return;
+    }
+
+    // Find chapters that use this audio track
+    const chapterHrefs = findChaptersForAudioTrack(activeBook.audioSyncMap, trackHref);
+    if (chapterHrefs.length === 0) {
+      console.debug("[App] No chapters found for audio track", { trackHref });
+      return;
+    }
+
+    // Find the first matching chapter by comparing hrefs
+    // Normalize hrefs by removing fragment identifiers for comparison
+    const normalizedChapterHrefs = chapterHrefs.map(href => href.split("#")[0]);
+    
+    const matchingChapter = activeBook.chapters.find((chapter) => {
+      const chapterBaseHref = chapter.href.split("#")[0];
+      return normalizedChapterHrefs.some(normalizedHref => {
+        // Compare with and without OEBPS prefix
+        return chapterBaseHref === normalizedHref ||
+               chapterBaseHref === normalizedHref.replace(/^OEBPS\//, "") ||
+               chapterBaseHref === `OEBPS/${normalizedHref}` ||
+               `OEBPS/${chapterBaseHref}` === normalizedHref;
+      });
+    });
+
+    if (matchingChapter && matchingChapter.id !== activeChapterId) {
+      console.log("[App] Changing chapter to match audio track", {
+        trackHref,
+        chapterId: matchingChapter.id,
+        chapterTitle: matchingChapter.title,
+      });
+      handleSelectChapter(matchingChapter.id, {
+        scrollPosition: "top",
+        isManualSelection: false,
+      });
+    }
+  }, [autoScrollEnabled, activeBook, activeChapterId, handleSelectChapter]);
 
   // Auto-open audio player when switching to reader view
   useEffect(() => {
@@ -410,6 +487,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
           autoScrollEnabled={autoScrollEnabled}
           onAutoScrollToggle={handleAutoScrollToggle}
           onRestorationStateChange={setIsAudioRestoring}
+          onTrackChange={handleTrackChange}
         />
       ) : null}
       <div

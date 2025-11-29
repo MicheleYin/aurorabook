@@ -4,7 +4,7 @@ import { Button } from "../ui/button";
 import type { ChapterSelectionOptions } from "./types";
 import { findChaptersForAudioTrack } from "../../lib/epub";
 import { anim } from "../../lib/animations";
-
+import React from "react";
 type ChapterListProps = {
   book: Book;
   activeChapterId?: string;
@@ -62,7 +62,11 @@ export function ChapterList({
               boxSizing: "border-box",
             }}
             onClick={() => {
-              onSelectChapter(chapter.id, { fragment: chapter.id, isManualSelection: true });
+              onSelectChapter(chapter.id, { 
+                fragment: chapter.id, 
+                isManualSelection: true,
+                scrollPosition: "top"
+              });
               onAfterSelect?.();
             }}
           >

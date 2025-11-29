@@ -657,11 +657,6 @@ export function ReaderViewport({
 
   // Handle audio sync highlighting
   useEffect(() => {
-    if (isAudioRestoring) {
-      console.debug("[Audio Sync] Skipping highlight update - audio is restoring");
-      return;
-    }
-
     if (
       !activeBook?.audioSyncMap ||
       !currentAudioTrackHref ||
@@ -802,7 +797,6 @@ export function ReaderViewport({
     activeChapter?.id,
     activeChapter?.href,
     autoScrollEnabled,
-    isAudioRestoring,
     audioPlayerVisible,
   ]);
 

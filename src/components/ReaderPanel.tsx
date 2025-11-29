@@ -8,8 +8,7 @@ import { ReaderViewport } from "./reader/ReaderViewport";
 import { cn } from "../lib/utils";
 import { animPatterns, enterExit, anim } from "../lib/animations";
 import { Button } from "./ui/button";
-import { computeScrollMetrics } from "../lib/scroll-utils";
-
+import React from "react";
 type ReaderPanelProps = ReaderPanelBaseProps & {
   resolvedUiTheme: "light" | "dark";
   onChromeVisibilityChange?: (visible: boolean) => void;
