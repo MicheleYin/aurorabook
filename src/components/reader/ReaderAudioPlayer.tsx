@@ -606,16 +606,9 @@ export function ReaderAudioPlayer({
     // Also check if we're auto-advancing (track ended and moving to next) or manually changing tracks
     const shouldAutoplay = isPlayingRef.current || isAutoAdvancingRef.current;
     
-    // Clear auto-advancing flag once we've set up the source
-    // This flag is set both for auto-advance (track ended) and manual track changes
-    if (isAutoAdvancingRef.current) {
-      isAutoAdvancingRef.current = false;
-      // Ensure playing state is set if we were trying to continue playing
-      if (shouldAutoplay) {
-        isPlayingRef.current = true;
-        setIsPlaying(true);
-      }
-    }
+    // Don't clear auto-advancing flag yet - keep it until audio actually starts playing
+    // This prevents the timeupdate handler from resetting the playing state
+    // The flag will be cleared when playback actually starts (in the event handlers)
     
     console.log("[Audio Player] Setting up audio source", {
       trackId: track.id,
@@ -666,22 +659,113 @@ export function ReaderAudioPlayer({
     
     // Try immediate play if audio is already ready (cached)
     if (tryPlayIfReady(audio, shouldAutoplay)) {
+      // Clear auto-advancing flag once playback actually starts
+      if (shouldAutoplay && !audio.paused) {
+        isAutoAdvancingRef.current = false;
+      }
       return; // Already playing, no need for event listener
     }
     
-    // Set up event listener for when audio becomes ready
+    // Set up event listeners for when audio becomes ready
+    // Use multiple events to ensure we catch when audio is ready
+    let cleanupCalled = false;
+    
     const handleCanPlay = () => {
-      audio.removeEventListener("canplay", handleCanPlay);
-      if (shouldAutoplay) {
-        attemptAutoplay(audio, true);
+      if (cleanupCalled) return;
+      if (shouldAutoplay && audio.paused) {
+        console.log("[Audio Player] canplay event - attempting autoplay", {
+          trackId: track.id,
+          shouldAutoplay,
+          audioPaused: audio.paused,
+        });
+        attemptAutoplay(audio, true).then((success) => {
+          if (success) {
+            // Clear auto-advancing flag once playback actually starts
+            isAutoAdvancingRef.current = false;
+          }
+        });
+      }
+    };
+    
+    const handleCanPlayThrough = () => {
+      if (cleanupCalled) return;
+      if (shouldAutoplay && audio.paused) {
+        console.log("[Audio Player] canplaythrough event - attempting autoplay", {
+          trackId: track.id,
+          shouldAutoplay,
+          audioPaused: audio.paused,
+        });
+        attemptAutoplay(audio, true).then((success) => {
+          if (success) {
+            // Clear auto-advancing flag once playback actually starts
+            isAutoAdvancingRef.current = false;
+          }
+        });
+      }
+    };
+    
+    const handleLoadedData = () => {
+      if (cleanupCalled) return;
+      // Only try autoplay on loadeddata if canplay hasn't fired yet
+      // This is a fallback for very fast loads
+      if (shouldAutoplay && audio.paused && audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+        console.log("[Audio Player] loadeddata event - attempting autoplay", {
+          trackId: track.id,
+          shouldAutoplay,
+          audioPaused: audio.paused,
+          readyState: audio.readyState,
+        });
+        attemptAutoplay(audio, true).then((success) => {
+          if (success) {
+            // Clear auto-advancing flag once playback actually starts
+            isAutoAdvancingRef.current = false;
+          }
+        });
+      }
+    };
+    
+    // Listen for when playback actually starts to clear the auto-advancing flag
+    const handlePlaying = () => {
+      if (isAutoAdvancingRef.current) {
+        console.log("[Audio Player] Playback started - clearing auto-advancing flag", {
+          trackId: track.id,
+        });
+        isAutoAdvancingRef.current = false;
       }
     };
     
     audio.addEventListener("canplay", handleCanPlay);
+    audio.addEventListener("canplaythrough", handleCanPlayThrough);
+    audio.addEventListener("loadeddata", handleLoadedData);
+    audio.addEventListener("playing", handlePlaying);
+    
+    // Also try to play after a short delay as a fallback
+    // This handles cases where events don't fire reliably
+    const fallbackTimeout = setTimeout(() => {
+      if (!cleanupCalled && shouldAutoplay && audio.paused && audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+        console.log("[Audio Player] Fallback timeout - attempting autoplay", {
+          trackId: track.id,
+          shouldAutoplay,
+          audioPaused: audio.paused,
+          readyState: audio.readyState,
+        });
+        attemptAutoplay(audio, true).then((success) => {
+          if (success) {
+            // Clear auto-advancing flag once playback actually starts
+            isAutoAdvancingRef.current = false;
+          }
+        });
+      }
+    }, 100);
     
     // Return cleanup function
     return () => {
+      cleanupCalled = true;
+      clearTimeout(fallbackTimeout);
       audio.removeEventListener("canplay", handleCanPlay);
+      audio.removeEventListener("canplaythrough", handleCanPlayThrough);
+      audio.removeEventListener("loadeddata", handleLoadedData);
+      audio.removeEventListener("playing", handlePlaying);
     };
   }, [playbackRate, onTrackChanged, onTrackChange, tryPlayIfReady, attemptAutoplay]);
 
@@ -1281,19 +1365,19 @@ export function ReaderAudioPlayer({
             aria-label="Seek audio"
             />
           <span className="text-xs tabular-nums text-muted-foreground min-w-[5rem] relative">
-            {duration > 0 ? (
-              <span
-                key="duration"
-                className="inline-block transition-opacity duration-300 ease-in-out animate-in fade-in"
-              >
-                {formatTime(duration)}
-              </span>
-            ) : (
+            {currentTrack && (currentTrack.url || loadedTrackUrlsRef.current.has(currentTrack.id)) ? (
               <span
                 key="current-only"
                 className="inline-block transition-opacity duration-300 ease-in-out animate-in fade-in"
               >
-                {formatTime(displayedCurrentTime)}
+                {duration > 0 ? formatTime(duration) : "--:--"}
+              </span>
+            ) : (
+              <span
+                key="placeholder"
+                className="inline-block transition-opacity duration-300 ease-in-out animate-in fade-in"
+              >
+                --:--
               </span>
             )}
           </span>
