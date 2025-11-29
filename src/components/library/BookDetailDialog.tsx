@@ -18,7 +18,6 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "../ui/drawer";
-import React from "react";
 import { cn, formatDurationShort, getBookProgressSummary } from "../../lib/utils";
 import { dialogSectionStagger } from "../../lib/animations";
 import { useAnimatedNumber } from "../../hooks/use-animated-number";

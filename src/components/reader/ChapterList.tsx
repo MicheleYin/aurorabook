@@ -4,7 +4,6 @@ import { Button } from "../ui/button";
 import type { ChapterSelectionOptions } from "./types";
 import { findChaptersForAudioTrack } from "../../lib/epub";
 import { anim } from "../../lib/animations";
-import React from "react";
 type ChapterListProps = {
   book: Book;
   activeChapterId?: string;

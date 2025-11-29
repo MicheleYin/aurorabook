@@ -67,7 +67,7 @@ export function ReaderViewport({
   currentAudioTime,
   currentAudioTrackHref,
   autoScrollEnabled = true,
-  isAudioRestoring = false,
+  isAudioRestoring: _isAudioRestoring = false,
   onSaveProgress,
 }: ReaderViewportProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);

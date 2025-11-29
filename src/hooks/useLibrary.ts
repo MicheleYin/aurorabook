@@ -27,7 +27,6 @@ import {
   getChapterPageCount,
   getChapterWordCount,
 } from "../lib/utils";
-import { findChaptersForAudioTrack } from "../lib/epub";
 import {
   getCurrentScrollMetrics,
   createProgressSnapshot,
@@ -45,7 +44,6 @@ import type {
 import type {
   ChapterProgressSnapshot,
   AudioProgressSnapshot,
-  ChapterSelectionOptions,
 } from "../components/reader/types";
 
 // ============================================================================

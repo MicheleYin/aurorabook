@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
  * Useful for detecting changes without causing re-renders.
  */
 export function usePrevious<T>(value: T): T | undefined {
-  const ref = useRef<T>();
+  const ref = useRef<T | undefined>(undefined);
   useEffect(() => {
     ref.current = value;
   }, [value]);

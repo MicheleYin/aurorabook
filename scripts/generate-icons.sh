@@ -48,16 +48,27 @@ rm -rf "$ICONSET_DIR"
 mkdir -p "$ICONSET_DIR"
 
 # Create all required sizes for .icns
-resize_image 16 "$ICONSET_DIR/icon_16x16.png"
-resize_image 32 "$ICONSET_DIR/icon_16x16@2x.png"
-resize_image 32 "$ICONSET_DIR/icon_32x32.png"
-resize_image 64 "$ICONSET_DIR/icon_32x32@2x.png"
-resize_image 128 "$ICONSET_DIR/icon_128x128.png"
-resize_image 256 "$ICONSET_DIR/icon_128x128@2x.png"
-resize_image 256 "$ICONSET_DIR/icon_256x256.png"
-resize_image 512 "$ICONSET_DIR/icon_256x256@2x.png"
-resize_image 512 "$ICONSET_DIR/icon_512x512.png"
-resize_image 1024 "$ICONSET_DIR/icon_512x512@2x.png"
+# Use direct paths for iconset files since resize_image prepends ICONS_DIR
+echo "  Creating icon_16x16.png (16x16)..."
+sips -z 16 16 "$SOURCE_IMAGE" --out "$ICONSET_DIR/icon_16x16.png" > /dev/null 2>&1
+echo "  Creating icon_16x16@2x.png (32x32)..."
+sips -z 32 32 "$SOURCE_IMAGE" --out "$ICONSET_DIR/icon_16x16@2x.png" > /dev/null 2>&1
+echo "  Creating icon_32x32.png (32x32)..."
+sips -z 32 32 "$SOURCE_IMAGE" --out "$ICONSET_DIR/icon_32x32.png" > /dev/null 2>&1
+echo "  Creating icon_32x32@2x.png (64x64)..."
+sips -z 64 64 "$SOURCE_IMAGE" --out "$ICONSET_DIR/icon_32x32@2x.png" > /dev/null 2>&1
+echo "  Creating icon_128x128.png (128x128)..."
+sips -z 128 128 "$SOURCE_IMAGE" --out "$ICONSET_DIR/icon_128x128.png" > /dev/null 2>&1
+echo "  Creating icon_128x128@2x.png (256x256)..."
+sips -z 256 256 "$SOURCE_IMAGE" --out "$ICONSET_DIR/icon_128x128@2x.png" > /dev/null 2>&1
+echo "  Creating icon_256x256.png (256x256)..."
+sips -z 256 256 "$SOURCE_IMAGE" --out "$ICONSET_DIR/icon_256x256.png" > /dev/null 2>&1
+echo "  Creating icon_256x256@2x.png (512x512)..."
+sips -z 512 512 "$SOURCE_IMAGE" --out "$ICONSET_DIR/icon_256x256@2x.png" > /dev/null 2>&1
+echo "  Creating icon_512x512.png (512x512)..."
+sips -z 512 512 "$SOURCE_IMAGE" --out "$ICONSET_DIR/icon_512x512.png" > /dev/null 2>&1
+echo "  Creating icon_512x512@2x.png (1024x1024)..."
+sips -z 1024 1024 "$SOURCE_IMAGE" --out "$ICONSET_DIR/icon_512x512@2x.png" > /dev/null 2>&1
 
 # Generate .icns using iconutil
 iconutil -c icns "$ICONSET_DIR" -o "$ICONSET_DIR/../icon.icns"
