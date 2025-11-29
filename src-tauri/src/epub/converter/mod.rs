@@ -23,6 +23,9 @@ use tauri::{AppHandle, Emitter};
 /// # Fields
 /// * `current_chapter` - The chapter currently being processed (1-indexed)
 /// * `total_chapters` - Total number of chapters to process
+/// * `words_processed` - Number of words processed so far
+/// * `total_words` - Total number of words across all chapters
+/// * `words_in_current_chapter` - Number of words in the current chapter
 /// * `current_step` - Current processing step (e.g., "generating-audio", "merging-audio")
 /// * `message` - Human-readable progress message
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +33,9 @@ use tauri::{AppHandle, Emitter};
 pub struct ConversionProgress {
     pub current_chapter: usize,
     pub total_chapters: usize,
+    pub words_processed: usize,
+    pub total_words: usize,
+    pub words_in_current_chapter: usize,
     pub current_step: String,
     pub message: String,
 }
@@ -43,12 +49,14 @@ pub struct ConversionProgress {
 /// * `title` - Chapter title extracted from HTML or metadata
 /// * `href` - Relative path to the chapter file within the EPUB
 /// * `content_html` - Full HTML content of the chapter
+/// * `word_count` - Number of words in this chapter
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversionChapter {
     pub id: String,
     pub title: String,
     pub href: String,
     pub content_html: String,
+    pub word_count: usize,
 }
 
 /// Options for EPUB to audiobook conversion.
@@ -67,6 +75,28 @@ pub struct ConversionOptions {
 /// Emit progress update to frontend
 pub fn emit_progress(app: &AppHandle, progress: ConversionProgress) {
     let _ = app.emit("conversion-progress", progress);
+}
+
+/// Count words in HTML content by extracting text and counting word boundaries.
+///
+/// This function parses HTML, extracts all text content, and counts words
+/// by splitting on whitespace and filtering out empty strings.
+///
+/// # Arguments
+/// * `html` - HTML content to count words in
+///
+/// # Returns
+/// The number of words in the HTML content
+fn count_words_in_html(html: &str) -> usize {
+    use scraper::Html;
+    
+    let document = Html::parse_document(html);
+    let text = document.root_element().text().collect::<String>();
+    
+    // Split by whitespace and count non-empty segments
+    text.split_whitespace()
+        .filter(|s| !s.is_empty())
+        .count()
 }
 
 /// Get the number of CPU cores for parallel processing.
@@ -216,11 +246,15 @@ pub fn extract_chapters(epub_data: Vec<u8>) -> AppResult<(Vec<ConversionChapter>
             chapter_meta.title.clone()
         };
         
+        // Calculate word count for this chapter
+        let word_count = count_words_in_html(&content);
+        
         chapters.push(ConversionChapter {
             id: format!("{}-{}", Uuid::new_v4().to_string(), chapter_meta.id),
             title,
             href: validated_href,
             content_html: content,
+            word_count,
         });
     }
     
@@ -250,9 +284,15 @@ where
     
     let parallelism = get_parallelism();
     
+    // Calculate total words across all chapters
+    let total_words: usize = options.chapters.iter().map(|c| c.word_count).sum();
+    
     progress_callback(ConversionProgress {
         current_chapter: 0,
         total_chapters: options.chapters.len(),
+        words_processed: 0,
+        total_words,
+        words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
         message: format!("Initializing TTS engine (using {} cores)...", parallelism),
     });
@@ -289,13 +329,21 @@ where
     // Validate chapter count
     validate_chapter_count(options.chapters.len(), MAX_CHAPTERS)?;
     
+    // Track words processed across all chapters
+    let mut words_processed = 0;
+    
     // Process each chapter
     for (chapter_index, chapter) in options.chapters.iter().enumerate() {
+        let chapter_word_count = chapter.word_count;
+        
         progress_callback(ConversionProgress {
             current_chapter: chapter_index + 1,
             total_chapters: options.chapters.len(),
+            words_processed,
+            total_words,
+            words_in_current_chapter: chapter_word_count,
             current_step: "generating-audio".to_string(),
-            message: format!("Generating audio for chapter {}: {}", chapter_index + 1, chapter.title),
+            message: format!("Generating audio for chapter {}: {} ({} words)", chapter_index + 1, chapter.title, chapter_word_count),
         });
         
         // Validate chapter content size
@@ -316,8 +364,21 @@ where
                 format!("OEBPS/{}", chapter.href)
             };
             zip_files.insert(chapter_path, updated_html.into_bytes());
+            // Chapter has no words, mark as complete
+            words_processed += chapter_word_count;
             continue;
         }
+        
+        // Calculate words per chunk for progress tracking
+        let total_chunk_words: usize = chunks.iter().map(|(_, text)| {
+            text.split_whitespace().filter(|s| !s.is_empty()).count()
+        }).sum();
+        let words_per_chunk = if chunks.len() > 0 {
+            total_chunk_words / chunks.len()
+        } else {
+            0
+        };
+        let mut chunks_processed = 0;
         
         // Generate audio for chunks
         let mut audio_data_arrays: Vec<Vec<u8>> = Vec::new();
@@ -359,8 +420,30 @@ where
                     current_time + duration,
                 ));
                 current_time += duration;
+                
+                // Update progress as chunks are processed
+                chunks_processed += 1;
+                let estimated_words_processed_in_chapter = (chunks_processed * words_per_chunk).min(chapter_word_count);
+                let current_words_processed = words_processed + estimated_words_processed_in_chapter;
+                
+                // Emit progress update every few chunks to avoid too many updates
+                if chunks_processed % parallelism == 0 || chunks_processed == chunks.len() {
+                    progress_callback(ConversionProgress {
+                        current_chapter: chapter_index + 1,
+                        total_chapters: options.chapters.len(),
+                        words_processed: current_words_processed,
+                        total_words,
+                        words_in_current_chapter: chapter_word_count,
+                        current_step: "generating-audio".to_string(),
+                        message: format!("Generating audio for chapter {}: {} ({}/{} words)", 
+                            chapter_index + 1, chapter.title, estimated_words_processed_in_chapter, chapter_word_count),
+                    });
+                }
             }
         }
+        
+        // Mark chapter words as fully processed
+        words_processed += chapter_word_count;
         
         if audio_data_arrays.is_empty() {
             // Create minimal silence
@@ -377,6 +460,9 @@ where
         progress_callback(ConversionProgress {
             current_chapter: chapter_index + 1,
             total_chapters: options.chapters.len(),
+            words_processed,
+            total_words,
+            words_in_current_chapter: chapter_word_count,
             current_step: "merging-audio".to_string(),
             message: format!("Merging audio for chapter {}...", chapter_index + 1),
         });
@@ -388,6 +474,9 @@ where
         progress_callback(ConversionProgress {
             current_chapter: chapter_index + 1,
             total_chapters: options.chapters.len(),
+            words_processed,
+            total_words,
+            words_in_current_chapter: chapter_word_count,
             current_step: "converting-audio".to_string(),
             message: format!("Converting audio to MP3 for chapter {}...", chapter_index + 1),
         });
@@ -440,6 +529,9 @@ where
         progress_callback(ConversionProgress {
             current_chapter: chapter_index + 1,
             total_chapters: options.chapters.len(),
+            words_processed,
+            total_words,
+            words_in_current_chapter: chapter_word_count,
             current_step: "creating-smil".to_string(),
             message: format!("Creating SMIL file for chapter {}...", chapter_index + 1),
         });
@@ -490,6 +582,9 @@ where
     progress_callback(ConversionProgress {
         current_chapter: options.chapters.len(),
         total_chapters: options.chapters.len(),
+        words_processed,
+        total_words,
+        words_in_current_chapter: 0,
         current_step: "updating-epub".to_string(),
         message: "Updating EPUB metadata...".to_string(),
     });
@@ -546,6 +641,9 @@ where
     progress_callback(ConversionProgress {
         current_chapter: options.chapters.len(),
         total_chapters: options.chapters.len(),
+        words_processed,
+        total_words,
+        words_in_current_chapter: 0,
         current_step: "complete".to_string(),
         message: "Completing conversion...".to_string(),
     });
@@ -617,12 +715,18 @@ pub async fn convert_epub_to_audiobook(
         emit_progress(&app_progress, progress);
     });
     
+    // Calculate total words
+    let total_words: usize = options.chapters.iter().map(|c| c.word_count).sum();
+    
     // Emit initial progress event when conversion starts
     progress_callback(ConversionProgress {
         current_chapter: 0,
         total_chapters: options.chapters.len(),
+        words_processed: 0,
+        total_words,
+        words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
-        message: format!("Starting conversion of {} chapters...", options.chapters.len()),
+        message: format!("Starting conversion of {} chapters ({} words)...", options.chapters.len(), total_words),
     });
     
     // Find model files
@@ -651,6 +755,9 @@ pub async fn convert_epub_to_audiobook(
     progress_callback(ConversionProgress {
         current_chapter: 0,
         total_chapters: options.chapters.len(),
+        words_processed: 0,
+        total_words,
+        words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
         message: format!("TTS engine pool created with {} instances", parallelism),
     });

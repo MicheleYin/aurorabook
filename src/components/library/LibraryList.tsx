@@ -88,8 +88,10 @@ export function LibraryList({
           : "Chapters: Not available";
         const conversionProgress = bookConversionProgress[book.id];
         const isConverting = Boolean(conversionProgress);
-        const conversionPercent = conversionProgress
-          ? Math.round((conversionProgress.currentChapter / conversionProgress.totalChapters) * 100)
+        const conversionPercent = conversionProgress && conversionProgress.totalWords > 0
+          ? Math.min(100, Math.max(0, Math.round((conversionProgress.wordsProcessed / conversionProgress.totalWords) * 100)))
+          : conversionProgress && conversionProgress.totalChapters > 0
+          ? Math.min(100, Math.max(0, Math.round((conversionProgress.currentChapter / conversionProgress.totalChapters) * 100)))
           : 0;
           
         return (
@@ -135,7 +137,9 @@ export function LibraryList({
                 <div className="space-y-1">
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-muted-foreground">
-                      Converting: {conversionProgress.currentChapter}/{conversionProgress.totalChapters}
+                      {conversionProgress.totalWords > 0
+                        ? `${conversionProgress.wordsProcessed.toLocaleString()}/${conversionProgress.totalWords.toLocaleString()} words`
+                        : `Converting: ${conversionProgress.currentChapter}/${conversionProgress.totalChapters}`}
                     </span>
                     <span className="font-medium">{conversionPercent}%</span>
                   </div>

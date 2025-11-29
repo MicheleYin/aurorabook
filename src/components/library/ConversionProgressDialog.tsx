@@ -21,8 +21,10 @@ export function ConversionProgressDialog({
   progress,
   bookTitle,
 }: ConversionProgressDialogProps) {
-  const targetProgressPercent = progress
-    ? Math.round((progress.currentChapter / progress.totalChapters) * 100)
+  const targetProgressPercent = progress && progress.totalWords > 0
+    ? Math.min(100, Math.max(0, Math.round((progress.wordsProcessed / progress.totalWords) * 100)))
+    : progress && progress.totalChapters > 0
+    ? Math.min(100, Math.max(0, Math.round((progress.currentChapter / progress.totalChapters) * 100)))
     : 0;
   
   // Animate the percentage number counting up
@@ -52,7 +54,9 @@ export function ConversionProgressDialog({
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">
-                    Chapter {progress.currentChapter} of {progress.totalChapters}
+                    {progress.totalWords > 0 
+                      ? `${progress.wordsProcessed.toLocaleString()} / ${progress.totalWords.toLocaleString()} words`
+                      : `Chapter ${progress.currentChapter} of ${progress.totalChapters}`}
                   </span>
                   <span className="font-medium">{animatedProgressPercent}%</span>
                 </div>

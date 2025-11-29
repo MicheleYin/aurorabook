@@ -61,6 +61,9 @@ pub async fn convert_epub_to_audiobook_command(
     emit_progress(&app, ConversionProgress {
         current_chapter: 0,
         total_chapters: 0,
+        words_processed: 0,
+        total_words: 0,
+        words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
         message: "Starting conversion...".to_string(),
     });
@@ -83,6 +86,9 @@ pub async fn convert_epub_to_audiobook_command(
     emit_progress(&app, ConversionProgress {
         current_chapter: 0,
         total_chapters: 0,
+        words_processed: 0,
+        total_words: 0,
+        words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
         message: "Extracting chapters from EPUB...".to_string(),
     });
@@ -106,6 +112,7 @@ pub async fn convert_epub_to_audiobook_command(
         title: c.title,
         href: c.href,
         content_html: c.content_html,
+        word_count: c.word_count,
     }).collect();
     
     let options = ConversionOptions {
@@ -113,12 +120,18 @@ pub async fn convert_epub_to_audiobook_command(
         chapters: conversion_chapters.clone(),
     };
     
+    // Calculate total words for progress tracking
+    let total_words: usize = conversion_chapters.iter().map(|c| c.word_count).sum();
+    
     // Emit progress with chapter count before starting conversion
     emit_progress(&app, ConversionProgress {
         current_chapter: 0,
         total_chapters: conversion_chapters.len(),
+        words_processed: 0,
+        total_words,
+        words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
-        message: format!("Found {} chapters. Preparing conversion...", conversion_chapters.len()),
+        message: format!("Found {} chapters ({} words total). Preparing conversion...", conversion_chapters.len(), total_words),
     });
     
     // Perform conversion

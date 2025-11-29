@@ -5,6 +5,9 @@ import type { VoiceId } from "../types/reader";
 export type ConversionProgress = {
   currentChapter: number;
   totalChapters: number;
+  wordsProcessed: number;
+  totalWords: number;
+  wordsInCurrentChapter: number;
   currentStep: "initializing" | "generating-audio" | "merging-audio" | "creating-smil" | "updating-epub" | "complete";
   message: string;
 };
@@ -35,6 +38,9 @@ export async function convertEpubToAudiobook(
   onProgress?.({
     currentChapter: 0,
     totalChapters: 0,
+    wordsProcessed: 0,
+    totalWords: 0,
+    wordsInCurrentChapter: 0,
     currentStep: "initializing",
     message: "Starting conversion...",
   });
@@ -46,6 +52,9 @@ export async function convertEpubToAudiobook(
     const progress: ConversionProgress = {
       currentChapter: payload.currentChapter ?? payload.current_chapter ?? 0,
       totalChapters: payload.totalChapters ?? payload.total_chapters ?? 0,
+      wordsProcessed: payload.wordsProcessed ?? payload.words_processed ?? 0,
+      totalWords: payload.totalWords ?? payload.total_words ?? 0,
+      wordsInCurrentChapter: payload.wordsInCurrentChapter ?? payload.words_in_current_chapter ?? 0,
       currentStep: payload.currentStep ?? payload.current_step ?? "initializing",
       message: payload.message ?? "",
     };

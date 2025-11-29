@@ -266,9 +266,11 @@ export function BookDetailDialog({
   
   const displayProgress = conversionProgress;
   
-  // Animate conversion progress percentage
-  const targetConversionPercent = displayProgress
-    ? Math.round((displayProgress.currentChapter / displayProgress.totalChapters) * 100)
+  // Animate conversion progress percentage (based on words, fallback to chapters)
+  const targetConversionPercent = displayProgress && displayProgress.totalWords > 0
+    ? Math.min(100, Math.max(0, Math.round((displayProgress.wordsProcessed / displayProgress.totalWords) * 100)))
+    : displayProgress && displayProgress.totalChapters > 0
+    ? Math.min(100, Math.max(0, Math.round((displayProgress.currentChapter / displayProgress.totalChapters) * 100)))
     : 0;
   const animatedConversionPercent = useAnimatedNumber(targetConversionPercent, 500);
   
@@ -324,7 +326,9 @@ export function BookDetailDialog({
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
               <span>
-                Chapter {displayProgress.currentChapter} of {displayProgress.totalChapters}: {displayProgress.message}
+                {displayProgress.totalWords > 0
+                  ? `${displayProgress.wordsProcessed.toLocaleString()} / ${displayProgress.totalWords.toLocaleString()} words: ${displayProgress.message}`
+                  : `Chapter ${displayProgress.currentChapter} of ${displayProgress.totalChapters}: ${displayProgress.message}`}
               </span>
             </div>
           </div>
