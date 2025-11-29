@@ -3,7 +3,7 @@
  */
 
 import type { ScrollMetrics } from "./scroll-utils";
-import { computeWindowScrollMetrics, calculateProgress } from "./scroll-utils";
+import { computeWindowScrollMetrics, computeScrollMetrics, calculateProgress } from "./scroll-utils";
 import type { ChapterProgressSnapshot } from "../components/reader/types";
 
 /**
@@ -83,12 +83,29 @@ export function isProgressUnchanged(
 }
 
 /**
- * Gets current window scroll metrics with fallback to last known
+ * Gets current scroll metrics with fallback to last known
+ * Uses container metrics if provided and scrollable, otherwise falls back to window metrics
  */
 export function getCurrentScrollMetrics(
   lastKnownMetrics: ScrollMetrics | null,
+  containerElement?: HTMLElement | null,
 ): ScrollMetrics {
-  const currentMetrics = computeWindowScrollMetrics();
+  // Try container first if provided
+  let currentMetrics: ScrollMetrics | null = null;
+  
+  if (containerElement) {
+    const containerMetrics = computeScrollMetrics(containerElement);
+    // Use container if it's actually scrollable (maxScroll > 0)
+    if (containerMetrics && containerMetrics.maxScroll > 0) {
+      currentMetrics = containerMetrics;
+    }
+  }
+  
+  // Fall back to window if container isn't scrollable or not provided
+  if (!currentMetrics) {
+    currentMetrics = computeWindowScrollMetrics();
+  }
+  
   return selectBestMetrics(currentMetrics, lastKnownMetrics);
 }
 

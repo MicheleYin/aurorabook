@@ -887,6 +887,7 @@ export function useLibrary(): UseLibraryReturn {
     (params: UseChapterProgressParams) => {
       const {
         activeChapter,
+        contentRef,
         onProgress,
         onSaveProgress,
         isRestoringScroll = false,
@@ -919,8 +920,10 @@ export function useLibrary(): UseLibraryReturn {
           return;
         }
 
+        const containerElement = contentRef?.current ?? null;
         const metrics = getCurrentScrollMetrics(
           progressStateRef.current.lastKnownMetrics,
+          containerElement,
         );
 
         if (metrics.maxScroll > 0 || metrics.scrollTop > 0) {
@@ -940,7 +943,7 @@ export function useLibrary(): UseLibraryReturn {
 
         progressStateRef.current.lastProgress = snapshot;
         onProgress(snapshot);
-      }, [activeChapter, onProgress]);
+      }, [activeChapter, onProgress, contentRef]);
 
       const saveProgress = useCallback(() => {
         if (!activeChapter || !onProgress || isRestoringRef.current) {
@@ -956,8 +959,10 @@ export function useLibrary(): UseLibraryReturn {
           scrollStateRef.current.rafId = null;
         }
 
+        const containerElement = contentRef?.current ?? null;
         const metrics = getCurrentScrollMetrics(
           progressStateRef.current.lastKnownMetrics,
+          containerElement,
         );
 
         if (metrics.maxScroll > 0 || metrics.scrollTop > 0) {
@@ -967,16 +972,18 @@ export function useLibrary(): UseLibraryReturn {
         const snapshot = createProgressSnapshot(activeChapter.id, metrics);
         progressStateRef.current.lastProgress = snapshot;
         onProgress(snapshot);
-      }, [activeChapter, onProgress]);
+      }, [activeChapter, onProgress, contentRef]);
 
       const updateMetricsOnScroll = useCallback(() => {
+        const containerElement = contentRef?.current ?? null;
         const metrics = getCurrentScrollMetrics(
           progressStateRef.current.lastKnownMetrics,
+          containerElement,
         );
         if (metrics.maxScroll > 0 || metrics.scrollTop > 0) {
           progressStateRef.current.lastKnownMetrics = metrics;
         }
-      }, []);
+      }, [contentRef]);
 
       useEffect(() => {
         if (onSaveProgress) {

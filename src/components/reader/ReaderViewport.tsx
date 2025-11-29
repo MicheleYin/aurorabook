@@ -4,7 +4,7 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { cn } from "../../lib/utils";
 import { anim, animPatterns } from "../../lib/animations";
 import { findCurrentAudioSegment } from "../../lib/epub";
-import { computeScrollMetrics, computeWindowScrollMetrics, restoreWindowScrollPosition, scrollToElement } from "../../lib/scroll-utils";
+import { computeScrollMetrics, computeWindowScrollMetrics, restoreScrollPosition, restoreWindowScrollPosition, scrollToElement } from "../../lib/scroll-utils";
 import { usePrevious } from "../../hooks/usePrevious";
 import { useLibrary } from "../../hooks/useLibrary";
 import { ensureChapterLoaded } from "../../lib/lazy-chapter-loader";
@@ -78,6 +78,7 @@ export function ReaderViewport({
     activityTimeout: null as number | null,
     restoreRafId: null as number | null,
     scrollIntentRafId: null as number | null,
+    restoreTimeout: null as number | null,
     cancelled: false,
   });
   
@@ -329,6 +330,10 @@ export function ReaderViewport({
     if (!node) return;
 
     // Cancel any existing restoration loops before starting new ones
+    if (scrollStateRef.current.restoreTimeout !== null) {
+      clearTimeout(scrollStateRef.current.restoreTimeout);
+      scrollStateRef.current.restoreTimeout = null;
+    }
     if (scrollStateRef.current.restoreRafId !== null) {
       cancelAnimationFrame(scrollStateRef.current.restoreRafId);
       scrollStateRef.current.restoreRafId = null;
@@ -402,78 +407,118 @@ export function ReaderViewport({
           scrollStateRef.current.cancelled = false;
 
           let attemptCount = 0;
-          const maxAttempts = 50; // ~3 seconds at 60fps
+          const maxAttempts = 100; // ~6 seconds at 60fps (increased to allow more time for layout)
           
-          const attemptRestore = () => {
-            // Check if cancelled or chapter changed before proceeding
+          // Add a small delay before starting restoration to allow CSS/layout to settle
+          scrollStateRef.current.restoreTimeout = window.setTimeout(() => {
             if (scrollStateRef.current.cancelled || activeChapter?.id !== targetChapterId) {
               scrollRestoreStateRef.current.isRestoring = false;
               scrollStateRef.current.restoreRafId = null;
               return;
             }
             
-            // Use window scroll metrics (window is what's actually scrolling)
-            const metrics = computeWindowScrollMetrics();
-            
-            // Wait for content to be rendered and scrollable
-            if (metrics.scrollHeight <= 0 || metrics.maxScroll <= 0) {
-              attemptCount++;
-              if (attemptCount < maxAttempts) {
-                const nextRafId = requestAnimationFrame(attemptRestore);
-                scrollStateRef.current.restoreRafId = nextRafId;
-              } else {
-                console.warn("[ReaderViewport] Failed to restore scroll - content not loaded after max attempts", {
-                  scrollHeight: metrics.scrollHeight,
-                  maxScroll: metrics.maxScroll,
+            const attemptRestore = () => {
+              // Check if cancelled or chapter changed before proceeding
+              if (scrollStateRef.current.cancelled || activeChapter?.id !== targetChapterId) {
+                scrollRestoreStateRef.current.isRestoring = false;
+                scrollStateRef.current.restoreRafId = null;
+                return;
+              }
+              
+              // Try both container and window scroll metrics to see which one is actually scrollable
+              const containerMetrics = computeScrollMetrics(node);
+              const windowMetrics = computeWindowScrollMetrics();
+              
+              // Determine which scroll container is actually being used
+              // Prefer container if it's scrollable, otherwise use window
+              const useContainer = containerMetrics && containerMetrics.maxScroll > 0;
+              const useWindow = !useContainer && windowMetrics && windowMetrics.maxScroll > 0;
+              
+              const metrics = useContainer ? containerMetrics : (useWindow ? windowMetrics : null);
+              
+              // Wait for content to be rendered and at least one scroll container to be scrollable
+              const hasContent = metrics && metrics.scrollHeight > 0;
+              const isScrollable = metrics && metrics.maxScroll > 0;
+              
+              if (!hasContent || !isScrollable) {
+                attemptCount++;
+                if (attemptCount < maxAttempts) {
+                  const nextRafId = requestAnimationFrame(attemptRestore);
+                  scrollStateRef.current.restoreRafId = nextRafId;
+                } else {
+                  console.warn("[ReaderViewport] Failed to restore scroll - content not loaded or no scrollable container after max attempts", {
+                    containerScrollHeight: containerMetrics?.scrollHeight ?? 0,
+                    containerClientHeight: containerMetrics?.clientHeight ?? 0,
+                    containerMaxScroll: containerMetrics?.maxScroll ?? 0,
+                    windowScrollHeight: windowMetrics?.scrollHeight ?? 0,
+                    windowClientHeight: windowMetrics?.clientHeight ?? 0,
+                    windowMaxScroll: windowMetrics?.maxScroll ?? 0,
+                    chapterId: targetChapterId,
+                    useContainer,
+                    useWindow,
+                  });
+                  scrollRestoreStateRef.current.isRestoring = false;
+                  scrollRestoreStateRef.current.restoredChapterId = targetChapterId;
+                  scrollStateRef.current.restoreRafId = null;
+                }
+                return;
+              }
+
+              // Attempt to restore scroll position using the appropriate container
+              let restored = false;
+              if (useContainer && containerMetrics) {
+                restored = restoreScrollPosition(node, {
+                  scrollTop: progress.currentChapterScrollTop,
+                  scrollHeight: progress.currentChapterScrollHeight,
+                  clientHeight: progress.currentChapterClientHeight,
+                  percent: progress.chapterProgressPercent,
+                });
+              } else if (useWindow && windowMetrics) {
+                restored = restoreWindowScrollPosition({
+                  scrollTop: progress.currentChapterScrollTop,
+                  scrollHeight: progress.currentChapterScrollHeight,
+                  clientHeight: progress.currentChapterClientHeight,
+                  percent: progress.chapterProgressPercent,
+                });
+              }
+
+              if (restored) {
+                console.log("[ReaderViewport] Successfully restored scroll position", {
                   chapterId: targetChapterId,
+                  scrollTop: progress.currentChapterScrollTop,
+                  percent: progress.chapterProgressPercent,
+                  restoredScrollTop: metrics.scrollTop,
+                  container: useContainer ? "container" : "window",
                 });
                 scrollRestoreStateRef.current.isRestoring = false;
                 scrollRestoreStateRef.current.restoredChapterId = targetChapterId;
                 scrollStateRef.current.restoreRafId = null;
-              }
-              return;
-            }
-
-            // Content is loaded and scrollable, attempt to restore window scroll position
-            const restored = restoreWindowScrollPosition({
-              scrollTop: progress.currentChapterScrollTop,
-              scrollHeight: progress.currentChapterScrollHeight,
-              clientHeight: progress.currentChapterClientHeight,
-              percent: progress.chapterProgressPercent,
-            });
-
-            if (restored) {
-              console.log("[ReaderViewport] Successfully restored window scroll position", {
-                chapterId: targetChapterId,
-                scrollTop: progress.currentChapterScrollTop,
-                percent: progress.chapterProgressPercent,
-              });
-              scrollRestoreStateRef.current.isRestoring = false;
-              scrollRestoreStateRef.current.restoredChapterId = targetChapterId;
-              scrollStateRef.current.restoreRafId = null;
-            } else {
-              // Restoration failed - retry if we haven't exceeded max attempts
-              attemptCount++;
-              if (attemptCount < maxAttempts) {
-                const nextRafId = requestAnimationFrame(attemptRestore);
-                scrollStateRef.current.restoreRafId = nextRafId;
               } else {
-                console.warn("[ReaderViewport] Failed to restore window scroll position after max attempts", {
-                  chapterId: targetChapterId,
-                  savedScrollTop: progress.currentChapterScrollTop,
-                  savedPercent: progress.chapterProgressPercent,
-                  currentMaxScroll: metrics.maxScroll,
-                  currentScrollTop: metrics.scrollTop,
-                });
-                scrollRestoreStateRef.current.isRestoring = false;
-                scrollRestoreStateRef.current.restoredChapterId = targetChapterId;
-                scrollStateRef.current.restoreRafId = null;
+                // Restoration failed - retry if we haven't exceeded max attempts
+                attemptCount++;
+                if (attemptCount < maxAttempts) {
+                  const nextRafId = requestAnimationFrame(attemptRestore);
+                  scrollStateRef.current.restoreRafId = nextRafId;
+                } else {
+                  console.warn("[ReaderViewport] Failed to restore scroll position after max attempts", {
+                    chapterId: targetChapterId,
+                    savedScrollTop: progress.currentChapterScrollTop,
+                    savedPercent: progress.chapterProgressPercent,
+                    currentMaxScroll: metrics.maxScroll,
+                    currentScrollTop: metrics.scrollTop,
+                    container: useContainer ? "container" : (useWindow ? "window" : "none"),
+                  });
+                  scrollRestoreStateRef.current.isRestoring = false;
+                  scrollRestoreStateRef.current.restoredChapterId = targetChapterId;
+                  scrollStateRef.current.restoreRafId = null;
+                }
               }
-            }
-          };
+            };
 
-          const initialRafId = requestAnimationFrame(attemptRestore);
-          scrollStateRef.current.restoreRafId = initialRafId;
+            const initialRafId = requestAnimationFrame(attemptRestore);
+            scrollStateRef.current.restoreRafId = initialRafId;
+            scrollStateRef.current.restoreTimeout = null;
+          }, 100); // Wait 100ms for layout to settle before starting restoration
         }
       }
     } else if (!activeChapter || scrollIntent) {
@@ -487,6 +532,10 @@ export function ReaderViewport({
       scrollStateRef.current.cancelled = true;
       
       // Cleanup timeouts and RAF
+      if (scrollStateRef.current.restoreTimeout !== null) {
+        clearTimeout(scrollStateRef.current.restoreTimeout);
+        scrollStateRef.current.restoreTimeout = null;
+      }
       if (scrollStateRef.current.activityTimeout !== null) {
         clearTimeout(scrollStateRef.current.activityTimeout);
         scrollStateRef.current.activityTimeout = null;
