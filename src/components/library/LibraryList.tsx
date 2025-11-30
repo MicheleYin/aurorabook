@@ -19,6 +19,7 @@ interface LibraryListProps {
   onOpenBook: (bookId: string) => void;
   onViewDetails: (bookId: string) => void;
   bookConversionProgress?: Record<string, ConversionProgress>;
+  conversionStartTimeRef?: React.MutableRefObject<number | null>;
 }
 
 export function LibraryList({
@@ -27,6 +28,7 @@ export function LibraryList({
   onOpenBook,
   onViewDetails,
   bookConversionProgress = {},
+  conversionStartTimeRef,
 }: LibraryListProps) {
   const [displayedBooks, setDisplayedBooks] = useState<Book[]>(books);
   const [exitingBookIds, setExitingBookIds] = useState<Set<string>>(new Set());
@@ -134,21 +136,11 @@ export function LibraryList({
                 {book.author}
               </span>
               {isConverting ? (
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">
-                      {conversionProgress.totalWords > 0
-                        ? `${conversionProgress.wordsProcessed.toLocaleString()}/${conversionProgress.totalWords.toLocaleString()} words`
-                        : `Converting: ${conversionProgress.currentChapter}/${conversionProgress.totalChapters}`}
-                    </span>
-                    <span className="font-medium">{conversionPercent}%</span>
-                  </div>
-                  <Progress value={conversionPercent} className="h-1.5" />
-                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    <span className="line-clamp-1">{conversionProgress.message}</span>
-                  </div>
-                </div>
+                <ConversionProgressWithETA
+                  conversionProgress={conversionProgress}
+                  conversionPercent={conversionPercent}
+                  conversionStartTimeRef={conversionStartTimeRef}
+                />
               ) : (
                 <>
                   <span className="line-clamp-1 text-xs text-muted-foreground">{progressText}</span>
@@ -172,6 +164,99 @@ export function LibraryList({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function ConversionProgressWithETA({
+  conversionProgress,
+  conversionPercent,
+  conversionStartTimeRef,
+}: {
+  conversionProgress: ConversionProgress;
+  conversionPercent: number;
+  conversionStartTimeRef?: React.MutableRefObject<number | null>;
+}) {
+  const [eta, setEta] = useState<string | null>(null);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Calculate ETA based on progress and elapsed time
+  useEffect(() => {
+    if (!conversionStartTimeRef?.current || conversionPercent <= 0 || conversionPercent >= 100) {
+      setEta(null);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      return;
+    }
+
+    const updateETA = () => {
+      const now = Date.now();
+      const elapsed = now - conversionStartTimeRef.current!;
+      const progressDecimal = conversionPercent / 100;
+      
+      if (progressDecimal > 0 && progressDecimal < 1) {
+        const estimatedTotal = elapsed / progressDecimal;
+        const remaining = estimatedTotal - elapsed;
+        
+        if (remaining > 0) {
+          const seconds = Math.floor(remaining / 1000);
+          const minutes = Math.floor(seconds / 60);
+          const hours = Math.floor(minutes / 60);
+          
+          let etaString = "";
+          if (hours > 0) {
+            etaString = `${hours}h ${minutes % 60}m`;
+          } else if (minutes > 0) {
+            etaString = `${minutes}m ${seconds % 60}s`;
+          } else {
+            etaString = `${seconds}s`;
+          }
+          
+          setEta(etaString);
+        } else {
+          setEta(null);
+        }
+      } else {
+        setEta(null);
+      }
+    };
+
+    // Update ETA immediately
+    updateETA();
+
+    // Update ETA every second
+    intervalRef.current = setInterval(updateETA, 1000);
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [conversionStartTimeRef, conversionPercent]);
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">
+          {conversionProgress.totalWords > 0
+            ? `${conversionProgress.wordsProcessed.toLocaleString()}/${conversionProgress.totalWords.toLocaleString()} words`
+            : `Converting: ${conversionProgress.currentChapter}/${conversionProgress.totalChapters}`}
+        </span>
+        <span className="font-medium">{conversionPercent}%</span>
+      </div>
+      <Progress value={conversionPercent} className="h-1.5" />
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <div className="flex items-center gap-1.5">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          <span className="line-clamp-1">{conversionProgress.message}</span>
+        </div>
+        {eta && (
+          <span className="shrink-0">ETA: {eta}</span>
+        )}
+      </div>
     </div>
   );
 }

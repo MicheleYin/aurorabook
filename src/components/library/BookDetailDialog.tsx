@@ -32,6 +32,7 @@ type BookDetailDialogProps = {
   isDeleting?: boolean;
   conversionProgress?: ConversionProgress;
   onConvertToAudiobook?: (book: Book, voiceId: VoiceId) => Promise<void>;
+  conversionStartTimeRef?: React.MutableRefObject<number | null>;
 };
 
 const formatFileSize = (bytes?: number) => {
@@ -60,6 +61,7 @@ export function BookDetailDialog({
   isDeleting = false,
   conversionProgress,
   onConvertToAudiobook,
+  conversionStartTimeRef,
 }: BookDetailDialogProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [showConvertDialog, setShowConvertDialog] = useState(false);
@@ -278,6 +280,66 @@ export function BookDetailDialog({
   const targetAudioPercent = audioProgressPercentDisplay ?? 0;
   const animatedAudioPercent = useAnimatedNumber(targetAudioPercent, 500);
   
+  const [eta, setEta] = useState<string | null>(null);
+  const etaIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Calculate ETA based on progress and elapsed time
+  useEffect(() => {
+    if (!displayProgress || !conversionStartTimeRef?.current || targetConversionPercent <= 0 || targetConversionPercent >= 100) {
+      setEta(null);
+      if (etaIntervalRef.current) {
+        clearInterval(etaIntervalRef.current);
+        etaIntervalRef.current = null;
+      }
+      return;
+    }
+
+    const updateETA = () => {
+      const now = Date.now();
+      const elapsed = now - conversionStartTimeRef.current!;
+      const progressDecimal = targetConversionPercent / 100;
+      
+      if (progressDecimal > 0 && progressDecimal < 1) {
+        const estimatedTotal = elapsed / progressDecimal;
+        const remaining = estimatedTotal - elapsed;
+        
+        if (remaining > 0) {
+          const seconds = Math.floor(remaining / 1000);
+          const minutes = Math.floor(seconds / 60);
+          const hours = Math.floor(minutes / 60);
+          
+          let etaString = "";
+          if (hours > 0) {
+            etaString = `${hours}h ${minutes % 60}m`;
+          } else if (minutes > 0) {
+            etaString = `${minutes}m ${seconds % 60}s`;
+          } else {
+            etaString = `${seconds}s`;
+          }
+          
+          setEta(etaString);
+        } else {
+          setEta(null);
+        }
+      } else {
+        setEta(null);
+      }
+    };
+
+    // Update ETA immediately
+    updateETA();
+
+    // Update ETA every second
+    etaIntervalRef.current = setInterval(updateETA, 1000);
+
+    return () => {
+      if (etaIntervalRef.current) {
+        clearInterval(etaIntervalRef.current);
+        etaIntervalRef.current = null;
+      }
+    };
+  }, [displayProgress, conversionStartTimeRef, targetConversionPercent]);
+  
   const progressSummary = getBookProgressSummary(book);
   const progressPrimaryText = book.chapters.length
     ? progressSummary.label
@@ -323,13 +385,18 @@ export function BookDetailDialog({
               showPulse={true}
               showWave={true}
             />
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              <span>
-                {displayProgress.totalWords > 0
-                  ? `${displayProgress.wordsProcessed.toLocaleString()} / ${displayProgress.totalWords.toLocaleString()} words: ${displayProgress.message}`
-                  : `Chapter ${displayProgress.currentChapter} of ${displayProgress.totalChapters}: ${displayProgress.message}`}
-              </span>
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                <span>
+                  {displayProgress.totalWords > 0
+                    ? `${displayProgress.wordsProcessed.toLocaleString()} / ${displayProgress.totalWords.toLocaleString()} words: ${displayProgress.message}`
+                    : `Chapter ${displayProgress.currentChapter} of ${displayProgress.totalChapters}: ${displayProgress.message}`}
+                </span>
+              </div>
+              {eta && (
+                <span className="shrink-0">ETA: {eta}</span>
+              )}
             </div>
           </div>
         ) : (

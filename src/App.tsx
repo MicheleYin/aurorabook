@@ -7,7 +7,6 @@ import { ReaderPanel } from "./components/ReaderPanel";
 import { ReaderAudioPlayer } from "./components/reader/ReaderAudioPlayer";
 import { BookDetailDialog } from "./components/library/BookDetailDialog";
 import { ConvertToAudiobookDialog } from "./components/library/ConvertToAudiobookDialog";
-import { ConversionProgressDialog } from "./components/library/ConversionProgressDialog";
 import { Toaster } from "./components/ui/sonner";
 import { LoadingScreen } from "./components/app/LoadingScreen";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -67,9 +66,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     pendingBookForConversion,
     setPendingBookForConversion,
     isConverting,
-    conversionProgress,
     bookConversionProgress,
-    convertingBookIdRef,
+    conversionStartTimeRef,
     handleConvertToAudiobook,
     handleConvertBookFromDetail,
     cancelConversionForBook,
@@ -417,6 +415,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       onOpenBook={handleSelectBook}
       onViewDetails={(bookId) => setDetailBookId(bookId)}
       bookConversionProgress={bookConversionProgress}
+      conversionStartTimeRef={conversionStartTimeRef}
     />
   );
 
@@ -569,29 +568,23 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
           isDeleting={deletingBookId === detailBook.id}
           conversionProgress={bookConversionProgress[detailBook.id]}
           onConvertToAudiobook={handleConvertBookFromDetail}
+          conversionStartTimeRef={conversionStartTimeRef}
         />
       ) : null}
       {pendingBookForConversion ? (
-        <>
-          <ConvertToAudiobookDialog
-            open={showConvertDialog && !isConverting}
-            onOpenChange={(open) => {
-              if (!isConverting) {
-                setShowConvertDialog(open);
-                if (!open) {
-                  setPendingBookForConversion(null);
-                }
+        <ConvertToAudiobookDialog
+          open={showConvertDialog && !isConverting}
+          onOpenChange={(open) => {
+            if (!isConverting) {
+              setShowConvertDialog(open);
+              if (!open) {
+                setPendingBookForConversion(null);
               }
-            }}
-            onConfirm={handleConvertToAudiobook}
-            bookTitle={pendingBookForConversion.book.title}
-          />
-          <ConversionProgressDialog
-            open={isConverting && convertingBookIdRef.current === pendingBookForConversion.book.id}
-            progress={conversionProgress}
-            bookTitle={pendingBookForConversion.book.title}
-          />
-        </>
+            }
+          }}
+          onConfirm={handleConvertToAudiobook}
+          bookTitle={pendingBookForConversion.book.title}
+        />
       ) : null}
       <Toaster position="top-center" richColors />
     </div>

@@ -25,6 +25,7 @@ export type LibraryPanelProps = {
   onOpenBook: (bookId: string) => void;
   onViewDetails: (bookId: string) => void;
   bookConversionProgress?: Record<string, ConversionProgress>;
+  conversionStartTimeRef?: React.MutableRefObject<number | null>;
 };
 
 export function LibraryPanel({
@@ -42,6 +43,7 @@ export function LibraryPanel({
   onOpenBook,
   onViewDetails,
   bookConversionProgress = {},
+  conversionStartTimeRef,
 }: LibraryPanelProps) {
   const isSearching = searchTerm.trim().length > 0;
   const hasBooks = library.length > 0;
@@ -89,6 +91,7 @@ export function LibraryPanel({
               onOpenBook={onOpenBook}
               onViewDetails={onViewDetails}
               bookConversionProgress={bookConversionProgress}
+              conversionStartTimeRef={conversionStartTimeRef}
             />
           ) : (
             <LibraryList
@@ -98,6 +101,7 @@ export function LibraryPanel({
               onOpenBook={onOpenBook}
               onViewDetails={onViewDetails}
               bookConversionProgress={bookConversionProgress}
+              conversionStartTimeRef={conversionStartTimeRef}
             />
           )
         ) : (

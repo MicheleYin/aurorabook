@@ -30,6 +30,7 @@ export function useBookConversion(
   const [bookConversionProgress, setBookConversionProgress] = useState<Record<string, ConversionProgress>>({});
   const conversionAbortControllerRef = useRef<AbortController | null>(null);
   const convertingBookIdRef = useRef<string | null>(null);
+  const conversionStartTimeRef = useRef<number | null>(null);
 
   const handleConvertToAudiobook = useCallback(async (voiceId: VoiceId) => {
     if (!pendingBookForConversion || isConverting) return;
@@ -42,6 +43,7 @@ export function useBookConversion(
     setIsConverting(true);
     setShowConvertDialog(false);
     setConversionProgress(null);
+    conversionStartTimeRef.current = Date.now();
     const bookId = pendingBookForConversion.book.id;
     
     try {
@@ -128,6 +130,7 @@ export function useBookConversion(
       setIsConverting(false);
       conversionAbortControllerRef.current = null;
       convertingBookIdRef.current = null;
+      conversionStartTimeRef.current = null;
     }
   }, [pendingBookForConversion, isConverting, setLibrary, ingestEpub, refreshLibrary]);
 
@@ -149,6 +152,7 @@ export function useBookConversion(
     
     setIsConverting(true);
     setConversionProgress(null);
+    conversionStartTimeRef.current = Date.now();
     const bookId = book.id;
     
     try {
@@ -252,6 +256,7 @@ export function useBookConversion(
       setIsConverting(false);
       conversionAbortControllerRef.current = null;
       convertingBookIdRef.current = null;
+      conversionStartTimeRef.current = null;
     }
   }, [isConverting, setLibrary, ingestEpub, refreshLibrary]);
 
@@ -262,6 +267,7 @@ export function useBookConversion(
       convertingBookIdRef.current = null;
       setIsConverting(false);
       setConversionProgress(null);
+      conversionStartTimeRef.current = null;
       setBookConversionProgress((prev) => {
         const next = { ...prev };
         delete next[bookId];
@@ -287,6 +293,7 @@ export function useBookConversion(
     conversionProgress,
     bookConversionProgress,
     convertingBookIdRef,
+    conversionStartTimeRef,
     handleConvertToAudiobook,
     handleConvertBookFromDetail,
     cancelConversionForBook,
