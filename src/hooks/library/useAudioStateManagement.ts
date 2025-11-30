@@ -1,0 +1,135 @@
+/**
+ * Audio state management: update audio state with debouncing
+ */
+
+import { useCallback, useEffect, useRef } from "react";
+import {
+  updateBookAudioState as updateBookAudioStateBackend,
+} from "../../lib/book-service";
+import { createDebounce } from "../../lib/debounce-utils";
+import type { Book } from "../../types/reader";
+
+export function useAudioStateManagement(
+  library: Book[],
+  setLibrary: React.Dispatch<React.SetStateAction<Book[]>>,
+) {
+  // Audio update debouncers - store pending updates
+  const pendingAudioUpdateRef = useRef<{
+    bookId: string;
+    audioState: Book["audioState"];
+    book: Book;
+  } | null>(null);
+  const audioUpdateDebouncerRef = useRef<
+    ReturnType<typeof createDebounce> | null
+  >(null);
+
+  // Initialize debouncer
+  useEffect(() => {
+    const audioDebouncer = createDebounce(async () => {
+      const pending = pendingAudioUpdateRef.current;
+      if (!pending) return;
+      
+      try {
+        const updatedBook = await updateBookAudioStateBackend(
+          pending.bookId,
+          pending.audioState!,
+        );
+        setLibrary((prev) =>
+          prev.map((b) => (b.id === pending.bookId ? updatedBook : b)),
+        );
+      } catch (error) {
+        console.error("Failed to sync audio state to backend", error);
+        setLibrary((prev) =>
+          prev.map((b) => (b.id === pending.bookId ? pending.book : b)),
+        );
+      } finally {
+        pendingAudioUpdateRef.current = null;
+      }
+    }, 150);
+
+    audioUpdateDebouncerRef.current = audioDebouncer;
+    
+    return () => {
+      audioDebouncer.cancel();
+    };
+  }, [setLibrary]);
+
+  const updateBookAudioState = useCallback(
+    async (
+      bookId: string,
+      snapshot: {
+        currentTimeSeconds: number;
+        trackId?: string;
+        trackHref?: string;
+        trackIndex?: number;
+        updatedAt?: string;
+      },
+    ) => {
+      if (
+        !bookId ||
+        typeof snapshot?.currentTimeSeconds !== "number" ||
+        !Number.isFinite(snapshot.currentTimeSeconds) ||
+        snapshot.currentTimeSeconds < 0
+      ) {
+        return;
+      }
+
+      const book = library.find((b) => b.id === bookId);
+      if (!book?.audioTracks.length) return;
+
+      const resolvedTrack =
+        book.audioTracks.find((track) => track.id === snapshot.trackId) ??
+        book.audioTracks.find((track) => track.href === snapshot.trackHref) ??
+        book.audioTracks[snapshot.trackIndex ?? 0];
+
+      if (!resolvedTrack) return;
+
+      const resolvedIndex = book.audioTracks.findIndex(
+        (track) => track.id === resolvedTrack.id,
+      );
+      const normalizedSeconds = Number(snapshot.currentTimeSeconds.toFixed(3));
+      const existing = book.audioState;
+
+      if (
+        existing &&
+        existing.currentTrackId === resolvedTrack.id &&
+        Math.abs(existing.currentTimeSeconds - normalizedSeconds) < 0.25
+      ) {
+        return;
+      }
+
+      const nextAudioState = {
+        currentTrackId: resolvedTrack.id,
+        currentTrackHref: resolvedTrack.href,
+        currentTrackIndex: resolvedIndex === -1 ? snapshot.trackIndex ?? 0 : resolvedIndex,
+        currentTimeSeconds: normalizedSeconds,
+        updatedAt: snapshot.updatedAt ?? new Date().toISOString(),
+      };
+
+      setLibrary((prev) =>
+        prev.map((b) =>
+          b.id === bookId ? { ...b, audioState: nextAudioState } : b
+        ),
+      );
+
+      // Store pending update and trigger debounced backend sync
+      pendingAudioUpdateRef.current = {
+        bookId,
+        audioState: nextAudioState,
+        book,
+      };
+      
+      const debouncer = audioUpdateDebouncerRef.current;
+      if (debouncer) {
+        debouncer.cancel();
+        debouncer.call();
+      }
+    },
+    [library, setLibrary],
+  );
+
+  return {
+    updateBookAudioState,
+  };
+}
+

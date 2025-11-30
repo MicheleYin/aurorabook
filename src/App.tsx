@@ -11,6 +11,7 @@ import { Toaster } from "./components/ui/sonner";
 import { LoadingScreen } from "./components/app/LoadingScreen";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { useLibrary } from "./hooks/useLibrary";
+import { LibraryProvider } from "./hooks/library/LibraryContext";
 import { usePersistentSettings } from "./hooks/usePersistentSettings";
 import { useBookConversion } from "./hooks/useBookConversion";
 import { useAppNavigation } from "./hooks/useAppNavigation";
@@ -599,6 +600,14 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
 }
 
 function App() {
+  return (
+    <LibraryProvider>
+      <AppWithLibrary />
+    </LibraryProvider>
+  );
+}
+
+function AppWithLibrary() {
   const libraryHook = useLibrary();
 
   return (
