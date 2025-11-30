@@ -787,18 +787,34 @@ export function ReaderViewport({
     );
 
     if (element) {
+      // Check if element is already visible in viewport
+      // Using getBoundingClientRect to check visibility relative to viewport
       const elementRect = element.getBoundingClientRect();
       const viewportHeight = window.innerHeight;
-      const visibleThreshold = viewportHeight * 0.7;
-      const isInBottomPortion = elementRect.top >= 0 && 
-                                 elementRect.top <= visibleThreshold &&
-                                 elementRect.bottom <= viewportHeight;
+      const viewportWidth = window.innerWidth;
       
-      if (isInBottomPortion) {
-        console.debug("[Audio Sync] Element already visible, skipping scroll", {
+      // Element is considered visible if:
+      // - It's within the viewport bounds (top/bottom and left/right)
+      // - At least a portion of it is visible (not completely outside)
+      const isVisible = elementRect.top < viewportHeight && 
+                        elementRect.bottom > 0 &&
+                        elementRect.left < viewportWidth &&
+                        elementRect.right > 0;
+      
+      // If element is already visible, we can skip scrolling
+      // But we still want to ensure it's well-positioned for reading
+      // Use a more generous threshold: element should be in the middle 80% of viewport
+      const topMargin = viewportHeight * 0.1; // 10% margin at top
+      const bottomMargin = viewportHeight * 0.1; // 10% margin at bottom
+      const isWellPositioned = elementRect.top >= topMargin && 
+                                elementRect.bottom <= (viewportHeight - bottomMargin);
+      
+      if (isVisible && isWellPositioned) {
+        console.debug("[Audio Sync] Element already visible and well-positioned, skipping scroll", {
           elementId,
           elementTop: elementRect.top,
-          visibleThreshold,
+          elementBottom: elementRect.bottom,
+          viewportHeight,
         });
         highlightStateRef.current.lastScrolledElement = elementId;
         return;
@@ -807,12 +823,45 @@ export function ReaderViewport({
       console.log("[Audio Sync] Scrolling to element", {
         elementId,
         elementTop: elementRect.top,
+        elementBottom: elementRect.bottom,
         viewportHeight,
-        visibleThreshold,
+        isVisible,
+        isWellPositioned,
       });
       
       highlightStateRef.current.lastScrolledElement = elementId;
-      element.scrollIntoView({ behavior: "smooth", block: "start" });
+      
+      // Calculate header offset if chrome is visible
+      const headerOffset = chromeVisible ? (() => {
+        const header = document.querySelector('[data-reader-header]') as HTMLElement;
+        return header ? header.offsetHeight : 0;
+      })() : 0;
+      
+      // Get the scroll container (either the contentRef or window)
+      const containerMetrics = computeScrollMetrics(root);
+      const windowMetrics = computeWindowScrollMetrics();
+      const useContainer = containerMetrics && containerMetrics.maxScroll > 0;
+      const useWindow = !useContainer && windowMetrics && windowMetrics.maxScroll > 0;
+      
+      if (useContainer && root) {
+        // Calculate target scroll position for container
+        const containerRect = root.getBoundingClientRect();
+        const elementTop = elementRect.top - containerRect.top + root.scrollTop;
+        const targetScroll = Math.max(0, elementTop - headerOffset);
+        root.scrollTo({ top: targetScroll, behavior: "smooth" });
+      } else if (useWindow) {
+        // Calculate target scroll position for window
+        const elementTop = elementRect.top + (window.scrollY || document.documentElement.scrollTop);
+        const targetScroll = Math.max(0, elementTop - headerOffset);
+        window.scrollTo({ top: targetScroll, behavior: "smooth" });
+      } else {
+        // Fallback to scrollIntoView if we can't determine scroll container
+        element.scrollIntoView({ 
+          behavior: "smooth", 
+          block: "start",
+          inline: "nearest",
+        });
+      }
     } else {
       console.warn("[Audio Sync] Element not found in DOM", {
         elementId,
