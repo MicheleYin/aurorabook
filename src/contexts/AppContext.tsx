@@ -1,13 +1,7 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect, useRef } from "react";
 import type { Book } from "../types/reader";
 import type { ReaderPreferences } from "../types/reader";
-
-const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
-  theme: "system",
-  fontFamily: "merriweather",
-  contentPadding: "comfortable",
-  fontSize: "medium",
-};
+import { usePersistentReaderPreferences } from "../hooks/usePersistentReaderPreferences";
 
 type AppContextType = {
   // Active book and chapter
@@ -55,9 +49,11 @@ export function AppContextProvider({
 }) {
   const [activeBookId, setActiveBookId] = useState<string | undefined>();
   const [activeChapterId, setActiveChapterId] = useState<string | undefined>();
-  const [readerPreferences, setReaderPreferences] = useState<ReaderPreferences>(
-    DEFAULT_READER_PREFERENCES,
-  );
+  const {
+    preferences: readerPreferences,
+    setPreferences: setReaderPreferences,
+    updatePreferences: updateReaderPreferences,
+  } = usePersistentReaderPreferences();
   const [pendingFragment, setPendingFragment] = useState<string | null>(null);
   const [isReaderChromeVisible, setIsReaderChromeVisible] = useState(true);
   const [detailBookId, setDetailBookId] = useState<string | null>(null);
@@ -79,15 +75,6 @@ export function AppContextProvider({
     return activeBook.chapters.find((chapter) => chapter.id === activeChapterId);
   }, [activeBook, activeChapterId]);
 
-  const updateReaderPreferences = useCallback(
-    (update: Partial<ReaderPreferences>) => {
-      setReaderPreferences((prev) => ({
-        ...prev,
-        ...update,
-      }));
-    },
-    [],
-  );
 
   const handleFragmentConsumed = useCallback(() => {
     setPendingFragment(null);
