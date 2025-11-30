@@ -33,6 +33,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     updateBookProgress,
     updateBookAudioState,
     handleChapterProgress,
+    flushProgressUpdate,
   } = libraryHook;
 
   const {
@@ -122,7 +123,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   // Ref to save progress from ReaderViewport
   const saveProgressRef = useRef<(() => void) | null>(null);
 
-  const handleSelectChapter = useCallback((chapterId: string, options?: ChapterSelectionOptions) => {
+  const handleSelectChapter = useCallback(async (chapterId: string, options?: ChapterSelectionOptions) => {
     if (!activeBookId) return;
 
     // Save progress before changing chapters
@@ -134,6 +135,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
         source: options?.isManualSelection ? "manual" : "navigation",
       });
       saveProgressRef.current();
+      // Flush the debounced save immediately
+      await flushProgressUpdate();
     } else if (!saveProgressRef.current) {
       console.debug("[App] No saveProgress function available", {
         bookId: activeBookId,
@@ -181,7 +184,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     const fragment = options?.fragment;
     setPendingFragment(fragment && fragment.length > 0 ? fragment.replace(/^#/, "") : null);
     setActiveView("reader");
-  }, [activeBookId, activeChapterId, autoScrollEnabled, setAutoScrollEnabled, updateSettings, setActiveChapterId, updateBookProgress, setPendingFragment, setActiveView]);
+  }, [activeBookId, activeChapterId, autoScrollEnabled, setAutoScrollEnabled, updateSettings, setActiveChapterId, updateBookProgress, setPendingFragment, setActiveView, flushProgressUpdate]);
 
   // Inline useAudioPlayer functionality (UI state management)
   const [isAudioPlayerOpen, setIsAudioPlayerOpen] = useState(false);
@@ -428,11 +431,13 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       onSelectChapter={handleSelectChapter}
       pendingFragment={pendingFragment}
       onFragmentConsumed={handleFragmentConsumed}
-      onNavigateLibrary={() => {
+      onNavigateLibrary={async () => {
         // Save progress before navigating away
         if (saveProgressRef.current && activeChapterId) {
           console.log("[App] Saving progress before navigating to library");
           saveProgressRef.current();
+          // Flush the debounced save immediately
+          await flushProgressUpdate();
         }
         setActiveView("library");
       }}
@@ -530,12 +535,14 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
                 key={item.id}
                 type="button"
                 disabled={isDisabled}
-                onClick={() => {
+                onClick={async () => {
                   if (isDisabled) return;
                   // Save progress before navigating away from reader
                   if (activeView === "reader" && item.id !== "reader" && saveProgressRef.current && activeChapterId) {
                     console.log("[App] Saving progress before navigating to", item.id);
                     saveProgressRef.current();
+                    // Flush the debounced save immediately
+                    await flushProgressUpdate();
                   }
                   setActiveView(item.id);
                 }}

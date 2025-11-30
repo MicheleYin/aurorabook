@@ -110,6 +110,7 @@ type UseLibraryReturn = {
     },
   ) => Promise<void>;
   handleChapterProgress: (bookId: string, snapshot: ChapterProgressSnapshot) => void;
+  flushProgressUpdate: () => Promise<void>;
 
   // Chapter progress tracking hook
   useChapterProgress: (params: UseChapterProgressParams) => {
@@ -393,6 +394,38 @@ export function useLibrary(): UseLibraryReturn {
   const audioUpdateDebouncerRef = useRef<
     ReturnType<typeof createDebounce> | null
   >(null);
+  
+  // Flush pending progress updates immediately (for navigation)
+  const flushProgressUpdate = useCallback(async () => {
+    const debouncer = progressUpdateDebouncerRef.current;
+    if (debouncer && pendingProgressUpdateRef.current) {
+      // Cancel the debounce and immediately execute the pending update
+      debouncer.cancel();
+      const pending = pendingProgressUpdateRef.current;
+      if (pending) {
+        try {
+          const { updateBookProgress } = await import("../lib/book-service");
+          const updatedBook = await updateBookProgress(
+            pending.bookId,
+            pending.progress,
+          );
+          setLibrary((prev) =>
+            prev.map((b) => (b.id === pending.bookId ? updatedBook : b)),
+          );
+        } catch (error) {
+          console.error("Failed to flush progress to backend", {
+            bookId: pending.bookId,
+            error,
+          });
+          setLibrary((prev) =>
+            prev.map((b) => (b.id === pending.bookId ? pending.book : b)),
+          );
+        } finally {
+          pendingProgressUpdateRef.current = null;
+        }
+      }
+    }
+  }, [setLibrary]);
 
   // Initialize debouncers with functions that use the pending refs
   useEffect(() => {
@@ -1025,7 +1058,19 @@ export function useLibrary(): UseLibraryReturn {
       }, [activeChapter, onProgress, contentRef]);
 
       const saveProgress = useCallback(() => {
-        if (!activeChapter || !onProgress || isRestoringRef.current) {
+        if (!activeChapter || !onProgress) {
+          console.debug("[useChapterProgress] saveProgress skipped", {
+            hasActiveChapter: !!activeChapter,
+            hasOnProgress: !!onProgress,
+          });
+          return;
+        }
+
+        // Skip saving if we're currently restoring scroll position
+        if (isRestoringRef.current) {
+          console.debug("[useChapterProgress] saveProgress skipped - restoration in progress", {
+            chapterId: activeChapter.id,
+          });
           return;
         }
 
@@ -1039,17 +1084,46 @@ export function useLibrary(): UseLibraryReturn {
         }
 
         const containerElement = contentRef?.current ?? null;
-        const metrics = getCurrentScrollMetrics(
+        const currentMetrics = getCurrentScrollMetrics(
           progressStateRef.current.lastKnownMetrics,
           containerElement,
         );
 
-        if (metrics.maxScroll > 0 || metrics.scrollTop > 0) {
-          progressStateRef.current.lastKnownMetrics = metrics;
+        // If current scroll position is 0 (likely during restoration or before content loads),
+        // and we have a last known good position, use that instead to prevent overwriting
+        // valid progress with invalid 0 position
+        let metricsToUse = currentMetrics;
+        if (currentMetrics && currentMetrics.scrollTop === 0 && 
+            progressStateRef.current.lastKnownMetrics && 
+            progressStateRef.current.lastKnownMetrics.scrollTop > 0) {
+          console.debug("[useChapterProgress] Using last known metrics to prevent overwriting with 0", {
+            chapterId: activeChapter.id,
+            currentScrollTop: currentMetrics.scrollTop,
+            lastKnownScrollTop: progressStateRef.current.lastKnownMetrics.scrollTop,
+          });
+          // Use last known metrics but update with current dimensions if available
+          metricsToUse = {
+            ...progressStateRef.current.lastKnownMetrics,
+            scrollHeight: currentMetrics.scrollHeight || progressStateRef.current.lastKnownMetrics.scrollHeight,
+            clientHeight: currentMetrics.clientHeight || progressStateRef.current.lastKnownMetrics.clientHeight,
+            maxScroll: currentMetrics.maxScroll || progressStateRef.current.lastKnownMetrics.maxScroll,
+          };
+        } else if (currentMetrics && (currentMetrics.maxScroll > 0 || currentMetrics.scrollTop > 0)) {
+          // Update lastKnownMetrics with valid current metrics
+          progressStateRef.current.lastKnownMetrics = currentMetrics;
         }
 
-        const snapshot = createProgressSnapshot(activeChapter.id, metrics);
+        const snapshot = createProgressSnapshot(activeChapter.id, metricsToUse);
         progressStateRef.current.lastProgress = snapshot;
+        
+        console.log("[useChapterProgress] Saving progress", {
+          chapterId: activeChapter.id,
+          scrollTop: snapshot.scrollTop,
+          percent: snapshot.percent,
+          scrollHeight: snapshot.scrollHeight,
+          usedLastKnown: metricsToUse !== currentMetrics,
+        });
+        
         onProgress(snapshot);
       }, [activeChapter, onProgress, contentRef]);
 
@@ -1449,6 +1523,7 @@ export function useLibrary(): UseLibraryReturn {
     updateBookProgress,
     updateBookAudioState,
     handleChapterProgress,
+    flushProgressUpdate,
     useChapterProgress,
     useAudioStateSync,
   };
