@@ -1,7 +1,7 @@
 use regex::Regex;
 use scraper::{Html, Selector};
 use once_cell::sync::Lazy;
-use crate::utils::errors::{AppError, AppResult};
+use crate::utils::errors::{ AppResult};
 
 // Compile regex once at startup instead of on every call
 static SENTENCE_PATTERN: Lazy<Regex> = Lazy::new(|| {

@@ -2,6 +2,7 @@ use crate::utils::path_resolver::ResourcePathResolver;
 use crate::utils::audio::f32_to_pcm_le_bytes;
 use crate::utils::constants::{DEFAULT_MP3_BITRATE, DEFAULT_LAME_QUALITY};
 use crate::utils::errors::{AppError, AppResult};
+use crate::tts::engine::TtsEngineType;
 use std::sync::Arc;
 
 /// Initialize the Kokoros TTS engine (Tauri command).
@@ -52,14 +53,14 @@ pub async fn init_kokoros_engine(
         }
     }
 
-    log::info!("ONNX Runtime engine initialization (models will be loaded from bundle resources when needed)");
+    log::info!("TTS engine initialization (models will be loaded from bundle resources when needed)");
     if !model_path.is_empty() {
         log::info!("Model path: {}, Voices path: {}", model_path, voices_path);
     } else {
         log::info!("Using bundle resources for models");
     }
 
-    Ok("Initialized ONNX Runtime engine (using bundle resources)".to_string())
+    Ok("Initialized TTS engine (using bundle resources)".to_string())
 }
 
 /// Generate text-to-speech audio for a single text string (Tauri command).
@@ -74,6 +75,7 @@ pub async fn init_kokoros_engine(
 /// * `language` - Optional language code (defaults to "en" if None)
 /// * `speed` - Optional speech speed multiplier (defaults to 1.0 if None)
 /// * `worker_id` - Optional worker ID for instance selection (defaults to 0)
+/// * `engine_type` - Optional engine type ("onnx" or "candle", defaults to "onnx")
 /// * `app` - Tauri application handle for resource path resolution
 ///
 /// # Returns
@@ -107,6 +109,7 @@ pub async fn generate_tts_cached(
     language: Option<String>,
     speed: Option<f32>,
     worker_id: Option<usize>,
+    engine_type: Option<String>,
     app: tauri::AppHandle,
 ) -> AppResult<Vec<u8>> {
     let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(Some(&app))?;
@@ -118,28 +121,58 @@ pub async fn generate_tts_cached(
         .to_str()
         .ok_or_else(|| AppError::Encoding("Voices path contains invalid UTF-8".to_string()))?;
 
-    let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
-        onnx_path_str,
-        voices_path_str,
-        1,
-    )
-    .await;
+    let engine_type = engine_type
+        .as_deref()
+        .map(|s| s.parse())
+        .transpose()?
+        .unwrap_or(TtsEngineType::Onnx);
 
-    let model_instance = engine.get_model_instance(worker_id.unwrap_or(0));
-    match engine.tts_raw_audio_with_instance(
-        &text,
-        language.as_deref().unwrap_or("en"),
-        &voice_id,
-        speed.unwrap_or(1.0),
-        None,
-        None,
-        None,
-        None,
-        model_instance,
-    ) {
-        Ok(audio_samples) => Ok(f32_to_pcm_le_bytes(&audio_samples)),
-        Err(e) => Err(AppError::TtsGeneration(format!("TTS generation failed: {}", e))),
-    }
+    let audio_samples = match engine_type {
+        TtsEngineType::Onnx => {
+            let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+                onnx_path_str,
+                voices_path_str,
+                1,
+            )
+            .await;
+            let model_instance = engine.get_model_instance(worker_id.unwrap_or(0));
+            engine.tts_raw_audio_with_instance(
+                &text,
+                language.as_deref().unwrap_or("en"),
+                &voice_id,
+                speed.unwrap_or(1.0),
+                None,
+                None,
+                None,
+                None,
+                model_instance,
+            )
+            .map_err(|e| AppError::TtsGeneration(format!("TTS generation failed: {}", e)))?
+        }
+        TtsEngineType::Candle => {
+            let engine = kokoros::tts::koko_candle::TTSKokoParallelCandle::new_with_instances(
+                onnx_path_str,
+                voices_path_str,
+                1,
+            )
+            .await;
+            let model_instance = engine.get_model_instance(worker_id.unwrap_or(0));
+            engine.tts_raw_audio_with_instance(
+                &text,
+                language.as_deref().unwrap_or("en"),
+                &voice_id,
+                speed.unwrap_or(1.0),
+                None,
+                None,
+                None,
+                None,
+                model_instance,
+            )
+            .map_err(|e| AppError::TtsGeneration(format!("TTS generation failed: {}", e)))?
+        }
+    };
+
+    Ok(f32_to_pcm_le_bytes(&audio_samples))
 }
 
 /// Generate text-to-speech audio for multiple texts in parallel (Tauri command).
@@ -153,6 +186,7 @@ pub async fn generate_tts_cached(
 /// * `voice_id` - Voice identifier (e.g., "af_heart", "af_bella")
 /// * `language` - Optional language code (defaults to "en" if None)
 /// * `speed` - Optional speech speed multiplier (defaults to 1.0 if None)
+/// * `engine_type` - Optional engine type ("onnx" or "candle", defaults to "onnx")
 /// * `app` - Tauri application handle for resource path resolution
 ///
 /// # Returns
@@ -191,6 +225,7 @@ pub async fn generate_tts_batch(
     voice_id: String,
     language: Option<String>,
     speed: Option<f32>,
+    engine_type: Option<String>,
     app: tauri::AppHandle,
 ) -> AppResult<Vec<Vec<u8>>> {
     use crate::tts::engine::TtsEnginePool;
@@ -207,12 +242,19 @@ pub async fn generate_tts_batch(
         .ok_or_else(|| AppError::Encoding("Voices path contains invalid UTF-8".to_string()))?
         .to_string();
 
+    let engine_type = engine_type
+        .as_deref()
+        .map(|s| s.parse())
+        .transpose()?
+        .unwrap_or(TtsEngineType::Onnx);
+
     // Create engine pool once (reused for all batch items)
     let parallelism = num_cpus::get().max(1);
     let engine_pool = TtsEnginePool::new(
         &onnx_path_str,
         &voices_path_str,
         parallelism,
+        engine_type,
     )
     .await
     .map_err(|e| AppError::TtsGeneration(format!("Failed to create TTS engine pool: {}", e)))?;

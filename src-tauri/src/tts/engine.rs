@@ -2,6 +2,36 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::utils::errors::{AppError, AppResult};
 
+/// TTS Engine type selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TtsEngineType {
+    /// ONNX Runtime engine (default, uses CoreML/CUDA/CPU)
+    Onnx,
+    /// Candle engine (uses Metal/CUDA/Accelerate/CPU)
+    Candle,
+}
+
+impl Default for TtsEngineType {
+    fn default() -> Self {
+        TtsEngineType::Onnx
+    }
+}
+
+impl std::str::FromStr for TtsEngineType {
+    type Err = AppError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "onnx" => Ok(TtsEngineType::Onnx),
+            "candle" => Ok(TtsEngineType::Candle),
+            _ => Err(AppError::Config(format!(
+                "Invalid engine type: {}. Must be 'onnx' or 'candle'",
+                s
+            ))),
+        }
+    }
+}
+
 /// TTS Engine Pool for reusing engines across multiple tasks.
 ///
 /// This struct manages a pool of TTS model instances that can be shared
@@ -16,12 +46,14 @@ use crate::utils::errors::{AppError, AppResult};
 /// # Performance
 /// Creating a new TTS engine involves:
 /// - Loading ONNX model files (can be 100+ MB)
-/// - Initializing ONNX Runtime
+/// - Initializing ONNX Runtime or Candle
 /// - Loading voice style data
 ///
 /// By reusing engines, we avoid this overhead for each TTS generation.
 pub struct TtsEnginePool {
-    engine: Arc<kokoros::tts::koko::TTSKokoParallel>,
+    engine_type: TtsEngineType,
+    onnx_engine: Option<Arc<kokoros::tts::koko::TTSKokoParallel>>,
+    candle_engine: Option<Arc<kokoros::tts::koko_candle::TTSKokoParallelCandle>>,
     instance_counter: Arc<AtomicUsize>,
     num_instances: usize,
 }
@@ -37,6 +69,7 @@ impl TtsEnginePool {
     /// * `onnx_path` - Path to the ONNX model file (e.g., "kokoro-v1.0.onnx")
     /// * `voices_path` - Path to the voices data file (e.g., "voices-v1.0.bin")
     /// * `num_instances` - Number of model instances to create (typically CPU core count)
+    /// * `engine_type` - Engine type to use (Onnx or Candle)
     ///
     /// # Returns
     /// A new `TtsEnginePool` instance ready to generate audio.
@@ -50,23 +83,56 @@ impl TtsEnginePool {
     /// let pool = TtsEnginePool::new(
     ///     "kokoro-v1.0.onnx",
     ///     "voices-v1.0.bin",
-    ///     4  // 4 instances for 4-core CPU
+    ///     4,  // 4 instances for 4-core CPU
+    ///     TtsEngineType::Onnx  // or TtsEngineType::Candle
     /// ).await?;
     /// ```
-    pub async fn new(onnx_path: &str, voices_path: &str, num_instances: usize) -> AppResult<Self> {
-        log::info!("Creating TTS engine pool with {} instances", num_instances);
-        let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
-            onnx_path,
-            voices_path,
+    pub async fn new(
+        onnx_path: &str,
+        voices_path: &str,
+        num_instances: usize,
+        engine_type: TtsEngineType,
+    ) -> AppResult<Self> {
+        log::info!(
+            "Creating TTS engine pool with {} instances using {:?} engine",
             num_instances,
-        )
-        .await;
-        
-        Ok(Self {
-            engine: Arc::new(engine),
-            instance_counter: Arc::new(AtomicUsize::new(0)),
-            num_instances,
-        })
+            engine_type
+        );
+
+        match engine_type {
+            TtsEngineType::Onnx => {
+                let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+                    onnx_path,
+                    voices_path,
+                    num_instances,
+                )
+                .await;
+
+                Ok(Self {
+                    engine_type,
+                    onnx_engine: Some(Arc::new(engine)),
+                    candle_engine: None,
+                    instance_counter: Arc::new(AtomicUsize::new(0)),
+                    num_instances,
+                })
+            }
+            TtsEngineType::Candle => {
+                let engine = kokoros::tts::koko_candle::TTSKokoParallelCandle::new_with_instances(
+                    onnx_path,
+                    voices_path,
+                    num_instances,
+                )
+                .await;
+
+                Ok(Self {
+                    engine_type,
+                    onnx_engine: None,
+                    candle_engine: Some(Arc::new(engine)),
+                    instance_counter: Arc::new(AtomicUsize::new(0)),
+                    num_instances,
+                })
+            }
+        }
     }
     
     /// Generate audio samples using a model instance from the pool.
@@ -106,21 +172,49 @@ impl TtsEnginePool {
     ) -> AppResult<Vec<f32>> {
         // Get next instance index using round-robin with modulo to ensure valid instance ID
         let instance_id = self.instance_counter.fetch_add(1, Ordering::Relaxed) % self.num_instances;
-        let model_instance = self.engine.get_model_instance(instance_id);
-        
-        self.engine
-            .tts_raw_audio_with_instance(
-                text,
-                language,
-                voice_id,
-                speed,
-                None,
-                None,
-                None,
-                None,
-                model_instance,
-            )
-            .map_err(|e| AppError::TtsGeneration(format!("TTS generation failed: {}", e)))
+
+        match self.engine_type {
+            TtsEngineType::Onnx => {
+                let engine = self
+                    .onnx_engine
+                    .as_ref()
+                    .ok_or_else(|| AppError::TtsGeneration("ONNX engine not initialized".to_string()))?;
+                let model_instance = engine.get_model_instance(instance_id);
+                engine
+                    .tts_raw_audio_with_instance(
+                        text,
+                        language,
+                        voice_id,
+                        speed,
+                        None,
+                        None,
+                        None,
+                        None,
+                        model_instance,
+                    )
+                    .map_err(|e| AppError::TtsGeneration(format!("TTS generation failed: {}", e)))
+            }
+            TtsEngineType::Candle => {
+                let engine = self
+                    .candle_engine
+                    .as_ref()
+                    .ok_or_else(|| AppError::TtsGeneration("Candle engine not initialized".to_string()))?;
+                let model_instance = engine.get_model_instance(instance_id);
+                engine
+                    .tts_raw_audio_with_instance(
+                        text,
+                        language,
+                        voice_id,
+                        speed,
+                        None,
+                        None,
+                        None,
+                        None,
+                        model_instance,
+                    )
+                    .map_err(|e| AppError::TtsGeneration(format!("TTS generation failed: {}", e)))
+            }
+        }
     }
     
     /// Generate PCM audio bytes (16-bit little-endian).
@@ -167,7 +261,9 @@ impl TtsEnginePool {
 impl Clone for TtsEnginePool {
     fn clone(&self) -> Self {
         Self {
-            engine: Arc::clone(&self.engine),
+            engine_type: self.engine_type,
+            onnx_engine: self.onnx_engine.as_ref().map(Arc::clone),
+            candle_engine: self.candle_engine.as_ref().map(Arc::clone),
             instance_counter: Arc::clone(&self.instance_counter),
             num_instances: self.num_instances,
         }

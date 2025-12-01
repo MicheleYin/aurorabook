@@ -27,3 +27,4 @@ test-results/
 *.sw?
 .history/
 data/
+sample_audio/

@@ -135,9 +135,14 @@ pub async fn convert_epub_to_audiobook_command(
     });
     
     // Perform conversion
+    log::info!("Starting EPUB to audiobook conversion with {} chapters", conversion_chapters.len());
     let converted_epub = convert_epub_to_audiobook(epub_data, options, app.clone())
         .await
-        .map_err(|e| AppError::EpubParse(e.to_string()).with_context("Conversion failed"))?;
+        .map_err(|e| {
+            log::error!("Conversion failed: {}", e);
+            AppError::EpubParse(e.to_string()).with_context("Conversion failed")
+        })?;
+    log::info!("EPUB conversion completed successfully");
     
     // Store converted EPUB
     let converted_base64 = general_purpose::STANDARD.encode(&converted_epub);

@@ -46,10 +46,14 @@ symphonia = { version = "0.5", features = ["all"] }
 #   CoreML automatically leverages GPU and Neural Engine when available on Apple devices
 #   Note: Using kokoros crate with CoreML EP support built-in for macOS/iOS
 # Use kokoros crate from local path (customized to support dynamic input names)
-kokoros = { path = "../Kokoros/kokoros", default-features = true }
+# Enable CoreML EP support - code will automatically use it on Apple platforms only
+kokoros = { path = "../Kokoros/kokoros", default-features = true, features = ["coreml"] }
+# Note: CoreML EP is enabled by default on Apple platforms for GPU/Neural Engine acceleration
+# To enable CUDA GPU support on Linux/Windows, use: features = ["cuda"]
+# kokoros = { path = "../Kokoros/kokoros", default-features = true, features = ["cuda"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
-# ONNX Runtime with CoreML EP support for explicit CoreML EP configuration
+# ONNX Runtime with CoreML EP support for GPU/Neural Engine acceleration on Apple devices
 # Using local ort crate to enable building from source for iOS
 ort = { path = "../ort", default-features = true, features = ["coreml"] }
 ndarray = "0.16"

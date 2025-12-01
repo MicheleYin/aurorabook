@@ -126,6 +126,7 @@ pub fn get_parallelism() -> usize {
     }
 
     workers.max(1)
+
 }
 
 /// Extract chapters from EPUB data for conversion.
@@ -745,6 +746,7 @@ pub async fn convert_epub_to_audiobook(
         &onnx_path_str,
         &voices_path_str,
         parallelism,
+        crate::tts::engine::TtsEngineType::Onnx, // Default to ONNX engine
     )
     .await
     .map_err(|e| AppError::TtsGeneration(format!("Failed to create TTS engine pool: {}", e)))?;
@@ -840,6 +842,7 @@ pub async fn convert_epub_to_audiobook_standalone(
         &onnx_path_str,
         &voices_path_str,
         parallelism,
+        crate::tts::engine::TtsEngineType::Onnx, // Default to ONNX engine
     )
     .await
     .map_err(|e| AppError::TtsGeneration(format!("Failed to create TTS engine pool: {}", e)))?;
