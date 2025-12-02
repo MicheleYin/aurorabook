@@ -56,8 +56,9 @@ kokoros = { path = "../Kokoros/kokoros", default-features = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 # ONNX Runtime with CoreML EP support for GPU/Neural Engine acceleration on Apple devices
-# Using local ort crate to enable building from source for iOS
-ort = { path = "../ort", default-features = true, features = ["coreml"] }
+
+# Use local ort crate to match the version used in src-tauri
+ort = { path = "../../ort", default-features = true }
 ndarray = "0.16"
 
 [patch.crates-io]
