@@ -854,6 +854,10 @@ async fn convert_epub_core_with_durations(
         }
     }
     
+    // Log chapter hrefs that will be passed to update_content_opf
+    let chapter_hrefs: Vec<String> = options.chapters.iter().map(|c| c.href.clone()).collect();
+    log::debug!("Chapter hrefs being passed to update_content_opf: {:?}", chapter_hrefs);
+    
     let updated_opf = update_content_opf(
         &original_opf_content,
         &context.audio_files,

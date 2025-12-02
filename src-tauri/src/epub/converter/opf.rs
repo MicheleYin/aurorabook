@@ -69,6 +69,8 @@ pub fn update_content_opf(
     
     // Build items to add
     log::debug!("Building manifest items: {} audio files, {} SMIL files", audio_files.len(), smil_files.len());
+    log::debug!("Chapters passed to update_content_opf: {:?}", chapters);
+    log::debug!("SMIL files: {:?}", smil_files.iter().map(|(idx, href)| (idx, href)).collect::<Vec<_>>());
     
     for (idx, (_, href)) in audio_files.iter().enumerate() {
         if !added_audio_hrefs.contains(href) {
@@ -164,18 +166,51 @@ pub fn update_content_opf(
                     let mut smil_id_to_add: Option<String> = None;
                     
                     if let Some(ref href) = href_attr {
-                        for (idx, (chapter_idx, _)) in smil_files.iter().enumerate() {
-                            let chapter_href = if let Some(chapter) = chapters.get(*chapter_idx) {
-                                // Strip common base path prefixes for comparison
-                                strip_base_path_prefix(chapter)
-                            } else {
-                                continue;
-                            };
+                        // Normalize the href from manifest (strip leading slash)
+                        let normalized_href = strip_base_path_prefix(href);
+                        
+                        // Check if this is an HTML/XHTML file that might need media-overlay
+                        let is_html_content = media_type_attr.as_ref()
+                            .map(|mt| mt == "application/xhtml+xml" || mt == "text/html" || mt == "application/html+xml")
+                            .unwrap_or(false);
+                        
+                        if is_html_content {
+                            log::debug!("Checking for SMIL match for chapter href '{}' (normalized: '{}')", href, normalized_href);
                             
-                            if href == &chapter_href {
-                                needs_media_overlay = true;
-                                smil_id_to_add = Some(format!("s{:03}", idx + 1));
-                                break;
+                            // Match by comparing manifest href with chapter hrefs
+                            // Then find the corresponding SMIL file using the chapter index
+                            for (chapter_idx, chapter_href) in chapters.iter().enumerate() {
+                                let normalized_chapter_href = strip_base_path_prefix(chapter_href);
+                                
+                                // Try exact match first
+                                if normalized_href == normalized_chapter_href {
+                                    // Find the SMIL file for this chapter index
+                                    if let Some((smil_idx, _)) = smil_files.iter().enumerate()
+                                        .find(|(_, (smil_chapter_idx, _))| *smil_chapter_idx == chapter_idx) {
+                                        needs_media_overlay = true;
+                                        smil_id_to_add = Some(format!("s{:03}", smil_idx + 1));
+                                        log::debug!("  ✓ Exact match! Matched chapter href '{}' (index {}) with SMIL id '{}'", normalized_href, chapter_idx, smil_id_to_add.as_ref().unwrap());
+                                        break;
+                                    }
+                                }
+                                
+                                // Try matching by filename (in case paths differ)
+                                let href_filename = normalized_href.split('/').last().unwrap_or(&normalized_href);
+                                let chapter_filename = normalized_chapter_href.split('/').last().unwrap_or(&normalized_chapter_href);
+                                if href_filename == chapter_filename && !href_filename.is_empty() {
+                                    // Find the SMIL file for this chapter index
+                                    if let Some((smil_idx, _)) = smil_files.iter().enumerate()
+                                        .find(|(_, (smil_chapter_idx, _))| *smil_chapter_idx == chapter_idx) {
+                                        needs_media_overlay = true;
+                                        smil_id_to_add = Some(format!("s{:03}", smil_idx + 1));
+                                        log::debug!("  ✓ Filename match! Matched chapter by filename '{}' (index {}) with SMIL id '{}'", href_filename, chapter_idx, smil_id_to_add.as_ref().unwrap());
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            if !needs_media_overlay {
+                                log::debug!("  ✗ No SMIL match found for chapter href '{}'", normalized_href);
                             }
                         }
                     }
@@ -194,6 +229,15 @@ pub fn update_content_opf(
                     if needs_media_overlay {
                         if let Some(ref smil_id) = smil_id_to_add {
                             new_item.push_attribute(("media-overlay", smil_id.as_str()));
+                            log::debug!("Added media-overlay='{}' to chapter item with href='{}'", smil_id, href_attr.as_ref().unwrap_or(&"unknown".to_string()));
+                        }
+                    } else if let Some(ref href) = href_attr {
+                        // Log when we don't add media-overlay for debugging
+                        let is_html = media_type_attr.as_ref()
+                            .map(|mt| mt == "application/xhtml+xml" || mt == "text/html" || mt == "application/html+xml")
+                            .unwrap_or(false);
+                        if is_html {
+                            log::debug!("No media-overlay added for chapter item href='{}' (no matching SMIL file found)", href);
                         }
                     }
                     
@@ -286,23 +330,56 @@ pub fn update_content_opf(
                         }
                     }
                     
-                    // Check if this is a chapter item
+                    // Check if this is a chapter item that needs media-overlay
                     let mut needs_media_overlay = false;
                     let mut smil_id_to_add: Option<String> = None;
                     
                     if let Some(ref href) = href_attr {
-                        for (idx, (chapter_idx, _)) in smil_files.iter().enumerate() {
-                            let chapter_href = if let Some(chapter) = chapters.get(*chapter_idx) {
-                                // Strip common base path prefixes for comparison
-                                strip_base_path_prefix(chapter)
-                            } else {
-                                continue;
-                            };
+                        // Normalize the href from manifest (strip leading slash)
+                        let normalized_href = strip_base_path_prefix(href);
+                        
+                        // Check if this is an HTML/XHTML file that might need media-overlay
+                        let is_html_content = media_type_attr.as_ref()
+                            .map(|mt| mt == "application/xhtml+xml" || mt == "text/html" || mt == "application/html+xml")
+                            .unwrap_or(false);
+                        
+                        if is_html_content {
+                            log::debug!("Checking for SMIL match for chapter href '{}' (normalized: '{}', empty item)", href, normalized_href);
                             
-                            if href == &chapter_href {
-                                needs_media_overlay = true;
-                                smil_id_to_add = Some(format!("s{:03}", idx + 1));
-                                break;
+                            // Match by comparing manifest href with chapter hrefs
+                            // Then find the corresponding SMIL file using the chapter index
+                            for (chapter_idx, chapter_href) in chapters.iter().enumerate() {
+                                let normalized_chapter_href = strip_base_path_prefix(chapter_href);
+                                
+                                // Try exact match first
+                                if normalized_href == normalized_chapter_href {
+                                    // Find the SMIL file for this chapter index
+                                    if let Some((smil_idx, _)) = smil_files.iter().enumerate()
+                                        .find(|(_, (smil_chapter_idx, _))| *smil_chapter_idx == chapter_idx) {
+                                        needs_media_overlay = true;
+                                        smil_id_to_add = Some(format!("s{:03}", smil_idx + 1));
+                                        log::debug!("  ✓ Exact match! Matched chapter href '{}' (index {}) with SMIL id '{}' (empty item)", normalized_href, chapter_idx, smil_id_to_add.as_ref().unwrap());
+                                        break;
+                                    }
+                                }
+                                
+                                // Try matching by filename (in case paths differ)
+                                let href_filename = normalized_href.split('/').last().unwrap_or(&normalized_href);
+                                let chapter_filename = normalized_chapter_href.split('/').last().unwrap_or(&normalized_chapter_href);
+                                if href_filename == chapter_filename && !href_filename.is_empty() {
+                                    // Find the SMIL file for this chapter index
+                                    if let Some((smil_idx, _)) = smil_files.iter().enumerate()
+                                        .find(|(_, (smil_chapter_idx, _))| *smil_chapter_idx == chapter_idx) {
+                                        needs_media_overlay = true;
+                                        smil_id_to_add = Some(format!("s{:03}", smil_idx + 1));
+                                        log::debug!("  ✓ Filename match! Matched chapter by filename '{}' (index {}) with SMIL id '{}' (empty item)", href_filename, chapter_idx, smil_id_to_add.as_ref().unwrap());
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            if !needs_media_overlay {
+                                log::debug!("  ✗ No SMIL match found for chapter href '{}' (empty item)", normalized_href);
                             }
                         }
                     }
@@ -319,6 +396,15 @@ pub fn update_content_opf(
                     if needs_media_overlay {
                         if let Some(ref smil_id) = smil_id_to_add {
                             new_item.push_attribute(("media-overlay", smil_id.as_str()));
+                            log::debug!("Added media-overlay='{}' to chapter item with href='{}' (empty item)", smil_id, href_attr.as_ref().unwrap_or(&"unknown".to_string()));
+                        }
+                    } else if let Some(ref href) = href_attr {
+                        // Log when we don't add media-overlay for debugging
+                        let is_html = media_type_attr.as_ref()
+                            .map(|mt| mt == "application/xhtml+xml" || mt == "text/html" || mt == "application/html+xml")
+                            .unwrap_or(false);
+                        if is_html {
+                            log::debug!("No media-overlay added for chapter item href='{}' (empty item, no matching SMIL file found)", href);
                         }
                     }
                     
@@ -355,6 +441,24 @@ pub fn update_content_opf(
         
         if !has_audio && !has_smil && !audio_files.is_empty() && !smil_files.is_empty() {
             log::warn!("Warning: Manifest items were built but not found in output OPF!");
+        }
+    }
+    
+    // Verify media-overlay attributes were added
+    let media_overlay_count = output.matches("media-overlay").count();
+    let expected_media_overlays = smil_files.len();
+    log::debug!("OPF output verification: found {} media-overlay attributes, expected {}", 
+        media_overlay_count, expected_media_overlays);
+    
+    if media_overlay_count < expected_media_overlays && !smil_files.is_empty() {
+        log::warn!("Warning: Expected {} media-overlay attributes but found {} in output OPF!", 
+            expected_media_overlays, media_overlay_count);
+        // Log a sample of the output to help debug
+        if let Some(start) = output.find("<manifest") {
+            if let Some(end) = output[start..].find("</manifest>") {
+                let manifest_section = &output[start..start+end.min(500)];
+                log::debug!("Manifest section sample: {}", manifest_section);
+            }
         }
     }
     
