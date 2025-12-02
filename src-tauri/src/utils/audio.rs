@@ -1,4 +1,3 @@
-use crate::utils::constants::SAMPLE_RATE;
 
 /// Convert f32 audio samples to 16-bit PCM bytes (little-endian).
 ///
@@ -38,17 +37,4 @@ pub fn f32_to_pcm_le_bytes(samples: &[f32]) -> Vec<u8> {
     pcm_bytes
 }
 
-/// Get the default sample rate used for TTS audio generation.
-///
-/// # Returns
-/// The default sample rate in Hz (typically 24000 for Kokoros TTS).
-///
-/// # Example
-/// ```rust
-/// let sample_rate = default_sample_rate();
-/// println!("Using sample rate: {} Hz", sample_rate);
-/// ```
-pub fn default_sample_rate() -> u32 {
-    SAMPLE_RATE
-}
 

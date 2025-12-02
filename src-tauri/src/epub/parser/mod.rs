@@ -26,13 +26,13 @@ pub mod utils;
 pub use types::{EpubMetadata, ManifestItem};
 
 // Re-export OPF functions
-pub use opf::{find_opf_path_from_epub, find_opf_path, derive_base_path_from_opf};
+pub use opf::{find_opf_path, derive_base_path_from_opf};
 
 // Re-export metadata functions
 pub use metadata::{extract_metadata_with_epub_crate, parse_opf_content};
 
 // Re-export navigation functions
-pub use navigation::{parse_navigation, parse_ncx_titles};
+pub use navigation::parse_ncx_titles;
 
 // Re-export cover functions
 pub use cover::{find_cover_image, extract_cover_image_as_data_url};

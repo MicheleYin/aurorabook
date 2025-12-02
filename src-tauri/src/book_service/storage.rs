@@ -95,7 +95,8 @@ pub fn save_epub_buffer_to_store(app: &AppHandle, source_path: &str, epub_data: 
     
     let base64_data = general_purpose::STANDARD.encode(epub_data);
     epub_store.set(&key, serde_json::Value::String(base64_data));
-    epub_store.save();
+    epub_store.save()
+        .map_err(|e| format!("Failed to save EPUB store: {}", e))?;
     
     Ok(())
 }
@@ -109,7 +110,8 @@ pub fn delete_epub_from_store(app: &AppHandle, source_path: &str) -> Result<(), 
         .map_err(|e| format!("Failed to create EPUB store: {}", e))?;
     let key = format!("{}{}", EPUB_STORE_KEY_PREFIX, source_path);
     epub_store.delete(&key);
-    epub_store.save();
+    epub_store.save()
+        .map_err(|e| format!("Failed to save EPUB store: {}", e))?;
     
     Ok(())
 }

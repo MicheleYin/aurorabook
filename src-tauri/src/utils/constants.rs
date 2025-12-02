@@ -10,15 +10,6 @@ pub const MEDIA_TYPE_HTML: &str = "text/html";
 /// Media type for HTML XML content
 pub const MEDIA_TYPE_HTML_XML: &str = "application/html+xml";
 
-/// Media type for SMIL files
-pub const MEDIA_TYPE_SMIL: &str = "application/smil+xml";
-
-/// Media type for MP3 audio
-pub const MEDIA_TYPE_MP3: &str = "audio/mpeg";
-
-/// Media type for WAV audio
-pub const MEDIA_TYPE_WAV: &str = "audio/wav";
-
 /// Default MP3 bitrate in kbps
 pub const DEFAULT_MP3_BITRATE: u32 = 128;
 

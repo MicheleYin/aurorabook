@@ -1,4 +1,4 @@
-use crate::utils::constants::{SAMPLE_RATE, WAV_HEADER_SIZE};
+use crate::utils::constants::WAV_HEADER_SIZE;
 
 /// Merge multiple PCM audio data arrays into a single WAV file.
 ///

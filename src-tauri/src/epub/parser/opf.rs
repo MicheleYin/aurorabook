@@ -1,25 +1,5 @@
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
-use epub::doc::EpubDoc;
-
-/// Find the content.opf path using epub crate.
-///
-/// This function uses the epub crate to get the OPF path from the EPUB.
-/// The epub crate stores the OPF path internally, but we need to extract it
-/// from the container.xml for compatibility with other functions.
-///
-/// # Arguments
-/// * `_epub` - Reference to the EpubDoc instance (currently unused, kept for API compatibility)
-///
-/// # Returns
-/// The path to the OPF file within the EPUB archive.
-pub fn find_opf_path_from_epub(_epub: &EpubDoc<Cursor<Vec<u8>>>) -> Result<String, String> {
-    // The epub crate stores the OPF path internally, but we typically
-    // need to find it via container.xml for compatibility
-    // This function is kept for API compatibility but the actual path
-    // is determined via find_opf_path() which reads container.xml
-    Ok("content.opf".to_string())
-}
 
 /// Find the content.opf path from container.xml or common locations.
 ///

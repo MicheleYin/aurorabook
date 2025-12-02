@@ -1,8 +1,21 @@
 pub mod parser;
 pub mod converter;
 
-pub use parser::*;
-pub use converter::*;
+// Re-export specific items to avoid ambiguous glob re-exports
+pub use parser::{
+    EpubMetadata, ManifestItem,
+    find_opf_path, derive_base_path_from_opf,
+    extract_metadata_with_epub_crate, parse_opf_content,
+    parse_ncx_titles,
+    find_cover_image, extract_cover_image_as_data_url,
+    extract_audio_tracks_from_manifest, compute_audio_track_durations,
+    extract_chapters_from_epub,
+    extract_year, derive_title_from_path, generate_audio_track_title,
+};
+pub use converter::{
+    ConversionOptions, ConversionChapter, ConversionProgress,
+    convert_epub_to_audiobook,
+};
 
 use tauri::AppHandle;
 use crate::utils::errors::{AppError, AppResult};
@@ -94,8 +107,9 @@ pub async fn convert_epub_to_audiobook_command(
     });
     
     // Extract chapters
-    let (chapters, stats) = extract_chapters(epub_data.clone())
-        .map_err(|e| e.with_context("Failed to extract chapters"))?;
+    use crate::epub::parser::extract_chapters_from_epub;
+    let (chapters, stats) = extract_chapters_from_epub(&epub_data)
+        .map_err(|e| AppError::EpubParse(e).with_context("Failed to extract chapters"))?;
     
     let (manifest_count, spine_itemref_count, missing_manifest_count, non_html_count, filtered_count) = stats;
     
@@ -111,8 +125,8 @@ pub async fn convert_epub_to_audiobook_command(
         id: c.id,
         title: c.title,
         href: c.href,
-        content_html: c.content_html,
-        word_count: c.word_count,
+        content_html: c.content_html.unwrap_or_default(),
+        word_count: c.word_count.unwrap_or(0),
     }).collect();
     
     let options = ConversionOptions {

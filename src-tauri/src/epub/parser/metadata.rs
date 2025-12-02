@@ -4,7 +4,7 @@ use zip::ZipArchive;
 use epub::doc::EpubDoc;
 
 use super::types::{EpubMetadata, ManifestItem};
-use super::opf::{find_opf_path, derive_base_path_from_opf};
+use super::opf::find_opf_path;
 
 /// Extract EPUB metadata using the epub crate.
 ///
