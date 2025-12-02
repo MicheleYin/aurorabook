@@ -40,6 +40,8 @@ thiserror = "1.0"
 anyhow = "1.0"
 once_cell = "1.19"
 symphonia = { version = "0.5", features = ["all"] }
+epub = "2.1"
+epub-builder = "0.5"
 # GPU acceleration configuration:
 # - CUDA: For NVIDIA GPUs (Linux/Windows) - enables GPU acceleration via kokoros cuda feature
 # - CoreML: For Apple devices (macOS/iOS/iPadOS) - ONNX Runtime uses CoreML Execution Provider
@@ -47,7 +49,7 @@ symphonia = { version = "0.5", features = ["all"] }
 #   Note: Using kokoros crate with CoreML EP support built-in for macOS/iOS
 # Use kokoros crate from local path (customized to support dynamic input names)
 # Enable CoreML EP support - code will automatically use it on Apple platforms only
-kokoros = { path = "../Kokoros/kokoros", default-features = true, features = ["coreml"] }
+kokoros = { path = "../Kokoros/kokoros", default-features = true }
 # Note: CoreML EP is enabled by default on Apple platforms for GPU/Neural Engine acceleration
 # To enable CUDA GPU support on Linux/Windows, use: features = ["cuda"]
 # kokoros = { path = "../Kokoros/kokoros", default-features = true, features = ["cuda"] }

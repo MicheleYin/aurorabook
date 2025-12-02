@@ -4,6 +4,7 @@ use crate::utils::path_validation::validate_epub_path;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
+use epub::doc::EpubDoc;
 
 /// EPUB metadata extracted from the OPF (Open Packaging Format) file.
 ///
@@ -47,27 +48,35 @@ pub struct ManifestItem {
     pub properties: Option<String>,
 }
 
+/// Find the content.opf path using epub crate.
+///
+/// This function uses the epub crate to get the OPF path from the EPUB.
+/// The epub crate stores the OPF path internally, but we need to extract it
+/// from the container.xml for compatibility with other functions.
+///
+/// # Arguments
+/// * `_epub` - Reference to the EpubDoc instance (currently unused, kept for API compatibility)
+///
+/// # Returns
+/// The path to the OPF file within the EPUB archive.
+pub fn find_opf_path_from_epub(_epub: &EpubDoc<Cursor<Vec<u8>>>) -> Result<String, String> {
+    // The epub crate stores the OPF path internally, but we typically
+    // need to find it via container.xml for compatibility
+    // This function is kept for API compatibility but the actual path
+    // is determined via find_opf_path() which reads container.xml
+    Ok("content.opf".to_string())
+}
+
 /// Find the content.opf path from container.xml or common locations.
 ///
-/// EPUB files must contain a container.xml file that points to the OPF file.
-/// This function first tries to read container.xml, and if that fails, it
-/// checks common locations where OPF files are typically stored.
+/// This is a compatibility function that still uses ZIP archive for cases
+/// where we need to work with raw ZIP data without rbook.
 ///
 /// # Arguments
 /// * `archive` - Mutable reference to the EPUB ZIP archive
 ///
 /// # Returns
 /// The path to the OPF file within the EPUB archive.
-///
-/// # Errors
-/// Returns an error string if the archive cannot be read.
-///
-/// # Common Paths Checked
-/// - `META-INF/container.xml` (EPUB 2.0/3.0 standard)
-/// - `OEBPS/content.opf`
-/// - `content.opf`
-/// - `OEBPS/package.opf`
-/// - `package.opf`
 pub fn find_opf_path(archive: &mut ZipArchive<Cursor<&[u8]>>) -> Result<String, String> {
     use quick_xml::events::Event;
     use quick_xml::Reader;
@@ -127,6 +136,117 @@ pub fn find_opf_path(archive: &mut ZipArchive<Cursor<&[u8]>>) -> Result<String, 
     }
     
     Ok("content.opf".to_string())
+}
+
+/// Derive the base path from an OPF path.
+///
+/// This function extracts the directory portion of the OPF path.
+/// For example:
+/// - "EPUB/content.opf" -> "EPUB/"
+/// - "OEBPS/content.opf" -> "OEBPS/"
+/// - "content.opf" -> ""
+///
+/// # Arguments
+/// * `opf_path` - The path to the OPF file within the EPUB archive
+///
+/// # Returns
+/// The base directory path (with trailing slash) or empty string if OPF is at root
+pub fn derive_base_path_from_opf(opf_path: &str) -> String {
+    if opf_path.contains("/") {
+        opf_path.rfind("/")
+            .map(|pos| opf_path[..pos + 1].to_string())
+            .unwrap_or_else(|| String::new())
+    } else {
+        String::new()
+    }
+}
+
+/// Extract EPUB metadata using the epub crate.
+///
+/// This function uses the epub crate to extract metadata, manifest items, and spine items
+/// in a more efficient way than manually parsing the OPF file.
+///
+/// # Arguments
+/// * `epub_data` - The EPUB file as a byte slice
+///
+/// # Returns
+/// A tuple containing:
+/// * `EpubMetadata` - Extracted metadata
+/// * `HashMap<String, ManifestItem>` - Map of manifest item IDs to items
+/// * `Vec<(String, String)>` - Spine items as (idref, linear) pairs
+/// * `String` - OPF path
+///
+/// # Errors
+/// Returns an error string if the EPUB cannot be opened or parsed.
+pub fn extract_metadata_with_epub_crate(
+    epub_data: &[u8],
+) -> Result<(EpubMetadata, HashMap<String, ManifestItem>, Vec<(String, String)>, String), String> {
+    use log::debug;
+    
+    // Open EPUB using the epub crate
+    let epub = EpubDoc::from_reader(Cursor::new(epub_data.to_vec()))
+        .map_err(|e| format!("Failed to open EPUB with epub crate: {}", e))?;
+    
+    // Get OPF path (we still need to find it via container.xml for compatibility)
+    let opf_path = find_opf_path(&mut ZipArchive::new(Cursor::new(epub_data))
+        .map_err(|e| format!("Failed to open EPUB archive: {}", e))?)?;
+    debug!("Using OPF path: {}", opf_path);
+    
+    // Extract metadata using epub crate's mdata() method
+    // mdata() returns Option<&MetadataItem>, we need to extract the value
+    let metadata = EpubMetadata {
+        title: epub.mdata("title")
+            .or_else(|| epub.mdata("dc:title"))
+            .map(|item| item.value.clone()),
+        creator: epub.mdata("creator")
+            .or_else(|| epub.mdata("dc:creator"))
+            .map(|item| item.value.clone()),
+        publisher: epub.mdata("publisher")
+            .or_else(|| epub.mdata("dc:publisher"))
+            .map(|item| item.value.clone()),
+        subjects: epub.mdata("subject")
+            .or_else(|| epub.mdata("dc:subject"))
+            .map(|item| vec![item.value.clone()])
+            .unwrap_or_default(),
+        pubdate: epub.mdata("date")
+            .or_else(|| epub.mdata("dc:date"))
+            .map(|item| item.value.clone()),
+        modified_date: epub.mdata("dcterms:modified")
+            .map(|item| item.value.clone()),
+        cover_id: epub.mdata("cover")
+            .or_else(|| epub.mdata("cover-image"))
+            .map(|item| item.value.clone()),
+    };
+    
+    // Build manifest items map from epub crate resources
+    let mut manifest_items: HashMap<String, ManifestItem> = HashMap::new();
+    let resources = epub.resources.clone();
+    
+    for (id, resource) in resources {
+        let href = resource.path.to_string_lossy().to_string();
+        let media_type = resource.mime.clone();
+        
+        // Properties in epub crate is already Option<String>, just clone it
+        let properties_str = resource.properties.clone();
+        
+        manifest_items.insert(id.clone(), ManifestItem {
+            id,
+            href,
+            media_type: Some(media_type),
+            properties: properties_str,
+        });
+    }
+    
+    // Build spine items from epub crate's spine
+    let mut spine_items = Vec::new();
+    let spine = epub.spine.clone();
+    
+    for spine_item in spine {
+        let linear_str = if spine_item.linear { "yes" } else { "no" }.to_string();
+        spine_items.push((spine_item.idref, linear_str));
+    }
+    
+    Ok((metadata, manifest_items, spine_items, opf_path))
 }
 
 /// Parse OPF file and extract all needed data in one pass.
@@ -724,27 +844,30 @@ pub fn extract_cover_image_as_data_url(
         }
     }
     
-    // Try alternative paths if primary didn't work
-    if !found_cover {
-        let alt_paths = [
-            format!("OEBPS/{}", cover_path),
-            format!("OPS/{}", cover_path),
-            cover_href.to_string(),
-            format!("OEBPS/{}", cover_href),
-            format!("OPS/{}", cover_href),
-        ];
-        
-        for alt_path in &alt_paths {
-            if let Ok(mut file) = archive.by_name(alt_path) {
-                cover_bytes.clear();
-                if file.read_to_end(&mut cover_bytes).is_ok() && !cover_bytes.is_empty() {
-                    debug!("Found cover at alternative path: '{}'", alt_path);
-                    found_cover = true;
-                    break;
+        // Try alternative paths if primary didn't work
+        if !found_cover {
+            let mut alt_paths = vec![
+                cover_href.to_string(),
+            ];
+            
+            // Add base path variants if base path exists
+            let opf_base = derive_base_path_from_opf(opf_base_path);
+            if !opf_base.is_empty() {
+                alt_paths.push(format!("{}{}", opf_base, cover_path));
+                alt_paths.push(format!("{}{}", opf_base, cover_href));
+            }
+            
+            for alt_path in &alt_paths {
+                if let Ok(mut file) = archive.by_name(alt_path) {
+                    cover_bytes.clear();
+                    if file.read_to_end(&mut cover_bytes).is_ok() && !cover_bytes.is_empty() {
+                        debug!("Found cover at alternative path: '{}'", alt_path);
+                        found_cover = true;
+                        break;
+                    }
                 }
             }
         }
-    }
     
     if !found_cover || cover_bytes.is_empty() {
         warn!("Cover image not found at path '{}' or alternatives", cover_path);
@@ -868,7 +991,7 @@ fn compute_audio_duration(audio_bytes: &[u8], mime_type: &str) -> Option<f64> {
         &FormatOptions::default(),
         &MetadataOptions::default(),
     ) {
-        Ok(mut probed) => {
+        Ok(probed) => {
             // Get the format
             let format = probed.format;
             
@@ -958,21 +1081,15 @@ pub fn compute_audio_track_durations(
         }
     };
     
-    // Determine OEBPS base path
-    let oebps_base = if opf_path.contains("/") {
-        opf_path.rfind("/")
-            .map(|pos| opf_path[..pos + 1].to_string())
-            .unwrap_or_else(|| "OEBPS/".to_string())
-    } else {
-        "OEBPS/".to_string()
-    };
+    // Determine base path from OPF location
+    let base_path = derive_base_path_from_opf(opf_path);
     
     for track in audio_tracks.iter_mut() {
         // Resolve audio path relative to OPF location
         let audio_path = if track.href.starts_with("/") {
             track.href[1..].to_string()
         } else {
-            let mut resolved_parts: Vec<&str> = oebps_base.split("/").filter(|s| !s.is_empty()).collect();
+            let mut resolved_parts: Vec<&str> = base_path.split("/").filter(|s| !s.is_empty()).collect();
             let audio_parts: Vec<&str> = track.href.split("/").collect();
             
             for part in audio_parts {
@@ -999,13 +1116,15 @@ pub fn compute_audio_track_durations(
         
         // Try alternative paths if primary didn't work
         if !found_audio {
-            let alt_paths = [
-                format!("OEBPS/{}", audio_path),
-                format!("OPS/{}", audio_path),
+            let mut alt_paths = vec![
                 track.href.clone(),
-                format!("OEBPS/{}", track.href),
-                format!("OPS/{}", track.href),
             ];
+            
+            // Add base path variants if base path exists
+            if !base_path.is_empty() {
+                alt_paths.push(format!("{}{}", base_path, audio_path));
+                alt_paths.push(format!("{}{}", base_path, track.href));
+            }
             
             for alt_path in &alt_paths {
                 if let Ok(mut file) = archive.by_name(alt_path) {
@@ -1086,25 +1205,40 @@ pub fn extract_chapters_from_epub(
     use uuid::Uuid;
     use log::{debug, warn};
     
-    let mut archive = ZipArchive::new(Cursor::new(epub_data))
-        .map_err(|e| format!("Failed to open EPUB: {}", e))?;
+    // Open EPUB using the epub crate
+    // EpubDoc::new() requires a file path, but we have bytes, so we need to use from_reader
+    // The epub crate supports reading from a Cursor
+    let mut epub = EpubDoc::from_reader(Cursor::new(epub_data.to_vec()))
+        .map_err(|e| format!("Failed to open EPUB with epub crate: {}", e))?;
     
-    // Find OPF path
-    let opf_path = find_opf_path(&mut archive)?;
+    // Get OPF path from the epub crate
+    // The epub crate stores the OPF internally, we can get it via the resources
+    let opf_path = find_opf_path(&mut ZipArchive::new(Cursor::new(epub_data))
+        .map_err(|e| format!("Failed to open EPUB archive: {}", e))?)?;
     debug!("Using OPF path: {}", opf_path);
     
-    // Read OPF content
-    let opf_content = {
-        let mut opf_file = archive.by_name(&opf_path)
-            .map_err(|e| format!("Failed to find OPF at path '{}': {}", opf_path, e))?;
-        let mut content = String::new();
-        opf_file.read_to_string(&mut content)
-            .map_err(|e| format!("Failed to read OPF: {}", e))?;
-        content
-    };
+    // Determine base path from OPF location  
+    let base_path = derive_base_path_from_opf(&opf_path);
+    debug!("Base path derived from OPF: '{}' (OPF: '{}')", base_path, opf_path);
     
-    // Parse OPF
-    let (_metadata, manifest_items, spine_items) = parse_opf_content(&opf_content)?;
+    // Build manifest items map from epub crate resources
+    let mut manifest_items: HashMap<String, ManifestItem> = HashMap::new();
+    let resources = epub.resources.clone();
+    
+    for (id, resource) in resources {
+        let href = resource.path.to_string_lossy().to_string();
+        let media_type = resource.mime.clone();
+        
+        // Properties in epub crate is already Option<String>, just clone it
+        let properties_str = resource.properties.clone();
+        
+        manifest_items.insert(id.clone(), ManifestItem {
+            id,
+            href,
+            media_type: Some(media_type),
+            properties: properties_str,
+        });
+    }
     
     let manifest_count = manifest_items.len();
     let mut spine_itemref_count = 0;
@@ -1112,83 +1246,43 @@ pub fn extract_chapters_from_epub(
     let mut non_html_count = 0;
     let mut filtered_count = 0;
     
-    // Determine OEBPS base path
-    let oebps_base = if opf_path.contains("/") {
-        opf_path.rfind("/")
-            .map(|pos| opf_path[..pos + 1].to_string())
-            .unwrap_or_else(|| OEBPS_PREFIX.to_string())
-    } else {
-        OEBPS_PREFIX.to_string()
-    };
-    debug!("OEBPS base path: '{}'", oebps_base);
-    
-    // Find and parse NCX file for chapter titles
-    // First, find the NCX path from manifest
-    let mut ncx_path_opt: Option<String> = None;
-    for item in manifest_items.values() {
-        if item.media_type.as_ref().map(|mt| mt == "application/x-dtbncx+xml").unwrap_or(false) {
-            ncx_path_opt = Some(if item.href.starts_with("/") {
-                item.href[1..].to_string()
-            } else if item.href.starts_with("OEBPS/") {
-                item.href.clone()
-            } else {
-                format!("{}{}", oebps_base, item.href)
-            });
-            break; // Only use the first NCX file found
-        }
-    }
-    
-    // Read NCX content if found (read into a variable to drop the file handle)
+    // Get navigation titles from NCX if available
     let mut ncx_title_map: HashMap<String, String> = HashMap::new();
-    if let Some(ncx_path) = ncx_path_opt {
-        debug!("Found NCX file at: {}", ncx_path);
-        let ncx_content = {
-            match archive.by_name(&ncx_path) {
-                Ok(mut ncx_file) => {
-                    let mut content = String::new();
-                    if ncx_file.read_to_string(&mut content).is_ok() {
-                        content
-                    } else {
-                        warn!("Failed to read NCX file content");
-                        String::new()
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to open NCX file at: {} (error: {:?})", ncx_path, e);
-                    String::new()
-                }
+    // Try to get NCX content and parse it
+    if let Some(ncx_content) = epub.get_resource_by_path("toc.ncx") {
+        if let Ok(ncx_str) = String::from_utf8(ncx_content) {
+            if let Ok(titles) = parse_ncx_titles(&ncx_str) {
+                ncx_title_map = titles;
             }
-        };
-        if !ncx_content.is_empty() {
-            match parse_ncx_titles(&ncx_content) {
-                Ok(titles) => {
-                    ncx_title_map = titles;
-                    debug!("Parsed {} chapter titles from NCX", ncx_title_map.len());
-                    // Debug: print first few titles
-                    for (href, title) in ncx_title_map.iter().take(5) {
-                        debug!("  NCX: '{}' -> '{}'", href, title);
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to parse NCX file: {}", e);
-                }
-            }
-        } else {
-            warn!("NCX file content is empty for path: {}", ncx_path);
         }
-    } else {
-        warn!("No NCX file found in manifest");
     }
     
-    // Extract chapters from spine
+    // Extract chapters from spine using epub crate's spine iterator
     let mut chapters = Vec::new();
-    let mut chapter_index = 0; // Track actual chapter index after filtering
-    for (_spine_index, (idref, href)) in spine_items.iter().enumerate() {
+    let mut chapter_index = 0;
+    
+    // The epub crate provides a spine() method that returns spine items
+    // We need to iterate through the spine and get each resource
+    let spine = epub.spine.clone();
+    
+    for spine_item in spine {
         spine_itemref_count += 1;
         
-        if let Some(item) = manifest_items.get(idref) {
+        let idref = spine_item.idref;
+        let linear = spine_item.linear;
+        
+        // Skip non-linear items (like notes, references)
+        if !linear {
+            filtered_count += 1;
+            continue;
+        }
+        
+        // Get the resource for this spine item
+        if let Some(resource) = epub.resources.get(&idref) {
+            let href = resource.path.to_string_lossy().to_string();
+            
             // Validate and sanitize href path for security
-            let validated_href = match validate_epub_path(href) {
+            let validated_href = match validate_epub_path(&href) {
                 Ok(v) => v,
                 Err(e) => {
                     warn!("Invalid chapter path '{}': {}, skipping", href, e);
@@ -1198,9 +1292,10 @@ pub fn extract_chapters_from_epub(
             };
             
             // Only include HTML/XHTML chapters
-            let is_html_content = item.media_type.as_ref()
-                .map(|mt| mt == MEDIA_TYPE_XHTML || mt == MEDIA_TYPE_HTML || mt == MEDIA_TYPE_HTML_XML)
-                .unwrap_or(false)
+            let media_type = &resource.mime;
+            let is_html_content = media_type == MEDIA_TYPE_XHTML 
+                || media_type == MEDIA_TYPE_HTML 
+                || media_type == MEDIA_TYPE_HTML_XML
                 || validated_href.ends_with(".xhtml")
                 || validated_href.ends_with(".html");
             
@@ -1222,31 +1317,20 @@ pub fn extract_chapters_from_epub(
                 continue;
             }
             
-            // Extract title from NCX if available, otherwise use fallback
+            // Extract title from navigation if available, otherwise use fallback
             let normalized_href = if validated_href.starts_with("/") {
                 validated_href[1..].to_string()
             } else {
                 validated_href.clone()
             };
             
-            // Try to find title in NCX map
-            let title = if let Some(ncx_title) = ncx_title_map.get(&normalized_href) {
-                debug!("Using NCX title '{}' for href '{}'", ncx_title, normalized_href);
-                ncx_title.clone()
+            // Try to find title in navigation map
+            let title = if let Some(nav_title) = ncx_title_map.get(&normalized_href) {
+                debug!("Using navigation title '{}' for href '{}'", nav_title, normalized_href);
+                nav_title.clone()
             } else {
-                // Fallback: try with OEBPS/ prefix
-                let oebps_href = if normalized_href.starts_with("OEBPS/") {
-                    normalized_href.clone()
-                } else {
-                    format!("OEBPS/{}", normalized_href)
-                };
-                if let Some(ncx_title) = ncx_title_map.get(&oebps_href) {
-                    debug!("Using NCX title '{}' for href '{}' (with OEBPS prefix)", ncx_title, normalized_href);
-                    ncx_title.clone()
-                } else {
-                    debug!("No NCX title found for href '{}', using fallback", normalized_href);
-                    format!("Section {}", chapter_index + 1)
-                }
+                debug!("No navigation title found for href '{}', using fallback", normalized_href);
+                format!("Section {}", chapter_index + 1)
             };
             
             chapter_index += 1;

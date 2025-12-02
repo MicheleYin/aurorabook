@@ -175,3 +175,138 @@ pub fn chunk_text(html: &str) -> AppResult<(Vec<(String, String)>, String)> {
     Ok((chunks, updated_html))
 }
 
+/// Extracts all text from HTML and adds span tags for text-audio synchronization.
+/// Unlike `chunk_text`, this function does NOT split into sentences - it processes
+/// the entire text as one unit, adding spans at the sentence level for mapping.
+///
+/// This function:
+/// 1. Extracts text from semantic elements (paragraphs, headings, list items, etc.)
+/// 2. Wraps each sentence in a `<span>` tag with a unique ID
+/// 3. Returns both the full text (for TTS) and updated HTML (for EPUB)
+///
+/// # Arguments
+/// * `html` - The HTML content to process
+///
+/// # Returns
+/// A tuple containing:
+/// * `String` - Full extracted text for TTS generation (all sentences joined)
+/// * `String` - Updated HTML with span tags for synchronization
+/// * `Vec<(String, usize, usize)>` - List of (span_id, start_word_index, end_word_index) for mapping
+///
+pub fn extract_text_with_spans(html: &str) -> AppResult<(String, String, Vec<(String, usize, usize)>)> {
+    let document = Html::parse_document(html);
+    let mut full_text = String::new();
+    let mut span_mappings: Vec<(String, usize, usize)> = Vec::new();
+    let mut span_index = 0;
+    let mut current_word_index = 0;
+    
+    // Use pre-compiled selectors
+    let selectors = vec![
+        &*SELECTOR_P,
+        &*SELECTOR_H1,
+        &*SELECTOR_H2,
+        &*SELECTOR_H3,
+        &*SELECTOR_H4,
+        &*SELECTOR_H5,
+        &*SELECTOR_H6,
+        &*SELECTOR_LI,
+        &*SELECTOR_BLOCKQUOTE,
+        &*SELECTOR_DIV,
+    ];
+    
+    let sentence_pattern = &*SENTENCE_PATTERN;
+    
+    // Store replacements with unique markers
+    let mut replacements: Vec<(String, String, String)> = Vec::new();
+    let mut marker_counter = 0;
+    
+    // Process each element type
+    for selector in &selectors {
+        for element in document.select(selector) {
+            let text = element.text().collect::<String>().trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            
+            // Split into sentences
+            let sentences: Vec<&str> = sentence_pattern
+                .find_iter(&text)
+                .map(|m| m.as_str().trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            
+            let sentences = if sentences.is_empty() {
+                vec![text.as_str()]
+            } else {
+                sentences
+            };
+            
+            // Build new content with spans and track word indices
+            let mut new_content = String::new();
+            for (idx, sentence) in sentences.iter().enumerate() {
+                // Format span ID: f000001, f000002, etc.
+                let span_id = format!("f{:06}", span_index + 1);
+                
+                // Count words in this sentence
+                let word_count = sentence.split_whitespace().filter(|s| !s.is_empty()).count();
+                let start_word = current_word_index;
+                let end_word = current_word_index + word_count;
+                
+                // Add to full text
+                if !full_text.is_empty() {
+                    full_text.push(' ');
+                }
+                full_text.push_str(sentence);
+                current_word_index = end_word;
+                
+                // Track span mapping
+                span_mappings.push((span_id.clone(), start_word, end_word));
+                
+                // Escape XML special characters
+                let escaped_sentence = sentence
+                    .replace('&', "&amp;")
+                    .replace('<', "&lt;")
+                    .replace('>', "&gt;")
+                    .replace('"', "&quot;")
+                    .replace('\'', "&apos;");
+                new_content.push_str(&format!(r#"<span id="{}">{}</span>"#, span_id, escaped_sentence));
+                if idx < sentences.len() - 1 {
+                    new_content.push(' ');
+                }
+                span_index += 1;
+            }
+            
+            // Get the element's outer HTML
+            let element_outer = element.html();
+            let marker = format!("__SPAN_MARKER_{}__", marker_counter);
+            marker_counter += 1;
+            
+            replacements.push((marker, new_content, element_outer));
+        }
+    }
+    
+    // Replace elements using markers
+    let mut updated_html = html.to_string();
+    
+    // First pass: replace each element with a unique marker
+    for (marker, _, old_outer) in &replacements {
+        if let Some(pos) = updated_html.find(old_outer) {
+            updated_html.replace_range(pos..pos + old_outer.len(), marker);
+        }
+    }
+    
+    // Second pass: replace markers with new content
+    for (marker, new_inner, old_outer) in &replacements {
+        if let Some(open_tag_end) = old_outer.find('>') {
+            let open_tag = &old_outer[..open_tag_end + 1];
+            if let Some(close_tag_start) = old_outer.rfind("</") {
+                let close_tag = &old_outer[close_tag_start..];
+                let new_pattern = format!("{}{}{}", open_tag, new_inner, close_tag);
+                updated_html = updated_html.replace(marker, &new_pattern);
+            }
+        }
+    }
+    
+    Ok((full_text, updated_html, span_mappings))
+}
+

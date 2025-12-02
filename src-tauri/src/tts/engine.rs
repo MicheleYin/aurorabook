@@ -53,7 +53,8 @@ impl std::str::FromStr for TtsEngineType {
 pub struct TtsEnginePool {
     engine_type: TtsEngineType,
     onnx_engine: Option<Arc<kokoros::tts::koko::TTSKokoParallel>>,
-    candle_engine: Option<Arc<kokoros::tts::koko_candle::TTSKokoParallelCandle>>,
+    // Candle engine support is not yet implemented in kokoros crate
+    // candle_engine: Option<Arc<kokoros::tts::koko_candle::TTSKokoParallelCandle>>,
     instance_counter: Arc<AtomicUsize>,
     num_instances: usize,
 }
@@ -111,26 +112,15 @@ impl TtsEnginePool {
                 Ok(Self {
                     engine_type,
                     onnx_engine: Some(Arc::new(engine)),
-                    candle_engine: None,
                     instance_counter: Arc::new(AtomicUsize::new(0)),
                     num_instances,
                 })
             }
             TtsEngineType::Candle => {
-                let engine = kokoros::tts::koko_candle::TTSKokoParallelCandle::new_with_instances(
-                    onnx_path,
-                    voices_path,
-                    num_instances,
-                )
-                .await;
-
-                Ok(Self {
-                    engine_type,
-                    onnx_engine: None,
-                    candle_engine: Some(Arc::new(engine)),
-                    instance_counter: Arc::new(AtomicUsize::new(0)),
-                    num_instances,
-                })
+                // Candle engine support is not yet implemented in kokoros crate
+                Err(AppError::TtsGeneration(
+                    "Candle engine is not yet implemented. Please use TtsEngineType::Onnx instead.".to_string()
+                ))
             }
         }
     }
@@ -195,24 +185,10 @@ impl TtsEnginePool {
                     .map_err(|e| AppError::TtsGeneration(format!("TTS generation failed: {}", e)))
             }
             TtsEngineType::Candle => {
-                let engine = self
-                    .candle_engine
-                    .as_ref()
-                    .ok_or_else(|| AppError::TtsGeneration("Candle engine not initialized".to_string()))?;
-                let model_instance = engine.get_model_instance(instance_id);
-                engine
-                    .tts_raw_audio_with_instance(
-                        text,
-                        language,
-                        voice_id,
-                        speed,
-                        None,
-                        None,
-                        None,
-                        None,
-                        model_instance,
-                    )
-                    .map_err(|e| AppError::TtsGeneration(format!("TTS generation failed: {}", e)))
+                // Candle engine support is not yet implemented in kokoros crate
+                Err(AppError::TtsGeneration(
+                    "Candle engine is not yet implemented. Please use TtsEngineType::Onnx instead.".to_string()
+                ))
             }
         }
     }
@@ -263,7 +239,7 @@ impl Clone for TtsEnginePool {
         Self {
             engine_type: self.engine_type,
             onnx_engine: self.onnx_engine.as_ref().map(Arc::clone),
-            candle_engine: self.candle_engine.as_ref().map(Arc::clone),
+            // candle_engine: self.candle_engine.as_ref().map(Arc::clone),
             instance_counter: Arc::clone(&self.instance_counter),
             num_instances: self.num_instances,
         }

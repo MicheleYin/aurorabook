@@ -83,7 +83,6 @@ pub fn run() {
             book_service::update_book_progress,
             book_service::update_book_audio_state,
             book_service::ingest_epub,
-            book_service::rebuild_audio_sync_map,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

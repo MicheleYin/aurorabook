@@ -10,6 +10,13 @@ use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::path_validation::validate_file_size;
 use crate::epub::parser::extract_audio_tracks_from_manifest;
 
+/// Normalize an EPUB href by removing leading slash.
+/// The base path should already be correctly derived from the OPF file.
+fn normalize_epub_href(href: &str) -> &str {
+    // Remove leading slash if present
+    href.strip_prefix("/").unwrap_or(href)
+}
+
 /// Read all books with optional filtering and search
 #[tauri::command]
 pub async fn read_all_books(
@@ -57,7 +64,7 @@ pub async fn load_chapter_content(
     chapter_href: String,
     app: tauri::AppHandle,
 ) -> AppResult<Option<Chapter>> {
-    use crate::epub::parser::find_opf_path;
+    use crate::epub::parser::{find_opf_path, derive_base_path_from_opf};
     use crate::utils::path_validation::validate_epub_path;
     use std::io::{Cursor, Read};
     use zip::ZipArchive;
@@ -83,15 +90,9 @@ pub async fn load_chapter_content(
             let mut archive = ZipArchive::new(Cursor::new(epub_data_clone.as_slice()))
                 .map_err(|e| format!("Failed to open EPUB: {}", e))?;
             
-            // Find OPF path to determine OEBPS base
+            // Find OPF path to determine base path
             let opf_path = find_opf_path(&mut archive)?;
-            let oebps_base = if opf_path.contains("/") {
-                opf_path.rfind("/")
-                    .map(|pos| opf_path[..pos + 1].to_string())
-                    .unwrap_or_else(|| "OEBPS/".to_string())
-            } else {
-                "OEBPS/".to_string()
-            };
+            let base_path = derive_base_path_from_opf(&opf_path);
             
             // Resolve chapter path
             let validated_href = validate_epub_path(&chapter_href_clone)
@@ -99,10 +100,10 @@ pub async fn load_chapter_content(
             
             let chapter_path = if validated_href.starts_with("/") {
                 validated_href[1..].to_string()
-            } else if validated_href.starts_with("OEBPS/") {
+            } else if !base_path.is_empty() && validated_href.starts_with(&base_path) {
                 validated_href.clone()
             } else {
-                format!("{}{}", oebps_base, validated_href)
+                format!("{}{}", base_path, validated_href)
             };
             
             // Try to read the chapter file
@@ -121,8 +122,16 @@ pub async fn load_chapter_content(
     .map_err(|e| AppError::EpubParse(e))?;
     
     // Find the chapter in the book to get metadata
+    // Normalize both hrefs for comparison to handle different base path prefixes
+    let normalized_chapter_href = normalize_epub_href(&chapter_href);
     let mut chapter = book.chapters.into_iter()
-        .find(|c| c.href == chapter_href || c.href == chapter_href.replace("OEBPS/", ""))
+        .find(|c| {
+            // Try exact match first
+            c.href == chapter_href || {
+                // Try normalized match (removes base path prefixes)
+                normalize_epub_href(&c.href) == normalized_chapter_href
+            }
+        })
         .ok_or_else(|| AppError::Store("Chapter not found in book".to_string()))?;
     
     // Set the content
@@ -140,7 +149,7 @@ pub async fn load_epub_image(
     chapter_href: Option<String>,
     app: tauri::AppHandle,
 ) -> AppResult<Option<String>> {
-    use crate::epub::parser::find_opf_path;
+    use crate::epub::parser::{find_opf_path, derive_base_path_from_opf};
     use crate::utils::path_validation::validate_epub_path;
     use std::io::{Cursor, Read};
     use zip::ZipArchive;
@@ -169,15 +178,9 @@ pub async fn load_epub_image(
             let mut archive = ZipArchive::new(Cursor::new(epub_data_clone.as_slice()))
                 .map_err(|e| format!("Failed to open EPUB: {}", e))?;
             
-            // Find OPF path to determine OEBPS base
+            // Find OPF path to determine base path
             let opf_path = find_opf_path(&mut archive)?;
-            let oebps_base = if opf_path.contains("/") {
-                opf_path.rfind("/")
-                    .map(|pos| opf_path[..pos + 1].to_string())
-                    .unwrap_or_else(|| "OEBPS/".to_string())
-            } else {
-                "OEBPS/".to_string()
-            };
+            let base_path = derive_base_path_from_opf(&opf_path);
             
             // Resolve image path relative to chapter if provided, otherwise relative to OPF
             let image_path = if image_href_clone.starts_with("/") {
@@ -190,19 +193,19 @@ pub async fn load_epub_image(
                 
                 let chapter_path = if validated_chapter.starts_with("/") {
                     validated_chapter[1..].to_string()
-                } else if validated_chapter.starts_with("OEBPS/") {
+                } else if !base_path.is_empty() && validated_chapter.starts_with(&base_path) {
                     validated_chapter.clone()
                 } else {
-                    format!("{}{}", oebps_base, validated_chapter)
+                    format!("{}{}", base_path, validated_chapter)
                 };
                 
                 // Get chapter directory
                 let chapter_dir = if chapter_path.contains("/") {
                     chapter_path.rfind("/")
                         .map(|pos| chapter_path[..pos + 1].to_string())
-                        .unwrap_or_else(|| oebps_base.clone())
+                        .unwrap_or_else(|| base_path.clone())
                 } else {
-                    oebps_base.clone()
+                    base_path.clone()
                 };
                 
                 // Resolve image path relative to chapter directory
@@ -220,15 +223,7 @@ pub async fn load_epub_image(
                 resolved_parts.join("/")
             } else {
                 // Resolve relative to OPF location
-                let opf_dir = if opf_path.contains("/") {
-                    opf_path.rfind("/")
-                        .map(|pos| opf_path[..pos + 1].to_string())
-                        .unwrap_or_else(|| "OEBPS/".to_string())
-                } else {
-                    "OEBPS/".to_string()
-                };
-                
-                let mut resolved_parts: Vec<&str> = opf_dir.split("/").filter(|s| !s.is_empty()).collect();
+                let mut resolved_parts: Vec<&str> = base_path.split("/").filter(|s| !s.is_empty()).collect();
                 let image_parts: Vec<&str> = image_href_clone.split("/").collect();
                 
                 for part in image_parts {
@@ -258,13 +253,15 @@ pub async fn load_epub_image(
             
             // Try alternative paths if primary didn't work
             if !found_image {
-                let alt_paths = [
-                    format!("OEBPS/{}", image_path),
-                    format!("OPS/{}", image_path),
+                let mut alt_paths = vec![
                     image_href_clone.clone(),
-                    format!("OEBPS/{}", image_href_clone),
-                    format!("OPS/{}", image_href_clone),
                 ];
+                
+                // Add base path variants if base path exists
+                if !base_path.is_empty() {
+                    alt_paths.push(format!("{}{}", base_path, image_path));
+                    alt_paths.push(format!("{}{}", base_path, image_href_clone));
+                }
                 
                 for alt_path in &alt_paths {
                     if let Ok(mut file) = archive.by_name(alt_path) {
@@ -336,7 +333,7 @@ pub async fn load_epub_audio(
     audio_href: String,
     app: tauri::AppHandle,
 ) -> AppResult<Option<String>> {
-    use crate::epub::parser::find_opf_path;
+    use crate::epub::parser::{find_opf_path, derive_base_path_from_opf};
     use std::io::{Cursor, Read};
     use zip::ZipArchive;
     use base64::{Engine as _, engine::general_purpose};
@@ -363,15 +360,9 @@ pub async fn load_epub_audio(
             let mut archive = ZipArchive::new(Cursor::new(epub_data_clone.as_slice()))
                 .map_err(|e| format!("Failed to open EPUB: {}", e))?;
             
-            // Find OPF path to determine OEBPS base
+            // Find OPF path to determine base path
             let opf_path = find_opf_path(&mut archive)?;
-            let oebps_base = if opf_path.contains("/") {
-                opf_path.rfind("/")
-                    .map(|pos| opf_path[..pos + 1].to_string())
-                    .unwrap_or_else(|| "OEBPS/".to_string())
-            } else {
-                "OEBPS/".to_string()
-            };
+            let base_path = derive_base_path_from_opf(&opf_path);
             
             // Resolve audio path relative to OPF location
             let audio_path = if audio_href_clone.starts_with("/") {
@@ -379,7 +370,7 @@ pub async fn load_epub_audio(
                 audio_href_clone[1..].to_string()
             } else {
                 // Resolve relative to OPF location
-                let mut resolved_parts: Vec<&str> = oebps_base.split("/").filter(|s| !s.is_empty()).collect();
+                let mut resolved_parts: Vec<&str> = base_path.split("/").filter(|s| !s.is_empty()).collect();
                 let audio_parts: Vec<&str> = audio_href_clone.split("/").collect();
                 
                 for part in audio_parts {
@@ -409,13 +400,15 @@ pub async fn load_epub_audio(
             
             // Try alternative paths if primary didn't work
             if !found_audio {
-                let alt_paths = [
-                    format!("OEBPS/{}", audio_path),
-                    format!("OPS/{}", audio_path),
+                let mut alt_paths = vec![
                     audio_href_clone.clone(),
-                    format!("OEBPS/{}", audio_href_clone),
-                    format!("OPS/{}", audio_href_clone),
                 ];
+                
+                // Add base path variants if base path exists
+                if !base_path.is_empty() {
+                    alt_paths.push(format!("{}{}", base_path, audio_path));
+                    alt_paths.push(format!("{}{}", base_path, audio_href_clone));
+                }
                 
                 for alt_path in &alt_paths {
                     if let Ok(mut file) = archive.by_name(alt_path) {
@@ -511,6 +504,7 @@ pub async fn delete_book(
     Ok(())
 }
 
+
 /// Add a new book to the library
 #[tauri::command]
 pub async fn add_book(
@@ -565,7 +559,6 @@ pub async fn add_book(
     
     Ok(result_book)
 }
-
 /// Get EPUB buffer for a book
 #[tauri::command]
 pub async fn get_epub_buffer(
@@ -576,66 +569,6 @@ pub async fn get_epub_buffer(
         .map_err(|e| AppError::Store(e))
 }
 
-/// Rebuild audio sync map for an existing book
-/// This is useful for books that were imported before SMIL parsing was added
-#[tauri::command]
-pub async fn rebuild_audio_sync_map(
-    book_id: String,
-    app: tauri::AppHandle,
-) -> AppResult<Option<AudioSyncMap>> {
-    use std::io::Cursor;
-    use zip::ZipArchive;
-    use crate::epub::converter::smil::build_audio_sync_map;
-    
-    let mut books = load_all_books(&app)
-        .map_err(|e| AppError::Store(e))?;
-    
-    let book = books.iter()
-        .find(|b| b.id == book_id)
-        .ok_or_else(|| AppError::Store(format!("Book with ID {} not found", book_id)))?;
-    
-    if book.audio_tracks.is_empty() {
-        log::warn!("Cannot rebuild audio sync map - book has no audio tracks");
-        return Ok(None);
-    }
-    
-    log::info!("Rebuilding audio sync map for book: {} ({} audio tracks)", book.title, book.audio_tracks.len());
-    
-    // Clone data needed for the blocking task
-    let source_path = book.source_path.clone();
-    let chapters = book.chapters.clone();
-    
-    // Get EPUB data from store
-    let epub_data = get_epub_buffer_from_store(&app, &source_path)
-        .map_err(|e| AppError::Store(e))?
-        .ok_or_else(|| AppError::Store("EPUB data not found in store".to_string()))?;
-    
-    // Build audio sync map
-    let audio_sync_map = tokio::task::spawn_blocking(move || {
-        let mut archive = ZipArchive::new(Cursor::new(epub_data.as_slice()))
-            .map_err(|e| format!("Failed to open EPUB: {}", e))?;
-        
-        build_audio_sync_map(&mut archive, &chapters)
-            .map_err(|e| format!("Failed to build audio sync map: {}", e))
-    })
-    .await
-    .map_err(|e| AppError::EpubParse(format!("Background task failed: {}", e)))?
-    .map_err(|e| AppError::EpubParse(e))?;
-    
-    if let Some(ref sync_map) = audio_sync_map {
-        log::info!("Successfully rebuilt audio sync map with {} segments", sync_map.segments.len());
-        // Update the book in the books vector
-        if let Some(book) = books.iter_mut().find(|b| b.id == book_id) {
-            book.audio_sync_map = audio_sync_map.clone();
-            save_all_books(&app, &books)
-                .map_err(|e| AppError::Store(e))?;
-        }
-    } else {
-        log::warn!("No audio sync segments found in SMIL files");
-    }
-    
-    Ok(audio_sync_map)
-}
 
 /// Update book progress
 #[tauri::command]
@@ -694,9 +627,7 @@ pub async fn ingest_epub(
     source_path: String,
     app: tauri::AppHandle,
 ) -> AppResult<Book> {
-    use crate::epub::parser::{extract_chapters_from_epub, find_opf_path, parse_opf_content, find_cover_image, extract_year, derive_title_from_path};
-    use std::io::{Cursor, Read};
-    use zip::ZipArchive;
+    use crate::epub::parser::{extract_chapters_from_epub, find_cover_image, extract_year, derive_title_from_path}; 
     use uuid::Uuid;
     use std::fs;
     
@@ -741,27 +672,16 @@ pub async fn ingest_epub(
         return Err(AppError::EpubParse("No readable chapters found in EPUB".to_string()));
     }
     
-    // Extract metadata from OPF in a separate blocking task
+    // Extract metadata using epub crate in a separate blocking task
     let epub_data_for_metadata = epub_data.clone();
     let (metadata, manifest_items, _spine_items, opf_path) = tokio::task::spawn_blocking(move || {
-        let epub_bytes = epub_data_for_metadata;
-        let mut archive = ZipArchive::new(Cursor::new(epub_bytes.as_slice()))
-            .map_err(|e| format!("Failed to open EPUB: {}", e))?;
-        
-        let opf_path = find_opf_path(&mut archive)?;
-        let mut opf_file = archive.by_name(&opf_path)
-            .map_err(|e| format!("Failed to find OPF at path '{}': {}", opf_path, e))?;
-        
-        let mut opf_content = String::new();
-        opf_file.read_to_string(&mut opf_content)
-            .map_err(|e| format!("Failed to read OPF: {}", e))?;
-        
-        let (metadata, manifest_items, spine_items) = parse_opf_content(&opf_content)?;
-        Ok((metadata, manifest_items, spine_items, opf_path))
+        use crate::epub::parser::extract_metadata_with_epub_crate;
+        extract_metadata_with_epub_crate(&epub_data_for_metadata)
+            .map_err(|e| format!("Failed to extract metadata: {}", e))
     })
     .await
     .map_err(|e| AppError::EpubParse(format!("Failed to extract metadata: {}", e)))?
-    .map_err(|e| AppError::EpubParse(e).with_context("Failed to parse OPF content"))?;
+    .map_err(|e| AppError::EpubParse(e).with_context("Failed to extract EPUB metadata"))?;
     
     // Find cover image href
     let cover_href = find_cover_image(metadata.cover_id.as_ref(), &manifest_items);

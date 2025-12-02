@@ -3,6 +3,7 @@
 
 use std::env;
 use std::path::PathBuf;
+use kokoros::onn::ort_base::OrtBase;
 
 mod helpers;
 use helpers::*;
@@ -350,6 +351,9 @@ async fn test_onnx_only() {
 
 #[tokio::test]
 async fn test_generate_and_save_audio() {
+    // Initialize tracing for logging
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init();
+    
     println!("\n🧪 Testing TTS generation and audio file saving");
     
     // Use ONNX Runtime with CPU execution provider
@@ -385,6 +389,14 @@ async fn test_generate_and_save_audio() {
         1,
     ).await;
     
+    // Print model info to see inputs/outputs
+    println!("\n📋 Model Information:");
+    let model_instance = engine.get_model_instance(0);
+    {
+        let model = model_instance.lock().unwrap();
+        model.print_info();
+    }
+    
     // Generate audio
     let test_text = "Hello, this is a test of the text to speech system. How does it sound?";
     let voice_id = "af_heart";
@@ -398,7 +410,9 @@ async fn test_generate_and_save_audio() {
     println!("   Speed: {}", speed);
     
     let model_instance = engine.get_model_instance(0);
-    let audio_samples = match engine.tts_raw_audio_with_instance(
+    
+    // Use timestamped version to get durations/alignments
+    let (audio_samples, durations_opt) = match engine.tts_timestamped_raw_audio_with_instance(
         test_text,
         language,
         voice_id,
@@ -407,9 +421,49 @@ async fn test_generate_and_save_audio() {
         None,
         None,
         None,
-        model_instance,
+        model_instance.clone(),
     ) {
-        Ok(audio) => audio,
+        Ok(Some((audio, alignments))) => {
+            println!("✅ Audio generated successfully with timestamps!");
+            println!("   Word alignments: {} words", alignments.len());
+            
+            // Print first few alignments
+            if !alignments.is_empty() {
+                println!("   First few word timings:");
+                for (i, alignment) in alignments.iter().take(5).enumerate() {
+                    println!("     {}. '{}': {:.3}s - {:.3}s", 
+                        i + 1, alignment.word, alignment.start_sec, alignment.end_sec);
+                }
+                if alignments.len() > 5 {
+                    println!("     ... and {} more words", alignments.len() - 5);
+                }
+            }
+            
+            (audio, Some(alignments))
+        }
+        Ok(None) => {
+            // Fallback to non-timestamped version
+            match engine.tts_raw_audio_with_instance(
+                test_text,
+                language,
+                voice_id,
+                speed,
+                None,
+                None,
+                None,
+                None,
+                model_instance,
+            ) {
+                Ok(audio) => {
+                    println!("✅ Audio generated successfully (no timestamps available)!");
+                    (audio, None)
+                }
+                Err(e) => {
+                    println!("❌ Failed to generate audio: {}", e);
+                    return;
+                }
+            }
+        }
         Err(e) => {
             println!("❌ Failed to generate audio: {}", e);
             return;
@@ -419,6 +473,32 @@ async fn test_generate_and_save_audio() {
     println!("✅ Audio generated successfully!");
     println!("   Samples: {}", audio_samples.len());
     println!("   Duration: {:.2}s (at 24kHz)", audio_samples.len() as f32 / 24000.0);
+    
+    // Print durations if available
+    if let Some(alignments) = &durations_opt {
+        let total_duration: f32 = alignments.iter()
+            .map(|a| a.end_sec - a.start_sec)
+            .sum();
+        println!("   Total word duration: {:.3}s", total_duration);
+        println!("   Number of words: {}", alignments.len());
+        
+        // Show detailed word timing breakdown
+        println!("\n📊 Word Timing Breakdown (derived from durations):");
+        println!("   Note: Durations are in frames (80 frames/sec), converted to seconds");
+        println!("   Word timing details:");
+        for (i, alignment) in alignments.iter().enumerate() {
+            let duration = alignment.end_sec - alignment.start_sec;
+            println!("     {}. '{}': {:.3}s - {:.3}s (duration: {:.3}s, {:.1} frames)", 
+                i + 1,
+                alignment.word, 
+                alignment.start_sec, 
+                alignment.end_sec,
+                duration,
+                duration * 80.0);
+        }
+    } else {
+        println!("   ⚠️ No durations/alignments available");
+    }
     
     // Save to WAV file
     let output_path = "test_output.wav";

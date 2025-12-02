@@ -245,8 +245,9 @@ pub fn parse_smil_file(
                         for attr in e.attributes() {
                             if let Ok(attr) = attr {
                                 if attr.key.into_inner() == b"src" {
-                                    text_src = Some(String::from_utf8_lossy(&attr.value).to_string());
-                                    log::trace!("Found <text> with src: {}", text_src.as_ref().unwrap());
+                                    let src_value = String::from_utf8_lossy(&attr.value).to_string();
+                                    text_src = Some(src_value.clone());
+                                    log::trace!("Found <text> with src: {}", src_value);
                                 }
                             }
                         }
@@ -437,6 +438,22 @@ pub fn build_audio_sync_map(
     
     log::info!("Building audio sync map from SMIL files for {} chapters", chapters.len());
     
+    // Try to detect common base path from chapter hrefs
+    let detected_base_path = if let Some(first_chapter) = chapters.first() {
+        let first_href = &first_chapter.href;
+        if first_href.contains("/") {
+            if let Some(pos) = first_href.rfind("/") {
+                Some(first_href[..pos + 1].to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    
     let mut all_segments = Vec::new();
     
     for chapter in chapters {
@@ -444,15 +461,18 @@ pub fn build_audio_sync_map(
         
         // Try different SMIL file name variations
         let base_href = chapter_href.replace(".xhtml", "").replace(".html", "");
-        let smil_candidates = vec![
+        let mut smil_candidates = vec![
             format!("{}.smil", chapter_href),
             format!("{}.smil", base_href),
             chapter_href.replace(".xhtml", ".smil").replace(".html", ".smil"),
-            format!("OEBPS/{}.smil", chapter_href),
-            format!("OEBPS/{}.smil", base_href),
-            format!("Text/{}.smil", base_href),
-            format!("OEBPS/Text/{}.smil", base_href),
         ];
+        
+        // Add detected base path variants if available
+        if let Some(ref base) = detected_base_path {
+            smil_candidates.push(format!("{}{}.smil", base, chapter_href));
+            smil_candidates.push(format!("{}{}.smil", base, base_href));
+            smil_candidates.push(format!("{}Text/{}.smil", base, base_href));
+        }
         
         let mut parsed = false;
         log::debug!("Searching for SMIL file for chapter: {}", chapter_href);

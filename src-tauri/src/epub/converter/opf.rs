@@ -6,6 +6,12 @@ use std::collections::HashSet;
 use crate::utils::errors::{AppError, AppResult};
 use anyhow::Context;
 
+/// Strip leading slash from an EPUB href.
+/// The base path should already be correctly derived from the OPF file.
+fn strip_base_path_prefix(href: &str) -> String {
+    href.strip_prefix("/").unwrap_or(href).to_string()
+}
+
 /// Update content.opf to include audio tracks and SMIL files in the EPUB manifest.
 ///
 /// This function modifies the EPUB's content.opf file to:
@@ -58,7 +64,7 @@ pub fn update_content_opf(
     // Track if we're inside manifest/metadata
     let mut in_manifest = false;
     let mut manifest_items_to_add: Vec<Vec<u8>> = Vec::new();
-    let mut in_metadata = false;
+    let mut _in_metadata = false;
     let mut needs_media_overlay_meta = true;
     
     // Build items to add
@@ -112,7 +118,7 @@ pub fn update_content_opf(
                         .context("Failed to write manifest start tag")
                         .map_err(|e| AppError::XmlParse(e.to_string()))?;
                 } else if name == b"metadata" {
-                    in_metadata = true;
+                    _in_metadata = true;
                     writer.write_event(Event::Start(e))
                         .context("Failed to write metadata start tag")
                         .map_err(|e| AppError::XmlParse(e.to_string()))?;
@@ -152,11 +158,8 @@ pub fn update_content_opf(
                     if let Some(ref href) = href_attr {
                         for (idx, (chapter_idx, _)) in smil_files.iter().enumerate() {
                             let chapter_href = if let Some(chapter) = chapters.get(*chapter_idx) {
-                                let mut ch = chapter.clone();
-                                if ch.starts_with("OEBPS/") {
-                                    ch = ch[6..].to_string();
-                                }
-                                ch
+                                // Strip common base path prefixes for comparison
+                                strip_base_path_prefix(chapter)
                             } else {
                                 continue;
                             };
@@ -225,7 +228,7 @@ pub fn update_content_opf(
                             .map_err(|e| AppError::XmlParse(e.to_string()))?;
                         needs_media_overlay_meta = false;
                     }
-                    in_metadata = false;
+                    _in_metadata = false;
                     writer.write_event(Event::End(e))
                         .context("Failed to write metadata end tag")
                         .map_err(|e| AppError::XmlParse(e.to_string()))?;
@@ -272,11 +275,8 @@ pub fn update_content_opf(
                     if let Some(ref href) = href_attr {
                         for (idx, (chapter_idx, _)) in smil_files.iter().enumerate() {
                             let chapter_href = if let Some(chapter) = chapters.get(*chapter_idx) {
-                                let mut ch = chapter.clone();
-                                if ch.starts_with("OEBPS/") {
-                                    ch = ch[6..].to_string();
-                                }
-                                ch
+                                // Strip common base path prefixes for comparison
+                                strip_base_path_prefix(chapter)
                             } else {
                                 continue;
                             };

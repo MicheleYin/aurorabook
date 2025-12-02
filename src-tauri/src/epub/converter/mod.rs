@@ -13,6 +13,7 @@ use crate::utils::errors::{AppError, AppResult};
 use crate::utils::path_validation::{validate_epub_path, validate_file_size, validate_chapter_count};
 use anyhow::{Context, Result as AnyhowResult};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
 /// Conversion progress information for tracking EPUB to audiobook conversion.
@@ -184,6 +185,15 @@ pub fn extract_chapters(epub_data: Vec<u8>) -> AppResult<(Vec<ConversionChapter>
     let mut archive = ZipArchive::new(Cursor::new(&epub_data))
         .map_err(|e| AppError::ZipArchive(format!("Failed to open EPUB: {}", e)))?;
     
+    // Find OPF path to determine base path
+    use crate::epub::parser::{find_opf_path, derive_base_path_from_opf};
+    let epub_slice: &[u8] = &epub_data;
+    let mut temp_archive = ZipArchive::new(Cursor::new(epub_slice))
+        .map_err(|e| AppError::EpubParse(format!("Failed to open EPUB for OPF search: {}", e)))?;
+    let opf_path = find_opf_path(&mut temp_archive)
+        .map_err(|e| AppError::EpubParse(format!("Failed to find OPF path: {}", e)))?;
+    let base_path = derive_base_path_from_opf(&opf_path);
+    
     let mut file_cache: HashMap<String, String> = HashMap::new();
     
     // Extract all files from archive into cache
@@ -216,19 +226,26 @@ pub fn extract_chapters(epub_data: Vec<u8>) -> AppResult<(Vec<ConversionChapter>
         // Validate and sanitize chapter href path
         let validated_href = validate_epub_path(&chapter_meta.href)?;
         
-        // Resolve chapter path
+        // Resolve chapter path using dynamic base path
         let chapter_path = if validated_href.starts_with("/") {
             validated_href[1..].to_string()
-        } else if validated_href.starts_with("OEBPS/") {
+        } else if !base_path.is_empty() && validated_href.starts_with(&base_path) {
             validated_href.clone()
         } else {
-            format!("{}{}", OEBPS_PREFIX, validated_href)
+            format!("{}{}", base_path, validated_href)
         };
         
-        // Read chapter content from cache (no need to reopen archive)
-        let content = file_cache.get(&chapter_path)
-            .cloned()
-            .unwrap_or_else(|| String::new());
+        // Try alternative paths if primary path not found
+        let mut content = file_cache.get(&chapter_path).cloned();
+        if content.is_none() {
+            // Try with the original validated href as fallback
+            if let Some(cached_content) = file_cache.get(&validated_href) {
+                content = Some(cached_content.clone());
+            }
+        }
+        
+        // Use content found above, or empty string if not found
+        let content = content.unwrap_or_else(|| String::new());
         
         // Extract title from HTML if available
         let title = if let Some(start) = content.find("<h1>") {
@@ -265,25 +282,21 @@ pub fn extract_chapters(epub_data: Vec<u8>) -> AppResult<(Vec<ConversionChapter>
 /// Progress callback type for conversion progress updates
 pub type ProgressCallback = Box<dyn Fn(ConversionProgress) + Send + Sync>;
 
-/// Core EPUB to audiobook conversion logic
-/// This function contains the shared conversion logic that can be used
-/// with or without AppHandle by providing appropriate callbacks.
-async fn convert_epub_core<F, Fut>(
+/// Core EPUB to audiobook conversion logic using single TTS instance with durations
+/// This function processes each chapter as a whole, using word alignments from
+/// the TTS engine to generate accurate SMIL timing information.
+async fn convert_epub_core_with_durations(
     epub_data: Vec<u8>,
     options: ConversionOptions,
     progress_callback: ProgressCallback,
-    tts_generator: F,
+    engine: Arc<kokoros::tts::koko::TTSKokoParallel>,
+    voice_id: String,
 ) -> AnyhowResult<Vec<u8>>
-where
-    F: Fn(String, String) -> Fut + Send + Sync + Clone + 'static,
-    Fut: std::future::Future<Output = AppResult<Vec<u8>>> + Send + 'static,
 {
     use std::collections::HashMap;
     use std::io::{Cursor, Write};
     use zip::{ZipArchive, ZipWriter};
     use zip::write::FileOptions;
-    
-    let parallelism = get_parallelism();
     
     // Calculate total words across all chapters
     let total_words: usize = options.chapters.iter().map(|c| c.word_count).sum();
@@ -295,12 +308,21 @@ where
         total_words,
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
-        message: format!("Initializing TTS engine (using {} cores)...", parallelism),
+        message: "Initializing EPUB conversion with single TTS engine...".to_string(),
     });
     
     // Load EPUB as ZIP
     let mut archive = ZipArchive::new(Cursor::new(&epub_data))
         .context("Failed to open EPUB")?;
+    
+    // Find OPF path to determine base path for preserving EPUB structure
+    use crate::epub::parser::{find_opf_path, derive_base_path_from_opf};
+    let epub_slice: &[u8] = &epub_data;
+    let mut temp_archive = ZipArchive::new(Cursor::new(epub_slice))
+        .map_err(|e| anyhow::anyhow!("Failed to open EPUB for OPF search: {}", e))?;
+    let opf_path = find_opf_path(&mut temp_archive)
+        .map_err(|e| anyhow::anyhow!("Failed to find OPF path: {}", e))?;
+    let base_path = derive_base_path_from_opf(&opf_path);
     
     let mut audio_files: Vec<(usize, String)> = Vec::new();
     let mut smil_files: Vec<(usize, String)> = Vec::new();
@@ -353,16 +375,18 @@ where
         // Validate chapter href path
         validate_epub_path(&chapter.href)?;
         
-        // Chunk the chapter text
-        let (chunks, updated_html) = chunk_text(&chapter.content_html)
-            .map_err(|e| AppError::EpubParse(format!("Failed to chunk chapter HTML: {}", e)))?;
+        // Extract all text with span IDs (no chunking)
+        let (full_text, updated_html, span_mappings) = extract_text_with_spans(&chapter.content_html)
+            .map_err(|e| AppError::EpubParse(format!("Failed to extract text from chapter HTML: {}", e)))?;
         
-        if chunks.is_empty() {
-            // Update chapter HTML in ZIP
-            let chapter_path = if chapter.href.starts_with("OEBPS/") {
+        if full_text.trim().is_empty() {
+            // Update chapter HTML in ZIP - preserve original path structure
+            let chapter_path = if chapter.href.starts_with("/") {
+                chapter.href[1..].to_string()
+            } else if !base_path.is_empty() && chapter.href.starts_with(&base_path) {
                 chapter.href.clone()
             } else {
-                format!("OEBPS/{}", chapter.href)
+                format!("{}{}", base_path, chapter.href)
             };
             zip_files.insert(chapter_path, updated_html.into_bytes());
             // Chapter has no words, mark as complete
@@ -370,93 +394,102 @@ where
             continue;
         }
         
-        // Calculate words per chunk for progress tracking
-        let total_chunk_words: usize = chunks.iter().map(|(_, text)| {
-            text.split_whitespace().filter(|s| !s.is_empty()).count()
-        }).sum();
-        let words_per_chunk = if chunks.len() > 0 {
-            total_chunk_words / chunks.len()
-        } else {
-            0
-        };
-        let mut chunks_processed = 0;
+        // Generate TTS for entire chapter text using single engine instance
+        let model_instance = engine.get_model_instance(0);
+        let result = engine
+            .tts_timestamped_raw_audio_with_instance(
+                &full_text,
+                "en",
+                &voice_id,
+                1.0,
+                None, // initial_silence
+                None, // request_id
+                None, // instance_id
+                None, // chunk_number
+                model_instance,
+            )
+            .map_err(|e| AppError::TtsGeneration(format!("TTS generation failed: {}", e)))?;
         
-        // Generate audio for chunks
-        let mut audio_data_arrays: Vec<Vec<u8>> = Vec::new();
-        let mut audio_segments: Vec<(String, f64, f64)> = Vec::new();
-        let mut current_time = 0.0;
-        let sample_rate = SAMPLE_RATE as f64;
-        
-        // Process in batches
-        for i in (0..chunks.len()).step_by(parallelism) {
-            let batch: Vec<_> = chunks.iter().skip(i).take(parallelism).collect();
-            
-            // Generate TTS for batch in parallel
-            let mut handles = Vec::new();
-            for (chunk_id, text) in &batch {
-                let text_clone = text.clone();
-                let voice_id_clone = options.voice_id.clone();
-                let generator = tts_generator.clone();
-                
-                let handle = tokio::spawn(async move {
-                    generator(text_clone, voice_id_clone).await
-                });
-                handles.push((chunk_id.clone(), handle));
-            }
-            
-            // Collect results
-            for (chunk_id, handle) in handles {
-                let audio_pcm = handle.await
-                    .with_context(|| format!("TTS task failed for chunk {}", chunk_id))?
-                    .map_err(|e| e.with_context(format!("chunk {}", chunk_id)))?;
-                
-                // Convert PCM bytes to f32 samples for duration calculation
-                let num_samples = audio_pcm.len() / 2;
-                let duration = num_samples as f64 / sample_rate;
-                
-                audio_data_arrays.push(audio_pcm);
-                audio_segments.push((
-                    chunk_id,
-                    current_time,
-                    current_time + duration,
+        let (audio_samples, word_alignments) = match result {
+            Some((audio, alignments)) => (audio, alignments),
+            None => {
+                return Err(anyhow::anyhow!(
+                    "Chapter {}: TTS engine did not return word alignments. Model may not support durations.",
+                    chapter_index + 1
                 ));
-                current_time += duration;
+            }
+        };
+        
+        // Map word alignments to spans based on word positions
+        // Word alignments are in the order they appear in the spoken text
+        // We need to map them to spans based on word indices in the extracted text
+        let mut audio_segments: Vec<(String, f64, f64)> = Vec::new();
+        
+        // Extract words from full text for matching
+        let text_words: Vec<&str> = full_text.split_whitespace().filter(|s| !s.is_empty()).collect();
+        
+        // Map spans to audio segments using word alignments
+        // Each span has a start_word_idx and end_word_idx that correspond to word positions in the extracted text
+        for (span_id, start_word_idx, end_word_idx) in span_mappings {
+            // Find the corresponding word alignments for this span
+            // Word alignments should roughly correspond to text words, but may include punctuation
+            let mut span_start_time: Option<f64> = None;
+            let mut span_end_time: Option<f64> = None;
+            
+            // Try to match word alignments to text words
+            // Since alignments might include punctuation, we match by position
+            let alignment_count = word_alignments.len();
+            let text_word_count = text_words.len();
+            
+            if alignment_count > 0 && text_word_count > 0 {
+                // Calculate approximate mapping: alignments per text word
+                let alignments_per_word = alignment_count as f64 / text_word_count as f64;
                 
-                // Update progress as chunks are processed
-                chunks_processed += 1;
-                let estimated_words_processed_in_chapter = (chunks_processed * words_per_chunk).min(chapter_word_count);
-                let current_words_processed = words_processed + estimated_words_processed_in_chapter;
+                // Map span word indices to alignment indices
+                let start_alignment_idx = (start_word_idx as f64 * alignments_per_word).floor() as usize;
+                let end_alignment_idx = ((end_word_idx as f64 * alignments_per_word).ceil() as usize).min(alignment_count);
                 
-                // Emit progress update every few chunks to avoid too many updates
-                if chunks_processed % parallelism == 0 || chunks_processed == chunks.len() {
-                    progress_callback(ConversionProgress {
-                        current_chapter: chapter_index + 1,
-                        total_chapters: options.chapters.len(),
-                        words_processed: current_words_processed,
-                        total_words,
-                        words_in_current_chapter: chapter_word_count,
-                        current_step: "generating-audio".to_string(),
-                        message: format!("Generating audio for chapter {}: {} ({}/{} words)", 
-                            chapter_index + 1, chapter.title, estimated_words_processed_in_chapter, chapter_word_count),
-                    });
+                if start_alignment_idx < alignment_count {
+                    span_start_time = Some(word_alignments[start_alignment_idx].start_sec as f64);
+                }
+                if end_alignment_idx > 0 && end_alignment_idx <= alignment_count {
+                    span_end_time = Some(word_alignments[end_alignment_idx - 1].end_sec as f64);
                 }
             }
+            
+            // Use alignment times if found, otherwise estimate
+            let (start_time, end_time) = match (span_start_time, span_end_time) {
+                (Some(start), Some(end)) => (start, end),
+                (Some(start), None) => {
+                    let end = if !word_alignments.is_empty() {
+                        word_alignments.last().unwrap().end_sec as f64
+                    } else {
+                        audio_samples.len() as f64 / SAMPLE_RATE as f64
+                    };
+                    (start, end)
+                }
+                (None, Some(end)) => (0.0, end),
+                (None, None) => {
+                    // Fallback: estimate based on word count
+                    let total_duration = if !word_alignments.is_empty() {
+                        word_alignments.last().unwrap().end_sec as f64
+                    } else {
+                        audio_samples.len() as f64 / SAMPLE_RATE as f64
+                    };
+                    let _span_word_count = end_word_idx - start_word_idx;
+                    let total_words = text_words.len().max(1);
+                    let duration_per_word = total_duration / total_words as f64;
+                    let estimated_start = (start_word_idx as f64) * duration_per_word;
+                    let estimated_end = (end_word_idx as f64) * duration_per_word;
+                    (estimated_start, estimated_end)
+                }
+            };
+            
+            audio_segments.push((span_id, start_time, end_time));
         }
         
         // Mark chapter words as fully processed
         words_processed += chapter_word_count;
-        
-        if audio_data_arrays.is_empty() {
-            // Create minimal silence
-            let silence_samples = SAMPLE_RATE as usize;
-            let silence_pcm = vec![0u8; silence_samples * 2];
-            audio_data_arrays.push(silence_pcm);
-            audio_segments.push((
-                chunks[0].0.clone(),
-                0.0,
-                1.0,
-            ));
-        }
         
         progress_callback(ConversionProgress {
             current_chapter: chapter_index + 1,
@@ -464,12 +497,14 @@ where
             words_processed,
             total_words,
             words_in_current_chapter: chapter_word_count,
-            current_step: "merging-audio".to_string(),
-            message: format!("Merging audio for chapter {}...", chapter_index + 1),
+            current_step: "converting-audio".to_string(),
+            message: format!("Converting audio to MP3 for chapter {}...", chapter_index + 1),
         });
         
-        // Merge audio
-        let merged_wav = merge_wav_files(&audio_data_arrays, SAMPLE_RATE);
+        // Convert audio samples to PCM bytes and create WAV
+        use crate::utils::audio::f32_to_pcm_le_bytes;
+        let audio_pcm = f32_to_pcm_le_bytes(&audio_samples);
+        let merged_wav = merge_wav_files(&[audio_pcm], SAMPLE_RATE);
         
         // Convert to MP3
         progress_callback(ConversionProgress {
@@ -511,18 +546,21 @@ where
         let validated_audio_name = validate_epub_path(&format!("Audio/{}.mp3", chapter_href_base))
             .map_err(|e| AppError::InvalidPath(format!("Invalid audio file name: {}", e)))?;
         
-        let audio_href_zip = format!("OEBPS/{}", validated_audio_name);
+        // Use base path for audio file location
+        let audio_href_zip = format!("{}{}", base_path, validated_audio_name);
         let audio_href_manifest = validated_audio_name;
         
         zip_files.insert(audio_href_zip.clone(), mp3_bytes);
         let audio_href_manifest_clone = audio_href_manifest.clone();
         audio_files.push((chapter_index, audio_href_manifest));
         
-        // Update chapter HTML
-        let chapter_path_zip = if chapter.href.starts_with("OEBPS/") {
+        // Update chapter HTML - preserve original path structure
+        let chapter_path_zip = if chapter.href.starts_with("/") {
+            chapter.href[1..].to_string()
+        } else if !base_path.is_empty() && chapter.href.starts_with(&base_path) {
             chapter.href.clone()
         } else {
-            format!("OEBPS/{}", chapter.href)
+            format!("{}{}", base_path, chapter.href)
         };
         let chapter_path_zip_clone = chapter_path_zip.clone();
         zip_files.insert(chapter_path_zip, updated_html.into_bytes());
@@ -537,9 +575,11 @@ where
             message: format!("Creating SMIL file for chapter {}...", chapter_index + 1),
         });
         
-        // Generate SMIL file
-        let chapter_href_for_smil = if chapter.href.starts_with("OEBPS/") {
-            chapter.href[6..].to_string()
+        // Generate SMIL file - strip base path prefix if present
+        let chapter_href_for_smil = if !base_path.is_empty() && chapter.href.starts_with(&base_path) {
+            chapter.href[base_path.len()..].to_string()
+        } else if chapter.href.starts_with("/") {
+            chapter.href[1..].to_string()
         } else {
             chapter.href.clone()
         };
@@ -590,8 +630,8 @@ where
         message: "Updating EPUB metadata...".to_string(),
     });
     
-    // Update content.opf
-    if let Some(opf_content) = zip_files.get("OEBPS/content.opf") {
+    // Update content.opf - use the actual OPF path found earlier
+    if let Some(opf_content) = zip_files.get(&opf_path) {
         let opf_str = String::from_utf8(opf_content.clone())
             .context("Invalid UTF-8 in OPF")?;
         
@@ -603,7 +643,7 @@ where
         )
         .map_err(|e| anyhow::anyhow!("Failed to update content.opf: {}", e))?;
         
-        zip_files.insert("OEBPS/content.opf".to_string(), updated_opf.into_bytes());
+        zip_files.insert(opf_path.clone(), updated_opf.into_bytes());
     }
     
     // Create new ZIP
@@ -708,7 +748,6 @@ pub async fn convert_epub_to_audiobook(
     app: AppHandle,
 ) -> AppResult<Vec<u8>> {
     use crate::utils::path_resolver::ResourcePathResolver;
-    use crate::tts::engine::TtsEnginePool;
     
     // Create progress callback that emits to Tauri
     let app_progress = app.clone();
@@ -740,20 +779,17 @@ pub async fn convert_epub_to_audiobook(
         .ok_or_else(|| AppError::Encoding("Voices path contains invalid UTF-8".to_string()))?
         .to_string();
     
-    // Create TTS engine pool once (reused for all generations)
-    let parallelism = get_parallelism();
-    let engine_pool = TtsEnginePool::new(
+    // Create single TTS engine instance (reused for all chapters)
+    let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
         &onnx_path_str,
         &voices_path_str,
-        parallelism,
-        crate::tts::engine::TtsEngineType::Onnx, // Default to ONNX engine
+        1, // Single instance
     )
-    .await
-    .map_err(|e| AppError::TtsGeneration(format!("Failed to create TTS engine pool: {}", e)))?;
+    .await;
     
-    log::info!("Created TTS engine pool with {} instances for parallel processing", parallelism);
+    log::info!("Created single TTS engine instance for conversion");
     
-    // Emit progress event for engine pool creation
+    // Emit progress event for engine creation
     progress_callback(ConversionProgress {
         current_chapter: 0,
         total_chapters: options.chapters.len(),
@@ -761,20 +797,13 @@ pub async fn convert_epub_to_audiobook(
         total_words,
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
-        message: format!("TTS engine pool created with {} instances", parallelism),
+        message: "TTS engine created - ready to process chapters".to_string(),
     });
     
-    // Create TTS generator that uses the shared engine pool
-    let engine_pool_arc = std::sync::Arc::new(engine_pool);
-    let tts_generator = move |text: String, voice_id: String| {
-        let pool = engine_pool_arc.clone();
-        async move {
-            pool.generate_audio_pcm(&text, "en", &voice_id, 1.0)
-                .await
-        }
-    };
+    let engine_arc = std::sync::Arc::new(engine);
+    let voice_id = options.voice_id.clone();
     
-    convert_epub_core(epub_data, options, progress_callback, tts_generator)
+    convert_epub_core_with_durations(epub_data, options, progress_callback, engine_arc, voice_id)
         .await
         .map_err(|e| AppError::EpubParse(e.to_string()))
 }
@@ -814,7 +843,6 @@ pub async fn convert_epub_to_audiobook_standalone(
     options: ConversionOptions,
 ) -> AppResult<Vec<u8>> {
     use crate::utils::path_resolver::ResourcePathResolver;
-    use crate::tts::engine::TtsEnginePool;
     
     // Find model files (standalone version - no AppHandle needed)
     let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(None)?;
@@ -836,30 +864,20 @@ pub async fn convert_epub_to_audiobook_standalone(
         );
     });
     
-    // Create TTS engine pool once (reused for all generations)
-    let parallelism = get_parallelism();
-    let engine_pool = TtsEnginePool::new(
+    // Create single TTS engine instance (reused for all chapters)
+    let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
         &onnx_path_str,
         &voices_path_str,
-        parallelism,
-        crate::tts::engine::TtsEngineType::Onnx, // Default to ONNX engine
+        1, // Single instance
     )
-    .await
-    .map_err(|e| AppError::TtsGeneration(format!("Failed to create TTS engine pool: {}", e)))?;
+    .await;
     
-    log::info!("Created TTS engine pool with {} instances for parallel processing", parallelism);
+    log::info!("Created single TTS engine instance for conversion");
     
-    // Create TTS generator that uses the shared engine pool
-    let engine_pool_arc = std::sync::Arc::new(engine_pool);
-    let tts_generator = move |text: String, voice_id: String| {
-        let pool = engine_pool_arc.clone();
-        async move {
-            pool.generate_audio_pcm(&text, "en", &voice_id, 1.0)
-                .await
-        }
-    };
+    let engine_arc = std::sync::Arc::new(engine);
+    let voice_id = options.voice_id.clone();
     
-    convert_epub_core(epub_data, options, progress_callback, tts_generator)
+    convert_epub_core_with_durations(epub_data, options, progress_callback, engine_arc, voice_id)
         .await
         .map_err(|e| AppError::EpubParse(e.to_string()))
 }

@@ -150,25 +150,10 @@ pub async fn generate_tts_cached(
             .map_err(|e| AppError::TtsGeneration(format!("TTS generation failed: {}", e)))?
         }
         TtsEngineType::Candle => {
-            let engine = kokoros::tts::koko_candle::TTSKokoParallelCandle::new_with_instances(
-                onnx_path_str,
-                voices_path_str,
-                1,
-            )
-            .await;
-            let model_instance = engine.get_model_instance(worker_id.unwrap_or(0));
-            engine.tts_raw_audio_with_instance(
-                &text,
-                language.as_deref().unwrap_or("en"),
-                &voice_id,
-                speed.unwrap_or(1.0),
-                None,
-                None,
-                None,
-                None,
-                model_instance,
-            )
-            .map_err(|e| AppError::TtsGeneration(format!("TTS generation failed: {}", e)))?
+            // Candle engine support is not yet implemented in kokoros crate
+            return Err(AppError::TtsGeneration(
+                "Candle engine is not yet implemented. Please use TtsEngineType::Onnx instead.".to_string()
+            ));
         }
     };
 

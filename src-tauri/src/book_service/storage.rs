@@ -50,8 +50,11 @@ pub fn save_all_books(app: &AppHandle, books: &[Book]) -> Result<(), String> {
         books: books.to_vec(),
     };
 
-    store.set(LIBRARY_STORE_KEY, serde_json::to_value(&library_file).unwrap());
-    store.save();
+    let value = serde_json::to_value(&library_file)
+        .map_err(|e| format!("Failed to serialize library data: {}", e))?;
+    store.set(LIBRARY_STORE_KEY, value);
+    store.save()
+        .map_err(|e| format!("Failed to save library store: {}", e))?;
 
     Ok(())
 }

@@ -1,9 +1,6 @@
 /// Audio sample rate for TTS generation (24kHz)
 pub const SAMPLE_RATE: u32 = 24000;
 
-/// EPUB OEBPS directory prefix
-pub const OEBPS_PREFIX: &str = "OEBPS/";
-
 /// Media type for XHTML content
 pub const MEDIA_TYPE_XHTML: &str = "application/xhtml+xml";
 
