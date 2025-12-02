@@ -460,22 +460,41 @@ pub fn build_audio_sync_map(
         let chapter_href = chapter.href.split('#').next().unwrap_or(&chapter.href);
         
         // Try different SMIL file name variations
+        // SMIL files are stored with the same path structure as chapters, just with .smil extension
         let base_href = chapter_href.replace(".xhtml", "").replace(".html", "");
         let mut smil_candidates = vec![
-            format!("{}.smil", chapter_href),
-            format!("{}.smil", base_href),
+            // Direct replacement of extension (most common case)
             chapter_href.replace(".xhtml", ".smil").replace(".html", ".smil"),
+            // Without extension
+            format!("{}.smil", base_href),
+            // Full path with extension
+            format!("{}.smil", chapter_href),
         ];
         
         // Add detected base path variants if available
         if let Some(ref base) = detected_base_path {
-            smil_candidates.push(format!("{}{}.smil", base, chapter_href));
-            smil_candidates.push(format!("{}{}.smil", base, base_href));
+            // If chapter already has base path, try without adding it again
+            if !chapter_href.starts_with(base) {
+                smil_candidates.push(format!("{}{}.smil", base, chapter_href));
+                smil_candidates.push(format!("{}{}.smil", base, base_href));
+            }
             smil_candidates.push(format!("{}Text/{}.smil", base, base_href));
         }
         
+        // Also try without any base path (in case chapter href includes it but SMIL doesn't)
+        if chapter_href.contains("/") {
+            if let Some(filename) = chapter_href.split('/').last() {
+                let filename_base = filename.replace(".xhtml", "").replace(".html", "");
+                smil_candidates.push(format!("{}.smil", filename));
+                smil_candidates.push(format!("{}.smil", filename_base));
+            }
+        }
+        
         let mut parsed = false;
-        log::debug!("Searching for SMIL file for chapter: {}", chapter_href);
+        log::debug!("Searching for SMIL file for chapter: {} (trying {} candidates)", chapter_href, smil_candidates.len());
+        for candidate in &smil_candidates {
+            log::trace!("Trying SMIL candidate: {}", candidate);
+        }
         for smil_href in &smil_candidates {
             if let Ok(mut smil_file) = archive.by_name(smil_href) {
                 log::debug!("Found SMIL file candidate: {}", smil_href);

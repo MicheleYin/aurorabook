@@ -106,28 +106,19 @@ pub async fn convert_epub_to_audiobook_command(
         message: "Extracting chapters from EPUB...".to_string(),
     });
     
-    // Extract chapters
-    use crate::epub::parser::extract_chapters_from_epub;
-    let (chapters, stats) = extract_chapters_from_epub(&epub_data)
-        .map_err(|e| AppError::EpubParse(e).with_context("Failed to extract chapters"))?;
+    // Extract chapters with content loaded from EPUB
+    use crate::epub::converter::extract_chapters;
+    let (conversion_chapters, stats) = extract_chapters(epub_data.clone())
+        .map_err(|e| AppError::EpubParse(e.to_string()).with_context("Failed to extract chapters"))?;
     
     let (manifest_count, spine_itemref_count, missing_manifest_count, non_html_count, filtered_count) = stats;
     
-    if chapters.is_empty() {
+    if conversion_chapters.is_empty() {
         return Err(AppError::EpubParse(format!(
             "No chapters found in EPUB. Manifest had {} items, spine had {} itemrefs ({} missing from manifest, {} non-HTML, {} filtered), but no valid chapters were extracted.",
             manifest_count, spine_itemref_count, missing_manifest_count, non_html_count, filtered_count
         )));
     }
-    
-    // Convert chapters to ConversionChapter format
-    let conversion_chapters: Vec<ConversionChapter> = chapters.into_iter().map(|c| ConversionChapter {
-        id: c.id,
-        title: c.title,
-        href: c.href,
-        content_html: c.content_html.unwrap_or_default(),
-        word_count: c.word_count.unwrap_or(0),
-    }).collect();
     
     let options = ConversionOptions {
         voice_id,
@@ -206,15 +197,43 @@ fn update_book_audio_tracks(
     let (_metadata, manifest_items, _spine_items) = parse_opf_content(&opf_content)
         .map_err(|e| format!("Failed to parse OPF content: {}", e))?;
     
+    log::debug!("Parsed manifest with {} items", manifest_items.len());
+    for (id, item) in &manifest_items {
+        if let Some(ref mt) = item.media_type {
+            if mt.starts_with("audio/") || mt == "application/smil+xml" {
+                log::debug!("Found {} item: id={}, href={}, media-type={}", 
+                    if mt.starts_with("audio/") { "audio" } else { "SMIL" },
+                    id, item.href, mt);
+            }
+        }
+    }
+    
     let audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
+    log::info!("Extracted {} audio tracks from manifest", audio_tracks.len());
     
     // Extract chapters from converted EPUB for building audio sync map
     let (chapters, _) = extract_chapters_from_epub(converted_epub)
         .map_err(|e| format!("Failed to extract chapters from converted EPUB: {}", e))?;
     
+    log::debug!("Extracted {} chapters for SMIL parsing", chapters.len());
+    for chapter in &chapters {
+        log::debug!("Chapter href: {}", chapter.href);
+    }
+    
     // Build audio sync map from SMIL files
     let mut archive_for_smil = ZipArchive::new(Cursor::new(converted_epub))
         .map_err(|e| format!("Failed to open converted EPUB for SMIL parsing: {}", e))?;
+    
+    // List all files in the EPUB for debugging
+    log::debug!("EPUB contains {} files", archive_for_smil.len());
+    for i in 0..archive_for_smil.len() {
+        if let Ok(file) = archive_for_smil.by_index(i) {
+            let name = file.name();
+            if name.ends_with(".smil") || name.ends_with(".mp3") {
+                log::debug!("Found file in EPUB: {}", name);
+            }
+        }
+    }
     
     let audio_sync_map = build_audio_sync_map(&mut archive_for_smil, &chapters)
         .map_err(|e| format!("Failed to build audio sync map: {}", e))?;

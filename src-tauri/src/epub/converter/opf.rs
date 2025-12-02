@@ -68,12 +68,16 @@ pub fn update_content_opf(
     let mut needs_media_overlay_meta = true;
     
     // Build items to add
+    log::debug!("Building manifest items: {} audio files, {} SMIL files", audio_files.len(), smil_files.len());
+    
     for (idx, (_, href)) in audio_files.iter().enumerate() {
         if !added_audio_hrefs.contains(href) {
             added_audio_hrefs.insert(href.clone());
             let item_id = format!("m{:03}", idx + 1);
             let is_mp3 = href.ends_with(".mp3");
             let media_type = if is_mp3 { "audio/mpeg" } else { "audio/wav" };
+            
+            log::debug!("Adding audio item: id={}, href={}, media-type={}", item_id, href, media_type);
             
             let mut item = BytesStart::new("item");
             item.push_attribute(("id", item_id.as_str()));
@@ -93,6 +97,8 @@ pub fn update_content_opf(
             added_smil_hrefs.insert(href.clone());
             let smil_item_id = format!("s{:03}", idx + 1);
             
+            log::debug!("Adding SMIL item: id={}, href={}", smil_item_id, href);
+            
             let mut item = BytesStart::new("item");
             item.push_attribute(("id", smil_item_id.as_str()));
             item.push_attribute(("href", href.as_str()));
@@ -105,6 +111,8 @@ pub fn update_content_opf(
             manifest_items_to_add.push(item_xml);
         }
     }
+    
+    log::debug!("Total manifest items to add: {}", manifest_items_to_add.len());
     
     // Process XML events
     loop {
@@ -203,8 +211,18 @@ pub fn update_content_opf(
                 
                 if name == b"manifest" {
                     // Before closing manifest, add our new items
-                    for item_xml in &manifest_items_to_add {
+                    log::debug!("Closing manifest, adding {} items", manifest_items_to_add.len());
+                    for (idx, item_xml) in manifest_items_to_add.iter().enumerate() {
+                        // Write newline and indentation before each item
+                        writer.get_mut().write_all(b"\n        ")
+                            .map_err(|e| AppError::Io(e))?;
                         writer.get_mut().write_all(item_xml)
+                            .map_err(|e| AppError::Io(e))?;
+                        log::debug!("Added manifest item {} of {}", idx + 1, manifest_items_to_add.len());
+                    }
+                    if !manifest_items_to_add.is_empty() {
+                        // Add newline before closing manifest tag
+                        writer.get_mut().write_all(b"\n    ")
                             .map_err(|e| AppError::Io(e))?;
                     }
                     in_manifest = false;
@@ -326,6 +344,20 @@ pub fn update_content_opf(
     }
     
     let result = writer.into_inner().into_inner();
-    Ok(String::from_utf8_lossy(&result).to_string())
+    let output = String::from_utf8_lossy(&result).to_string();
+    
+    // Verify that items were added if we had any to add
+    if !manifest_items_to_add.is_empty() {
+        let has_audio = output.contains("audio/mpeg") || output.contains("audio/wav");
+        let has_smil = output.contains("application/smil+xml");
+        log::debug!("OPF output verification: has_audio={}, has_smil={}, expected {} items", 
+            has_audio, has_smil, manifest_items_to_add.len());
+        
+        if !has_audio && !has_smil && !audio_files.is_empty() && !smil_files.is_empty() {
+            log::warn!("Warning: Manifest items were built but not found in output OPF!");
+        }
+    }
+    
+    Ok(output)
 }
 

@@ -42,22 +42,22 @@ export function useBookConversion(
     
     setIsConverting(true);
     setShowConvertDialog(false);
-    setConversionProgress(null);
+    setConversionProgress({
+      currentChapter: 0,
+      totalChapters: 1,
+      wordsProcessed: 0,
+      totalWords: 0,
+      wordsInCurrentChapter: 0,
+      currentStep: "initializing",
+      message: "Starting conversion...",
+    });
+    
     conversionStartTimeRef.current = Date.now();
     const bookId = pendingBookForConversion.book.id;
     
     try {
       const { book } = pendingBookForConversion;
       
-      setConversionProgress({
-        currentChapter: 0,
-        totalChapters: 1,
-        wordsProcessed: 0,
-        totalWords: 0,
-        wordsInCurrentChapter: 0,
-        currentStep: "initializing",
-        message: "Starting conversion...",
-      });
       // Load EPUB buffer before conversion
       const epubBuffer = await getEpubBuffer(book.sourcePath);
       if (!epubBuffer) {
@@ -151,7 +151,15 @@ export function useBookConversion(
     convertingBookIdRef.current = book.id;
     
     setIsConverting(true);
-    setConversionProgress(null);
+    setConversionProgress({
+      currentChapter: 0,
+      totalChapters: 0,
+      wordsProcessed: 0,
+      totalWords: 0,
+      wordsInCurrentChapter: 0,
+      currentStep: "initializing",
+      message: "Starting conversion...",
+    });
     conversionStartTimeRef.current = Date.now();
     const bookId = book.id;
     
