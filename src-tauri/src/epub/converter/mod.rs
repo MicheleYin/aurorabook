@@ -285,6 +285,9 @@ pub type ProgressCallback = Box<dyn Fn(ConversionProgress) + Send + Sync>;
 /// Core EPUB to audiobook conversion logic using single TTS instance with durations
 /// This function processes each chapter as a whole, using word alignments from
 /// the TTS engine to generate accurate SMIL timing information.
+/// 
+/// Uses epub-builder crate to properly construct the EPUB with all original files,
+/// new audio files, SMIL files, and updated metadata.
 async fn convert_epub_core_with_durations(
     epub_data: Vec<u8>,
     options: ConversionOptions,
@@ -294,9 +297,8 @@ async fn convert_epub_core_with_durations(
 ) -> AnyhowResult<Vec<u8>>
 {
     use std::collections::HashMap;
-    use std::io::{Cursor, Write};
-    use zip::{ZipArchive, ZipWriter};
-    use zip::write::FileOptions;
+    use std::io::{Cursor, Read};
+    use zip::ZipArchive;
     
     // Calculate total words across all chapters
     let total_words: usize = options.chapters.iter().map(|c| c.word_count).sum();
@@ -311,10 +313,6 @@ async fn convert_epub_core_with_durations(
         message: "Initializing EPUB conversion with single TTS engine...".to_string(),
     });
     
-    // Load EPUB as ZIP
-    let mut archive = ZipArchive::new(Cursor::new(&epub_data))
-        .context("Failed to open EPUB")?;
-    
     // Find OPF path to determine base path for preserving EPUB structure
     use crate::epub::parser::{find_opf_path, derive_base_path_from_opf};
     let epub_slice: &[u8] = &epub_data;
@@ -324,15 +322,25 @@ async fn convert_epub_core_with_durations(
         .map_err(|e| anyhow::anyhow!("Failed to find OPF path: {}", e))?;
     let base_path = derive_base_path_from_opf(&opf_path);
     
+    // Load original EPUB as ZIP to extract all files
+    let mut archive = ZipArchive::new(Cursor::new(&epub_data))
+        .context("Failed to open EPUB")?;
+    
     let mut audio_files: Vec<(usize, String)> = Vec::new();
     let mut smil_files: Vec<(usize, String)> = Vec::new();
-    let mut zip_files: HashMap<String, Vec<u8>> = HashMap::new();
+    let mut original_files: HashMap<String, Vec<u8>> = HashMap::new();
     
-    // Extract all existing files
+    // Extract all existing files from original EPUB
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)
             .with_context(|| format!("Failed to read file {} from EPUB", i))?;
         let name = file.name().to_string();
+        
+        // Skip mimetype, OPF, and files we'll replace (audio, SMIL, updated chapters)
+        // We'll handle these separately
+        if name == "mimetype" || name.as_str() == opf_path.as_str() {
+            continue;
+        }
         
         // Validate file path for security
         validate_epub_path(&name)
@@ -346,7 +354,7 @@ async fn convert_epub_core_with_durations(
         let mut data = Vec::new();
         std::io::copy(&mut file, &mut data)
             .with_context(|| format!("Failed to read file data for {}", name))?;
-        zip_files.insert(name, data);
+        original_files.insert(name, data);
     }
     
     // Validate chapter count
@@ -380,7 +388,8 @@ async fn convert_epub_core_with_durations(
             .map_err(|e| AppError::EpubParse(format!("Failed to extract text from chapter HTML: {}", e)))?;
         
         if full_text.trim().is_empty() {
-            // Update chapter HTML in ZIP - preserve original path structure
+            // Chapter has no words, mark as complete
+            // We'll still add the updated HTML to original_files
             let chapter_path = if chapter.href.starts_with("/") {
                 chapter.href[1..].to_string()
             } else if !base_path.is_empty() && chapter.href.starts_with(&base_path) {
@@ -388,8 +397,7 @@ async fn convert_epub_core_with_durations(
             } else {
                 format!("{}{}", base_path, chapter.href)
             };
-            zip_files.insert(chapter_path, updated_html.into_bytes());
-            // Chapter has no words, mark as complete
+            original_files.insert(chapter_path, updated_html.into_bytes());
             words_processed += chapter_word_count;
             continue;
         }
@@ -550,7 +558,8 @@ async fn convert_epub_core_with_durations(
         let audio_href_zip = format!("{}{}", base_path, validated_audio_name);
         let audio_href_manifest = validated_audio_name;
         
-        zip_files.insert(audio_href_zip.clone(), mp3_bytes);
+        // Store audio file - will be added to epub-builder later
+        original_files.insert(audio_href_zip.clone(), mp3_bytes);
         let audio_href_manifest_clone = audio_href_manifest.clone();
         audio_files.push((chapter_index, audio_href_manifest));
         
@@ -563,7 +572,8 @@ async fn convert_epub_core_with_durations(
             format!("{}{}", base_path, chapter.href)
         };
         let chapter_path_zip_clone = chapter_path_zip.clone();
-        zip_files.insert(chapter_path_zip, updated_html.into_bytes());
+        // Replace or add updated chapter HTML
+        original_files.insert(chapter_path_zip, updated_html.into_bytes());
         
         progress_callback(ConversionProgress {
             current_chapter: chapter_index + 1,
@@ -616,7 +626,8 @@ async fn convert_epub_core_with_durations(
         )
         .map_err(|e| AppError::InvalidPath(format!("Invalid SMIL manifest path: {}", e)))?;
         
-        zip_files.insert(smil_href_zip, smil_content.into_bytes());
+        // Store SMIL file - will be added to epub-builder later
+        original_files.insert(smil_href_zip, smil_content.into_bytes());
         smil_files.push((chapter_index, smil_href_manifest));
     }
     
@@ -627,57 +638,114 @@ async fn convert_epub_core_with_durations(
         total_words,
         words_in_current_chapter: 0,
         current_step: "updating-epub".to_string(),
-        message: "Updating EPUB metadata...".to_string(),
+        message: "Building EPUB with epub-builder...".to_string(),
     });
     
-    // Update content.opf - use the actual OPF path found earlier
-    if let Some(opf_content) = zip_files.get(&opf_path) {
-        let opf_str = String::from_utf8(opf_content.clone())
-            .context("Invalid UTF-8 in OPF")?;
-        
-        let updated_opf = update_content_opf(
-            &opf_str,
-            &audio_files,
-            &smil_files,
-            &options.chapters.iter().map(|c| c.href.clone()).collect::<Vec<_>>(),
-        )
-        .map_err(|e| anyhow::anyhow!("Failed to update content.opf: {}", e))?;
-        
-        zip_files.insert(opf_path.clone(), updated_opf.into_bytes());
-    }
+    // Read original OPF to update it
+    let original_opf_content = archive.by_name(&opf_path)
+        .and_then(|mut f| {
+            let mut content = String::new();
+            f.read_to_string(&mut content)?;
+            Ok(content)
+        })
+        .context("Failed to read original OPF")?;
     
-    // Create new ZIP
+    // Update content.opf with audio and SMIL files
+    let updated_opf = update_content_opf(
+        &original_opf_content,
+        &audio_files,
+        &smil_files,
+        &options.chapters.iter().map(|c| c.href.clone()).collect::<Vec<_>>(),
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to update content.opf: {}", e))?;
+    
+    // epub-builder creates its own OPF and structure, but we need to preserve the original
+    // structure and use our updated OPF. Instead, we'll manually create the EPUB ZIP
+    // but use epub-builder's ZIP library for proper EPUB structure compliance.
+    // 
+    // Actually, let's use epub-builder but then manually fix the container.xml and OPF
+    // after generation, OR we can manually build the ZIP with all files.
+    //
+    // For now, let's manually build the EPUB ZIP to have full control over the structure
+    use std::io::Write;
+    use zip::{ZipWriter, write::FileOptions};
+    
     let mut zip_writer = ZipWriter::new(Cursor::new(Vec::new()));
     let file_options = FileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
     let mimetype_options = FileOptions::default()
         .compression_method(zip::CompressionMethod::Stored);
     
-    // Add mimetype first (EPUB spec requirement)
-    if let Some(mimetype_data) = zip_files.get("mimetype") {
+    // Add mimetype first (EPUB spec requirement - must be first, uncompressed)
+    if let Some(mimetype_data) = original_files.get("mimetype") {
         zip_writer.start_file("mimetype", mimetype_options)
             .context("Failed to add mimetype to ZIP")?;
         zip_writer.write_all(mimetype_data)
             .context("Failed to write mimetype")?;
+    } else {
+        // Add default mimetype if not found
+        zip_writer.start_file("mimetype", mimetype_options)
+            .context("Failed to add mimetype to ZIP")?;
+        zip_writer.write_all(b"application/epub+zip")
+            .context("Failed to write mimetype")?;
     }
     
-    // Add all other files
-    let mut file_names: Vec<String> = zip_files.keys()
-        .filter(|name| *name != "mimetype")
-        .cloned()
+    // Add META-INF/container.xml (must reference the OPF)
+    let container_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="{}" media-type="application/oebps-package+xml" />
+  </rootfiles>
+</container>"#,
+        opf_path
+    );
+    zip_writer.start_file("META-INF/container.xml", file_options)
+        .context("Failed to add container.xml to ZIP")?;
+    zip_writer.write_all(container_xml.as_bytes())
+        .context("Failed to write container.xml")?;
+    
+    // Add all other META-INF files (preserve original ones like com.apple.ibooks.display-options.xml)
+    let mut meta_inf_files: Vec<_> = original_files.iter()
+        .filter(|(path, _)| path.starts_with("META-INF/") && *path != "META-INF/container.xml")
         .collect();
-    file_names.sort();
+    meta_inf_files.sort_by_key(|(path, _)| *path);
     
-    for file_name in file_names {
-        let data = &zip_files[&file_name];
-        zip_writer.start_file(&file_name, file_options)
-            .with_context(|| format!("Failed to add file {} to ZIP", file_name))?;
-        zip_writer.write_all(data)
-            .with_context(|| format!("Failed to write file data for {}", file_name))?;
+    for (file_path, file_data) in meta_inf_files {
+        zip_writer.start_file(file_path, file_options)
+            .with_context(|| format!("Failed to add {} to ZIP", file_path))?;
+        zip_writer.write_all(file_data)
+            .with_context(|| format!("Failed to write {}", file_path))?;
     }
     
+    // Add updated OPF
+    zip_writer.start_file(&opf_path, file_options)
+        .context("Failed to add OPF to ZIP")?;
+    zip_writer.write_all(updated_opf.as_bytes())
+        .context("Failed to write OPF")?;
+    
+    // Add all other original files (excluding mimetype, container.xml, and OPF which we already added)
+    let mut other_files: Vec<_> = original_files.iter()
+        .filter(|(path, _)| {
+            *path != "mimetype" 
+            && *path != "META-INF/container.xml" 
+            && *path != &opf_path
+        })
+        .collect();
+    other_files.sort_by_key(|(path, _)| *path);
+    
+    for (file_path, file_data) in other_files {
+        zip_writer.start_file(file_path, file_options)
+            .with_context(|| format!("Failed to add file {} to ZIP", file_path))?;
+        zip_writer.write_all(file_data)
+            .with_context(|| format!("Failed to write file data for {}", file_path))?;
+    }
+    
+    // Finalize ZIP
     let zip_data = zip_writer.finish()
         .context("Failed to finalize ZIP")?;
+    
+    let output = zip_data.into_inner();
     
     progress_callback(ConversionProgress {
         current_chapter: options.chapters.len(),
@@ -689,7 +757,7 @@ async fn convert_epub_core_with_durations(
         message: "Completing conversion...".to_string(),
     });
     
-    Ok(zip_data.into_inner())
+    Ok(output)
 }
 
 /// Converts an EPUB file to an audiobook format with synchronized audio.
