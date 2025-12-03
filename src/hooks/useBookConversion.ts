@@ -85,15 +85,7 @@ export function useBookConversion(
       // Clear book cache to force fresh data from backend
       clearBookCache(book.sourcePath);
       
-      // Re-ingest the converted EPUB (backend has already stored it, just need to reload metadata)
-      // No need to read buffer here, backend will read from sourcePath
-      await ingestEpub({
-        filePath: book.sourcePath,
-        sourcePath: book.sourcePath, // Keep same path - convert in place
-        fallbackTitle: book.title,
-        progress: book.progress,
-        pageCountHint: book.pageCount,
-      });
+      
       
       // Refetch library from backend to ensure we have the latest data
       if (refreshLibrary) {
@@ -220,15 +212,6 @@ export function useBookConversion(
         throw new Error("Converted EPUB not found in backend store");
       }
       
-      // Re-ingest to update audio tracks and other metadata
-      // Note: For converted EPUBs, the backend has already stored it, so we can use the sourcePath
-      await ingestEpub({
-        filePath: book.sourcePath,
-        sourcePath: book.sourcePath, // Keep same path - convert in place
-        fallbackTitle: book.title,
-        progress: book.progress,
-        pageCountHint: book.pageCount,
-      });
       
       // Refetch library from backend to ensure we have the latest data
       if (refreshLibrary) {
