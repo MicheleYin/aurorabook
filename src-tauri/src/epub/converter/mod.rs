@@ -825,7 +825,7 @@ fn merge_chapter_result(
 }
 
 /// Rebuild EPUB with current progress and save to Tauri store
-fn rebuild_and_save_epub(
+async fn rebuild_and_save_epub(
     context: &ConversionContext,
     original_opf_content: &str,
     chapter_hrefs: &[String],
@@ -864,7 +864,7 @@ fn rebuild_and_save_epub(
     // Save to Tauri store if app and source_path are provided
     if let (Some(app_ref), Some(source_path_ref)) = (app, source_path) {
         use crate::book_service::storage::save_epub_buffer_to_store;
-        save_epub_buffer_to_store(app_ref, source_path_ref, &epub_output)
+        save_epub_buffer_to_store(app_ref, source_path_ref, &epub_output).await
             .map_err(|e| anyhow::anyhow!("Failed to save EPUB to store: {}", e))?;
         log::debug!("Saved EPUB to store after chapter {}", chapter_index + 1);
     }
@@ -969,7 +969,7 @@ async fn convert_epub_core_with_durations(
             &progress_callback,
             app.as_ref(),
             source_path.as_deref(),
-        )?;
+        ).await?;
     }
     
     log::debug!("All chapters processed. Total: {} audio files, {} SMIL files", 

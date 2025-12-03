@@ -4,3 +4,6 @@
 - in the FE, if a chapter is loaded and has a href for audio track, load it from BE. Also use a callaback to after the audio track is loaded so i can enable audio track sync to the BE
 - when audiobook conversion happens, dont reload from FE, make it all in the BE
 - remove all useEffects because they are shittte
+- parallelize on chapters -> if chapters are too few ... i dont know
+- Revise how chapter names are extracted from the TOC because they are not extracter correctly
+  

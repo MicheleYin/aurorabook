@@ -50,6 +50,8 @@ epub-builder = "0.5"
 # Use kokoros crate from local path (customized to support dynamic input names)
 # Enable CoreML EP support - code will automatically use it on Apple platforms only
 kokoros = { path = "../Kokoros/kokoros", default-features = true }
+tauri-plugin-sql = { version = "2.3.1", features = ["sqlite"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
 # Note: CoreML EP is enabled by default on Apple platforms for GPU/Neural Engine acceleration
 # To enable CUDA GPU support on Linux/Windows, use: features = ["cuda"]
 # kokoros = { path = "../Kokoros/kokoros", default-features = true, features = ["cuda"] }
@@ -58,8 +60,14 @@ kokoros = { path = "../Kokoros/kokoros", default-features = true }
 # ONNX Runtime with CoreML EP support for GPU/Neural Engine acceleration on Apple devices
 
 # Use local ort crate to match the version used in src-tauri
-ort = { path = "../../ort", default-features = true }
+# Base ONNX Runtime configuration
+ort = { path = "../ort", default-features = true }
+
 ndarray = "0.16"
+
+[dev-dependencies]
+tempfile = "3.8"
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 [patch.crates-io]
 # Patch audiopus_sys to fix CMake compatibility issue for iOS builds

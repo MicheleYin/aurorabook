@@ -35,7 +35,7 @@ fn greet(name: &str) -> String {
 /// - `tauri_plugin_dialog` - File dialogs
 /// - `tauri_plugin_fs` - File system operations
 /// - `tauri_plugin_opener` - Opening files/URLs
-/// - `tauri_plugin_store` - Persistent storage
+/// - `tauri_plugin_sql` - SQLite database storage
 ///
 /// # Commands
 /// The application registers commands for:
@@ -60,6 +60,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_sql::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             greet,
             tts_commands::init_kokoros_engine,

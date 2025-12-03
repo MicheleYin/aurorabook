@@ -156,7 +156,7 @@ pub async fn convert_epub_to_audiobook_command(
         .map_err(|e| AppError::Store(format!("Failed to save converted EPUB: {}", e)))?;
     
     // Extract audio tracks from converted EPUB and update book in library
-    update_book_audio_tracks(&converted_epub, &source_path, &app)
+    update_book_audio_tracks(&converted_epub, &source_path, &app).await
         .map_err(|e| AppError::Store(format!("Failed to update book audio tracks: {}", e)))?;
     
     Ok(())
@@ -167,7 +167,7 @@ pub async fn convert_epub_to_audiobook_command(
 /// This function parses the converted EPUB to extract audio tracks from the manifest
 /// and builds the audio sync map from SMIL files, then updates the corresponding book
 /// in the library store.
-fn update_book_audio_tracks(
+async fn update_book_audio_tracks(
     converted_epub: &[u8],
     source_path: &str,
     app: &AppHandle,
@@ -245,7 +245,7 @@ fn update_book_audio_tracks(
     }
     
     // Update book in library
-    let mut books = load_all_books(app)
+    let mut books = load_all_books(app).await
         .map_err(|e| format!("Failed to load books: {}", e))?;
     
     if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
@@ -258,7 +258,7 @@ fn update_book_audio_tracks(
         return Ok(());
     }
     
-    save_all_books(app, &books)
+    save_all_books(app, &books).await
         .map_err(|e| format!("Failed to save books: {}", e))?;
     
     Ok(())
