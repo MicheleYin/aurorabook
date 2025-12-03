@@ -1,11 +1,10 @@
 /**
  * Progress management: update book progress with debouncing
+ * Simplified version with explicit debouncer creation
  */
 
-import { useCallback, useEffect, useRef } from "react";
-import {
-  updateBookProgress as updateBookProgressBackend,
-} from "../../lib/book-service";
+import { useCallback, useRef } from "react";
+import { updateBookProgress as updateBookProgressBackend } from "../../lib/book-service";
 import { createDebounce } from "../../lib/debounce-utils";
 import type { Book } from "../../types/reader";
 import type { ChapterProgressSnapshot } from "../../components/reader/types";
@@ -21,51 +20,16 @@ export function useProgressManagement(
   library: Book[],
   setLibrary: React.Dispatch<React.SetStateAction<Book[]>>,
 ) {
-  // Progress update debouncers - store pending updates
+  // Pending progress update
   const pendingProgressUpdateRef = useRef<{
     bookId: string;
     progress: NonNullable<Book["progress"]>;
     book: Book;
   } | null>(null);
-  const progressUpdateDebouncerRef = useRef<
-    ReturnType<typeof createDebounce> | null
-  >(null);
 
-  // Flush pending progress updates immediately (for navigation)
-  const flushProgressUpdate = useCallback(async () => {
-    const debouncer = progressUpdateDebouncerRef.current;
-    if (debouncer && pendingProgressUpdateRef.current) {
-      // Cancel the debounce and immediately execute the pending update
-      debouncer.cancel();
-      const pending = pendingProgressUpdateRef.current;
-      if (pending) {
-        try {
-          const { updateBookProgress } = await import("../../lib/book-service");
-          const updatedBook = await updateBookProgress(
-            pending.bookId,
-            pending.progress,
-          );
-          setLibrary((prev) =>
-            prev.map((b) => (b.id === pending.bookId ? updatedBook : b)),
-          );
-        } catch (error) {
-          console.error("Failed to flush progress to backend", {
-            bookId: pending.bookId,
-            error,
-          });
-          setLibrary((prev) =>
-            prev.map((b) => (b.id === pending.bookId ? pending.book : b)),
-          );
-        } finally {
-          pendingProgressUpdateRef.current = null;
-        }
-      }
-    }
-  }, [setLibrary]);
-
-  // Initialize debouncer
-  useEffect(() => {
-    const progressDebouncer = createDebounce(async () => {
+  // Progress update debouncer - created once
+  const progressUpdateDebouncerRef = useRef(
+    createDebounce(async () => {
       const pending = pendingProgressUpdateRef.current;
       if (!pending) return;
       
@@ -88,13 +52,36 @@ export function useProgressManagement(
       } finally {
         pendingProgressUpdateRef.current = null;
       }
-    }, 200);
+    }, 200)
+  );
 
-    progressUpdateDebouncerRef.current = progressDebouncer;
-    
-    return () => {
-      progressDebouncer.cancel();
-    };
+  // Flush pending progress updates immediately (for navigation)
+  const flushProgressUpdate = useCallback(async () => {
+    const pending = pendingProgressUpdateRef.current;
+    if (!pending) return;
+
+    const debouncer = progressUpdateDebouncerRef.current;
+    debouncer.cancel();
+
+    try {
+      const updatedBook = await updateBookProgressBackend(
+        pending.bookId,
+        pending.progress,
+      );
+      setLibrary((prev) =>
+        prev.map((b) => (b.id === pending.bookId ? updatedBook : b)),
+      );
+    } catch (error) {
+      console.error("Failed to flush progress to backend", {
+        bookId: pending.bookId,
+        error,
+      });
+      setLibrary((prev) =>
+        prev.map((b) => (b.id === pending.bookId ? pending.book : b)),
+      );
+    } finally {
+      pendingProgressUpdateRef.current = null;
+    }
   }, [setLibrary]);
 
   const updateBookProgress = useCallback(
@@ -137,12 +124,10 @@ export function useProgressManagement(
       const totalChapters = book.chapters.length;
       const isLastChapter = chapterIndex === totalChapters - 1;
       if (isLastChapter && chapterProgressPercent >= 0.95) {
-        // If user is at 95%+ of the last chapter, consider it finished
         chapterProgressPercent = 1.0;
       }
 
-      // Calculate overall book progress across all chapters
-      // Formula: (completed chapters + current chapter progress) / total chapters
+      // Calculate overall book progress
       const bookProgressPercent = totalChapters > 0
         ? Math.min(Math.max((chapterIndex + chapterProgressPercent) / totalChapters, 0), 1)
         : 0;
@@ -193,6 +178,35 @@ export function useProgressManagement(
         return;
       }
 
+      // If there's a pending update for a different chapter, flush it first
+      // This prevents losing progress when changing chapters rapidly
+      const pending = pendingProgressUpdateRef.current;
+      if (pending && pending.bookId === bookId && pending.progress.currentChapterId !== chapter.id) {
+        // Different chapter - flush the pending update immediately before setting new one
+        const debouncer = progressUpdateDebouncerRef.current;
+        debouncer.cancel();
+        
+        try {
+          const updatedBook = await updateBookProgressBackend(
+            pending.bookId,
+            pending.progress,
+          );
+          setLibrary((prev) =>
+            prev.map((b) => (b.id === pending.bookId ? updatedBook : b)),
+          );
+        } catch (error) {
+          console.error("Failed to flush previous chapter progress", {
+            bookId: pending.bookId,
+            chapterId: pending.progress.currentChapterId,
+            error,
+          });
+          // Continue anyway - update local state with new progress
+        } finally {
+          pendingProgressUpdateRef.current = null;
+        }
+      }
+
+      // Update local state immediately
       setLibrary((prev) =>
         prev.map((b) => (b.id === bookId ? { ...b, progress: nextProgress } : b)),
       );
@@ -204,11 +218,7 @@ export function useProgressManagement(
         book,
       };
       
-      const debouncer = progressUpdateDebouncerRef.current;
-      if (debouncer) {
-        debouncer.cancel();
-        debouncer.call();
-      }
+      progressUpdateDebouncerRef.current.call();
     },
     [library, setLibrary],
   );
@@ -234,4 +244,3 @@ export function useProgressManagement(
     flushProgressUpdate,
   };
 }
-

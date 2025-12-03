@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Headphones } from "lucide-react";
 
-import type { ChapterProgressSnapshot, ChapterSelectionOptions, ReaderPanelBaseProps } from "./reader/types";
+import type { ChapterSelectionOptions, ReaderPanelBaseProps } from "./reader/types";
 import { ReaderSettingsControl } from "./reader/ReaderSettingsControl";
 import { ReaderTocDrawer } from "./reader/ReaderTocDrawer";
-import { ReaderViewport } from "./reader/ReaderViewport";
+import { ReaderWrapper } from "./reader/ReaderWrapper";
 import { cn } from "../lib/utils";
 import { animPatterns, enterExit, anim } from "../lib/animations";
 import { Button } from "./ui/button";
@@ -13,10 +13,7 @@ type ReaderPanelProps = ReaderPanelBaseProps & {
   onChromeVisibilityChange?: (visible: boolean) => void;
   audioPlayerVisible?: boolean;
   onOpenAudioPlayer?: () => void;
-  currentAudioTime?: number;
   currentAudioTrackHref?: string;
-  autoScrollEnabled?: boolean;
-  isAudioRestoring?: boolean;
   onSaveProgress?: (saveFn: () => void) => void;
 };
 
@@ -26,18 +23,13 @@ export function ReaderPanel({
   preferences,
   onPreferencesChange,
   onSelectChapter,
-  pendingFragment,
-  onFragmentConsumed,
   onNavigateLibrary,
   resolvedUiTheme,
   onChapterProgress,
   onChromeVisibilityChange,
   audioPlayerVisible,
   onOpenAudioPlayer,
-  currentAudioTime,
   currentAudioTrackHref,
-  autoScrollEnabled,
-  isAudioRestoring,
   onSaveProgress,
 }: ReaderPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -46,7 +38,6 @@ export function ReaderPanel({
   const [isAudioReopenVisible, setIsAudioReopenVisible] = useState(false);
   const [shouldRenderAudioReopen, setShouldRenderAudioReopen] = useState(false);
   const preserveChromeNextSelectionRef = useRef(false);
-  const scrollIntentRef = useRef<"top" | "bottom" | null>(null);
   const previousBookIdRef = useRef<string | undefined>(activeBook?.id);
   const previousChapterIdRef = useRef<string | undefined>(activeChapter?.id);
 
@@ -130,24 +121,12 @@ export function ReaderPanel({
   }, [showAudioReopen, shouldRenderAudioReopen]);
 
   const handleChapterChange = (chapterId: string, options?: ChapterSelectionOptions) => {
-    const requestedScrollPosition = options?.scrollPosition ?? "maintain";
-    scrollIntentRef.current =
-      requestedScrollPosition === "maintain" ? null : (requestedScrollPosition as "top" | "bottom");
-
     if (options?.preserveChrome) {
       preserveChromeNextSelectionRef.current = true;
     }
     onSelectChapter(chapterId, options);
   };
 
-  const handleChapterProgress = (snapshot: ChapterProgressSnapshot) => {
-    if (!activeBook?.id) {
-      return;
-    }
-    onChapterProgress?.(activeBook.id, snapshot);
-  };
-
-  
 
   return (
     <section className="flex flex-1 min-h-0 flex-col">
@@ -242,26 +221,17 @@ export function ReaderPanel({
       </div>
 
       <div className="flex flex-1 overflow-hidden min-h-0">
-        <ReaderViewport
+        <ReaderWrapper
           activeBook={activeBook}
           activeChapter={activeChapter}
           preferences={preferences}
-          pendingFragment={pendingFragment}
-          onFragmentConsumed={onFragmentConsumed}
+          onPreferencesChange={onPreferencesChange}
           onSelectChapter={handleChapterChange}
           chromeVisible={chromeVisible}
           resolvedTheme={appliedTheme}
           onToggleChrome={handleToggleImmersive}
           audioPlayerVisible={showAudioPlayer}
-          scrollIntent={scrollIntentRef.current}
-          onScrollIntentConsumed={() => {
-            scrollIntentRef.current = null;
-          }}
-          onChapterProgress={handleChapterProgress}
-          currentAudioTime={currentAudioTime}
-          currentAudioTrackHref={currentAudioTrackHref}
-          autoScrollEnabled={Boolean(activeBook?.audioTracks?.length) && autoScrollEnabled}
-          isAudioRestoring={isAudioRestoring}
+          onChapterProgress={onChapterProgress}
           onSaveProgress={onSaveProgress}
         />
       </div>

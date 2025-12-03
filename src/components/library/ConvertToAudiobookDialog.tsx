@@ -38,7 +38,7 @@ export function ConvertToAudiobookDialog({
         <DialogHeader>
           <DialogTitle>Convert to Audiobook?</DialogTitle>
           <DialogDescription>
-            This ebook doesn't have audio tracks. Would you like to convert it to an audiobook using
+            This ebook doesn&apos;t have audio tracks. Would you like to convert it to an audiobook using
             text-to-speech? This may take some time depending on the book length.
           </DialogDescription>
         </DialogHeader>

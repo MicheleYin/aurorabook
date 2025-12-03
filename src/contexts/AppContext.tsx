@@ -185,6 +185,10 @@ export function AppContextProvider({
       // Mark this as a manual selection to prevent auto-selection from overriding it
       manualSelectionRef.current = bookId;
       
+      // Check if this book is already active BEFORE setting activeBookId
+      // This allows us to preserve the current chapter if the book is already active
+      const wasAlreadyActive = activeBookId === bookId;
+      
       setActiveBookId(bookId);
       console.debug("[ReaderProgress] select book", { bookId });
       
@@ -192,7 +196,7 @@ export function AppContextProvider({
       // Otherwise, use the saved progress or fallback to first chapter
       let nextChapterId: string | undefined;
       
-      if (activeBookId === bookId && activeChapterId) {
+      if (wasAlreadyActive && activeChapterId) {
         // Check if current chapter is still valid for this book
         const currentChapterValid = selectedBook.chapters.some(
           (chapter) => chapter.id === activeChapterId

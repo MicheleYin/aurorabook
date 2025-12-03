@@ -1,11 +1,10 @@
 /**
  * Audio state management: update audio state with debouncing
+ * Simplified version with explicit debouncer creation
  */
 
-import { useCallback, useEffect, useRef } from "react";
-import {
-  updateBookAudioState as updateBookAudioStateBackend,
-} from "../../lib/book-service";
+import { useCallback, useRef } from "react";
+import { updateBookAudioState as updateBookAudioStateBackend } from "../../lib/book-service";
 import { createDebounce } from "../../lib/debounce-utils";
 import type { Book } from "../../types/reader";
 
@@ -13,19 +12,16 @@ export function useAudioStateManagement(
   library: Book[],
   setLibrary: React.Dispatch<React.SetStateAction<Book[]>>,
 ) {
-  // Audio update debouncers - store pending updates
+  // Pending audio update
   const pendingAudioUpdateRef = useRef<{
     bookId: string;
     audioState: Book["audioState"];
     book: Book;
   } | null>(null);
-  const audioUpdateDebouncerRef = useRef<
-    ReturnType<typeof createDebounce> | null
-  >(null);
 
-  // Initialize debouncer
-  useEffect(() => {
-    const audioDebouncer = createDebounce(async () => {
+  // Audio update debouncer - created once
+  const audioUpdateDebouncerRef = useRef(
+    createDebounce(async () => {
       const pending = pendingAudioUpdateRef.current;
       if (!pending) return;
       
@@ -45,14 +41,8 @@ export function useAudioStateManagement(
       } finally {
         pendingAudioUpdateRef.current = null;
       }
-    }, 150);
-
-    audioUpdateDebouncerRef.current = audioDebouncer;
-    
-    return () => {
-      audioDebouncer.cancel();
-    };
-  }, [setLibrary]);
+    }, 150)
+  );
 
   const updateBookAudioState = useCallback(
     async (
@@ -90,6 +80,7 @@ export function useAudioStateManagement(
       const normalizedSeconds = Number(snapshot.currentTimeSeconds.toFixed(3));
       const existing = book.audioState;
 
+      // Skip if unchanged (within tolerance)
       if (
         existing &&
         existing.currentTrackId === resolvedTrack.id &&
@@ -106,6 +97,7 @@ export function useAudioStateManagement(
         updatedAt: snapshot.updatedAt ?? new Date().toISOString(),
       };
 
+      // Update local state immediately
       setLibrary((prev) =>
         prev.map((b) =>
           b.id === bookId ? { ...b, audioState: nextAudioState } : b
@@ -119,11 +111,7 @@ export function useAudioStateManagement(
         book,
       };
       
-      const debouncer = audioUpdateDebouncerRef.current;
-      if (debouncer) {
-        debouncer.cancel();
-        debouncer.call();
-      }
+      audioUpdateDebouncerRef.current.call();
     },
     [library, setLibrary],
   );
@@ -132,4 +120,3 @@ export function useAudioStateManagement(
     updateBookAudioState,
   };
 }
-

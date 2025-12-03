@@ -31,8 +31,6 @@ export type ReaderPanelBaseProps = {
   preferences: ReaderPreferences;
   onPreferencesChange: (update: Partial<ReaderPreferences>) => void;
   onSelectChapter: (chapterId: string, options?: ChapterSelectionOptions) => void;
-  pendingFragment: string | null;
-  onFragmentConsumed: () => void;
   onNavigateLibrary?: () => void;
   onChapterProgress?: (bookId: string, snapshot: ChapterProgressSnapshot) => void;
 };

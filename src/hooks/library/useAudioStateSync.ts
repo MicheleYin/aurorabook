@@ -1,8 +1,10 @@
 /**
- * Audio state sync hook
+ * Audio state sync hook - simplified version
+ * Manages track index and restoration time based on initial audio state
+ * No useEffects - initialization is explicit
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { UseAudioStateSyncParams } from "./types";
 
 const PROGRESS_ECHO_TOLERANCE_SECONDS = 0.5;
@@ -15,7 +17,10 @@ export function useAudioStateSync(params: UseAudioStateSyncParams) {
   const [isRestoring, setIsRestoring] = useState(false);
 
   const currentIndexRef = useRef(0);
-  const previousTrackIdRef = useRef<string | null>(null);
+  const onProgressRef = useRef(onProgress);
+  const tracksRef = useRef(tracks);
+  const isRestoringRef = useRef(false);
+  const restorationAppliedRef = useRef<string | null>(null);
   const lastProgressSnapshotRef = useRef<{
     trackId?: string;
     trackHref?: string;
@@ -24,35 +29,15 @@ export function useAudioStateSync(params: UseAudioStateSyncParams) {
     updatedAt?: string;
     timestamp: number;
   }>({ timestamp: 0 });
-  const lastAppliedAudioStateSignatureRef = useRef<string | undefined>(
-    undefined,
-  );
-  const onProgressRef = useRef(onProgress);
-  const tracksRef = useRef(tracks);
-  const isRestoringRef = useRef(false);
-  const restorationAppliedRef = useRef<string | null>(null);
-  const restoreTimeRef = useRef<number | null>(null);
+  const initializedRef = useRef<string | undefined>();
 
-  useEffect(() => {
-    onProgressRef.current = onProgress;
-  }, [onProgress]);
+  // Update refs when props change
+  onProgressRef.current = onProgress;
+  tracksRef.current = tracks;
+  currentIndexRef.current = currentIndex;
+  isRestoringRef.current = isRestoring;
 
-  useEffect(() => {
-    tracksRef.current = tracks;
-  }, [tracks]);
-
-  useEffect(() => {
-    currentIndexRef.current = currentIndex;
-  }, [currentIndex]);
-
-  useEffect(() => {
-    isRestoringRef.current = isRestoring;
-  }, [isRestoring]);
-
-  useEffect(() => {
-    restoreTimeRef.current = restoreTime;
-  }, [restoreTime]);
-
+  // Find track index from initial audio state
   const findTrackIndex = useCallback((): number => {
     if (!tracks.length || !initialAudioState) {
       return 0;
@@ -62,18 +47,14 @@ export function useAudioStateSync(params: UseAudioStateSyncParams) {
       const matchById = tracks.findIndex(
         (track) => track.id === initialAudioState.currentTrackId,
       );
-      if (matchById >= 0) {
-        return matchById;
-      }
+      if (matchById >= 0) return matchById;
     }
 
     if (initialAudioState.currentTrackHref) {
       const matchByHref = tracks.findIndex(
         (track) => track.href === initialAudioState.currentTrackHref,
       );
-      if (matchByHref >= 0) {
-        return matchByHref;
-      }
+      if (matchByHref >= 0) return matchByHref;
     }
 
     if (
@@ -88,11 +69,10 @@ export function useAudioStateSync(params: UseAudioStateSyncParams) {
     return 0;
   }, [tracks, initialAudioState]);
 
+  // Check if progress is an echo (same as what we just emitted)
   const isProgressEcho = useCallback((): boolean => {
     const state = initialAudioState;
-    if (!state) {
-      return false;
-    }
+    if (!state) return false;
 
     const snapshot = lastProgressSnapshotRef.current;
     if (
@@ -123,9 +103,7 @@ export function useAudioStateSync(params: UseAudioStateSyncParams) {
         typeof nextTrackIndex === "number" &&
         snapshot.trackIndex === nextTrackIndex);
 
-    if (!trackMatches) {
-      return false;
-    }
+    if (!trackMatches) return false;
 
     const timeMatches =
       (snapshot.updatedAt && snapshot.updatedAt === state.updatedAt) ||
@@ -137,40 +115,29 @@ export function useAudioStateSync(params: UseAudioStateSyncParams) {
     return timeMatches;
   }, [initialAudioState]);
 
-  useEffect(() => {
+  // Initialize from audio state (call explicitly when needed)
+  const initialize = useCallback(() => {
     if (!bookId) {
-      lastAppliedAudioStateSignatureRef.current = undefined;
-      previousTrackIdRef.current = null;
       setRestoreTime(null);
       setIsRestoring(false);
+      setCurrentIndexState(0);
+      currentIndexRef.current = 0;
+      initializedRef.current = undefined;
       return;
     }
 
-    const state = initialAudioState;
-    const signatureComponents = [
-      bookId,
-      state?.currentTrackId ?? "no-track",
-      state?.updatedAt ?? "no-updated-at",
-      Number.isFinite(state?.currentTimeSeconds)
-        ? String(state?.currentTimeSeconds)
-        : "0",
-      String(tracks.length),
-    ];
-    const signature = signatureComponents.join("|");
-
-    if (lastAppliedAudioStateSignatureRef.current === signature) {
-      return;
+    // Create signature to detect changes
+    const signature = `${bookId}|${initialAudioState?.currentTrackId}|${initialAudioState?.updatedAt}|${tracks.length}`;
+    if (initializedRef.current === signature) {
+      return; // Already initialized with this state
     }
 
     if (isProgressEcho()) {
-      lastAppliedAudioStateSignatureRef.current = signature;
-      return;
+      initializedRef.current = signature;
+      return; // Don't restore if this is just an echo of our own progress
     }
 
-    lastAppliedAudioStateSignatureRef.current = signature;
-
     const nextIndex = findTrackIndex();
-    previousTrackIdRef.current = null;
     setCurrentIndexState(nextIndex);
     currentIndexRef.current = nextIndex;
 
@@ -181,131 +148,114 @@ export function useAudioStateSync(params: UseAudioStateSyncParams) {
         : null;
 
     setRestoreTime(restoredTime);
-    setIsRestoring(true);
+    setIsRestoring(restoredTime !== null);
     restorationAppliedRef.current = null;
     lastProgressSnapshotRef.current = { timestamp: 0 };
-  }, [bookId, initialAudioState, tracks, findTrackIndex, isProgressEcho]);
+    initializedRef.current = signature;
+  }, [bookId, initialAudioState, tracks.length, findTrackIndex, isProgressEcho]);
 
-  const onTrackChanged = useCallback(
-    (newTrackId: string) => {
-      const currentTrack = tracksRef.current[currentIndexRef.current];
-      if (!currentTrack || currentTrack.id === newTrackId) {
-        return;
-      }
+  // Call initialize when bookId or state changes (explicit check in render)
+  const currentSignature = bookId && initialAudioState
+    ? `${bookId}|${initialAudioState.currentTrackId}|${initialAudioState.updatedAt}|${tracks.length}`
+    : undefined;
+  
+  if (initializedRef.current !== currentSignature) {
+    initialize();
+  }
 
-      if (isRestoringRef.current) {
-        previousTrackIdRef.current = newTrackId;
-        return;
-      }
+  const onTrackChanged = useCallback((newTrackId: string) => {
+    const currentTrack = tracksRef.current[currentIndexRef.current];
+    if (!currentTrack || currentTrack.id === newTrackId) {
+      return;
+    }
 
-      if (
-        previousTrackIdRef.current !== null &&
-        previousTrackIdRef.current !== newTrackId
-      ) {
-        setRestoreTime(null);
-        restorationAppliedRef.current = null;
-        previousTrackIdRef.current = newTrackId;
-      } else if (previousTrackIdRef.current === null) {
-        previousTrackIdRef.current = newTrackId;
-      }
-    },
-    [],
-  );
+    if (isRestoringRef.current) {
+      return;
+    }
 
-  const emitProgress = useCallback(
-    (timeSeconds: number) => {
-      const track = tracksRef.current[currentIndexRef.current];
-      const listener = onProgressRef.current;
-      if (!track || !listener) {
-        return;
-      }
+    setRestoreTime(null);
+    restorationAppliedRef.current = null;
+  }, []);
 
-      const normalizedSeconds = Number(Math.max(timeSeconds, 0).toFixed(3));
-      const updatedAt = new Date().toISOString();
+  const emitProgress = useCallback((timeSeconds: number) => {
+    const track = tracksRef.current[currentIndexRef.current];
+    const listener = onProgressRef.current;
+    if (!track || !listener) return;
 
-      lastProgressSnapshotRef.current = {
-        trackId: track.id,
-        trackHref: track.href,
-        trackIndex: currentIndexRef.current,
-        currentTimeSeconds: normalizedSeconds,
-        updatedAt,
-        timestamp: Date.now(),
-      };
+    const normalizedSeconds = Number(Math.max(timeSeconds, 0).toFixed(3));
+    const updatedAt = new Date().toISOString();
 
-      listener({
-        trackId: track.id,
-        trackHref: track.href,
-        trackIndex: currentIndexRef.current,
-        currentTimeSeconds: normalizedSeconds,
-        updatedAt,
-      });
-    },
-    [],
-  );
+    lastProgressSnapshotRef.current = {
+      trackId: track.id,
+      trackHref: track.href,
+      trackIndex: currentIndexRef.current,
+      currentTimeSeconds: normalizedSeconds,
+      updatedAt,
+      timestamp: Date.now(),
+    };
 
-  const onTrackLoaded = useCallback(
-    (audioElement: HTMLAudioElement) => {
-      const currentTrack = tracksRef.current[currentIndexRef.current];
-      if (!currentTrack || !audioElement) {
-        return;
-      }
+    listener({
+      trackId: track.id,
+      trackHref: track.href,
+      trackIndex: currentIndexRef.current,
+      currentTimeSeconds: normalizedSeconds,
+      updatedAt,
+    });
+  }, []);
 
-      const shouldRestore = isRestoringRef.current;
-      const timeToRestore = restoreTimeRef.current;
-      const currentTrackId = currentTrack.id;
-      const alreadyApplied =
-        restorationAppliedRef.current === currentTrackId;
+  const onTrackLoaded = useCallback((audioElement: HTMLAudioElement) => {
+    const currentTrack = tracksRef.current[currentIndexRef.current];
+    if (!currentTrack || !audioElement) return;
 
-      if (
-        shouldRestore &&
-        timeToRestore !== null &&
-        Number.isFinite(timeToRestore) &&
-        !alreadyApplied
-      ) {
-        try {
-          audioElement.currentTime = timeToRestore;
-          const appliedTime = audioElement.currentTime || timeToRestore;
-          restorationAppliedRef.current = currentTrackId;
-          emitProgress(appliedTime);
-          setIsRestoring(false);
-          setRestoreTime(null);
-        } catch (error) {
-          console.warn("Failed to apply restore time:", error);
-          setIsRestoring(false);
-          setRestoreTime(null);
-        }
-      } else if (shouldRestore && timeToRestore === null) {
+    const shouldRestore = isRestoringRef.current;
+    const timeToRestore = restoreTime;
+    const currentTrackId = currentTrack.id;
+    const alreadyApplied = restorationAppliedRef.current === currentTrackId;
+
+    if (
+      shouldRestore &&
+      timeToRestore !== null &&
+      Number.isFinite(timeToRestore) &&
+      !alreadyApplied
+    ) {
+      try {
+        audioElement.currentTime = timeToRestore;
+        const appliedTime = audioElement.currentTime || timeToRestore;
+        restorationAppliedRef.current = currentTrackId;
+        emitProgress(appliedTime);
         setIsRestoring(false);
         setRestoreTime(null);
-        restorationAppliedRef.current = currentTrackId;
-      } else if (!shouldRestore && timeToRestore === null && !alreadyApplied) {
-        if (previousTrackIdRef.current !== null) {
-          audioElement.currentTime = 0;
-        }
-        restorationAppliedRef.current = null;
+      } catch (error) {
+        console.warn("Failed to apply restore time:", error);
+        setIsRestoring(false);
+        setRestoreTime(null);
       }
-    },
-    [emitProgress],
-  );
-
-  const setCurrentIndex = useCallback(
-    (index: number) => {
-      const newTrack = tracksRef.current[index];
-      if (newTrack) {
-        onTrackChanged(newTrack.id);
-      }
-      setCurrentIndexState(index);
-      currentIndexRef.current = index;
-    },
-    [onTrackChanged],
-  );
-
-  useEffect(() => {
-    if (tracks.length && currentIndex >= tracks.length) {
-      setCurrentIndexState(0);
-      currentIndexRef.current = 0;
+    } else if (shouldRestore && timeToRestore === null) {
+      setIsRestoring(false);
+      setRestoreTime(null);
+      restorationAppliedRef.current = currentTrackId;
+    } else if (!shouldRestore && timeToRestore === null && !alreadyApplied) {
+      audioElement.currentTime = 0;
+      restorationAppliedRef.current = null;
     }
-  }, [tracks.length, currentIndex]);
+  }, [restoreTime, emitProgress]);
+
+  const setCurrentIndex = useCallback((index: number) => {
+    if (index < 0 || index >= tracksRef.current.length) return;
+    
+    const newTrack = tracksRef.current[index];
+    if (newTrack) {
+      onTrackChanged(newTrack.id);
+    }
+    setCurrentIndexState(index);
+    currentIndexRef.current = index;
+  }, [onTrackChanged]);
+
+  // Ensure index is valid
+  if (tracks.length && currentIndex >= tracks.length) {
+    setCurrentIndexState(0);
+    currentIndexRef.current = 0;
+  }
 
   return {
     currentIndex,
@@ -317,4 +267,3 @@ export function useAudioStateSync(params: UseAudioStateSyncParams) {
     emitProgress,
   };
 }
-

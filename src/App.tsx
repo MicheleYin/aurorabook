@@ -430,12 +430,15 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       preferences={readerPreferences}
       onPreferencesChange={updateReaderPreferences}
       onSelectChapter={handleSelectChapter}
-      pendingFragment={pendingFragment}
-      onFragmentConsumed={handleFragmentConsumed}
       onNavigateLibrary={async () => {
         // Save progress before navigating away
         if (saveProgressRef.current && activeChapterId) {
-          console.log("[App] Saving progress before navigating to library");
+          console.log("[App] Saving progress before navigating to library", {
+            bookId: activeBookId,
+            fromChapterId: activeChapterId,
+            toChapterId: undefined,
+            source: "navigation",
+          });
           saveProgressRef.current();
           // Flush the debounced save immediately
           await flushProgressUpdate();
@@ -447,10 +450,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       onChromeVisibilityChange={setIsReaderChromeVisible}
       audioPlayerVisible={Boolean(activeBook?.audioTracks?.length) && isAudioPlayerOpen}
       onOpenAudioPlayer={() => setIsAudioPlayerOpen(true)}
-      currentAudioTime={currentAudioTime}
       currentAudioTrackHref={currentAudioTrackHref}
-      autoScrollEnabled={autoScrollEnabled}
-      isAudioRestoring={isAudioRestoring}
       onSaveProgress={(saveFn) => {
         saveProgressRef.current = saveFn;
       }}
@@ -540,7 +540,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
                   if (isDisabled) return;
                   // Save progress before navigating away from reader
                   if (activeView === "reader" && item.id !== "reader" && saveProgressRef.current && activeChapterId) {
-                    console.log("[App] Saving progress before navigating to", item.id);
+                    console.log("[App] Saving progress before navigating to", item.id, "from", saveProgressRef.current,activeChapterId);
                     saveProgressRef.current();
                     // Flush the debounced save immediately
                     await flushProgressUpdate();
