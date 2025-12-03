@@ -139,9 +139,9 @@ pub async fn convert_epub_to_audiobook_command(
         message: format!("Found {} chapters ({} words total). Preparing conversion...", conversion_chapters.len(), total_words),
     });
     
-    // Perform conversion
+    // Perform conversion (with source_path for incremental saving)
     log::info!("Starting EPUB to audiobook conversion with {} chapters", conversion_chapters.len());
-    let converted_epub = convert_epub_to_audiobook(epub_data, options, app.clone())
+    let converted_epub = convert_epub_to_audiobook(epub_data, options, app.clone(), Some(source_path.clone()))
         .await
         .map_err(|e| {
             log::error!("Conversion failed: {}", e);

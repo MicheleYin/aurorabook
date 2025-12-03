@@ -337,6 +337,15 @@ struct ConversionContext {
     smil_files: Vec<(usize, String)>,
 }
 
+/// Result of processing a single chapter
+struct ChapterProcessResult {
+    chapter_index: usize,
+    files: std::collections::HashMap<String, Vec<u8>>,
+    audio_file: (usize, String),
+    smil_file: (usize, String),
+    words_processed: usize,
+}
+
 /// Initialize EPUB conversion by finding OPF path and base path
 fn initialize_conversion(epub_data: &[u8]) -> AnyhowResult<(String, String)> {
     use crate::epub::parser::{find_opf_path, derive_base_path_from_opf};
@@ -506,18 +515,17 @@ fn resolve_chapter_path(href: &str, base_path: &str) -> String {
 }
 
 /// Process a single chapter: generate audio, create SMIL, and store files
+/// Returns a result struct with all generated files and metadata
 async fn process_chapter(
     chapter: &ConversionChapter,
     chapter_index: usize,
     base_path: &str,
     engine: &Arc<kokoros::tts::koko::TTSKokoParallel>,
     voice_id: &str,
-    context: &mut ConversionContext,
     progress_callback: &ProgressCallback,
-    words_processed: &mut usize,
     total_words: usize,
     total_chapters: usize,
-) -> AnyhowResult<()> {
+) -> AnyhowResult<ChapterProcessResult> {
     log::debug!("Processing chapter {}: '{}' (href: '{}', content_html: {} bytes, word_count: {})", 
         chapter_index + 1, chapter.title, chapter.href, chapter.content_html.len(), chapter.word_count);
     
@@ -530,7 +538,7 @@ async fn process_chapter(
     progress_callback(ConversionProgress {
         current_chapter: chapter_index + 1,
         total_chapters,
-        words_processed: *words_processed,
+        words_processed: 0, // Will be updated by caller
         total_words,
         words_in_current_chapter: chapter.word_count,
         current_step: "generating-audio".to_string(),
@@ -543,12 +551,19 @@ async fn process_chapter(
     let (full_text, updated_html, span_mappings) = extract_text_with_spans(&chapter.content_html)
         .map_err(|e| AppError::EpubParse(format!("Failed to extract text from chapter HTML: {}", e)))?;
     
+    let mut files = std::collections::HashMap::new();
+    
     if full_text.trim().is_empty() {
         log::debug!("Chapter {} has no text content after extraction - skipping audio generation", chapter_index + 1);
         let chapter_path = resolve_chapter_path(&chapter.href, base_path);
-        context.original_files.insert(chapter_path, updated_html.into_bytes());
-        *words_processed += chapter.word_count;
-        return Ok(());
+        files.insert(chapter_path, updated_html.into_bytes());
+        return Ok(ChapterProcessResult {
+            chapter_index,
+            files,
+            audio_file: (chapter_index, String::new()),
+            smil_file: (chapter_index, String::new()),
+            words_processed: chapter.word_count,
+        });
     }
     
     // Generate TTS audio
@@ -582,12 +597,10 @@ async fn process_chapter(
         &full_text,
     );
     
-    *words_processed += chapter.word_count;
-    
     progress_callback(ConversionProgress {
         current_chapter: chapter_index + 1,
         total_chapters,
-        words_processed: *words_processed,
+        words_processed: 0, // Will be updated by caller
         total_words,
         words_in_current_chapter: chapter.word_count,
         current_step: "converting-audio".to_string(),
@@ -601,20 +614,19 @@ async fn process_chapter(
     let (audio_href_zip, audio_href_manifest) = generate_audio_path(&chapter.href, chapter_index, base_path)?;
     
     // Store audio file
-    context.original_files.insert(audio_href_zip.clone(), mp3_bytes);
-    context.audio_files.push((chapter_index, audio_href_manifest.clone()));
-    log::debug!("Added audio file to context: chapter_index={}, href={}, total_audio_files={}", 
-        chapter_index, audio_href_manifest, context.audio_files.len());
+    files.insert(audio_href_zip.clone(), mp3_bytes);
+    log::debug!("Generated audio file: chapter_index={}, href={}", 
+        chapter_index, audio_href_manifest);
     
     // Store updated chapter HTML
     let chapter_path_zip = resolve_chapter_path(&chapter.href, base_path);
     let chapter_path_zip_clone = chapter_path_zip.clone();
-    context.original_files.insert(chapter_path_zip, updated_html.into_bytes());
+    files.insert(chapter_path_zip, updated_html.into_bytes());
     
     progress_callback(ConversionProgress {
         current_chapter: chapter_index + 1,
         total_chapters,
-        words_processed: *words_processed,
+        words_processed: 0, // Will be updated by caller
         total_words,
         words_in_current_chapter: chapter.word_count,
         current_step: "creating-smil".to_string(),
@@ -660,12 +672,17 @@ async fn process_chapter(
     )
     .map_err(|e| AppError::InvalidPath(format!("Invalid SMIL manifest path: {}", e)))?;
     
-    context.original_files.insert(smil_href_zip, smil_content.into_bytes());
-    context.smil_files.push((chapter_index, smil_href_manifest.clone()));
-    log::debug!("Added SMIL file to context: chapter_index={}, href={}, total_smil_files={}", 
-        chapter_index, smil_href_manifest, context.smil_files.len());
+    files.insert(smil_href_zip, smil_content.into_bytes());
+    log::debug!("Generated SMIL file: chapter_index={}, href={}", 
+        chapter_index, smil_href_manifest);
     
-    Ok(())
+    Ok(ChapterProcessResult {
+        chapter_index,
+        files,
+        audio_file: (chapter_index, audio_href_manifest),
+        smil_file: (chapter_index, smil_href_manifest),
+        words_processed: chapter.word_count,
+    })
 }
 
 /// Build the final EPUB ZIP file with all content
@@ -752,20 +769,140 @@ fn build_epub_zip(
     Ok(zip_data.into_inner())
 }
 
+/// Initialize conversion context and read original OPF content
+fn initialize_conversion_context(
+    epub_data: &[u8],
+) -> AnyhowResult<(ConversionContext, String)> {
+    use std::io::{Cursor, Read};
+    use zip::ZipArchive;
+    
+    let (opf_path, base_path) = initialize_conversion(epub_data)?;
+    let original_files = extract_original_files(epub_data, &opf_path)?;
+    
+    let context = ConversionContext {
+        opf_path: opf_path.clone(),
+        base_path,
+        original_files,
+        audio_files: Vec::new(),
+        smil_files: Vec::new(),
+    };
+    
+    // Read original OPF content
+    let mut archive = ZipArchive::new(Cursor::new(epub_data))
+        .context("Failed to open EPUB for OPF read")?;
+    let original_opf_content = archive.by_name(&opf_path)
+        .and_then(|mut f| {
+            let mut content = String::new();
+            f.read_to_string(&mut content)?;
+            Ok(content)
+        })
+        .context("Failed to read original OPF")?;
+    
+    Ok((context, original_opf_content))
+}
+
+/// Merge a chapter processing result into the conversion context
+fn merge_chapter_result(
+    context: &mut ConversionContext,
+    result: ChapterProcessResult,
+) {
+    // Merge files into context
+    for (path, data) in result.files {
+        context.original_files.insert(path, data);
+    }
+    
+    // Add audio and SMIL file entries only if they're not empty
+    if !result.audio_file.1.is_empty() {
+        context.audio_files.push(result.audio_file);
+    }
+    if !result.smil_file.1.is_empty() {
+        context.smil_files.push(result.smil_file);
+    }
+    
+    // Sort audio and SMIL files by chapter index to maintain order
+    context.audio_files.sort_by_key(|(idx, _)| *idx);
+    context.smil_files.sort_by_key(|(idx, _)| *idx);
+}
+
+/// Rebuild EPUB with current progress and save to Tauri store
+fn rebuild_and_save_epub(
+    context: &ConversionContext,
+    original_opf_content: &str,
+    chapter_hrefs: &[String],
+    chapter_index: usize,
+    total_chapters: usize,
+    words_processed: usize,
+    total_words: usize,
+    words_in_current_chapter: usize,
+    progress_callback: &ProgressCallback,
+    app: Option<&AppHandle>,
+    source_path: Option<&str>,
+) -> AnyhowResult<Vec<u8>> {
+    // Update progress
+    progress_callback(ConversionProgress {
+        current_chapter: chapter_index + 1,
+        total_chapters,
+        words_processed,
+        total_words,
+        words_in_current_chapter,
+        current_step: "saving-epub".to_string(),
+        message: format!("Saving EPUB after chapter {}...", chapter_index + 1),
+    });
+    
+    // Update OPF with current progress
+    let updated_opf = update_content_opf(
+        original_opf_content,
+        &context.audio_files,
+        &context.smil_files,
+        chapter_hrefs,
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to update content.opf: {}", e))?;
+    
+    // Build EPUB with current progress
+    let epub_output = build_epub_zip(context, &updated_opf)?;
+    
+    // Save to Tauri store if app and source_path are provided
+    if let (Some(app_ref), Some(source_path_ref)) = (app, source_path) {
+        use crate::book_service::storage::save_epub_buffer_to_store;
+        save_epub_buffer_to_store(app_ref, source_path_ref, &epub_output)
+            .map_err(|e| anyhow::anyhow!("Failed to save EPUB to store: {}", e))?;
+        log::debug!("Saved EPUB to store after chapter {}", chapter_index + 1);
+    }
+    
+    Ok(epub_output)
+}
+
+/// Build final EPUB with all completed chapters
+fn build_final_epub(
+    context: &ConversionContext,
+    original_opf_content: &str,
+    chapter_hrefs: &[String],
+) -> AnyhowResult<Vec<u8>> {
+    let updated_opf = update_content_opf(
+        original_opf_content,
+        &context.audio_files,
+        &context.smil_files,
+        chapter_hrefs,
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to update content.opf: {}", e))?;
+    
+    build_epub_zip(context, &updated_opf)
+}
+
 /// Core EPUB to audiobook conversion logic using single TTS instance with durations
 /// This function processes each chapter as a whole, using word alignments from
 /// the TTS engine to generate accurate SMIL timing information.
+/// After each chapter, it rebuilds the EPUB and saves it to the Tauri store.
 async fn convert_epub_core_with_durations(
     epub_data: Vec<u8>,
     options: ConversionOptions,
     progress_callback: ProgressCallback,
     engine: Arc<kokoros::tts::koko::TTSKokoParallel>,
     voice_id: String,
+    app: Option<AppHandle>,
+    source_path: Option<String>,
 ) -> AnyhowResult<Vec<u8>>
 {
-    use std::io::{Cursor, Read};
-    use zip::ZipArchive;
-    
     let total_words: usize = options.chapters.iter().map(|c| c.word_count).sum();
     
     progress_callback(ConversionProgress {
@@ -778,98 +915,68 @@ async fn convert_epub_core_with_durations(
         message: "Initializing EPUB conversion with single TTS engine...".to_string(),
     });
     
-    // Initialize conversion context
-    let (opf_path, base_path) = initialize_conversion(&epub_data)?;
-    let original_files = extract_original_files(&epub_data, &opf_path)?;
-    
-    let mut context = ConversionContext {
-        opf_path,
-        base_path,
-        original_files,
-        audio_files: Vec::new(),
-        smil_files: Vec::new(),
-    };
-    
     validate_chapter_count(options.chapters.len(), MAX_CHAPTERS)?;
     
-    // Process each chapter
+    // Initialize conversion context and read OPF
+    let (mut context, original_opf_content) = initialize_conversion_context(&epub_data)?;
+    let base_path = context.base_path.clone();
     let mut words_processed = 0;
-    let base_path = context.base_path.clone(); // Clone to avoid borrow checker issues
+    let chapter_hrefs: Vec<String> = options.chapters.iter().map(|c| c.href.clone()).collect();
+    
+    // Process each chapter sequentially
     for (chapter_index, chapter) in options.chapters.iter().enumerate() {
         log::debug!("Starting to process chapter {}: '{}'", chapter_index + 1, chapter.title);
-        process_chapter(
+        
+        progress_callback(ConversionProgress {
+            current_chapter: chapter_index + 1,
+            total_chapters: options.chapters.len(),
+            words_processed,
+            total_words,
+            words_in_current_chapter: chapter.word_count,
+            current_step: "generating-audio".to_string(),
+            message: format!("Processing chapter {}: {} ({} words)", chapter_index + 1, chapter.title, chapter.word_count),
+        });
+        
+        // Process the chapter
+        let result = process_chapter(
             chapter,
             chapter_index,
             &base_path,
             &engine,
             &voice_id,
-            &mut context,
             &progress_callback,
-            &mut words_processed,
             total_words,
             options.chapters.len(),
         ).await?;
-        log::debug!("Finished processing chapter {}, context now has {} audio files and {} SMIL files", 
+        
+        // Update words processed and merge result
+        words_processed += result.words_processed;
+        merge_chapter_result(&mut context, result);
+        
+        log::debug!("Finished processing chapter {}. Total: {} audio files, {} SMIL files", 
             chapter_index + 1, context.audio_files.len(), context.smil_files.len());
+        
+        // Rebuild EPUB and save after each chapter
+        rebuild_and_save_epub(
+            &context,
+            &original_opf_content,
+            &chapter_hrefs,
+            chapter_index,
+            options.chapters.len(),
+            words_processed,
+            total_words,
+            chapter.word_count,
+            &progress_callback,
+            app.as_ref(),
+            source_path.as_deref(),
+        )?;
     }
     
-    progress_callback(ConversionProgress {
-        current_chapter: options.chapters.len(),
-        total_chapters: options.chapters.len(),
-        words_processed,
-        total_words,
-        words_in_current_chapter: 0,
-        current_step: "updating-epub".to_string(),
-        message: "Building EPUB...".to_string(),
-    });
-    
-    // Read and update OPF
-    let mut archive = ZipArchive::new(Cursor::new(&epub_data))
-        .context("Failed to open EPUB for OPF read")?;
-    let original_opf_content = archive.by_name(&context.opf_path)
-        .and_then(|mut f| {
-            let mut content = String::new();
-            f.read_to_string(&mut content)?;
-            Ok(content)
-        })
-        .context("Failed to read original OPF")?;
-    
-    log::debug!("Updating OPF with {} audio files and {} SMIL files", 
+    log::debug!("All chapters processed. Total: {} audio files, {} SMIL files", 
         context.audio_files.len(), context.smil_files.len());
     
-    // Log details of what's in the context
-    if context.audio_files.is_empty() {
-        log::warn!("WARNING: audio_files vector is empty! Expected {} chapters to have audio.", options.chapters.len());
-    } else {
-        for (idx, (chapter_idx, href)) in context.audio_files.iter().enumerate() {
-            log::debug!("  Audio file {}: chapter_index={}, href={}", idx, chapter_idx, href);
-        }
-    }
-    
-    if context.smil_files.is_empty() {
-        log::warn!("WARNING: smil_files vector is empty! Expected {} chapters to have SMIL files.", options.chapters.len());
-    } else {
-        for (idx, (chapter_idx, href)) in context.smil_files.iter().enumerate() {
-            log::debug!("  SMIL file {}: chapter_index={}, href={}", idx, chapter_idx, href);
-        }
-    }
-    
-    // Log chapter hrefs that will be passed to update_content_opf
-    let chapter_hrefs: Vec<String> = options.chapters.iter().map(|c| c.href.clone()).collect();
-    log::debug!("Chapter hrefs being passed to update_content_opf: {:?}", chapter_hrefs);
-    
-    let updated_opf = update_content_opf(
-        &original_opf_content,
-        &context.audio_files,
-        &context.smil_files,
-        &options.chapters.iter().map(|c| c.href.clone()).collect::<Vec<_>>(),
-    )
-    .map_err(|e| anyhow::anyhow!("Failed to update content.opf: {}", e))?;
-    
-    log::debug!("OPF updated successfully ({} bytes)", updated_opf.len());
-    
-    // Build final EPUB ZIP
-    let output = build_epub_zip(&context, &updated_opf)?;
+    // Build final EPUB
+    let output = build_final_epub(&context, &original_opf_content, &chapter_hrefs)?;
     
     progress_callback(ConversionProgress {
         current_chapter: options.chapters.len(),
@@ -938,6 +1045,7 @@ pub async fn convert_epub_to_audiobook(
     epub_data: Vec<u8>,
     options: ConversionOptions,
     app: AppHandle,
+    source_path: Option<String>,
 ) -> AppResult<Vec<u8>> {
     use crate::utils::path_resolver::ResourcePathResolver;
     
@@ -949,7 +1057,7 @@ pub async fn convert_epub_to_audiobook(
     
     // Calculate total words
     let total_words: usize = options.chapters.iter().map(|c| c.word_count).sum();
-    
+    let num_chapters = options.chapters.len();
     // Emit initial progress event when conversion starts
     progress_callback(ConversionProgress {
         current_chapter: 0,
@@ -975,11 +1083,11 @@ pub async fn convert_epub_to_audiobook(
     let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
         &onnx_path_str,
         &voices_path_str,
-        1, // Single instance
+        num_chapters.max(get_parallelism()),
     )
     .await;
     
-    log::info!("Created single TTS engine instance for conversion");
+    log::info!("Created {} TTS engine instances for conversion", num_chapters.max(get_parallelism()));
     
     // Emit progress event for engine creation
     progress_callback(ConversionProgress {
@@ -995,9 +1103,19 @@ pub async fn convert_epub_to_audiobook(
     let engine_arc = std::sync::Arc::new(engine);
     let voice_id = options.voice_id.clone();
     
-    convert_epub_core_with_durations(epub_data, options, progress_callback, engine_arc, voice_id)
+    convert_epub_core_with_durations(
+        epub_data, 
+        options, 
+        progress_callback, 
+        engine_arc, 
+        voice_id,
+        Some(app),
+        source_path,
+    )
         .await
         .map_err(|e| AppError::EpubParse(e.to_string()))
+
+    
 }
 
 
