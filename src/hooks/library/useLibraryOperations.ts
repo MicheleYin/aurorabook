@@ -303,12 +303,47 @@ export function useLibraryOperations(
       const buffer = (await getEpubBuffer(filePath)) ?? new ArrayBuffer(0);
       return { book, buffer };
     } catch (error) {
-      console.error(error);
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Something went wrong while importing that ebook.";
-      toast.error(message);
+      // Extract error message from various error formats
+      let errorMessage = "Something went wrong while importing that ebook.";
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (typeof error === "string") {
+        errorMessage = error;
+      } else if (error && typeof error === "object") {
+        // Handle Tauri InvokeError structure
+        if ("message" in error) {
+          errorMessage = String(error.message);
+        } else if ("kind" in error) {
+          const errorObj = error as { kind?: { message?: unknown } };
+          if (errorObj.kind && "message" in errorObj.kind) {
+            errorMessage = String(errorObj.kind.message);
+          }
+        }
+      }
+      
+      console.error("Import error:", { error, errorMessage });
+      
+      // Check if this is a duplicate book error
+      // The error message from Rust will be: "Duplicate book: This EPUB is already in your library: \"{title}\""
+      const isDuplicateError = 
+        errorMessage.toLowerCase().includes("duplicate book") || 
+        errorMessage.includes("already in your library");
+      
+      if (isDuplicateError) {
+        // Extract the book title from the error message if present
+        const titleMatch = errorMessage.match(/This EPUB is already in your library: "([^"]+)"/);
+        const bookTitle = titleMatch ? titleMatch[1] : null;
+        
+        toast.warning("Duplicate EPUB detected", {
+          description: bookTitle 
+            ? `"${bookTitle}" is already in your library.`
+            : "This EPUB is already in your library.",
+        });
+      } else {
+        toast.error("Import failed", {
+          description: errorMessage,
+        });
+      }
       return true;
     } finally {
       setIsImporting(false);

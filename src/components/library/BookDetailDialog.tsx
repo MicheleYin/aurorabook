@@ -22,6 +22,7 @@ import { cn, formatDurationShort, getBookProgressSummary } from "../../lib/utils
 import { dialogSectionStagger } from "../../lib/animations";
 import { useAnimatedNumber } from "../../hooks/use-animated-number";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useETA } from "../../hooks/useETA";
 
 type BookDetailDialogProps = {
   book: Book;
@@ -280,65 +281,12 @@ export function BookDetailDialog({
   const targetAudioPercent = audioProgressPercentDisplay ?? 0;
   const animatedAudioPercent = useAnimatedNumber(targetAudioPercent, 500);
   
-  const [eta, setEta] = useState<string | null>(null);
-  const etaIntervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Calculate ETA based on progress and elapsed time
-  useEffect(() => {
-    if (!displayProgress || !conversionStartTimeRef?.current || targetConversionPercent <= 0 || targetConversionPercent >= 100) {
-      setEta(null);
-      if (etaIntervalRef.current) {
-        clearInterval(etaIntervalRef.current);
-        etaIntervalRef.current = null;
-      }
-      return;
-    }
-
-    const updateETA = () => {
-      const now = Date.now();
-      const elapsed = now - conversionStartTimeRef.current!;
-      const progressDecimal = targetConversionPercent / 100;
-      
-      if (progressDecimal > 0 && progressDecimal < 1) {
-        const estimatedTotal = elapsed / progressDecimal;
-        const remaining = estimatedTotal - elapsed;
-        
-        if (remaining > 0) {
-          const seconds = Math.floor(remaining / 1000);
-          const minutes = Math.floor(seconds / 60);
-          const hours = Math.floor(minutes / 60);
-          
-          let etaString = "";
-          if (hours > 0) {
-            etaString = `${hours}h ${minutes % 60}m`;
-          } else if (minutes > 0) {
-            etaString = `${minutes}m ${seconds % 60}s`;
-          } else {
-            etaString = `${seconds}s`;
-          }
-          
-          setEta(etaString);
-        } else {
-          setEta(null);
-        }
-      } else {
-        setEta(null);
-      }
-    };
-
-    // Update ETA immediately
-    updateETA();
-
-    // Update ETA every second
-    etaIntervalRef.current = setInterval(updateETA, 1000);
-
-    return () => {
-      if (etaIntervalRef.current) {
-        clearInterval(etaIntervalRef.current);
-        etaIntervalRef.current = null;
-      }
-    };
-  }, [displayProgress, conversionStartTimeRef, targetConversionPercent]);
+  // Calculate ETA using exponentially decaying average for smoother estimates
+  const eta = useETA({
+    progressPercent: targetConversionPercent,
+    startTimeRef: conversionStartTimeRef,
+    isActive: displayProgress,
+  });
   
   const progressSummary = getBookProgressSummary(book);
   const progressPrimaryText = book.chapters.length

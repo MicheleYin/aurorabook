@@ -68,6 +68,7 @@ export type Book = {
   chapters: Chapter[];
   coverUrl?: string;
   sourcePath: string;
+  contentHash?: string;
   publisher?: string;
   publishedYear?: string;
   subjects?: string[];

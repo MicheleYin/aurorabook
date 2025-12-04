@@ -20,6 +20,7 @@ use tauri::ipc::InvokeError;
 /// * `XmlParse` - XML parsing errors (OPF, SMIL, etc.)
 /// * `Store` - Persistent storage errors
 /// * `Config` - Configuration errors
+/// * `DuplicateBook` - Duplicate book detection errors
 ///
 /// # Example
 /// ```rust
@@ -67,6 +68,9 @@ pub enum AppError {
 
     #[error("Configuration error: {0}")]
     Config(String),
+
+    #[error("Duplicate book: {0}")]
+    DuplicateBook(String),
 }
 
 /// Result type alias for application errors.
@@ -114,6 +118,7 @@ impl AppError {
             AppError::XmlParse(msg) => AppError::XmlParse(format!("{}: {}", context.into(), msg)),
             AppError::Store(msg) => AppError::Store(format!("{}: {}", context.into(), msg)),
             AppError::Config(msg) => AppError::Config(format!("{}: {}", context.into(), msg)),
+            AppError::DuplicateBook(msg) => AppError::DuplicateBook(format!("{}: {}", context.into(), msg)),
             other => other,
         }
     }

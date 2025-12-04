@@ -12,6 +12,7 @@ import { anim, staggerDelay } from "../../lib/animations";
 import { Button } from "../ui/button";
 import { Progress } from "../ui/progress";
 import { LibraryStatusBadge } from "./LibraryStatusBadge";
+import { useETA } from "../../hooks/useETA";
 
 interface LibraryListProps {
   books: Book[];
@@ -177,65 +178,12 @@ function ConversionProgressWithETA({
   conversionPercent: number;
   conversionStartTimeRef?: React.MutableRefObject<number | null>;
 }) {
-  const [eta, setEta] = useState<string | null>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Calculate ETA based on progress and elapsed time
-  useEffect(() => {
-    if (!conversionStartTimeRef?.current || conversionPercent <= 0 || conversionPercent >= 100) {
-      setEta(null);
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      return;
-    }
-
-    const updateETA = () => {
-      const now = Date.now();
-      const elapsed = now - conversionStartTimeRef.current!;
-      const progressDecimal = conversionPercent / 100;
-      
-      if (progressDecimal > 0 && progressDecimal < 1) {
-        const estimatedTotal = elapsed / progressDecimal;
-        const remaining = estimatedTotal - elapsed;
-        
-        if (remaining > 0) {
-          const seconds = Math.floor(remaining / 1000);
-          const minutes = Math.floor(seconds / 60);
-          const hours = Math.floor(minutes / 60);
-          
-          let etaString = "";
-          if (hours > 0) {
-            etaString = `${hours}h ${minutes % 60}m`;
-          } else if (minutes > 0) {
-            etaString = `${minutes}m ${seconds % 60}s`;
-          } else {
-            etaString = `${seconds}s`;
-          }
-          
-          setEta(etaString);
-        } else {
-          setEta(null);
-        }
-      } else {
-        setEta(null);
-      }
-    };
-
-    // Update ETA immediately
-    updateETA();
-
-    // Update ETA every second
-    intervalRef.current = setInterval(updateETA, 1000);
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [conversionStartTimeRef, conversionPercent]);
+  // Calculate ETA using exponentially decaying average for smoother estimates
+  const eta = useETA({
+    progressPercent: conversionPercent,
+    startTimeRef: conversionStartTimeRef,
+    isActive: true,
+  });
 
   return (
     <div className="space-y-1">
