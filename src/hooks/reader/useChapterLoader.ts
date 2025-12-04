@@ -5,7 +5,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import type { Chapter } from "../../types/reader";
-import { loadChapterContent } from "../../lib/book-service";
+import { ensureChapterLoaded } from "../../lib/lazy-chapter-loader";
 
 type ChapterCacheEntry = {
   chapter: Chapter;
@@ -38,10 +38,10 @@ export function useChapterLoader() {
       return chapter;
     }
 
-    // Load from backend
+    // Load from backend (this processes images)
     setIsLoading(true);
     try {
-      const loaded = await loadChapterContent(bookId, chapter.href);
+      const loaded = await ensureChapterLoaded(bookId, chapter);
       if (loaded && loaded.contentHtml) {
         // Cache it
         cacheRef.current.set(cacheKey, {

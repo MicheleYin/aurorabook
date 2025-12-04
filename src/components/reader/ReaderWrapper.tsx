@@ -3,19 +3,17 @@
  * No useEffects - all operations are explicit via callbacks
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { Book, Chapter, ReaderPreferences } from "../../types/reader";
-import type { ChapterProgressSnapshot, AudioProgressSnapshot, ChapterSelectionOptions } from "./types";
+import type { ChapterProgressSnapshot, ChapterSelectionOptions } from "./types";
 import { ReaderViewport } from "./ReaderViewport";
-import { ReaderAudioPlayer } from "./ReaderAudioPlayer";
 import { createProgressSnapshot } from "../../lib/progress-utils";
 import { findCurrentAudioSegment } from "../../lib/epub";
 import { useChapterLoader } from "../../hooks/reader/useChapterLoader";
-import { useAudioTrackLoader } from "../../hooks/reader/useAudioTrackLoader";
 import { useProgressRestoration } from "../../hooks/reader/useProgressRestoration";
 import { useScrollOperations } from "../../hooks/reader/useScrollOperations";
-import { useAudioTextSync } from "../../hooks/reader/useAudioTextSync";
 import { useChapterProgress } from "../../hooks/library/useChapterProgress";
+import { useAudioPlayerProgress } from "../../hooks/reader/useAudioPlayerProgress";
 
 type ReaderWrapperProps = {
   activeBook?: Book;
@@ -53,17 +51,15 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
   const previousChapterIdRef = useRef<string | undefined>(undefined);
   const pendingScrollToElementIdRef = useRef<string | null>(null);
   const [chapterAnimationState, setChapterAnimationState] = useState<"entering" | "entered" | null>(null);
-  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+  const [autoScrollEnabled] = useState(true); // Auto-scroll is managed in App.tsx, this is just for ReaderViewport config
 
   // Custom hooks
   const chapterLoader = useChapterLoader();
-  const audioLoader = useAudioTrackLoader();
   const progressRestoration = useProgressRestoration();
   const scrollOps = useScrollOperations(contentRef);
   
   // Progress tracking
   const restoreState = progressRestoration.getState();
-  const audioSync = useAudioTextSync(contentRef, autoScrollEnabled, restoreState.isRestoring);
   const progressTracking = useChapterProgress({
     activeChapter: activeChapter || null,
     contentRef: contentRef as React.RefObject<HTMLElement>,
@@ -74,6 +70,44 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     } : undefined,
     onSaveProgress,
     isRestoringScroll: restoreState.isRestoring,
+  });
+
+  // Save progress (uses progressTracking.saveProgress which handles all the logic)
+  const saveProgress = useCallback(async (chapterId: string) => {
+    if (!activeChapter || chapterId !== activeChapter.id) {
+      // If saving a different chapter, use the manual save logic
+      if (!activeBook || !onChapterProgress) return;
+      
+      const node = contentRef.current;
+      if (!node) return;
+
+      const { computeScrollMetrics, computeWindowScrollMetrics } = await import("../../lib/scroll-utils");
+      const containerMetrics = computeScrollMetrics(node);
+      const windowMetrics = computeWindowScrollMetrics();
+      
+      const useContainer = containerMetrics && containerMetrics.maxScroll > 0;
+      const useWindow = !useContainer && windowMetrics && windowMetrics.maxScroll > 0;
+      const metrics = useContainer ? containerMetrics : (useWindow ? windowMetrics : null);
+
+      if (!metrics) return;
+
+      const snapshot = createProgressSnapshot(chapterId, metrics);
+      onChapterProgress(activeBook.id, snapshot);
+    } else {
+      // Use the progress tracking save function for current chapter
+      progressTracking.saveProgress();
+    }
+  }, [activeBook, activeChapter, onChapterProgress, progressTracking]);
+
+  // Audio player progress logic
+  const audioPlayerProgress = useAudioPlayerProgress({
+    activeBook,
+    activeChapter,
+    contentRef,
+    autoScrollEnabled,
+    isRestoringScroll: restoreState.isRestoring,
+    onSaveProgress: saveProgress,
+    onCloseAudioPlayer,
   });
 
   // Helper to determine if progress should be restored for a chapter
@@ -178,33 +212,6 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     chapterLoader.setIsLoading(false);
     return null;
   }, [chapterLoader]);
-
-  // Save progress (uses progressTracking.saveProgress which handles all the logic)
-  const saveProgress = useCallback(async (chapterId: string) => {
-    if (!activeChapter || chapterId !== activeChapter.id) {
-      // If saving a different chapter, use the manual save logic
-      if (!activeBook || !onChapterProgress) return;
-      
-      const node = contentRef.current;
-      if (!node) return;
-
-      const { computeScrollMetrics, computeWindowScrollMetrics } = await import("../../lib/scroll-utils");
-      const containerMetrics = computeScrollMetrics(node);
-      const windowMetrics = computeWindowScrollMetrics();
-      
-      const useContainer = containerMetrics && containerMetrics.maxScroll > 0;
-      const useWindow = !useContainer && windowMetrics && windowMetrics.maxScroll > 0;
-      const metrics = useContainer ? containerMetrics : (useWindow ? windowMetrics : null);
-
-      if (!metrics) return;
-
-      const snapshot = createProgressSnapshot(chapterId, metrics);
-      onChapterProgress(activeBook.id, snapshot);
-    } else {
-      // Use the progress tracking save function for current chapter
-      progressTracking.saveProgress();
-    }
-  }, [activeBook, activeChapter, onChapterProgress, progressTracking]);
 
   // Callback when chapter is loaded and ready (called from ReaderViewport)
   // This handles restoration for newly loaded chapters (not cached/pre-loaded)
@@ -360,19 +367,6 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     }
   }
 
-  // Handle audio progress
-  const handleAudioProgress = useCallback((snapshot: AudioProgressSnapshot) => {
-    // Update highlighting based on audioSyncMap
-    if (activeBook && snapshot.trackHref) {
-      audioSync.updateHighlight(
-        activeBook,
-        activeChapter,
-        snapshot.trackHref,
-        snapshot.currentTimeSeconds
-      );
-    }
-  }, [activeBook, activeChapter, audioSync]);
-
   // Sync button: go to current audio chapter
   const handleSyncToAudio = useCallback(() => {
     if (!activeBook?.audioState || !activeBook?.audioSyncMap) return;
@@ -405,50 +399,6 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     handleChapterChange(chapter.id, { scrollPosition: "top" });
   }, [activeBook, activeChapter, handleChapterChange, scrollOps]);
 
-  // Get cached audio tracks
-  const cachedAudioTracks = useMemo(() => {
-    if (!activeBook) return [];
-    
-    return activeBook.audioTracks.map(track => {
-      const cached = audioLoader.loadedTracks.get(track.id);
-      return cached || track;
-    });
-  }, [activeBook, audioLoader.loadedTracks]);
-
-  // Preload next audio track
-  const preloadNextAudioTrack = useCallback(async (currentIndex: number) => {
-    if (!activeBook || currentIndex + 1 >= activeBook.audioTracks.length) return;
-    
-    const nextTrack = activeBook.audioTracks[currentIndex + 1];
-    if (!nextTrack.url && !audioLoader.isTrackLoaded(activeBook.id, nextTrack.id)) {
-      await audioLoader.loadTrack(activeBook.id, nextTrack);
-    }
-  }, [activeBook, audioLoader]);
-
-  // Handle audio track change
-  const handleAudioTrackChange = useCallback(async (trackId: string) => {
-    if (!activeBook) return;
-
-    // Save progress before changing tracks
-    if (activeChapter) {
-      await saveProgress(activeChapter.id);
-    }
-
-    // Preload next track
-    const trackIndex = activeBook.audioTracks.findIndex(t => t.id === trackId);
-    if (trackIndex >= 0) {
-      await preloadNextAudioTrack(trackIndex);
-    }
-  }, [activeBook, activeChapter, saveProgress, preloadNextAudioTrack, progressRestoration]);
-
-  // Handle audio player close
-  const handleAudioPlayerClose = useCallback(async () => {
-    if (activeChapter) {
-      await saveProgress(activeChapter.id);
-    }
-    onCloseAudioPlayer?.();
-  }, [activeChapter, saveProgress, onCloseAudioPlayer]);
-
   const loadedChapter = chapterLoader.loadedChapter;
 
   return (
@@ -466,7 +416,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
           chapter: loadedChapter || activeChapter,
           isLoading: chapterLoader.isLoading,
           animationState: chapterAnimationState,
-          highlightedElementId: audioSync.highlightedElementId,
+          highlightedElementId: audioPlayerProgress.highlightedElementId,
           pendingFragment: null,
         }}
         callbacks={{
@@ -486,22 +436,6 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
         }}
         contentRef={contentRef}
       />
-      {audioPlayerVisible && activeBook && (
-        <ReaderAudioPlayer
-          bookId={activeBook.id}
-          tracks={cachedAudioTracks}
-          bookTitle={activeBook.title}
-          sourcePath={activeBook.sourcePath}
-          initialAudioState={activeBook.audioState}
-          onProgress={handleAudioProgress}
-          onRestorationStateChange={() => {}}
-          chromeVisible={chromeVisible}
-          onClose={handleAudioPlayerClose}
-          autoScrollEnabled={autoScrollEnabled}
-          onAutoScrollToggle={setAutoScrollEnabled}
-          onTrackChange={handleAudioTrackChange}
-        />
-      )}
     </>
   );
 }

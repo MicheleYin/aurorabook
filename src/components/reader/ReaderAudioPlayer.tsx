@@ -246,11 +246,14 @@ export function ReaderAudioPlayer({
       
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
       
-      // Throttle setCurrentTime state updates to at most once per second
-      const timeSinceLastUpdate = now - lastCurrentTimeUpdateRef.current;
-      if (timeSinceLastUpdate >= 1000) {
-        setCurrentTime(seconds);
-        lastCurrentTimeUpdateRef.current = now;
+      // Don't update UI state if component is dismissing (reduces re-renders during animation)
+      if (!hasBeenDismissedRef.current && !isDismissing) {
+        // Throttle setCurrentTime state updates to at most once per second
+        const timeSinceLastUpdate = now - lastCurrentTimeUpdateRef.current;
+        if (timeSinceLastUpdate >= 1000) {
+          setCurrentTime(seconds);
+          lastCurrentTimeUpdateRef.current = now;
+        }
       }
       
       // Throttle progress emissions to at most once per second
@@ -373,11 +376,14 @@ export function ReaderAudioPlayer({
   }, [currentIndex, tracks.length, isRestoring, restoreTime]);
 
   // Track loaded count to trigger re-renders when URLs are loaded
+  // Use ref to avoid unnecessary re-renders, only update state when needed for UI
+  const loadedCountRef = useRef(0);
   const [loadedCount, setLoadedCount] = useState(0);
   // Track if current track is loading
   const [isTrackLoading, setIsTrackLoading] = useState(false);
   
   // Get current track with URL if loaded
+  // Memoize to prevent unnecessary recalculations
   const currentTrack = useMemo(() => {
     const track = tracks[currentIndex];
     if (!track) return undefined;
@@ -386,9 +392,11 @@ export function ReaderAudioPlayer({
   }, [tracks, currentIndex, loadedCount]);
 
   // Periodically check audio state to detect external pause/play
+  // Use currentTrack.id instead of currentTrack object to avoid re-runs
+  const currentTrackId = currentTrack?.id;
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || !currentTrack) {
+    if (!audio || !currentTrackId) {
       return;
     }
 
@@ -419,7 +427,7 @@ export function ReaderAudioPlayer({
     return () => {
       clearInterval(interval);
     };
-  }, [currentTrack]);
+  }, [currentTrackId]);
 
   // Track if we've loaded a track for restoration to prevent resetting time after restoration
   const trackLoadedForRestorationRef = useRef(false);
@@ -458,8 +466,9 @@ export function ReaderAudioPlayer({
               if (preloadedTrack.url) {
                 loadingTracksRef.current.delete(nextTrack.id);
                 loadedTrackUrlsRef.current.set(nextTrack.id, preloadedTrack.url);
-                // Trigger re-render to update track memos
-                setLoadedCount(prev => prev + 1);
+                // Trigger re-render to update track memos (only when needed)
+                loadedCountRef.current += 1;
+                setLoadedCount(loadedCountRef.current);
                 console.log("[Audio Player] Next audio track preloaded", {
                   nextTrackId: preloadedTrack.id,
                 });
@@ -499,8 +508,9 @@ export function ReaderAudioPlayer({
           loadingTracksRef.current.delete(trackId);
           loadedTrackUrlsRef.current.set(trackId, loadedTrack.url);
           setIsTrackLoading(false);
-          // Trigger re-render to update currentTrack memo
-          setLoadedCount(prev => prev + 1);
+          // Trigger re-render to update currentTrack memo (only when needed)
+          loadedCountRef.current += 1;
+          setLoadedCount(loadedCountRef.current);
           
           // Preload next audio track if it exists
           const nextIndex = currentIndex + 1;
@@ -521,9 +531,10 @@ export function ReaderAudioPlayer({
                 .then((preloadedTrack) => {
                   if (preloadedTrack.url) {
                     loadingTracksRef.current.delete(nextTrack.id);
-                    loadedTrackUrlsRef.current.set(nextTrack.id, preloadedTrack.url);
-                    // Trigger re-render to update track memos
-                    setLoadedCount(prev => prev + 1);
+                loadedTrackUrlsRef.current.set(nextTrack.id, preloadedTrack.url);
+                // Trigger re-render to update track memos (only when needed)
+                loadedCountRef.current += 1;
+                setLoadedCount(loadedCountRef.current);
                     console.log("[Audio Player] Next audio track preloaded", {
                       nextTrackId: preloadedTrack.id,
                     });
@@ -887,7 +898,8 @@ export function ReaderAudioPlayer({
           if (loadedTrack.url) {
             trackUrl = loadedTrack.url;
             loadedTrackUrlsRef.current.set(currentTrack.id, trackUrl);
-            setLoadedCount(prev => prev + 1);
+            loadedCountRef.current += 1;
+            setLoadedCount(loadedCountRef.current);
           } else {
             console.warn("[Audio Player] Failed to load track URL");
             return;
@@ -1069,31 +1081,44 @@ export function ReaderAudioPlayer({
   }, []);
 
   const handleDismiss = useCallback(() => {
-    const audio = audioRef.current;
-    // Ensure progress is saved before closing
-    if (audio && Number.isFinite(audio.currentTime)) {
-      emitProgressRef.current(audio.currentTime);
-    } else {
-      // Even if audio isn't ready, emit current time from ref
-      emitProgressRef.current(currentTimeRef.current);
+    // Prevent multiple dismiss calls
+    if (hasBeenDismissedRef.current || isDismissing) {
+      return;
     }
+    
+    // Start exit animation immediately for responsive UI (synchronous state updates)
     // Mark as dismissed to prevent re-animation
     hasBeenDismissedRef.current = true;
     // Start exit animation - set both states immediately
     setIsDismissing(true);
     setIsVisible(false);
-      // Wait for exit animation to complete before notifying parent
-      setTimeout(() => {
-        // Parent component will handle unmounting after animation
-        onClose?.();
-      }, 300); // Match animation duration
-  }, [onClose]);
+    
+    // Save progress asynchronously (don't block animation)
+    // Use a microtask to save progress without delaying the animation start
+    Promise.resolve().then(() => {
+      const audio = audioRef.current;
+      if (audio && Number.isFinite(audio.currentTime)) {
+        emitProgressRef.current(audio.currentTime);
+      } else {
+        // Even if audio isn't ready, emit current time from ref
+        emitProgressRef.current(currentTimeRef.current);
+      }
+    });
+    
+    // Wait for exit animation to complete before notifying parent
+    // Use a slightly longer timeout to ensure animation completes smoothly
+    setTimeout(() => {
+      // Parent component will handle unmounting after animation
+      onClose?.();
+    }, 350); // Slightly longer than animation duration to ensure smooth completion
+  }, [onClose, isDismissing]);
 
   // Save progress when component becomes hidden (not just on unmount)
   const previousVisibleRef = useRef(isVisible);
   useEffect(() => {
     // When component transitions from visible to hidden, save progress
-    if (previousVisibleRef.current && !isVisible && !isDismissing) {
+    // Skip if we're dismissing (handleDismiss already saves progress)
+    if (previousVisibleRef.current && !isVisible && !isDismissing && !hasBeenDismissedRef.current) {
       // Component became hidden - save progress
       const audio = audioRef.current;
       if (audio && Number.isFinite(audio.currentTime)) {
@@ -1125,13 +1150,18 @@ export function ReaderAudioPlayer({
       <div
         className={cn(
           "pointer-events-auto flex w-full max-w-xl flex-col gap-3 rounded-2xl border border-border bg-background/90 p-4 shadow-lg ring-1 ring-black/5 backdrop-blur",
+          // Optimize for animations - use will-change when dismissing
+          isDismissing && "will-change-transform will-change-opacity will-change-scale",
           animPatterns.audioPlayer,
-          // Apply exit animation when dismissing, otherwise apply enter animation when visible
+          // Apply beautiful exit animation when dismissing (slide up + fade + scale down)
           isDismissing || hasBeenDismissedRef.current
-            ? enterExit(false, "slideUpFade")
+            ? cn(
+                "animate-out slide-out-to-top-4 fade-out-0 zoom-out-95",
+                "duration-300 ease-in-out"
+              )
             : enterExit(isVisible, "slideUpFade"),
           // Ensure it stays hidden after dismissal
-          hasBeenDismissedRef.current && "opacity-0 pointer-events-none",
+          hasBeenDismissedRef.current && "opacity-0 pointer-events-none scale-95",
         )}
       >
         {/* Mobile: Top row with title, speed, sync, close */}

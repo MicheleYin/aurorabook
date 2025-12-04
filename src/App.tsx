@@ -219,11 +219,15 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   const showAudioPlayer = hasAudioTracks && (isAudioPlayerOpen || isAudioPlayerDismissing);
 
   const handleAudioPlayerClose = useCallback(() => {
+    // Start dismissal immediately for responsive UI
     setIsAudioPlayerDismissing(true);
+    // Wait for exit animation to complete before unmounting
+    // The audio player component also has its own timeout, but we need this
+    // to update the showAudioPlayer condition after animation completes
     setTimeout(() => {
       setIsAudioPlayerOpen(false);
       setIsAudioPlayerDismissing(false);
-    }, 300);
+    }, 500); // Match animation duration
   }, []);
 
   const handleProgress = useCallback((snapshot: AudioProgressSnapshot) => {
