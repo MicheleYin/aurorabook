@@ -38,6 +38,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     activeChapter,
     preferences,
     onPreferencesChange,
+    onSelectChapter,
     onChapterProgress,
     onSaveProgress,
     chromeVisible,
@@ -50,6 +51,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
   // Content ref for scroll operations
   const contentRef = useRef<HTMLDivElement | null>(null);
   const previousChapterIdRef = useRef<string | undefined>(undefined);
+  const pendingScrollToElementIdRef = useRef<string | null>(null);
   const [chapterAnimationState, setChapterAnimationState] = useState<"entering" | "entered" | null>(null);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
 
@@ -73,6 +75,78 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     onSaveProgress,
     isRestoringScroll: restoreState.isRestoring,
   });
+
+  // Helper to determine if progress should be restored for a chapter
+  const shouldRestoreProgress = useCallback((
+    chapterId: string,
+    options?: ChapterSelectionOptions
+  ): boolean => {
+    if (!activeBook) return false;
+    const hasProgress = activeBook.progress?.currentChapterId === chapterId;
+    // Don't restore if explicit scroll position requested or manual selection
+    const shouldRestore = !options?.scrollPosition && !options?.isManualSelection && hasProgress;
+    return shouldRestore;
+  }, [activeBook]);
+
+  // Helper to check if chapter is already loaded (cached or has content)
+  const isChapterAlreadyLoaded = useCallback((
+    bookId: string,
+    chapter: Chapter
+  ): boolean => {
+    return !!(chapter.contentHtml || chapterLoader.getCachedChapter(bookId, chapter.id));
+  }, [chapterLoader]);
+
+  // Helper to handle pending scroll target (used after restoration or when not restoring)
+  const handlePendingScrollTarget = useCallback(() => {
+    if (pendingScrollToElementIdRef.current) {
+      const elementId = pendingScrollToElementIdRef.current;
+      pendingScrollToElementIdRef.current = null;
+      requestAnimationFrame(() => {
+        scrollOps.scrollToElementId(elementId, "smooth");
+      });
+    }
+  }, [scrollOps]);
+
+  // Restore progress (called after chapter loads via callback)
+  const restoreProgress = useCallback((onComplete?: () => void) => {
+    const loadedChapter = chapterLoader.loadedChapter;
+    if (!activeBook || !loadedChapter) {
+      onComplete?.();
+      handlePendingScrollTarget();
+      return;
+    }
+    
+    progressRestoration.restoreProgress(
+      activeBook,
+      loadedChapter,
+      contentRef,
+      () => {
+        onComplete?.();
+        // Always check for pending scroll target after restoration completes
+        handlePendingScrollTarget();
+      }
+    );
+  }, [activeBook, chapterLoader.loadedChapter, progressRestoration, handlePendingScrollTarget]);
+
+  // Unified restoration trigger - handles both cached and newly loaded chapters
+  const triggerRestorationIfNeeded = useCallback((
+    loadedChapter: Chapter,
+    wasAlreadyLoaded: boolean,
+    shouldRestore: boolean
+  ) => {
+    if (!shouldRestore) return;
+    
+    // For cached/pre-loaded chapters, restore immediately
+    // For newly loaded chapters, onChapterLoaded will handle it
+    if (wasAlreadyLoaded) {
+      console.log("[ReaderWrapper] Triggering restoration for cached/pre-loaded chapter", {
+        chapterId: loadedChapter.id,
+        shouldRestore: progressRestoration.getState().shouldRestore,
+      });
+      restoreProgress();
+    }
+    // else: onChapterLoaded callback will handle restoration
+  }, [progressRestoration, restoreProgress]);
 
   // Chapter loading helper
   const ensureChapterLoaded = useCallback(async (
@@ -105,21 +179,6 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     return null;
   }, [chapterLoader]);
 
-  // Restore progress (called after chapter loads via callback)
-  const restoreProgress = useCallback(() => {
-    const loadedChapter = chapterLoader.loadedChapter;
-    if (!activeBook || !loadedChapter) return;
-    
-    progressRestoration.restoreProgress(
-      activeBook,
-      loadedChapter,
-      contentRef,
-      () => {
-        // Restoration complete
-      }
-    );
-  }, [activeBook, chapterLoader.loadedChapter, progressRestoration]);
-
   // Save progress (uses progressTracking.saveProgress which handles all the logic)
   const saveProgress = useCallback(async (chapterId: string) => {
     if (!activeChapter || chapterId !== activeChapter.id) {
@@ -148,19 +207,22 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
   }, [activeBook, activeChapter, onChapterProgress, progressTracking]);
 
   // Callback when chapter is loaded and ready (called from ReaderViewport)
+  // This handles restoration for newly loaded chapters (not cached/pre-loaded)
   const onChapterLoaded = useCallback(() => {
     const loadedChapter = chapterLoader.loadedChapter;
     if (!loadedChapter || !activeBook) return;
     
     const restoreState = progressRestoration.getState();
-    // Only restore if shouldRestore is true and chapter matches
-    if (loadedChapter.id === activeChapter?.id && restoreState.shouldRestore) {
+    const shouldRestore = loadedChapter.id === activeChapter?.id && restoreState.shouldRestore;
+    
+    if (shouldRestore) {
       console.log("[ReaderWrapper] Chapter loaded, restoring progress", {
         chapterId: loadedChapter.id,
         shouldRestore: restoreState.shouldRestore,
         hasProgress: !!activeBook.progress,
         currentChapterId: activeBook.progress?.currentChapterId,
       });
+      // restoreProgress will handle pending scroll target in its onComplete
       restoreProgress();
     } else {
       console.debug("[ReaderWrapper] Chapter loaded but not restoring", {
@@ -169,8 +231,10 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
         shouldRestore: restoreState.shouldRestore,
         hasProgress: !!activeBook.progress,
       });
+      // If not restoring, still check for pending scroll target
+      handlePendingScrollTarget();
     }
-  }, [chapterLoader.loadedChapter, activeBook, activeChapter, progressRestoration, restoreProgress]);
+  }, [chapterLoader.loadedChapter, activeBook, activeChapter, progressRestoration, restoreProgress, handlePendingScrollTarget]);
 
   // Handle chapter change
   const handleChapterChange = useCallback(async (
@@ -184,22 +248,33 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       console.warn("[ReaderWrapper] Chapter not found", { chapterId, bookId: activeBook.id });
       return;
     }
-
+    
     // Update previousChapterIdRef
     previousChapterIdRef.current = chapterId;
 
     // Save progress for previous chapter before changing
     if (activeChapter && activeChapter.id !== chapterId) {
-      // Always save progress, not just if restored
       await saveProgress(activeChapter.id);
     }
 
-    // Determine if we should restore progress
-    // Restore if: no explicit scroll position requested AND not a manual selection
-    // Also check if this chapter has saved progress
+    // Determine if we should restore progress BEFORE calling onSelectChapter
+    // This is important because onSelectChapter may update progress, which could affect restoration
+    const shouldRestore = shouldRestoreProgress(chapterId, options);
     const hasProgress = activeBook.progress?.currentChapterId === chapterId;
-    const shouldRestore = !options?.scrollPosition && !options?.isManualSelection && hasProgress;
 
+    // IMPORTANT: Call parent's onSelectChapter to update App state (activeChapterId)
+    // This ensures TOC and other components get the updated chapter ID
+    // If we should restore, we need to preserve the existing progress for this chapter
+    // by passing scrollPosition: "maintain" which tells App.tsx not to reset progress
+    const optionsForParent = shouldRestore 
+      ? { ...options, scrollPosition: "maintain" as const }
+      : options;
+    
+    // Call onSelectChapter to update App state (this will update activeChapterId for TOC)
+    // Note: This may trigger updateBookProgress, but if scrollPosition is "maintain",
+    // it should preserve existing progress values for the chapter
+    onSelectChapter(chapterId, optionsForParent);
+    
     console.log("[ReaderWrapper] Chapter change", {
       chapterId,
       shouldRestore,
@@ -212,8 +287,8 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     // Reset restore state for new chapter
     progressRestoration.reset(shouldRestore);
 
-    // Check if chapter is already cached or has content
-    const wasAlreadyLoaded = chapter.contentHtml || chapterLoader.getCachedChapter(activeBook.id, chapter.id);
+    // Check if chapter is already loaded
+    const wasAlreadyLoaded = isChapterAlreadyLoaded(activeBook.id, chapter);
     
     // Load chapter
     const loaded = await ensureChapterLoaded(activeBook.id, chapter);
@@ -225,31 +300,17 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
 
       // Handle scroll position based on options
       if (options?.scrollPosition === "top" || options?.isManualSelection) {
-        setTimeout(() => scrollOps.scrollToTop(), 100);
+        scrollOps.scrollToTop();
       } else if (options?.scrollPosition === "bottom") {
-        setTimeout(() => scrollOps.scrollToBottom(), 100);
+        scrollOps.scrollToBottom();
       }
-      // else: will restore via onChapterLoaded callback
       
-      // If chapter was already loaded (cached or had contentHtml), trigger restoration
-      // since onChapterLoaded might not fire reliably for cached chapters
-      if (shouldRestore && wasAlreadyLoaded) {
-        // Wait a bit for DOM to be ready, then restore
-        setTimeout(() => {
-          const currentRestoreState = progressRestoration.getState();
-          if (currentRestoreState.shouldRestore && loaded.id === chapterId) {
-            console.log("[ReaderWrapper] Triggering restoration for cached chapter", {
-              chapterId: loaded.id,
-              shouldRestore: currentRestoreState.shouldRestore,
-            });
-            restoreProgress();
-          }
-        }, 250);
-      }
+      // Trigger restoration if needed (for cached chapters, restore immediately)
+      triggerRestorationIfNeeded(loaded, wasAlreadyLoaded, shouldRestore);
     } else {
       console.error("[ReaderWrapper] Failed to load chapter", { chapterId, loaded });
     }
-  }, [activeBook, activeChapter, ensureChapterLoaded, saveProgress, scrollOps, progressRestoration]);
+  }, [activeBook, activeChapter, ensureChapterLoaded, saveProgress, scrollOps, progressRestoration, shouldRestoreProgress, isChapterAlreadyLoaded, triggerRestorationIfNeeded, onSelectChapter]);
 
   // Load current chapter when activeChapter changes (explicit check via ref, no useEffect)
   // This handles cases where activeChapter changes from outside (e.g., book selection)
@@ -262,9 +323,9 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       loadInitiatedRef.current = chapterId;
       previousChapterIdRef.current = currentChapterId;
       
-      // Determine if we should restore progress for this chapter
+      // Determine if we should restore progress (no options, so restore if has progress)
+      const shouldRestore = shouldRestoreProgress(chapterId);
       const hasProgress = activeBook.progress?.currentChapterId === chapterId;
-      const shouldRestore = hasProgress; // Restore if there's saved progress
       
       console.log("[ReaderWrapper] Active chapter changed, loading", {
         chapterId,
@@ -277,7 +338,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       progressRestoration.reset(shouldRestore);
       
       // Check if chapter is already loaded
-      const wasAlreadyLoaded = activeChapter.contentHtml || chapterLoader.getCachedChapter(activeBook.id, chapterId);
+      const wasAlreadyLoaded = isChapterAlreadyLoaded(activeBook.id, activeChapter);
       
       // Load chapter asynchronously
       ensureChapterLoaded(activeBook.id, activeChapter).then(loaded => {
@@ -287,30 +348,8 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
             setChapterAnimationState("entered");
           }, 50);
           
-          // If chapter was already loaded, trigger restoration
-          if (shouldRestore && wasAlreadyLoaded) {
-            setTimeout(() => {
-              const currentRestoreState = progressRestoration.getState();
-              if (currentRestoreState.shouldRestore && loaded.id === chapterId) {
-                console.log("[ReaderWrapper] Triggering restoration for pre-loaded chapter", {
-                  chapterId: loaded.id,
-                  shouldRestore: currentRestoreState.shouldRestore,
-                });
-                // Call restoreProgress directly with current state
-                const currentLoadedChapter = chapterLoader.loadedChapter;
-                if (currentLoadedChapter && activeBook) {
-                  progressRestoration.restoreProgress(
-                    activeBook,
-                    currentLoadedChapter,
-                    contentRef,
-                    () => {
-                      // Restoration complete
-                    }
-                  );
-                }
-              }
-            }, 250);
-          }
+          // Trigger restoration if needed (for cached chapters, restore immediately)
+          triggerRestorationIfNeeded(loaded, wasAlreadyLoaded, shouldRestore);
         } else {
           console.error("[ReaderWrapper] Failed to load chapter in render-time check", { chapterId, loaded });
         }
@@ -361,12 +400,9 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     }
 
     // Navigate to chapter (no restore, will scroll to element after load)
+    // Store the element ID to scroll to after chapter loads
+    pendingScrollToElementIdRef.current = segment.textElementId;
     handleChapterChange(chapter.id, { scrollPosition: "top" });
-    
-    // After chapter loads, scroll to element
-    setTimeout(() => {
-      scrollOps.scrollToElementId(segment.textElementId, "smooth");
-    }, 500);
   }, [activeBook, activeChapter, handleChapterChange, scrollOps]);
 
   // Get cached audio tracks

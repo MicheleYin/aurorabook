@@ -222,7 +222,7 @@ export function ReaderViewport({
     if (!previousChapter) return;
     onSelectChapter(previousChapter.id, {
       preserveChrome: true,
-      scrollPosition: "bottom",
+      scrollPosition: "top",
       isManualSelection: true,
     });
   }, [previousChapter, onSelectChapter]);

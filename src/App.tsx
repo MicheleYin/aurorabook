@@ -171,6 +171,28 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       progressUpdate.percent = 0;
     } else if (requestedScrollPosition === "bottom") {
       progressUpdate.percent = 1;
+    } else if (requestedScrollPosition === "maintain") {
+      // When maintaining scroll position, check if this chapter has saved progress
+      // If it does, preserve the saved scroll position values
+      // This is important for restoration - we don't want to reset progress when restoring
+      const activeBook = library.find(b => b.id === activeBookId);
+      if (activeBook?.progress && activeBook.progress.currentChapterId === chapterId) {
+        // Chapter has saved progress - preserve it
+        if (activeBook.progress.currentChapterScrollTop !== undefined) {
+          progressUpdate.scrollTop = activeBook.progress.currentChapterScrollTop;
+        }
+        if (activeBook.progress.currentChapterScrollHeight !== undefined) {
+          progressUpdate.scrollHeight = activeBook.progress.currentChapterScrollHeight;
+        }
+        if (activeBook.progress.currentChapterClientHeight !== undefined) {
+          progressUpdate.clientHeight = activeBook.progress.currentChapterClientHeight;
+        }
+        if (activeBook.progress.chapterProgressPercent !== undefined) {
+          progressUpdate.percent = activeBook.progress.chapterProgressPercent;
+        }
+      }
+      // If chapter doesn't have saved progress, don't set these values
+      // updateBookProgress will handle it appropriately
     }
 
     console.log("[App] Updating progress for new chapter", {
