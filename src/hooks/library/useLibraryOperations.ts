@@ -321,13 +321,17 @@ export function useLibraryOperations(
         }
       }
       
-      console.error("Import error:", { error, errorMessage });
+      console.error("Import error:", { error, errorMessage, errorString: String(error) });
       
       // Check if this is a duplicate book error
       // The error message from Rust will be: "Duplicate book: This EPUB is already in your library: \"{title}\""
+      const errorString = String(error).toLowerCase();
+      const errorMessageLower = errorMessage.toLowerCase();
       const isDuplicateError = 
-        errorMessage.toLowerCase().includes("duplicate book") || 
-        errorMessage.includes("already in your library");
+        errorMessageLower.includes("duplicate book") || 
+        errorMessageLower.includes("already in your library") ||
+        errorString.includes("duplicate book") ||
+        errorString.includes("already in your library");
       
       if (isDuplicateError) {
         // Extract the book title from the error message if present
