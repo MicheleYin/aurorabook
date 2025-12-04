@@ -214,6 +214,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   const [isAudioPlayerDismissing, setIsAudioPlayerDismissing] = useState(false);
   const [currentAudioTime, setCurrentAudioTime] = useState<number | undefined>(undefined);
   const [currentAudioTrackHref, setCurrentAudioTrackHref] = useState<string | undefined>(undefined);
+  const [currentAudioProgress, setCurrentAudioProgress] = useState<AudioProgressSnapshot | undefined>(undefined);
   const [isAudioRestoring, setIsAudioRestoring] = useState(false);
   const hasAudioTracks = (activeBook?.audioTracks?.length ?? 0) > 0;
   const showAudioPlayer = hasAudioTracks && (isAudioPlayerOpen || isAudioPlayerDismissing);
@@ -233,6 +234,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   const handleProgress = useCallback((snapshot: AudioProgressSnapshot) => {
     setCurrentAudioTime(snapshot.currentTimeSeconds);
     setCurrentAudioTrackHref(snapshot.trackHref);
+    setCurrentAudioProgress(snapshot);
   }, []);
 
   const handleAutoScrollToggle = useCallback((enabled: boolean) => {
@@ -480,6 +482,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       onSaveProgress={(saveFn) => {
         saveProgressRef.current = saveFn;
       }}
+      autoScrollEnabled={autoScrollEnabled}
+      currentAudioProgress={currentAudioProgress}
     />
   );
 

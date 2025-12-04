@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Headphones } from "lucide-react";
 
-import type { ChapterSelectionOptions, ReaderPanelBaseProps } from "./reader/types";
+import type { ChapterSelectionOptions, ReaderPanelBaseProps, AudioProgressSnapshot } from "./reader/types";
 import { ReaderSettingsControl } from "./reader/ReaderSettingsControl";
 import { ReaderTocDrawer } from "./reader/ReaderTocDrawer";
 import { ReaderWrapper } from "./reader/ReaderWrapper";
@@ -15,6 +15,8 @@ type ReaderPanelProps = ReaderPanelBaseProps & {
   onOpenAudioPlayer?: () => void;
   currentAudioTrackHref?: string;
   onSaveProgress?: (saveFn: () => void) => void;
+  autoScrollEnabled?: boolean;
+  currentAudioProgress?: AudioProgressSnapshot;
 };
 
 export function ReaderPanel({
@@ -31,6 +33,8 @@ export function ReaderPanel({
   onOpenAudioPlayer,
   currentAudioTrackHref,
   onSaveProgress,
+  autoScrollEnabled,
+  currentAudioProgress,
 }: ReaderPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
@@ -154,18 +158,18 @@ export function ReaderPanel({
             Library
           </Button>
           <div className="flex items-center gap-2">
-            {shouldRenderAudioReopen ? (
+           
               <Button
                 type="button"
                 variant="outline"
                 size="icon"
-                className={enterExit(isAudioReopenVisible, "scaleFade")}
+                className={cn(enterExit(isAudioReopenVisible, "scaleFade"),shouldRenderAudioReopen ? "opacity-100" : "opacity-0")}
                 onClick={onOpenAudioPlayer}
                 aria-label="Open audio player"
               >
                 <Headphones className="h-4 w-4" />
               </Button>
-            ) : null}
+  
             {activeBook && (
               <ReaderTocDrawer
                 book={activeBook}
@@ -233,6 +237,8 @@ export function ReaderPanel({
           audioPlayerVisible={showAudioPlayer}
           onChapterProgress={onChapterProgress}
           onSaveProgress={onSaveProgress}
+          autoScrollEnabled={autoScrollEnabled}
+          currentAudioProgress={currentAudioProgress}
         />
       </div>
     </section>

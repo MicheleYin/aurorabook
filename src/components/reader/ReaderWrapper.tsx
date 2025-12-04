@@ -3,9 +3,9 @@
  * No useEffects - all operations are explicit via callbacks
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, useEffect } from "react";
 import type { Book, Chapter, ReaderPreferences } from "../../types/reader";
-import type { ChapterProgressSnapshot, ChapterSelectionOptions } from "./types";
+import type { ChapterProgressSnapshot, ChapterSelectionOptions, AudioProgressSnapshot } from "./types";
 import { ReaderViewport } from "./ReaderViewport";
 import { createProgressSnapshot } from "../../lib/progress-utils";
 import { findCurrentAudioSegment } from "../../lib/epub";
@@ -28,6 +28,8 @@ type ReaderWrapperProps = {
   onToggleChrome: () => void;
   audioPlayerVisible?: boolean;
   onCloseAudioPlayer?: () => void;
+  autoScrollEnabled?: boolean;
+  currentAudioProgress?: AudioProgressSnapshot;
 };
 
 export function ReaderWrapper(props: ReaderWrapperProps) {
@@ -44,6 +46,8 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     onToggleChrome,
     audioPlayerVisible = false,
     onCloseAudioPlayer,
+    autoScrollEnabled = true,
+    currentAudioProgress,
   } = props;
 
   // Content ref for scroll operations
@@ -51,7 +55,6 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
   const previousChapterIdRef = useRef<string | undefined>(undefined);
   const pendingScrollToElementIdRef = useRef<string | null>(null);
   const [chapterAnimationState, setChapterAnimationState] = useState<"entering" | "entered" | null>(null);
-  const [autoScrollEnabled] = useState(true); // Auto-scroll is managed in App.tsx, this is just for ReaderViewport config
 
   // Custom hooks
   const chapterLoader = useChapterLoader();
@@ -109,6 +112,29 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     onSaveProgress: saveProgress,
     onCloseAudioPlayer,
   });
+
+  // Handle audio progress updates from App.tsx
+  // This ensures highlighting and scrolling are updated when audio plays
+  const lastProgressRef = useRef<AudioProgressSnapshot | undefined>(undefined);
+  const handleAudioProgressRef = useRef(audioPlayerProgress.handleAudioProgress);
+  handleAudioProgressRef.current = audioPlayerProgress.handleAudioProgress;
+  
+  useEffect(() => {
+    if (currentAudioProgress) {
+      // Compare by value, not reference, to avoid unnecessary updates
+      const lastProgress = lastProgressRef.current;
+      const isNewProgress = 
+        !lastProgress ||
+        lastProgress.trackHref !== currentAudioProgress.trackHref ||
+        lastProgress.currentTimeSeconds !== currentAudioProgress.currentTimeSeconds ||
+        lastProgress.updatedAt !== currentAudioProgress.updatedAt;
+      
+      if (isNewProgress) {
+        lastProgressRef.current = currentAudioProgress;
+        handleAudioProgressRef.current(currentAudioProgress);
+      }
+    }
+  }, [currentAudioProgress]);
 
   // Helper to determine if progress should be restored for a chapter
   const shouldRestoreProgress = useCallback((

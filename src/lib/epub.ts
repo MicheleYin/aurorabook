@@ -102,7 +102,7 @@ export const sanitizeChapterHtml = (html: string) => {
       ADD_TAGS: ["svg", "math", "path", "g"],
       ADD_ATTR: ["xmlns", "viewBox", "xlink:href", "xml:lang"],
       // Explicitly allow blob: and data: URLs
-      ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|blob|data):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+      ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|blob|data):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
       // Keep all content
       KEEP_CONTENT: true,
       // Allow all standard HTML attributes on img tags including src with blob URLs
@@ -150,10 +150,27 @@ export const ensureStringArray = (value: unknown): string[] => {
 
 /**
  * Normalize audio track href for comparison (handles relative paths)
+ * Handles various formats:
+ * - "OEBPS/Audio/02.mp3"
+ * - "Audio/02.mp3"
+ * - "./OEBPS/Audio/02.mp3"
+ * - "../OEBPS/Audio/02.mp3"
+ * - "/OEBPS/Audio/02.mp3"
  */
 const normalizeAudioHref = (href: string): string => {
-  // Remove leading slashes and normalize
-  return href.replace(/^\/+/, "").replace(/^\.\.\//, "");
+  if (!href) return "";
+  
+  // Remove leading slashes, dots, and normalize path separators
+  let normalized = href
+    .replace(/^\/+/, "") // Remove leading slashes
+    .replace(/^\.+\//, "") // Remove leading ./ or ../
+    .replace(/\\/g, "/") // Normalize backslashes to forward slashes
+    .toLowerCase(); // Case-insensitive comparison
+  
+  // Remove any remaining leading dots or slashes
+  normalized = normalized.replace(/^[./]+/, "");
+  
+  return normalized;
 };
 
 /**
@@ -177,41 +194,87 @@ export const findCurrentAudioSegment = (
     totalSegments: syncMap.segments.length,
   });
 
-  // Find segment where currentTime falls within clipBegin and clipEnd
-  const segment = syncMap.segments.find(
+  // Try multiple matching strategies
+  // Strategy 1: Exact normalized match
+  let segment = syncMap.segments.find(
     (seg) => {
       const normalizedSegHref = normalizeAudioHref(seg.audioTrackHref);
-      const matches = (
+      return (
         normalizedSegHref === normalizedTrackHref &&
         currentTimeSeconds >= seg.clipBegin &&
         currentTimeSeconds < seg.clipEnd
       );
-      
-      if (matches) {
-        console.debug("[Audio Sync] Found matching segment", {
-          textElementId: seg.textElementId,
-          chapterHref: seg.chapterHref,
-          audioTrackHref: seg.audioTrackHref,
-          clipBegin: seg.clipBegin,
-          clipEnd: seg.clipEnd,
-          currentTime: currentTimeSeconds,
-        });
-      }
-      
-      return matches;
     },
   );
 
+  // Strategy 2: If no exact match, try filename-only match (for cases where paths differ)
   if (!segment) {
+    const trackFilename = normalizedTrackHref.split("/").pop() || normalizedTrackHref;
+    segment = syncMap.segments.find(
+      (seg) => {
+        const normalizedSegHref = normalizeAudioHref(seg.audioTrackHref);
+        const segFilename = normalizedSegHref.split("/").pop() || normalizedSegHref;
+        return (
+          segFilename === trackFilename &&
+          currentTimeSeconds >= seg.clipBegin &&
+          currentTimeSeconds < seg.clipEnd
+        );
+      },
+    );
+  }
+
+  // Strategy 3: Try case-insensitive match
+  if (!segment) {
+    segment = syncMap.segments.find(
+      (seg) => {
+        const normalizedSegHref = normalizeAudioHref(seg.audioTrackHref);
+        return (
+          normalizedSegHref.toLowerCase() === normalizedTrackHref.toLowerCase() &&
+          currentTimeSeconds >= seg.clipBegin &&
+          currentTimeSeconds < seg.clipEnd
+        );
+      },
+    );
+  }
+  
+  if (segment) {
+    console.debug("[Audio Sync] Found matching segment", {
+      textElementId: segment.textElementId,
+      chapterHref: segment.chapterHref,
+      audioTrackHref: segment.audioTrackHref,
+      clipBegin: segment.clipBegin,
+      clipEnd: segment.clipEnd,
+      currentTime: currentTimeSeconds,
+    });
+  }
+
+  if (!segment) {
+    // Get sample of segment hrefs to debug matching issues
+    const sampleSegments = syncMap.segments.slice(0, 10).map(seg => ({
+      original: seg.audioTrackHref,
+      normalized: normalizeAudioHref(seg.audioTrackHref),
+      timeRange: `${seg.clipBegin.toFixed(3)}-${seg.clipEnd.toFixed(3)}s`,
+    }));
+    
+    // Count segments with matching normalized href
+    const matchingSegments = syncMap.segments.filter(
+      seg => normalizeAudioHref(seg.audioTrackHref) === normalizedTrackHref
+    );
+    
     console.debug("[Audio Sync] No segment found for", {
+      audioTrackHref,
       normalizedTrackHref,
       currentTimeSeconds,
-      availableSegments: syncMap.segments
-        .filter(seg => normalizeAudioHref(seg.audioTrackHref) === normalizedTrackHref)
-        .map(seg => ({
-          textElementId: seg.textElementId,
-          timeRange: `${seg.clipBegin.toFixed(3)}-${seg.clipEnd.toFixed(3)}s`,
-        })),
+      totalSegments: syncMap.segments.length,
+      matchingSegmentsCount: matchingSegments.length,
+      sampleSegments,
+      // Show first few segments with matching href (if any)
+      availableSegments: matchingSegments.slice(0, 5).map(seg => ({
+        textElementId: seg.textElementId,
+        timeRange: `${seg.clipBegin.toFixed(3)}-${seg.clipEnd.toFixed(3)}s`,
+        clipBegin: seg.clipBegin,
+        clipEnd: seg.clipEnd,
+      })),
     });
   }
 
