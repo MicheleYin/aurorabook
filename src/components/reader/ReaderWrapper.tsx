@@ -111,6 +111,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     isRestoringScroll: restoreState.isRestoring,
     onSaveProgress: saveProgress,
     onCloseAudioPlayer,
+    chromeVisible,
   });
 
   // Handle audio progress updates from App.tsx

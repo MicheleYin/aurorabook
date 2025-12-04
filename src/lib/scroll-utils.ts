@@ -179,23 +179,263 @@ export function restoreWindowScrollPosition(savedMetrics: {
   return false;
 }
 
+/**
+ * Check if an element is visible in its scrollable container
+ * Accounts for header offset to determine if element is properly positioned
+ */
+export function isElementVisible(
+  element: HTMLElement,
+  container: HTMLElement,
+  headerOffset: number = 0,
+  tolerance: number = 10
+): boolean {
+  const elementRect = element.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const isDocumentElement = container === document.documentElement;
+  
+  // Calculate visible area of container
+  const containerTop = isDocumentElement ? 0 : containerRect.top;
+  const containerBottom = isDocumentElement ? window.innerHeight : containerRect.bottom;
+  
+  // Account for header offset - element should be visible below the header
+  const visibleTop = containerTop + headerOffset;
+  const visibleBottom = containerBottom;
+  
+  // Check if element is within the visible area (with tolerance)
+  const isTopVisible = elementRect.top >= visibleTop - tolerance;
+  const isBottomVisible = elementRect.bottom <= visibleBottom + tolerance;
+  const isFullyVisible = isTopVisible && isBottomVisible;
+  
+  // Also check if element is at least partially visible
+  const isPartiallyVisible = 
+    elementRect.top < visibleBottom + tolerance && 
+    elementRect.bottom > visibleTop - tolerance;
+  
+  // Element is considered visible if it's fully visible or mostly visible (80% or more)
+  const elementHeight = elementRect.height;
+  const visibleHeight = Math.min(
+    elementRect.bottom,
+    visibleBottom
+  ) - Math.max(
+    elementRect.top,
+    visibleTop
+  );
+  const visibilityRatio = elementHeight > 0 ? visibleHeight / elementHeight : 0;
+  const isMostlyVisible = visibilityRatio >= 0.8;
+  
+  return isFullyVisible || (isPartiallyVisible && isMostlyVisible);
+}
+
+/**
+ * Find the actual scrollable container for an element
+ * Returns the first parent that can actually scroll
+ */
+function findScrollableContainer(element: HTMLElement): HTMLElement | null {
+  let current: HTMLElement | null = element;
+  
+  while (current) {
+    const style = window.getComputedStyle(current);
+    const hasOverflow = style.overflowY === "auto" || style.overflowY === "scroll" || 
+                        style.overflow === "auto" || style.overflow === "scroll";
+    
+    // Check if it can actually scroll (has scrollable content)
+    const canScroll = current.scrollHeight > current.clientHeight;
+    
+    // Also check if it has overflow styles (even if not currently scrollable, it might be the intended container)
+    if (hasOverflow) {
+      // If it has overflow styles, prefer it even if not currently scrollable
+      // (content might not be fully loaded yet)
+      return current;
+    }
+    
+    if (canScroll) {
+      return current;
+    }
+    
+    // Stop at body or html
+    if (current === document.body || current === document.documentElement) {
+      break;
+    }
+    
+    current = current.parentElement;
+  }
+  
+  // Fallback: check if window/document can scroll
+  if (document.documentElement.scrollHeight > window.innerHeight) {
+    return document.documentElement;
+  }
+  
+  return null;
+}
+
 export function scrollToElement(
   root: HTMLElement,
   elementId: string,
   behavior: ScrollBehavior = "smooth",
+  headerOffset: number = 0,
 ): boolean {
+  console.log("[Scroll] scrollToElement called", {
+    elementId,
+    behavior,
+    headerOffset,
+    rootTag: root.tagName,
+    rootId: root.id,
+    rootScrollHeight: root.scrollHeight,
+    rootClientHeight: root.clientHeight,
+  });
+
   const selector = typeof CSS !== "undefined" && CSS.escape
     ? `#${CSS.escape(elementId)}`
     : `#${elementId}`;
   
+  console.log("[Scroll] Searching for element", { selector });
+  
   const element = root.querySelector<HTMLElement>(selector) ??
     root.querySelector<HTMLElement>(`a[name="${elementId}"]`);
   
-  if (element) {
+  if (!element) {
+    console.log("[Scroll] Element not found", { elementId, selector });
+    // Try to find any element with this ID in the document
+    const docElement = document.getElementById(elementId);
+    if (docElement) {
+      console.log("[Scroll] Element found in document but not in root", {
+        elementId,
+        rootContains: root.contains(docElement),
+      });
+    }
+    return false;
+  }
+
+  console.log("[Scroll] Element found", {
+    elementId,
+    elementTag: element.tagName,
+    headerOffset,
+  });
+
+  // Find the actual scrollable container
+  let scrollContainer = findScrollableContainer(element);
+  
+  // If no scrollable container found, try the root
+  if (!scrollContainer || scrollContainer.scrollHeight <= scrollContainer.clientHeight) {
+    // Check if root can scroll
+    if (root.scrollHeight > root.clientHeight) {
+      scrollContainer = root;
+    } else {
+      // Try document/window as fallback
+      if (document.documentElement.scrollHeight > window.innerHeight) {
+        scrollContainer = document.documentElement;
+      } else {
+        scrollContainer = root; // Use root anyway, might work
+      }
+    }
+  }
+  
+  const isRootScrollable = scrollContainer === root;
+  const isDocumentElement = scrollContainer === document.documentElement;
+  
+  console.log("[Scroll] Scroll container", {
+    isRootScrollable,
+    isDocumentElement,
+    containerTag: scrollContainer.tagName,
+    containerScrollHeight: scrollContainer.scrollHeight,
+    containerClientHeight: scrollContainer.clientHeight,
+    containerMaxScroll: scrollContainer.scrollHeight - scrollContainer.clientHeight,
+  });
+
+  // Check if element is already visible (accounting for header offset)
+  const isVisible = isElementVisible(element, scrollContainer, headerOffset);
+  console.log("[Scroll] Element visibility check", {
+    isVisible,
+    headerOffset,
+  });
+  
+  if (isVisible) {
+    console.log("[Scroll] Element is already visible, skipping scroll");
+    return true;
+  }
+
+  // If container can't scroll (maxScroll is 0 or negative), use scrollIntoView with offset
+  const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+  if (maxScroll <= 0) {
+    console.log("[Scroll] Container cannot scroll, using scrollIntoView with offset workaround");
+    
+    // Use scrollIntoView and then adjust for header offset
+    element.scrollIntoView({ behavior, block: "start" });
+    
+    // If header offset is needed, adjust after scroll
+    if (headerOffset > 0) {
+      // Wait for scroll to start, then adjust
+      requestAnimationFrame(() => {
+        if (isDocumentElement) {
+          window.scrollBy({ top: -headerOffset, behavior: "smooth" });
+        } else {
+          scrollContainer.scrollBy({ top: -headerOffset, behavior: "smooth" });
+        }
+      });
+    }
+    
+    return true;
+  }
+
+  // If no header offset, use simple scrollIntoView
+  if (headerOffset === 0) {
+    console.log("[Scroll] Using scrollIntoView (no header offset)");
     element.scrollIntoView({ behavior, block: "start" });
     return true;
   }
+
+  // Calculate scroll position accounting for header
+  const elementRect = element.getBoundingClientRect();
+  const containerRect = scrollContainer.getBoundingClientRect();
   
-  return false;
+  // For document element, use window coordinates
+  const containerTop = isDocumentElement ? 0 : containerRect.top;
+  const currentScrollTop = isDocumentElement ? window.scrollY : scrollContainer.scrollTop;
+  
+  console.log("[Scroll] Calculating scroll position", {
+    elementTop: elementRect.top,
+    containerTop,
+    currentScrollTop,
+    headerOffset,
+    containerScrollHeight: scrollContainer.scrollHeight,
+    containerClientHeight: scrollContainer.clientHeight,
+    isDocumentElement,
+  });
+  
+  // Calculate the element's position relative to the scroll container
+  // elementRect.top is relative to viewport
+  // For document element, elementRect.top is already relative to viewport (containerTop = 0)
+  // For other containers, elementRect.top - containerRect.top gives position relative to container's visible area
+  const elementTopRelativeToContainer = elementRect.top - containerTop + currentScrollTop;
+  
+  // Subtract header offset to position element below header
+  const targetScrollTop = elementTopRelativeToContainer - headerOffset;
+  
+  // Ensure we don't scroll past the bounds
+  const clampedScrollTop = Math.max(0, Math.min(targetScrollTop, maxScroll));
+  
+  console.log("[Scroll] Scrolling to position", {
+    elementTopRelativeToContainer,
+    targetScrollTop,
+    clampedScrollTop,
+    maxScroll,
+    currentScrollTop,
+    behavior,
+  });
+  
+  // Scroll the container
+  if (isDocumentElement) {
+    window.scrollTo({
+      top: clampedScrollTop,
+      behavior,
+    });
+  } else {
+    scrollContainer.scrollTo({
+      top: clampedScrollTop,
+      behavior,
+    });
+  }
+  
+  return true;
 }
 

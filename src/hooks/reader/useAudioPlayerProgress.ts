@@ -17,6 +17,7 @@ type UseAudioPlayerProgressParams = {
   isRestoringScroll: boolean;
   onSaveProgress: (chapterId: string) => Promise<void>;
   onCloseAudioPlayer?: () => void;
+  chromeVisible?: boolean;
 };
 
 export function useAudioPlayerProgress({
@@ -27,9 +28,13 @@ export function useAudioPlayerProgress({
   isRestoringScroll,
   onSaveProgress,
   onCloseAudioPlayer,
+  chromeVisible = true,
 }: UseAudioPlayerProgressParams) {
   const audioLoader = useAudioTrackLoader();
-  const audioSync = useAudioTextSync(contentRef, autoScrollEnabled, isRestoringScroll);
+  
+  // Calculate header offset - will be computed dynamically in useAudioTextSync
+  // Pass chromeVisible so it can calculate the offset when needed
+  const audioSync = useAudioTextSync(contentRef, autoScrollEnabled, isRestoringScroll, chromeVisible);
 
   // Get cached audio tracks
   const cachedAudioTracks = useMemo(() => {
@@ -53,6 +58,13 @@ export function useAudioPlayerProgress({
 
   // Handle audio progress updates
   const handleAudioProgress = useCallback((snapshot: AudioProgressSnapshot) => {
+    console.log("[Audio Progress] handleAudioProgress called", {
+      hasActiveBook: !!activeBook,
+      trackHref: snapshot.trackHref,
+      currentTime: snapshot.currentTimeSeconds,
+      hasActiveChapter: !!activeChapter,
+    });
+    
     // Update highlighting based on audioSyncMap
     if (activeBook && snapshot.trackHref) {
       audioSync.updateHighlight(
@@ -61,6 +73,8 @@ export function useAudioPlayerProgress({
         snapshot.trackHref,
         snapshot.currentTimeSeconds
       );
+    } else {
+      console.log("[Audio Progress] Skipping update - missing book or trackHref");
     }
   }, [activeBook, activeChapter, audioSync]);
 
