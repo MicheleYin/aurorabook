@@ -436,7 +436,7 @@ export function ReaderAudioPlayer({
 
   // Simplified: Pre-load track URL only when needed
   useEffect(() => {
-    if (!currentTrack || !bookId || !currentIndex) {
+    if (!currentTrack || !bookId || currentIndex === undefined || currentIndex === null) {
       setIsTrackLoading(false);
       return;
     }
