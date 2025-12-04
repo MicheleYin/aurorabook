@@ -633,7 +633,9 @@ export function ReaderAudioPlayer({
     onTrackChanged(track.id);
     
     // Notify parent about track change (for chapter sync)
-    if (onTrackChange) {
+    // BUT: Don't trigger chapter changes during audio restoration
+    // This prevents resetting chapter progress when restoring audio state
+    if (onTrackChange && !isRestoringRef.current) {
       onTrackChange(track.href);
     }
     
