@@ -102,41 +102,6 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     }
   }, [activeBook, activeChapter, onChapterProgress, progressTracking]);
 
-  // Audio player progress logic
-  const audioPlayerProgress = useAudioPlayerProgress({
-    activeBook,
-    activeChapter,
-    contentRef,
-    autoScrollEnabled,
-    isRestoringScroll: restoreState.isRestoring,
-    onSaveProgress: saveProgress,
-    onCloseAudioPlayer,
-    chromeVisible,
-  });
-
-  // Handle audio progress updates from App.tsx
-  // This ensures highlighting and scrolling are updated when audio plays
-  const lastProgressRef = useRef<AudioProgressSnapshot | undefined>(undefined);
-  const handleAudioProgressRef = useRef(audioPlayerProgress.handleAudioProgress);
-  handleAudioProgressRef.current = audioPlayerProgress.handleAudioProgress;
-  
-  useEffect(() => {
-    if (currentAudioProgress) {
-      // Compare by value, not reference, to avoid unnecessary updates
-      const lastProgress = lastProgressRef.current;
-      const isNewProgress = 
-        !lastProgress ||
-        lastProgress.trackHref !== currentAudioProgress.trackHref ||
-        lastProgress.currentTimeSeconds !== currentAudioProgress.currentTimeSeconds ||
-        lastProgress.updatedAt !== currentAudioProgress.updatedAt;
-      
-      if (isNewProgress) {
-        lastProgressRef.current = currentAudioProgress;
-        handleAudioProgressRef.current(currentAudioProgress);
-      }
-    }
-  }, [currentAudioProgress]);
-
   // Helper to determine if progress should be restored for a chapter
   const shouldRestoreProgress = useCallback((
     chapterId: string,
@@ -425,6 +390,54 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     pendingScrollToElementIdRef.current = segment.textElementId;
     handleChapterChange(chapter.id, { scrollPosition: "top" });
   }, [activeBook, activeChapter, handleChapterChange, scrollOps]);
+
+  // Wrapper for chapter change from audio sync
+  // Converts the audio sync format (chapterId, elementId) to the chapter change format
+  const handleAudioSyncChapterChange = useCallback((chapterId: string, elementId?: string) => {
+    if (elementId) {
+      // Store the element ID to scroll to after chapter loads
+      pendingScrollToElementIdRef.current = elementId;
+    }
+    // Navigate to chapter with scrollPosition: "top" so it loads at the top,
+    // then handlePendingScrollTarget will scroll to the element after load
+    handleChapterChange(chapterId, { scrollPosition: "top", isManualSelection: false });
+  }, [handleChapterChange]);
+
+  // Audio player progress logic
+  const audioPlayerProgress = useAudioPlayerProgress({
+    activeBook,
+    activeChapter,
+    contentRef,
+    autoScrollEnabled,
+    isRestoringScroll: restoreState.isRestoring,
+    onSaveProgress: saveProgress,
+    onCloseAudioPlayer,
+    chromeVisible,
+    onChapterChange: handleAudioSyncChapterChange,
+  });
+
+  // Handle audio progress updates from App.tsx
+  // This ensures highlighting and scrolling are updated when audio plays
+  const lastProgressRef = useRef<AudioProgressSnapshot | undefined>(undefined);
+  const handleAudioProgressRef = useRef(audioPlayerProgress.handleAudioProgress);
+  handleAudioProgressRef.current = audioPlayerProgress.handleAudioProgress;
+  
+  useEffect(() => {
+    if (currentAudioProgress) {
+      // Compare by value, not reference, to avoid unnecessary updates
+      const lastProgress = lastProgressRef.current;
+      const isNewProgress = 
+        !lastProgress ||
+        lastProgress.trackHref !== currentAudioProgress.trackHref ||
+        lastProgress.currentTimeSeconds !== currentAudioProgress.currentTimeSeconds ||
+        lastProgress.updatedAt !== currentAudioProgress.updatedAt;
+      
+      if (isNewProgress) {
+        lastProgressRef.current = currentAudioProgress;
+        handleAudioProgressRef.current(currentAudioProgress);
+      }
+    }
+  }, [currentAudioProgress]);
 
   const loadedChapter = chapterLoader.loadedChapter;
 

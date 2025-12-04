@@ -12,12 +12,15 @@ export function useAudioTextSync(
   contentRef: React.RefObject<HTMLDivElement | null>,
   autoScrollEnabled: boolean,
   isRestoringScroll: boolean = false,
-  chromeVisible: boolean = true
+  chromeVisible: boolean = true,
+  onChapterChange?: (chapterId: string, elementId?: string) => void
 ) {
   const [highlightedElementId, setHighlightedElementId] = useState<string | null>(null);
   const lastScrolledElementRef = useRef<string | null>(null);
   const lastScrollTimeRef = useRef<number>(0);
   const scrollThrottleMs = 100; // Throttle scrolling to at most once per 100ms
+  const lastChapterChangeTimeRef = useRef<number>(0);
+  const chapterChangeThrottleMs = 500; // Throttle chapter changes to avoid rapid switching
   
   // Calculate header offset dynamically when scrolling
   const getHeaderOffset = useCallback((): number => {
@@ -79,7 +82,57 @@ export function useAudioTextSync(
       console.log("[Audio Sync] Segment chapter mismatch", {
         segmentChapterHref: segment.chapterHref,
         currentChapterHref: chapterHref,
+        autoScrollEnabled,
       });
+      
+      // If auto scroll is enabled, navigate to the correct chapter
+      if (autoScrollEnabled && onChapterChange) {
+        const now = Date.now();
+        const timeSinceLastChange = now - lastChapterChangeTimeRef.current;
+        
+        // Throttle chapter changes to avoid rapid switching
+        if (timeSinceLastChange >= chapterChangeThrottleMs) {
+          // Find the chapter that matches the segment's chapterHref
+          const matchingChapter = book.chapters.find((ch) => {
+            const chHref = ch.href.split("#")[0];
+            // Compare with and without OEBPS prefix, handle various path formats
+            return (
+              chHref === segment.chapterHref ||
+              chHref === segment.chapterHref.replace(/^OEBPS\//, "") ||
+              chHref === `OEBPS/${segment.chapterHref}` ||
+              `OEBPS/${chHref}` === segment.chapterHref ||
+              chHref.endsWith(segment.chapterHref) ||
+              segment.chapterHref.endsWith(chHref)
+            );
+          });
+
+          if (matchingChapter && matchingChapter.id !== chapter.id) {
+            console.log("[Audio Sync] Navigating to correct chapter", {
+              fromChapterId: chapter.id,
+              toChapterId: matchingChapter.id,
+              segmentChapterHref: segment.chapterHref,
+              elementId: segment.textElementId,
+            });
+            
+            lastChapterChangeTimeRef.current = now;
+            // Navigate to the chapter, passing the element ID to scroll to after load
+            onChapterChange(matchingChapter.id, segment.textElementId);
+            setHighlightedElementId(null);
+            return;
+          } else {
+            console.log("[Audio Sync] No matching chapter found for segment", {
+              segmentChapterHref: segment.chapterHref,
+              availableChapters: book.chapters.map(ch => ch.href.split("#")[0]),
+            });
+          }
+        } else {
+          console.log("[Audio Sync] Chapter change throttled", {
+            timeSinceLastChange,
+            throttleMs: chapterChangeThrottleMs,
+          });
+        }
+      }
+      
       setHighlightedElementId(null);
       return;
     }
@@ -143,7 +196,7 @@ export function useAudioTextSync(
         hasContentRef: !!contentRef.current,
       });
     }
-  }, [autoScrollEnabled, isRestoringScroll, contentRef, getHeaderOffset]);
+  }, [autoScrollEnabled, isRestoringScroll, contentRef, getHeaderOffset, onChapterChange]);
 
   const clearHighlight = useCallback(() => {
     setHighlightedElementId(null);
