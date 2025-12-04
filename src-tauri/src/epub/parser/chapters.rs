@@ -90,14 +90,75 @@ pub fn extract_chapters_from_epub(
     let mut filtered_count = 0;
     
     // Get navigation titles from NCX if available
+    // First, find NCX file from manifest (it might be in a subdirectory)
     let mut ncx_title_map: HashMap<String, String> = HashMap::new();
+    
+    // Find NCX path from manifest items
+    let mut ncx_path: Option<String> = None;
+    for item in manifest_items.values() {
+        if item.media_type.as_ref().map(|mt| mt == "application/x-dtbncx+xml").unwrap_or(false) {
+            // Resolve NCX path relative to OPF location
+            let ncx_href = if item.href.starts_with("/") {
+                item.href[1..].to_string()
+            } else if !base_path.is_empty() && !item.href.starts_with(&base_path) {
+                format!("{}{}", base_path, item.href)
+            } else {
+                item.href.clone()
+            };
+            ncx_path = Some(ncx_href);
+            debug!("Found NCX in manifest: href='{}', resolved path='{}'", item.href, ncx_path.as_ref().unwrap());
+            break;
+        }
+    }
+    
     // Try to get NCX content and parse it
-    if let Some(ncx_content) = epub.get_resource_by_path("toc.ncx") {
-        if let Ok(ncx_str) = String::from_utf8(ncx_content) {
-            if let Ok(titles) = parse_ncx_titles(&ncx_str) {
-                ncx_title_map = titles;
+    if let Some(ncx_path_str) = ncx_path {
+        // Try multiple possible paths
+        let ncx_paths = vec![
+            ncx_path_str.clone(),
+            format!("{}{}", base_path, "toc.ncx"),
+            "toc.ncx".to_string(),
+            format!("{}{}", base_path, "OEBPS/toc.ncx"),
+            "OEBPS/toc.ncx".to_string(),
+        ];
+        
+        for path in ncx_paths {
+            if let Some(ncx_content) = epub.get_resource_by_path(&path) {
+                if let Ok(ncx_str) = String::from_utf8(ncx_content) {
+                    if let Ok(titles) = parse_ncx_titles(&ncx_str) {
+                        debug!("Successfully parsed NCX from path '{}', found {} titles", path, titles.len());
+                        ncx_title_map = titles;
+                        break;
+                    }
+                }
             }
         }
+    } else {
+        // Fallback: try common NCX paths
+        let fallback_paths = vec![
+            format!("{}{}", base_path, "toc.ncx"),
+            "toc.ncx".to_string(),
+            format!("{}{}", base_path, "OEBPS/toc.ncx"),
+            "OEBPS/toc.ncx".to_string(),
+        ];
+        
+        for path in fallback_paths {
+            if let Some(ncx_content) = epub.get_resource_by_path(&path) {
+                if let Ok(ncx_str) = String::from_utf8(ncx_content) {
+                    if let Ok(titles) = parse_ncx_titles(&ncx_str) {
+                        debug!("Successfully parsed NCX from fallback path '{}', found {} titles", path, titles.len());
+                        ncx_title_map = titles;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
+    if ncx_title_map.is_empty() {
+        warn!("No NCX titles found - chapters will use fallback names");
+    } else {
+        debug!("Loaded {} chapter titles from NCX", ncx_title_map.len());
     }
     
     // Extract chapters from spine using epub crate's spine iterator
@@ -161,19 +222,66 @@ pub fn extract_chapters_from_epub(
             }
             
             // Extract title from navigation if available, otherwise use fallback
+            // Normalize href for matching - try multiple variations
             let normalized_href = if validated_href.starts_with("/") {
                 validated_href[1..].to_string()
             } else {
                 validated_href.clone()
             };
             
-            // Try to find title in navigation map
-            let title = if let Some(nav_title) = ncx_title_map.get(&normalized_href) {
-                debug!("Using navigation title '{}' for href '{}'", nav_title, normalized_href);
-                nav_title.clone()
-            } else {
-                debug!("No navigation title found for href '{}', using fallback", normalized_href);
-                format!("Section {}", chapter_index + 1)
+            // Try to find title in navigation map with multiple matching strategies
+            // NCX hrefs are often relative (e.g., "prologue.xhtml") while spine hrefs
+            // may include base path (e.g., "OEBPS/prologue.xhtml")
+            let title = {
+                let mut found_title: Option<String> = None;
+                
+                // Strategy 1: Try exact match
+                if let Some(nav_title) = ncx_title_map.get(&normalized_href) {
+                    found_title = Some(nav_title.clone());
+                    debug!("Using navigation title '{}' for href '{}' (exact match)", nav_title, normalized_href);
+                }
+                
+                // Strategy 2: Try without base path (if href has base path)
+                if found_title.is_none() && !base_path.is_empty() && normalized_href.starts_with(&base_path) {
+                    let href_without_base = normalized_href[base_path.len()..].to_string();
+                    if let Some(nav_title) = ncx_title_map.get(&href_without_base) {
+                        found_title = Some(nav_title.clone());
+                        debug!("Using navigation title '{}' for href '{}' (without base path)", nav_title, normalized_href);
+                    }
+                }
+                
+                // Strategy 3: Try with base path (if href doesn't have it)
+                if found_title.is_none() && !base_path.is_empty() && !normalized_href.starts_with(&base_path) {
+                    let href_with_base = format!("{}{}", base_path, normalized_href);
+                    if let Some(nav_title) = ncx_title_map.get(&href_with_base) {
+                        found_title = Some(nav_title.clone());
+                        debug!("Using navigation title '{}' for href '{}' (with base path)", nav_title, normalized_href);
+                    }
+                }
+                
+                // Strategy 4: Try just the filename (last component)
+                if found_title.is_none() {
+                    let filename = normalized_href.split("/").last().unwrap_or(&normalized_href);
+                    if let Some(nav_title) = ncx_title_map.get(filename) {
+                        found_title = Some(nav_title.clone());
+                        debug!("Using navigation title '{}' for href '{}' (filename match)", nav_title, normalized_href);
+                    }
+                }
+                
+                // Strategy 5: Try filename with base path
+                if found_title.is_none() && !base_path.is_empty() {
+                    let filename = normalized_href.split("/").last().unwrap_or(&normalized_href);
+                    let filename_with_base = format!("{}{}", base_path, filename);
+                    if let Some(nav_title) = ncx_title_map.get(&filename_with_base) {
+                        found_title = Some(nav_title.clone());
+                        debug!("Using navigation title '{}' for href '{}' (filename with base path)", nav_title, normalized_href);
+                    }
+                }
+                
+                found_title.unwrap_or_else(|| {
+                    debug!("No navigation title found for href '{}' (tried {} variations), using fallback", normalized_href, ncx_title_map.len());
+                    format!("Section {}", chapter_index + 1)
+                })
             };
             
             chapter_index += 1;

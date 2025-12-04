@@ -1214,4 +1214,111 @@ pub async fn convert_epub_to_audiobook(
     
 }
 
+/// Standalone version of `convert_epub_to_audiobook` for testing (no AppHandle required).
+///
+/// This function is identical to `convert_epub_to_audiobook` but doesn't require
+/// a Tauri AppHandle, making it suitable for unit tests. It uses a console-based
+/// progress callback instead of emitting Tauri events.
+///
+/// # Arguments
+/// * `epub_data` - The original EPUB file as a byte vector
+/// * `options` - Conversion options including voice ID and chapters to convert
+///
+/// # Returns
+/// A new EPUB file (as byte vector) with embedded audio tracks and SMIL files.
+///
+/// # Example
+/// ```rust
+/// use crate::epub::converter::{ConversionOptions, ConversionChapter};
+///
+/// let epub_data = std::fs::read("book.epub")?;
+/// let options = ConversionOptions {
+///     voice_id: "af_heart".to_string(),
+///     chapters: vec![/* chapters */],
+/// };
+/// let converted_epub = convert_epub_to_audiobook_standalone(epub_data, options).await?;
+/// std::fs::write("audiobook.epub", converted_epub)?;
+/// ```
+pub async fn convert_epub_to_audiobook_standalone(
+    epub_data: Vec<u8>,
+    options: ConversionOptions,
+) -> AppResult<Vec<u8>> {
+    use crate::utils::path_resolver::ResourcePathResolver;
+    
+    // Create console-based progress callback for testing
+    let progress_callback: ProgressCallback = Box::new(|progress| {
+        println!("Progress: {} - {} ({}/{})", 
+            progress.current_step, 
+            progress.message,
+            progress.current_chapter,
+            progress.total_chapters);
+    });
+    
+    // Calculate total words
+    let total_words: usize = options.chapters.iter().map(|c| c.word_count).sum();
+    let num_chapters = options.chapters.len();
+    
+    // Emit initial progress event when conversion starts
+    progress_callback(ConversionProgress {
+        current_chapter: 0,
+        total_chapters: options.chapters.len(),
+        words_processed: 0,
+        total_words,
+        words_in_current_chapter: 0,
+        current_step: "initializing".to_string(),
+        message: format!("Starting conversion of {} chapters ({} words)...", options.chapters.len(), total_words),
+    });
+    
+    // Find model files (without AppHandle)
+    let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(None)?;
+    
+    let onnx_path_str = onnx_path.to_str()
+        .ok_or_else(|| AppError::Encoding("ONNX path contains invalid UTF-8".to_string()))?
+        .to_string();
+    let voices_path_str = voices_path.to_str()
+        .ok_or_else(|| AppError::Encoding("Voices path contains invalid UTF-8".to_string()))?
+        .to_string();
+    
+    // Create TTS engine pool with at most get_parallelism() instances, capped by num_chapters
+    let num_instances = get_parallelism().min(num_chapters);
+    let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+        &onnx_path_str,
+        &voices_path_str,
+        num_instances,
+    )
+    .await;
+    
+    log::info!("Created {} TTS engine instances for conversion (parallelism: {}, chapters: {})", 
+        num_instances, get_parallelism(), num_chapters);
+    
+    // Emit progress event for engine creation
+    progress_callback(ConversionProgress {
+        current_chapter: 0,
+        total_chapters: options.chapters.len(),
+        words_processed: 0,
+        total_words,
+        words_in_current_chapter: 0,
+        current_step: "initializing".to_string(),
+        message: "TTS engine created - ready to process chapters".to_string(),
+    });
+    
+    let engine_arc = std::sync::Arc::new(engine);
+    let instance_counter = Arc::new(AtomicUsize::new(0));
+    let voice_id = options.voice_id.clone();
+    
+    convert_epub_core_with_durations(
+        epub_data, 
+        options, 
+        progress_callback, 
+        engine_arc,
+        instance_counter,
+        num_instances,
+        voice_id,
+        None, // No AppHandle for standalone version
+        None, // No source_path for standalone version
+    )
+        .await
+        .map_err(|e| AppError::EpubParse(e.to_string()))
+}
+
 
