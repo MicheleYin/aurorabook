@@ -586,25 +586,44 @@ pub async fn add_book(
     epub_data: Option<Vec<u8>>,
     app: tauri::AppHandle,
 ) -> AppResult<Book> {
-    use storage::{get_book_by_source_path, add_book as add_book_storage};
+    use storage::{get_book_by_hash, get_book_by_source_path, add_book as add_book_storage};
     
     // Clone source_path before we might move book
     let source_path = book.source_path.clone();
     
-    // Check if book with same source_path already exists
-    let result_book = if let Some(existing_book) = get_book_by_source_path(&app, &source_path).await
-        .map_err(|e| AppError::Store(e))?
-    {
-        // Update existing book instead, but preserve progress and state
-        let updated_book = merge_book_data(&book, &existing_book);
-        add_book_storage(&app, &updated_book).await
-            .map_err(|e| AppError::Store(e))?;
-        updated_book
+    // Check for duplicates by content hash first (if available), then fall back to source_path
+    let result_book = if let Some(ref hash) = book.content_hash {
+        // Check if book with same content hash already exists
+        if let Some(existing_book) = get_book_by_hash(&app, hash).await
+            .map_err(|e| AppError::Store(e))?
+        {
+            // Update existing book instead, but preserve progress and state
+            let updated_book = merge_book_data(&book, &existing_book);
+            add_book_storage(&app, &updated_book).await
+                .map_err(|e| AppError::Store(e))?;
+            updated_book
+        } else {
+            // New book - just add it
+            add_book_storage(&app, &book).await
+                .map_err(|e| AppError::Store(e))?;
+            book
+        }
     } else {
-        // New book - just add it
-        add_book_storage(&app, &book).await
-            .map_err(|e| AppError::Store(e))?;
-        book
+        // Fall back to source_path check if no hash available (backward compatibility)
+        if let Some(existing_book) = get_book_by_source_path(&app, &source_path).await
+            .map_err(|e| AppError::Store(e))?
+        {
+            // Update existing book instead, but preserve progress and state
+            let updated_book = merge_book_data(&book, &existing_book);
+            add_book_storage(&app, &updated_book).await
+                .map_err(|e| AppError::Store(e))?;
+            updated_book
+        } else {
+            // New book - just add it
+            add_book_storage(&app, &book).await
+                .map_err(|e| AppError::Store(e))?;
+            book
+        }
     };
     
     // Store EPUB data if provided
@@ -710,6 +729,12 @@ pub async fn ingest_epub(
     if epub_data.len() < 4 || &epub_data[0..4] != b"PK\x03\x04" {
         return Err(AppError::EpubParse("Invalid EPUB file: not a valid ZIP archive".to_string()));
     }
+    
+    // Compute content hash for duplicate detection (synchronously since data is already in memory)
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(&epub_data);
+    let content_hash = hex::encode(hasher.finalize());
     
     // Parse EPUB in a blocking task
     let epub_data_clone = epub_data.clone();
@@ -840,6 +865,7 @@ pub async fn ingest_epub(
         chapters,
         cover_url,
         source_path: source_path.clone(),
+        content_hash: Some(content_hash.clone()),
         publisher: metadata.publisher,
         published_year,
         subjects: if metadata.subjects.is_empty() {

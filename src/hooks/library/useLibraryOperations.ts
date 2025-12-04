@@ -266,10 +266,8 @@ export function useLibraryOperations(
         return true;
       }
 
-      if (library.some((book) => book.sourcePath === filePath)) {
-        toast.error("This ebook is already in your library.");
-        return true;
-      }
+      // Note: Duplicate detection is now handled by the backend using content hash
+      // We can't check for duplicates here without reading the file content
 
       const book = await ingestEpub({
         filePath: filePath,
@@ -281,8 +279,11 @@ export function useLibraryOperations(
       }
 
       setLibrary((prevLibrary) => {
+        // Check for existing book by ID, sourcePath, or contentHash
         const existingIndex = prevLibrary.findIndex(
-          (b) => b.id === book.id || b.sourcePath === book.sourcePath,
+          (b) => b.id === book.id 
+            || b.sourcePath === book.sourcePath
+            || (book.contentHash && b.contentHash && b.contentHash === book.contentHash),
         );
         if (existingIndex !== -1) {
           const updated = [...prevLibrary];

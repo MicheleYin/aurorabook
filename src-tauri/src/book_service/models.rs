@@ -93,6 +93,8 @@ pub struct Book {
     pub cover_url: Option<String>,
     pub source_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub publisher: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub published_year: Option<String>,

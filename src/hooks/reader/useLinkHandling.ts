@@ -4,7 +4,7 @@
  */
 
 import { useCallback, useRef } from "react";
-import type { Book, Chapter } from "../../types/reader";
+import type { Book } from "../../types/reader";
 import type { ChapterSelectionOptions } from "../../components/reader/types";
 import { scrollToElement } from "../../lib/scroll-utils";
 

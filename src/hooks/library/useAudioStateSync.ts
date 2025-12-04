@@ -29,7 +29,7 @@ export function useAudioStateSync(params: UseAudioStateSyncParams) {
     updatedAt?: string;
     timestamp: number;
   }>({ timestamp: 0 });
-  const initializedRef = useRef<string | undefined>();
+  const initializedRef = useRef<string | undefined>(undefined);
 
   // Update refs when props change
   onProgressRef.current = onProgress;

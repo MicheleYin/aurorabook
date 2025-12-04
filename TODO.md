@@ -8,4 +8,6 @@
 - Revise how chapter names are extracted from the TOC because they are not extracter correctly
 - build iOS
 - make epub exportable in m4b
-- 
+- make the progress count the total word count so far
+- change how duplicates are found, compute a hash and use the hash instead
+- audio play or pause state is not restored correctly when not loaded in cache.

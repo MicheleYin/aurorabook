@@ -8,7 +8,7 @@ import type { Book, Chapter } from "../../types/reader";
 
 export function useChapterTransitions() {
   const [direction, setDirection] = useState<"left" | "right" | "fade" | null>(null);
-  const previousChapterIdRef = useRef<string | undefined>();
+  const previousChapterIdRef = useRef<string | undefined>(undefined);
   const timerRef = useRef<number | null>(null);
 
   const triggerTransition = useCallback((
