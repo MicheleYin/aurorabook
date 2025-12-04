@@ -14,6 +14,7 @@ use crate::utils::path_validation::{validate_epub_path, validate_file_size, vali
 use anyhow::{Context, Result as AnyhowResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tauri::{AppHandle, Emitter};
 
 /// Conversion progress information for tracking EPUB to audiobook conversion.
@@ -521,10 +522,12 @@ async fn process_chapter(
     chapter_index: usize,
     base_path: &str,
     engine: &Arc<kokoros::tts::koko::TTSKokoParallel>,
+    worker_id: usize,
     voice_id: &str,
     progress_callback: &ProgressCallback,
     total_words: usize,
     total_chapters: usize,
+    words_processed_atomic: Option<Arc<AtomicUsize>>,
 ) -> AnyhowResult<ChapterProcessResult> {
     log::debug!("Processing chapter {}: '{}' (href: '{}', content_html: {} bytes, word_count: {})", 
         chapter_index + 1, chapter.title, chapter.href, chapter.content_html.len(), chapter.word_count);
@@ -535,10 +538,16 @@ async fn process_chapter(
             chapter_index + 1, chapter.title, chapter.href);
     }
     
+    // Get current total words processed from atomic counter if available
+    let current_words_processed = words_processed_atomic
+        .as_ref()
+        .map(|atomic| atomic.load(Ordering::Relaxed))
+        .unwrap_or(0);
+    
     progress_callback(ConversionProgress {
         current_chapter: chapter_index + 1,
         total_chapters,
-        words_processed: 0, // Will be updated by caller
+        words_processed: current_words_processed,
         total_words,
         words_in_current_chapter: chapter.word_count,
         current_step: "generating-audio".to_string(),
@@ -566,8 +575,8 @@ async fn process_chapter(
         });
     }
     
-    // Generate TTS audio
-    let model_instance = engine.get_model_instance(0);
+    // Generate TTS audio using round-robin engine instance
+    let model_instance = engine.get_model_instance(worker_id);
     let result = engine
         .tts_timestamped_raw_audio_with_instance(
             &full_text,
@@ -597,10 +606,16 @@ async fn process_chapter(
         &full_text,
     );
     
+    // Update progress with current total words processed
+    let current_words_processed = words_processed_atomic
+        .as_ref()
+        .map(|atomic| atomic.load(Ordering::Relaxed))
+        .unwrap_or(0);
+    
     progress_callback(ConversionProgress {
         current_chapter: chapter_index + 1,
         total_chapters,
-        words_processed: 0, // Will be updated by caller
+        words_processed: current_words_processed,
         total_words,
         words_in_current_chapter: chapter.word_count,
         current_step: "converting-audio".to_string(),
@@ -623,10 +638,16 @@ async fn process_chapter(
     let chapter_path_zip_clone = chapter_path_zip.clone();
     files.insert(chapter_path_zip, updated_html.into_bytes());
     
+    // Update progress with current total words processed
+    let current_words_processed = words_processed_atomic
+        .as_ref()
+        .map(|atomic| atomic.load(Ordering::Relaxed))
+        .unwrap_or(0);
+    
     progress_callback(ConversionProgress {
         current_chapter: chapter_index + 1,
         total_chapters,
-        words_processed: 0, // Will be updated by caller
+        words_processed: current_words_processed,
         total_words,
         words_in_current_chapter: chapter.word_count,
         current_step: "creating-smil".to_string(),
@@ -889,20 +910,26 @@ fn build_final_epub(
     build_epub_zip(context, &updated_opf)
 }
 
-/// Core EPUB to audiobook conversion logic using single TTS instance with durations
+/// Core EPUB to audiobook conversion logic using TTS engine pool with round-robin distribution
 /// This function processes each chapter as a whole, using word alignments from
 /// the TTS engine to generate accurate SMIL timing information.
+/// Chapters are processed in parallel with a semaphore limiting concurrent operations
+/// to the number of available engine instances.
 /// After each chapter, it rebuilds the EPUB and saves it to the Tauri store.
 async fn convert_epub_core_with_durations(
     epub_data: Vec<u8>,
     options: ConversionOptions,
     progress_callback: ProgressCallback,
     engine: Arc<kokoros::tts::koko::TTSKokoParallel>,
+    instance_counter: Arc<AtomicUsize>,
+    num_instances: usize,
     voice_id: String,
     app: Option<AppHandle>,
     source_path: Option<String>,
 ) -> AnyhowResult<Vec<u8>>
 {
+    // Wrap progress_callback in Arc for sharing across tasks
+    let progress_callback = Arc::new(progress_callback);
     let total_words: usize = options.chapters.iter().map(|c| c.word_count).sum();
     
     progress_callback(ConversionProgress {
@@ -920,43 +947,107 @@ async fn convert_epub_core_with_durations(
     // Initialize conversion context and read OPF
     let (mut context, original_opf_content) = initialize_conversion_context(&epub_data)?;
     let base_path = context.base_path.clone();
-    let mut words_processed = 0;
     let chapter_hrefs: Vec<String> = options.chapters.iter().map(|c| c.href.clone()).collect();
     
-    // Process each chapter sequentially
+    // Create semaphore to limit concurrent operations to available engine instances
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(num_instances));
+    
+    // Atomic counter to track total words processed across all parallel tasks
+    let words_processed_atomic = Arc::new(AtomicUsize::new(0));
+    
+    // Process chapters in parallel with semaphore limiting
+    let mut handles = Vec::new();
     for (chapter_index, chapter) in options.chapters.iter().enumerate() {
-        log::debug!("Starting to process chapter {}: '{}'", chapter_index + 1, chapter.title);
+        let semaphore = Arc::clone(&semaphore);
+        let engine = Arc::clone(&engine);
+        let instance_counter = Arc::clone(&instance_counter);
+        let progress_callback = Arc::clone(&progress_callback);
+        let words_processed_atomic = Arc::clone(&words_processed_atomic);
+        let base_path = base_path.clone();
+        let voice_id = voice_id.clone();
+        let chapter = chapter.clone();
+        let total_chapters = options.chapters.len();
         
-        progress_callback(ConversionProgress {
-            current_chapter: chapter_index + 1,
-            total_chapters: options.chapters.len(),
-            words_processed,
-            total_words,
-            words_in_current_chapter: chapter.word_count,
-            current_step: "generating-audio".to_string(),
-            message: format!("Processing chapter {}: {} ({} words)", chapter_index + 1, chapter.title, chapter.word_count),
+        let handle = tokio::spawn(async move {
+            // Acquire semaphore permit (blocks if all engines are busy)
+            let _permit = semaphore.acquire().await
+                .map_err(|e| anyhow::anyhow!("Failed to acquire semaphore: {}", e))?;
+            
+            // Get worker_id using round-robin distribution
+            let worker_id = instance_counter.fetch_add(1, Ordering::Relaxed) % num_instances;
+            
+            log::debug!("Processing chapter {}: '{}' with engine instance {}", 
+                chapter_index + 1, chapter.title, worker_id);
+            
+            // Get current total words processed before starting
+            let current_total = words_processed_atomic.load(Ordering::Relaxed);
+            progress_callback(ConversionProgress {
+                current_chapter: chapter_index + 1,
+                total_chapters,
+                words_processed: current_total,
+                total_words,
+                words_in_current_chapter: chapter.word_count,
+                current_step: "generating-audio".to_string(),
+                message: format!("Processing chapter {}: {} ({} words)", chapter_index + 1, chapter.title, chapter.word_count),
+            });
+            
+            // Process the chapter with atomic counter for progress tracking
+            let result = process_chapter(
+                &chapter,
+                chapter_index,
+                &base_path,
+                &engine,
+                worker_id,
+                &voice_id,
+                &*progress_callback,
+                total_words,
+                total_chapters,
+                Some(Arc::clone(&words_processed_atomic)),
+            ).await?;
+            
+            // Update atomic counter with words processed by this task
+            let updated_total = words_processed_atomic.fetch_add(result.words_processed, Ordering::Relaxed) + result.words_processed;
+            
+            // Report progress with updated total
+            progress_callback(ConversionProgress {
+                current_chapter: chapter_index + 1,
+                total_chapters,
+                words_processed: updated_total,
+                total_words,
+                words_in_current_chapter: chapter.word_count,
+                current_step: "completed".to_string(),
+                message: format!("Completed chapter {}: {} ({} words processed, {} total)", chapter_index + 1, chapter.title, result.words_processed, updated_total),
+            });
+            
+            Ok::<(usize, ChapterProcessResult), anyhow::Error>((chapter_index, result))
         });
         
-        // Process the chapter
-        let result = process_chapter(
-            chapter,
-            chapter_index,
-            &base_path,
-            &engine,
-            &voice_id,
-            &progress_callback,
-            total_words,
-            options.chapters.len(),
-        ).await?;
-        
-        // Update words processed and merge result
-        words_processed += result.words_processed;
+        handles.push(handle);
+    }
+    
+    // Collect results and merge them in order
+    let mut results: Vec<(usize, ChapterProcessResult)> = Vec::new();
+    for handle in handles {
+        let result = handle.await
+            .map_err(|e| anyhow::anyhow!("Task join error: {}", e))??;
+        results.push(result);
+    }
+    
+    // Sort by chapter index to maintain order
+    results.sort_by_key(|(idx, _)| *idx);
+    
+    // Merge results in order
+    // Use atomic counter value as the source of truth for words processed
+    let words_processed = words_processed_atomic.load(Ordering::Relaxed);
+    for (chapter_index, result) in results {
+        // Verify words_processed matches (should already be updated by tasks)
         merge_chapter_result(&mut context, result);
         
         log::debug!("Finished processing chapter {}. Total: {} audio files, {} SMIL files", 
             chapter_index + 1, context.audio_files.len(), context.smil_files.len());
         
         // Rebuild EPUB and save after each chapter
+        let chapter = &options.chapters[chapter_index];
         rebuild_and_save_epub(
             &context,
             &original_opf_content,
@@ -966,7 +1057,7 @@ async fn convert_epub_core_with_durations(
             words_processed,
             total_words,
             chapter.word_count,
-            &progress_callback,
+            &*progress_callback,
             app.as_ref(),
             source_path.as_deref(),
         ).await?;
@@ -1079,15 +1170,17 @@ pub async fn convert_epub_to_audiobook(
         .ok_or_else(|| AppError::Encoding("Voices path contains invalid UTF-8".to_string()))?
         .to_string();
     
-    // Create single TTS engine instance (reused for all chapters)
+    // Create TTS engine pool with at most get_parallelism() instances, capped by num_chapters
+    let num_instances = get_parallelism().min(num_chapters);
     let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
         &onnx_path_str,
         &voices_path_str,
-        num_chapters.max(get_parallelism()),
+        num_instances,
     )
     .await;
     
-    log::info!("Created {} TTS engine instances for conversion", num_chapters.max(get_parallelism()));
+    log::info!("Created {} TTS engine instances for conversion (parallelism: {}, chapters: {})", 
+        num_instances, get_parallelism(), num_chapters);
     
     // Emit progress event for engine creation
     progress_callback(ConversionProgress {
@@ -1101,13 +1194,16 @@ pub async fn convert_epub_to_audiobook(
     });
     
     let engine_arc = std::sync::Arc::new(engine);
+    let instance_counter = Arc::new(AtomicUsize::new(0));
     let voice_id = options.voice_id.clone();
     
     convert_epub_core_with_durations(
         epub_data, 
         options, 
         progress_callback, 
-        engine_arc, 
+        engine_arc,
+        instance_counter,
+        num_instances,
         voice_id,
         Some(app),
         source_path,

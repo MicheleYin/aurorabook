@@ -6,4 +6,6 @@
 - remove all useEffects because they are shittte
 - parallelize on chapters -> if chapters are too few ... i dont know
 - Revise how chapter names are extracted from the TOC because they are not extracter correctly
-  
+- build iOS
+- make epub exportable in m4b
+- 
