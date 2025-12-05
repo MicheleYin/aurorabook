@@ -178,19 +178,27 @@ pub fn update_content_opf(
                             log::debug!("Checking for SMIL match for chapter href '{}' (normalized: '{}')", href, normalized_href);
                             
                             // Match by comparing manifest href with chapter hrefs
-                            // Then find the corresponding SMIL file using the chapter index
-                            for (chapter_idx, chapter_href) in chapters.iter().enumerate() {
+                            // Since smil_files is sorted by chapter_index, and chapters are processed
+                            // in order (chapter_index matches position in chapters vector),
+                            // we can find the SMIL file by matching the chapter href
+                            for (chapter_pos, chapter_href) in chapters.iter().enumerate() {
                                 let normalized_chapter_href = strip_base_path_prefix(chapter_href);
                                 
                                 // Try exact match first
                                 if normalized_href == normalized_chapter_href {
-                                    // Find the SMIL file for this chapter index
-                                    if let Some((smil_idx, _)) = smil_files.iter().enumerate()
-                                        .find(|(_, (smil_chapter_idx, _))| *smil_chapter_idx == chapter_idx) {
+                                    // Find the SMIL file with chapter_index matching chapter_pos
+                                    // Since smil_files is sorted by chapter_index, the position in the vector
+                                    // should match chapter_pos (assuming no gaps in chapter indices)
+                                    if let Some((smil_pos, (smil_chapter_idx, _))) = smil_files.iter().enumerate()
+                                        .find(|(_, (smil_chapter_idx, _))| *smil_chapter_idx == chapter_pos) {
                                         needs_media_overlay = true;
-                                        smil_id_to_add = Some(format!("s{:03}", smil_idx + 1));
-                                        log::debug!("  ✓ Exact match! Matched chapter href '{}' (index {}) with SMIL id '{}'", normalized_href, chapter_idx, smil_id_to_add.as_ref().unwrap());
+                                        // Use the position in the sorted smil_files vector for ID generation
+                                        // This matches how we generate IDs when adding SMIL items (line 100)
+                                        smil_id_to_add = Some(format!("s{:03}", smil_pos + 1));
+                                        log::debug!("  ✓ Exact match! Matched chapter href '{}' (position {}) with SMIL id '{}' (stored chapter_index: {})", normalized_href, chapter_pos, smil_id_to_add.as_ref().unwrap(), smil_chapter_idx);
                                         break;
+                                    } else {
+                                        log::debug!("  ✗ No SMIL file found with chapter_index={} for chapter href '{}'", chapter_pos, normalized_href);
                                     }
                                 }
                                 
@@ -198,13 +206,16 @@ pub fn update_content_opf(
                                 let href_filename = normalized_href.split('/').last().unwrap_or(&normalized_href);
                                 let chapter_filename = normalized_chapter_href.split('/').last().unwrap_or(&normalized_chapter_href);
                                 if href_filename == chapter_filename && !href_filename.is_empty() {
-                                    // Find the SMIL file for this chapter index
-                                    if let Some((smil_idx, _)) = smil_files.iter().enumerate()
-                                        .find(|(_, (smil_chapter_idx, _))| *smil_chapter_idx == chapter_idx) {
+                                    // Find the SMIL file with chapter_index matching chapter_pos
+                                    if let Some((smil_pos, (smil_chapter_idx, _))) = smil_files.iter().enumerate()
+                                        .find(|(_, (smil_chapter_idx, _))| *smil_chapter_idx == chapter_pos) {
                                         needs_media_overlay = true;
-                                        smil_id_to_add = Some(format!("s{:03}", smil_idx + 1));
-                                        log::debug!("  ✓ Filename match! Matched chapter by filename '{}' (index {}) with SMIL id '{}'", href_filename, chapter_idx, smil_id_to_add.as_ref().unwrap());
+                                        // Use the position in the sorted smil_files vector for ID generation
+                                        smil_id_to_add = Some(format!("s{:03}", smil_pos + 1));
+                                        log::debug!("  ✓ Filename match! Matched chapter by filename '{}' (position {}) with SMIL id '{}' (stored chapter_index: {})", href_filename, chapter_pos, smil_id_to_add.as_ref().unwrap(), smil_chapter_idx);
                                         break;
+                                    } else {
+                                        log::debug!("  ✗ No SMIL file found with chapter_index={} for chapter filename '{}'", chapter_pos, href_filename);
                                     }
                                 }
                             }
@@ -347,19 +358,27 @@ pub fn update_content_opf(
                             log::debug!("Checking for SMIL match for chapter href '{}' (normalized: '{}', empty item)", href, normalized_href);
                             
                             // Match by comparing manifest href with chapter hrefs
-                            // Then find the corresponding SMIL file using the chapter index
-                            for (chapter_idx, chapter_href) in chapters.iter().enumerate() {
+                            // Since smil_files is sorted by chapter_index, and chapters are processed
+                            // in order (chapter_index matches position in chapters vector),
+                            // we can find the SMIL file by matching the chapter href
+                            for (chapter_pos, chapter_href) in chapters.iter().enumerate() {
                                 let normalized_chapter_href = strip_base_path_prefix(chapter_href);
                                 
                                 // Try exact match first
                                 if normalized_href == normalized_chapter_href {
-                                    // Find the SMIL file for this chapter index
-                                    if let Some((smil_idx, _)) = smil_files.iter().enumerate()
-                                        .find(|(_, (smil_chapter_idx, _))| *smil_chapter_idx == chapter_idx) {
+                                    // Find the SMIL file with chapter_index matching chapter_pos
+                                    // Since smil_files is sorted by chapter_index, the position in the vector
+                                    // should match chapter_pos (assuming no gaps in chapter indices)
+                                    if let Some((smil_pos, (smil_chapter_idx, _))) = smil_files.iter().enumerate()
+                                        .find(|(_, (smil_chapter_idx, _))| *smil_chapter_idx == chapter_pos) {
                                         needs_media_overlay = true;
-                                        smil_id_to_add = Some(format!("s{:03}", smil_idx + 1));
-                                        log::debug!("  ✓ Exact match! Matched chapter href '{}' (index {}) with SMIL id '{}' (empty item)", normalized_href, chapter_idx, smil_id_to_add.as_ref().unwrap());
+                                        // Use the position in the sorted smil_files vector for ID generation
+                                        // This matches how we generate IDs when adding SMIL items (line 100)
+                                        smil_id_to_add = Some(format!("s{:03}", smil_pos + 1));
+                                        log::debug!("  ✓ Exact match! Matched chapter href '{}' (position {}) with SMIL id '{}' (stored chapter_index: {}, empty item)", normalized_href, chapter_pos, smil_id_to_add.as_ref().unwrap(), smil_chapter_idx);
                                         break;
+                                    } else {
+                                        log::debug!("  ✗ No SMIL file found with chapter_index={} for chapter href '{}' (empty item)", chapter_pos, normalized_href);
                                     }
                                 }
                                 
@@ -367,13 +386,16 @@ pub fn update_content_opf(
                                 let href_filename = normalized_href.split('/').last().unwrap_or(&normalized_href);
                                 let chapter_filename = normalized_chapter_href.split('/').last().unwrap_or(&normalized_chapter_href);
                                 if href_filename == chapter_filename && !href_filename.is_empty() {
-                                    // Find the SMIL file for this chapter index
-                                    if let Some((smil_idx, _)) = smil_files.iter().enumerate()
-                                        .find(|(_, (smil_chapter_idx, _))| *smil_chapter_idx == chapter_idx) {
+                                    // Find the SMIL file with chapter_index matching chapter_pos
+                                    if let Some((smil_pos, (smil_chapter_idx, _))) = smil_files.iter().enumerate()
+                                        .find(|(_, (smil_chapter_idx, _))| *smil_chapter_idx == chapter_pos) {
                                         needs_media_overlay = true;
-                                        smil_id_to_add = Some(format!("s{:03}", smil_idx + 1));
-                                        log::debug!("  ✓ Filename match! Matched chapter by filename '{}' (index {}) with SMIL id '{}' (empty item)", href_filename, chapter_idx, smil_id_to_add.as_ref().unwrap());
+                                        // Use the position in the sorted smil_files vector for ID generation
+                                        smil_id_to_add = Some(format!("s{:03}", smil_pos + 1));
+                                        log::debug!("  ✓ Filename match! Matched chapter by filename '{}' (position {}) with SMIL id '{}' (stored chapter_index: {}, empty item)", href_filename, chapter_pos, smil_id_to_add.as_ref().unwrap(), smil_chapter_idx);
                                         break;
+                                    } else {
+                                        log::debug!("  ✗ No SMIL file found with chapter_index={} for chapter filename '{}' (empty item)", chapter_pos, href_filename);
                                     }
                                 }
                             }
