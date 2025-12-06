@@ -21,6 +21,7 @@ use tauri::AppHandle;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::path_validation::validate_file_size;
+use crate::book_service::models::Book;
 
 /// Tauri command wrapper for EPUB to audiobook conversion.
 ///
@@ -41,7 +42,8 @@ use crate::utils::path_validation::validate_file_size;
 /// * `app` - Tauri application handle
 ///
 /// # Returns
-/// `Ok(())` if conversion succeeds.
+/// `Ok(Some(Book))` with the updated book if conversion succeeds and book is found in library.
+/// `Ok(None)` if conversion succeeds but book is not in library.
 ///
 /// # Errors
 /// Returns an error if:
@@ -66,7 +68,7 @@ pub async fn convert_epub_to_audiobook_command(
     epub_data: Vec<u8>,
     voice_id: String,
     app: AppHandle,
-) -> AppResult<()> {
+) -> AppResult<Option<Book>> {
     use base64::{engine::general_purpose, Engine as _};
     use crate::epub::converter::{ConversionProgress, emit_progress};
     
@@ -156,10 +158,10 @@ pub async fn convert_epub_to_audiobook_command(
         .map_err(|e| AppError::Store(format!("Failed to save converted EPUB: {}", e)))?;
     
     // Extract audio tracks from converted EPUB and update book in library
-    update_book_audio_tracks(&converted_epub, &source_path, &app).await
+    let updated_book = update_book_audio_tracks(&converted_epub, &source_path, &app).await
         .map_err(|e| AppError::Store(format!("Failed to update book audio tracks: {}", e)))?;
     
-    Ok(())
+    Ok(updated_book)
 }
 
 /// Update book audio tracks and audio sync map after conversion
@@ -167,11 +169,13 @@ pub async fn convert_epub_to_audiobook_command(
 /// This function parses the converted EPUB to extract audio tracks from the manifest
 /// and builds the audio sync map from SMIL files, then updates the corresponding book
 /// in the library store.
+/// 
+/// Returns the updated Book if found, or None if the book wasn't in the library.
 async fn update_book_audio_tracks(
     converted_epub: &[u8],
     source_path: &str,
     app: &AppHandle,
-) -> Result<(), String> {
+) -> Result<Option<Book>, String> {
     use crate::book_service::storage::{load_all_books, save_all_books};
     use crate::epub::parser::{find_opf_path, parse_opf_content, extract_audio_tracks_from_manifest, extract_chapters_from_epub};
     use crate::epub::converter::smil::build_audio_sync_map;
@@ -252,14 +256,17 @@ async fn update_book_audio_tracks(
         book.audio_tracks = audio_tracks;
         book.audio_sync_map = audio_sync_map;
         log::info!("Updated audio tracks for book '{}' ({} tracks) and audio sync map", book.title, book.audio_tracks.len());
+        
+        // Clone the updated book before saving
+        let updated_book = book.clone();
+        
+        save_all_books(app, &books).await
+            .map_err(|e| format!("Failed to save books: {}", e))?;
+        
+        Ok(Some(updated_book))
     } else {
         log::warn!("Book with source_path '{}' not found in library, skipping audio track update", source_path);
         // Don't return error - book might not be in library yet
-        return Ok(());
+        Ok(None)
     }
-    
-    save_all_books(app, &books).await
-        .map_err(|e| format!("Failed to save books: {}", e))?;
-    
-    Ok(())
 }

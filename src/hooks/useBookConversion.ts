@@ -64,8 +64,8 @@ export function useBookConversion(
         throw new Error("Failed to load EPUB file for conversion");
       }
       
-      // Convert EPUB to audiobook - backend handles everything
-      await convertEpubToAudiobook({
+      // Convert EPUB to audiobook - backend handles everything and returns updated Book
+      const updatedBook = await convertEpubToAudiobook({
         sourcePath: book.sourcePath,
         epubData: epubBuffer,
         voiceId,
@@ -79,17 +79,23 @@ export function useBookConversion(
         },
       });
       
-      // Remove the original book from library
-      setLibrary((prev) => prev.filter((b) => b.id !== book.id));
-      
       // Clear book cache to force fresh data from backend
       clearBookCache(book.sourcePath);
       
-      
-      
-      // Refetch library from backend to ensure we have the latest data
-      if (refreshLibrary) {
-        await refreshLibrary();
+      // Update library with the returned book data directly
+      if (updatedBook) {
+        setLibrary((prev) => {
+          const index = prev.findIndex((b) => b.id === updatedBook.id || b.sourcePath === updatedBook.sourcePath);
+          if (index !== -1) {
+            // Replace existing book with updated version
+            const updated = [...prev];
+            updated[index] = updatedBook;
+            return updated;
+          } else {
+            // Book not found, add it (shouldn't happen, but safe)
+            return [...prev, updatedBook];
+          }
+        });
       }
       
       setPendingBookForConversion(null);
@@ -180,8 +186,9 @@ export function useBookConversion(
         epubSize: epubBuffer.byteLength,
       });
       
+      let updatedBook: Book | null = null;
       try {
-        await convertEpubToAudiobook({
+        updatedBook = await convertEpubToAudiobook({
           sourcePath: book.sourcePath,
           epubData: epubBuffer,
           voiceId,
@@ -199,23 +206,28 @@ export function useBookConversion(
         throw conversionError; // Re-throw to be caught by outer catch
       }
       
-      console.debug("Conversion completed, reloading book from backend", {
+      console.debug("Conversion completed, updating library with returned book data", {
         sourcePath: book.sourcePath,
+        hasUpdatedBook: updatedBook !== null,
       });
       
       // Clear book cache to force fresh data from backend
       clearBookCache(book.sourcePath);
       
-      // Backend has stored the converted EPUB, reload it to update metadata
-      const convertedBuffer = await getEpubBuffer(book.sourcePath);
-      if (!convertedBuffer) {
-        throw new Error("Converted EPUB not found in backend store");
-      }
-      
-      
-      // Refetch library from backend to ensure we have the latest data
-      if (refreshLibrary) {
-        await refreshLibrary();
+      // Update library with the returned book data directly
+      if (updatedBook) {
+        setLibrary((prev) => {
+          const index = prev.findIndex((b) => b.id === updatedBook.id || b.sourcePath === updatedBook.sourcePath);
+          if (index !== -1) {
+            // Replace existing book with updated version
+            const updated = [...prev];
+            updated[index] = updatedBook;
+            return updated;
+          } else {
+            // Book not found, add it (shouldn't happen, but safe)
+            return [...prev, updatedBook];
+          }
+        });
       }
       
       setConversionProgress(null);

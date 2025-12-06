@@ -44,7 +44,7 @@ export function useLibraryOperations(
             const processedIds = new Set<string>();
             const processedPaths = new Set<string>();
 
-            // Start with backend books (source of truth)
+            // Start with backend books (source of truth) - these are the most up-to-date
             books.forEach((book) => {
               mergedBooks.push(book);
               processedIds.add(book.id);
@@ -64,6 +64,8 @@ export function useLibraryOperations(
               }
             });
 
+            // Always return a new array to ensure React detects the change
+            // This is important when books are updated (e.g., after conversion)
             return mergedBooks;
           });
         }

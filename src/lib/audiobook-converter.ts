@@ -20,13 +20,16 @@ type ConversionOptions = {
   signal?: AbortSignal;
 };
 
+import type { Book } from "../types/reader";
+
 /**
  * Convert an EPUB to audiobook format (backend implementation)
  * The backend handles everything: extracts chapters from EPUB, generates audio, and stores the result
+ * Returns the updated Book with audio tracks if found in library, or null if not found
  */
 export async function convertEpubToAudiobook(
   options: ConversionOptions,
-): Promise<void> {
+): Promise<Book | null> {
   const { sourcePath, epubData, voiceId, onProgress, signal } = options;
   
   // Check for cancellation before starting
@@ -65,12 +68,14 @@ export async function convertEpubToAudiobook(
     // Convert ArrayBuffer to number array for Tauri
     const epubBytes = Array.from(new Uint8Array(epubData));
     
-    // Call backend conversion function - backend handles everything
-    await invoke("convert_epub_to_audiobook_command", {
+    // Call backend conversion function - backend handles everything and returns updated Book
+    const updatedBook = await invoke<Book | null>("convert_epub_to_audiobook_command", {
       sourcePath,
       epubData: epubBytes,
       voiceId,
     });
+    
+    return updatedBook;
   } finally {
     // Clean up event listener
     unlisten();
