@@ -4,7 +4,7 @@ use tauri::{AppHandle, WebviewWindow};
 #[derive(Debug, Clone)]
 pub struct WindowState {
     pub size: (f64, f64),
-    pub position: Option<(f64, f64)>,
+    // pub position: Option<(f64, f64)>,
     pub maximized: bool,
 }
 
@@ -12,7 +12,7 @@ impl Default for WindowState {
     fn default() -> Self {
         Self {
             size: (800.0, 600.0),
-            position: None,
+            // position: None,
             maximized: false,
         }
     }
@@ -41,17 +41,17 @@ pub fn load_window_state(app: &AppHandle) -> WindowState {
                     }
                 }
             }
-            if let Some(pos) = saved_state.get("position") {
-                if let (Some(x), Some(y)) = (
-                    pos.get("x").and_then(|v| v.as_f64()),
-                    pos.get("y").and_then(|v| v.as_f64()),
-                ) {
-                    // Validate position is reasonable
-                    if x >= -10000.0 && x <= 10000.0 && y >= -10000.0 && y <= 10000.0 {
-                        state.position = Some((x, y));
-                    }
-                }
-            }
+            // if let Some(pos) = saved_state.get("position") {
+            //     if let (Some(x), Some(y)) = (
+            //         pos.get("x").and_then(|v| v.as_f64()),
+            //         pos.get("y").and_then(|v| v.as_f64()),
+            //     ) {
+            //         // Validate position is reasonable
+            //         if x >= -10000.0 && x <= 10000.0 && y >= -10000.0 && y <= 10000.0 {
+            //             state.position = Some((x, y));
+            //         }
+            //     }
+            // }
             if let Some(max) = saved_state.get("maximized").and_then(|v| v.as_bool()) {
                 state.maximized = max;
             }
@@ -68,16 +68,16 @@ pub fn save_window_state(window: &WebviewWindow, app: &AppHandle) {
         "window-state.json"
     ).build() {
         if let Ok(size) = window.inner_size() {
-            if let Ok(position) = window.outer_position() {
+            if let Ok(_) = window.outer_position() {
                 let state = serde_json::json!({
                     "size": {
                         "width": size.width as f64,
                         "height": size.height as f64,
                     },
-                    "position": {
-                        "x": position.x as f64,
-                        "y": position.y as f64,
-                    },
+                    // "position": {
+                    //     "x": position.x as f64,
+                    //     "y": position.y as f64,
+                    // },
                     "maximized": window.is_maximized().unwrap_or(false),
                 });
                 
@@ -126,11 +126,11 @@ pub fn create_main_window(app: &tauri::App) -> Result<WebviewWindow, String> {
     #[cfg(not(target_os = "ios"))]
     {
         // Restore window position if available
-        if let Some((x, y)) = window_state.position {
-            if let Err(e) = window.set_position(tauri::LogicalPosition::new(x, y)) {
-                log::warn!("Failed to restore window position: {}", e);
-            }
-        }
+        // if let Some((x, y)) = window_state.position {
+        //     if let Err(e) = window.set_position(tauri::LogicalPosition::new(x, y)) {
+        //         log::warn!("Failed to restore window position: {}", e);
+        //     }
+        // }
         
         // Restore maximized state if it was maximized
         if window_state.maximized {

@@ -61,12 +61,15 @@ anyhow = "1.0"
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
 
 # TTS engine (uses CoreML EP on Apple platforms)
-kokoros = { path = "../Kokoros/kokoros", default-features = true, features = [] }
+# espeak is enabled by default on macOS, but not on iOS
+kokoros = { path = "../Kokoros/kokoros", default-features = false, features = ["cpu"] }
 ort = { version = "2.0.0-rc.10", default-features = true }
 ndarray = "0.16"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
+# Enable espeak on macOS (but not iOS)
+kokoros = { path = "../Kokoros/kokoros", default-features = false, features = ["cpu", "espeak"] }
 
 
 [dev-dependencies]
