@@ -96,6 +96,7 @@ export function useBookConversion(
               // Create merged book with only audio fields updated
               const mergedBook: Book = {
                 ...currentBook,
+                chapters: updatedBook.chapters,
                 fileSizeBytes: updatedBook.fileSizeBytes,
                 // Only update audio-related fields
                 audioTracks: updatedBook.audioTracks,

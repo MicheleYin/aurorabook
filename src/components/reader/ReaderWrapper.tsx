@@ -177,21 +177,32 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
   // Chapter loading helper
   const ensureChapterLoaded = useCallback(async (
     bookId: string,
-    chapter: Chapter
+    chapter: Chapter,
+    forceReload: boolean = false
   ): Promise<Chapter | null> => {
-    // Check if already has content
-    if (chapter.contentHtml) {
+    // If forcing reload, clear cache first
+    if (forceReload) {
+      chapterLoader.clearCache(bookId);
+      // Also clear the lazy chapter loader cache
+      const { clearBookCache } = await import("../../lib/lazy-chapter-loader");
+      clearBookCache(bookId);
+    }
+
+    // Check if already has content (skip if forcing reload)
+    if (!forceReload && chapter.contentHtml) {
       chapterLoader.setLoadedChapter(chapter);
       chapterLoader.setIsLoading(false);
       return chapter;
     }
 
-    // Check cache
-    const cached = chapterLoader.getCachedChapter(bookId, chapter.id);
-    if (cached && cached.contentHtml) {
-      chapterLoader.setLoadedChapter(cached);
-      chapterLoader.setIsLoading(false);
-      return cached;
+    // Check cache (skip if forcing reload)
+    if (!forceReload) {
+      const cached = chapterLoader.getCachedChapter(bookId, chapter.id);
+      if (cached && cached.contentHtml) {
+        chapterLoader.setLoadedChapter(cached);
+        chapterLoader.setIsLoading(false);
+        return cached;
+      }
     }
 
     // Load from backend (this will set isLoading to true, then false when done)
@@ -204,6 +215,29 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     chapterLoader.setIsLoading(false);
     return null;
   }, [chapterLoader]);
+
+  // Handle chapter reload (for when content is missing spans)
+  const handleChapterReload = useCallback(async (chapterId: string) => {
+    if (!activeBook || !activeChapter || activeChapter.id !== chapterId) {
+      return;
+    }
+
+    console.log("[ReaderWrapper] Reloading chapter due to missing spans", {
+      chapterId,
+      bookId: activeBook.id,
+    });
+
+    // Force reload the chapter
+    const reloaded = await ensureChapterLoaded(activeBook.id, activeChapter, true);
+    if (reloaded && reloaded.contentHtml) {
+      // Update the chapter in state by triggering a re-render
+      // The chapter change handler will pick it up
+      setChapterAnimationState("entering");
+      setTimeout(() => {
+        setChapterAnimationState("entered");
+      }, 50);
+    }
+  }, [activeBook, activeChapter, ensureChapterLoaded]);
 
   // Callback when chapter is loaded and ready (called from ReaderViewport)
   // This handles restoration for newly loaded chapters (not cached/pre-loaded)
@@ -414,6 +448,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     onCloseAudioPlayer,
     chromeVisible,
     onChapterChange: handleAudioSyncChapterChange,
+    onChapterReload: handleChapterReload,
   });
 
   // Handle audio progress updates from App.tsx

@@ -174,31 +174,40 @@
 
   /* Audio highlight animations */
   @keyframes audio-highlight-fade-in {
-    from {
+    0% {
       opacity: 0;
-      background-color: transparent;
+      transform: scale(0.98);
+      box-shadow: 0 0 0 0 rgba(234, 179, 8, 0);
     }
-    to {
+    50% {
+      box-shadow: 0 0 6px 2px rgba(234, 179, 8, 0.4);
+    }
+    100% {
       opacity: 1;
+      transform: scale(1);
+      box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
     }
   }
 
   @keyframes audio-highlight-fade-out {
-    from {
+    0% {
       opacity: 1;
+      transform: scale(1);
+      box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
     }
-    to {
+    100% {
       opacity: 0;
-      background-color: transparent;
+      transform: scale(0.98);
+      box-shadow: 0 0 0 0 rgba(234, 179, 8, 0);
     }
   }
 
   @keyframes audio-highlight-glow {
     0%, 100% {
-      box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.4);
+      box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
     }
     50% {
-      box-shadow: 0 0 8px 2px rgba(234, 179, 8, 0.6);
+      box-shadow: 0 0 8px 2px rgba(234, 179, 8, 0.5);
     }
   }
 
@@ -235,47 +244,72 @@
     border-radius: 2px;
     position: relative;
     display: inline;
-    /* Smooth transitions for all properties */
+    /* Smooth transitions for all properties with spring-like easing */
     transition: 
-      background-color var(--anim-duration-normal) var(--anim-easing-ease-in-out),
-      opacity var(--anim-duration-normal) var(--anim-easing-ease-in-out),
-      box-shadow var(--anim-duration-normal) var(--anim-easing-ease-in-out);
+      background-color var(--anim-duration-slow) var(--anim-easing-ease-out),
+      opacity var(--anim-duration-slow) var(--anim-easing-ease-out),
+      box-shadow var(--anim-duration-slow) var(--anim-easing-ease-out),
+      transform var(--anim-duration-slow) var(--anim-easing-ease-out);
     /* Subtle glow effect */
     box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
+    /* Prevent layout shifts from transform */
+    transform: scale(1);
+    will-change: opacity, box-shadow, transform;
   }
 
   /* Fade-in effect when highlight first appears */
   .audio-highlight.audio-highlight-enter {
     animation: 
-      audio-highlight-fade-in var(--anim-duration-normal) var(--anim-easing-ease-out) forwards;
+      audio-highlight-fade-in var(--anim-duration-slow) var(--anim-easing-ease-out) forwards;
   }
 
   /* Enhanced glow and pulse for active highlighting */
   .audio-highlight.audio-highlight-active {
-    /* Active state uses base styling - no additional properties to avoid layout shifts */
+    /* Active state with smooth transitions */
     opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
   }
 
   /* Fade out animation when removing highlight */
   .audio-highlight.audio-highlight-exit {
-    /* Exit state uses base styling - no additional properties to avoid layout shifts */
-    opacity: 1;
+    animation: 
+      audio-highlight-fade-out var(--anim-duration-slow) var(--anim-easing-ease-in) forwards;
   }
 
   /* Auto-scroll visual indicator - subtle background tint without borders */
   @keyframes auto-scroll-pulse {
     0%, 100% {
-      background-color: transparent;
+      opacity: 0;
     }
     50% {
-      background-color: rgba(59, 130, 246, 0.02);
+      opacity: 1;
     }
   }
 
   .auto-scroll-active {
-    /* Subtle background indicator when auto-scroll is active - no borders */
+    /* Use pseudo-element overlay to preserve base background color */
+    position: relative;
+  }
+
+  .auto-scroll-active::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: 0;
+    /* Light blue tint for light theme, subtle blue for dark theme */
+    background-color: rgba(59, 130, 246, 0.02);
     animation: auto-scroll-pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-    transition: background-color var(--anim-duration-medium) var(--anim-easing-ease-in-out);
+  }
+
+  /* Ensure content wrapper and all content is above the overlay */
+  .auto-scroll-active > * {
+    position: relative;
+    z-index: 1;
   }
 
   /* Smooth transition for auto-scroll toggle button */

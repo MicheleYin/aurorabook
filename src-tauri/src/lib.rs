@@ -2,7 +2,7 @@
 // ONNX Runtime with CoreML EP support (macOS/iOS only)
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 
-mod book_service;
+pub mod book_service;  // Made public for testing
 mod resources;
 mod tts_commands;
 mod tts;

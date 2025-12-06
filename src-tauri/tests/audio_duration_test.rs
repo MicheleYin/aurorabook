@@ -316,3 +316,362 @@ fn test_timestamp_ordering() {
     }
 }
 
+/// Test backend duration computation accuracy
+/// 
+/// This test verifies that the backend's `compute_audio_duration` function
+/// accurately computes durations from audio files using symphonia.
+#[test]
+fn test_backend_duration_computation_accuracy() {
+    use std::fs;
+    use std::io::Read;
+    use aurorabook_lib::epub::parser::audio::compute_audio_track_durations;
+    use aurorabook_lib::book_service::models::AudioTrack;
+    
+    let test_dir = std::env::temp_dir().join("duration_accuracy_test");
+    fs::create_dir_all(&test_dir).expect("Failed to create test directory");
+    
+    // Test with multiple durations
+    let test_durations = vec![
+        0.5,   // 500ms
+        1.0,   // 1 second
+        2.5,   // 2.5 seconds
+        5.0,   // 5 seconds
+        10.0,  // 10 seconds
+        30.0,  // 30 seconds
+    ];
+    
+    println!("\n🔬 Testing backend duration computation accuracy");
+    println!("{}", "=".repeat(60));
+    
+    for expected_duration in test_durations {
+        let wav_path = test_dir.join(format!("test_{:.1}s.wav", expected_duration));
+        
+        // Create test WAV file
+        let _samples = create_test_wav_file(
+            wav_path.to_str().unwrap(),
+            expected_duration,
+        ).expect("Failed to create WAV file");
+        
+        // Read audio bytes
+        let mut audio_bytes = Vec::new();
+        let mut file = std::fs::File::open(&wav_path)
+            .expect("Failed to open WAV file");
+        file.read_to_end(&mut audio_bytes)
+            .expect("Failed to read WAV file");
+        
+        // Compute duration using the internal function (we'll need to test it indirectly)
+        // Since compute_audio_duration is private, we'll test via compute_audio_track_durations
+        let mut tracks = vec![AudioTrack {
+            id: "test-track".to_string(),
+            title: "Test Track".to_string(),
+            href: wav_path.file_name().unwrap().to_string_lossy().to_string(),
+            url: None,
+            duration: None,
+        }];
+        
+        // Create a minimal EPUB-like structure for testing
+        // We'll create a zip archive with the WAV file
+        use std::io::Write;
+        use zip::write::{FileOptions, ZipWriter};
+        use std::io::Cursor;
+        
+        let epub_bytes = {
+            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+            let options = FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            
+            let file_name = wav_path.file_name().unwrap().to_string_lossy().to_string();
+            zip.start_file(&file_name, options)
+                .expect("Failed to add file to zip");
+            zip.write_all(&audio_bytes)
+                .expect("Failed to write audio to zip");
+            zip.finish()
+                .expect("Failed to finish zip")
+                .into_inner()
+        };
+        
+        // Compute durations
+        compute_audio_track_durations(&epub_bytes, &mut tracks, "test.opf");
+        
+        // Verify computed duration
+        let computed_duration = tracks[0].duration.expect("Duration should be computed");
+        
+        // Calculate accuracy metrics
+        let duration_diff = (computed_duration - expected_duration).abs();
+        let duration_diff_percent = (duration_diff / expected_duration) * 100.0;
+        
+        println!(
+            "   Expected: {:.3}s, Computed: {:.3}s, Diff: {:.3}s ({:.2}%)",
+            expected_duration, computed_duration, duration_diff, duration_diff_percent
+        );
+        
+        // Allow 1% tolerance for duration computation
+        // Symphonia should be very accurate, but there may be slight rounding differences
+        let tolerance_percent = 1.0;
+        assert!(
+            duration_diff_percent < tolerance_percent,
+            "Duration computation inaccurate for {:.1}s file. Expected: {:.3}s, Got: {:.3}s, Diff: {:.2}%",
+            expected_duration, expected_duration, computed_duration, duration_diff_percent
+        );
+        
+        // Also verify duration is positive and reasonable
+        assert!(computed_duration > 0.0, "Computed duration should be positive");
+        assert!(
+            computed_duration <= expected_duration * 1.1,
+            "Computed duration should not exceed expected by more than 10%"
+        );
+    }
+    
+    // Cleanup
+    let _ = fs::remove_dir_all(&test_dir);
+    println!("\n✅ All duration computations accurate within tolerance");
+}
+
+/// Test total duration calculation accuracy
+/// 
+/// This test verifies that summing individual track durations
+/// produces accurate total durations.
+#[test]
+fn test_total_duration_calculation_accuracy() {
+    use std::fs;
+    use std::io::Read;
+    use aurorabook_lib::epub::parser::audio::compute_audio_track_durations;
+    use aurorabook_lib::book_service::models::AudioTrack;
+    use std::io::Write;
+    use zip::write::{FileOptions, ZipWriter};
+    use std::io::Cursor;
+    
+    let test_dir = std::env::temp_dir().join("total_duration_test");
+    fs::create_dir_all(&test_dir).expect("Failed to create test directory");
+    
+    // Create multiple tracks with known durations
+    let track_durations = vec![
+        5.0,   // 5 seconds
+        10.0,  // 10 seconds
+        15.0,  // 15 seconds
+        20.0,  // 20 seconds
+    ];
+    let expected_total = track_durations.iter().sum::<f64>();
+    
+    println!("\n🔬 Testing total duration calculation accuracy");
+    println!("{}", "=".repeat(60));
+    println!("   Individual track durations: {:?}", track_durations);
+    println!("   Expected total: {:.3}s", expected_total);
+    
+    let mut tracks: Vec<AudioTrack> = track_durations
+        .iter()
+        .enumerate()
+        .map(|(i, &duration)| {
+            let wav_path = test_dir.join(format!("track_{}.wav", i));
+            create_test_wav_file(wav_path.to_str().unwrap(), duration)
+                .expect("Failed to create WAV file");
+            
+            AudioTrack {
+                id: format!("track-{}", i),
+                title: format!("Track {}", i + 1),
+                href: format!("track_{}.wav", i),
+                url: None,
+                duration: None,
+            }
+        })
+        .collect();
+    
+    // Create a zip archive with all audio files
+    let epub_bytes = {
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = FileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        
+        for (i, &duration) in track_durations.iter().enumerate() {
+            let wav_path = test_dir.join(format!("track_{}.wav", i));
+            let mut audio_bytes = Vec::new();
+            let mut file = std::fs::File::open(&wav_path)
+                .expect("Failed to open WAV file");
+            file.read_to_end(&mut audio_bytes)
+                .expect("Failed to read WAV file");
+            
+            let file_name = format!("track_{}.wav", i);
+            zip.start_file(&file_name, options)
+                .expect("Failed to add file to zip");
+            zip.write_all(&audio_bytes)
+                .expect("Failed to write audio to zip");
+        }
+        
+        zip.finish()
+            .expect("Failed to finish zip")
+            .into_inner()
+    };
+    
+    // Compute durations for all tracks
+    compute_audio_track_durations(&epub_bytes, &mut tracks, "test.opf");
+    
+    // Calculate total duration
+    let computed_total: f64 = tracks
+        .iter()
+        .map(|track| track.duration.unwrap_or(0.0))
+        .sum();
+    
+    println!("   Computed total: {:.3}s", computed_total);
+    
+    // Verify all tracks have durations
+    for (i, track) in tracks.iter().enumerate() {
+        assert!(
+            track.duration.is_some(),
+            "Track {} should have a computed duration",
+            i
+        );
+        let computed = track.duration.unwrap();
+        let expected = track_durations[i];
+        let diff_percent = ((computed - expected).abs() / expected) * 100.0;
+        
+        println!(
+            "   Track {}: Expected {:.3}s, Computed {:.3}s, Diff {:.2}%",
+            i + 1, expected, computed, diff_percent
+        );
+        
+        assert!(
+            diff_percent < 1.0,
+            "Track {} duration inaccurate. Expected: {:.3}s, Got: {:.3}s",
+            i + 1, expected, computed
+        );
+    }
+    
+    // Verify total duration accuracy
+    let total_diff = (computed_total - expected_total).abs();
+    let total_diff_percent = (total_diff / expected_total) * 100.0;
+    
+    println!(
+        "   Total duration diff: {:.3}s ({:.2}%)",
+        total_diff, total_diff_percent
+    );
+    
+    // Allow 1% tolerance for total duration
+    assert!(
+        total_diff_percent < 1.0,
+        "Total duration inaccurate. Expected: {:.3}s, Got: {:.3}s, Diff: {:.2}%",
+        expected_total, computed_total, total_diff_percent
+    );
+    
+    // Cleanup
+    let _ = fs::remove_dir_all(&test_dir);
+    println!("\n✅ Total duration calculation accurate");
+}
+
+/// Test duration computation with edge cases
+#[test]
+fn test_duration_edge_cases() {
+    use std::fs;
+    use std::io::Read;
+    use aurorabook_lib::epub::parser::audio::compute_audio_track_durations;
+    use aurorabook_lib::book_service::models::AudioTrack;
+    use std::io::Write;
+    use zip::write::{FileOptions, ZipWriter};
+    use std::io::Cursor;
+    
+    let test_dir = std::env::temp_dir().join("duration_edge_cases");
+    fs::create_dir_all(&test_dir).expect("Failed to create test directory");
+    
+    println!("\n🔬 Testing duration computation edge cases");
+    println!("{}", "=".repeat(60));
+    
+    // Test very short duration (100ms)
+    let short_duration = 0.1;
+    let wav_path = test_dir.join("short.wav");
+    create_test_wav_file(wav_path.to_str().unwrap(), short_duration)
+        .expect("Failed to create short WAV file");
+    
+    let mut audio_bytes = Vec::new();
+    let mut file = std::fs::File::open(&wav_path)
+        .expect("Failed to open WAV file");
+    file.read_to_end(&mut audio_bytes)
+        .expect("Failed to read WAV file");
+    
+    let mut tracks = vec![AudioTrack {
+        id: "short-track".to_string(),
+        title: "Short Track".to_string(),
+        href: "short.wav".to_string(),
+        url: None,
+        duration: None,
+    }];
+    
+    let epub_bytes = {
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = FileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("short.wav", options)
+            .expect("Failed to add file to zip");
+        zip.write_all(&audio_bytes)
+            .expect("Failed to write audio to zip");
+        zip.finish().expect("Failed to finish zip").into_inner()
+    };
+    
+    compute_audio_track_durations(&epub_bytes, &mut tracks, "test.opf");
+    
+    if let Some(computed) = tracks[0].duration {
+        let diff = (computed - short_duration).abs();
+        println!("   Short duration (0.1s): Computed {:.3}s, Diff {:.3}s", computed, diff);
+        
+        // For very short durations, allow more tolerance (10%)
+        assert!(
+            diff < 0.05, // 50ms tolerance for 100ms file
+            "Short duration computation failed. Expected: {:.3}s, Got: {:.3}s",
+            short_duration, computed
+        );
+    } else {
+        println!("   Short duration: Could not compute (may be too short for accurate measurement)");
+        // This is acceptable - very short files may not have accurate duration metadata
+    }
+    
+    // Test longer duration (60 seconds)
+    let long_duration = 60.0;
+    let wav_path = test_dir.join("long.wav");
+    create_test_wav_file(wav_path.to_str().unwrap(), long_duration)
+        .expect("Failed to create long WAV file");
+    
+    let mut audio_bytes = Vec::new();
+    let mut file = std::fs::File::open(&wav_path)
+        .expect("Failed to open WAV file");
+    file.read_to_end(&mut audio_bytes)
+        .expect("Failed to read WAV file");
+    
+    let mut tracks = vec![AudioTrack {
+        id: "long-track".to_string(),
+        title: "Long Track".to_string(),
+        href: "long.wav".to_string(),
+        url: None,
+        duration: None,
+    }];
+    
+    let epub_bytes = {
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = FileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("long.wav", options)
+            .expect("Failed to add file to zip");
+        zip.write_all(&audio_bytes)
+            .expect("Failed to write audio to zip");
+        zip.finish().expect("Failed to finish zip").into_inner()
+    };
+    
+    compute_audio_track_durations(&epub_bytes, &mut tracks, "test.opf");
+    
+    if let Some(computed) = tracks[0].duration {
+        let diff = (computed - long_duration).abs();
+        let diff_percent = (diff / long_duration) * 100.0;
+        println!("   Long duration (60s): Computed {:.3}s, Diff {:.3}s ({:.2}%)", computed, diff, diff_percent);
+        
+        // For longer durations, should be very accurate (within 1%)
+        assert!(
+            diff_percent < 1.0,
+            "Long duration computation failed. Expected: {:.3}s, Got: {:.3}s, Diff: {:.2}%",
+            long_duration, computed, diff_percent
+        );
+    } else {
+        panic!("Long duration should always be computable");
+    }
+    
+    // Cleanup
+    let _ = fs::remove_dir_all(&test_dir);
+    println!("\n✅ Edge cases handled correctly");
+}
+

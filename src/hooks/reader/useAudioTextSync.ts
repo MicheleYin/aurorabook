@@ -13,7 +13,8 @@ export function useAudioTextSync(
   autoScrollEnabled: boolean,
   isRestoringScroll: boolean = false,
   chromeVisible: boolean = true,
-  onChapterChange?: (chapterId: string, elementId?: string) => void
+  onChapterChange?: (chapterId: string, elementId?: string) => void,
+  onChapterReload?: (chapterId: string) => void
 ) {
   const [highlightedElementId, setHighlightedElementId] = useState<string | null>(null);
   const lastScrolledElementRef = useRef<string | null>(null);
@@ -21,6 +22,8 @@ export function useAudioTextSync(
   const scrollThrottleMs = 100; // Throttle scrolling to at most once per 100ms
   const lastChapterChangeTimeRef = useRef<number>(0);
   const chapterChangeThrottleMs = 500; // Throttle chapter changes to avoid rapid switching
+  const lastReloadAttemptRef = useRef<{ chapterId: string; timestamp: number } | null>(null);
+  const reloadThrottleMs = 2000; // Throttle reload attempts to avoid infinite loops
   
   // Calculate header offset dynamically when scrolling
   const getHeaderOffset = useCallback((): number => {
@@ -142,6 +145,48 @@ export function useAudioTextSync(
       chapterHref: segment.chapterHref,
     });
 
+    // Check if the element exists in the DOM
+    // If not, and we have audio sync, the chapter might need to be reloaded with spans
+    if (contentRef.current) {
+      const selector = typeof CSS !== "undefined" && CSS.escape
+        ? `#${CSS.escape(segment.textElementId)}`
+        : `#${segment.textElementId}`;
+      const element = contentRef.current.querySelector<HTMLElement>(selector);
+      
+      if (!element) {
+        // Element not found - check if chapter content has any spans at all
+        const chapterContent = contentRef.current.querySelector('[data-reader-chapter-content="true"]');
+        const hasAnySpans = chapterContent?.querySelector('span[id^="f"]');
+        
+        if (!hasAnySpans && onChapterReload) {
+          // Chapter content doesn't have the required spans - need to reload
+          const now = Date.now();
+          const lastAttempt = lastReloadAttemptRef.current;
+          const shouldReload = !lastAttempt || 
+            lastAttempt.chapterId !== chapter.id || 
+            (now - lastAttempt.timestamp) >= reloadThrottleMs;
+          
+          if (shouldReload) {
+            console.warn("[Audio Sync] Chapter content missing spans, triggering reload", {
+              chapterId: chapter.id,
+              textElementId: segment.textElementId,
+              hasChapterContent: !!chapterContent,
+            });
+            lastReloadAttemptRef.current = { chapterId: chapter.id, timestamp: now };
+            onChapterReload(chapter.id);
+            // Don't set highlight yet - wait for reload
+            return;
+          }
+        } else if (!element) {
+          console.warn("[Audio Sync] Element not found in DOM", {
+            textElementId: segment.textElementId,
+            hasChapterContent: !!chapterContent,
+            hasAnySpans: !!hasAnySpans,
+          });
+        }
+      }
+    }
+
     // Always update highlighting, even if element hasn't changed
     // This ensures highlighting is applied when audio sync updates
     setHighlightedElementId(segment.textElementId);
@@ -196,7 +241,7 @@ export function useAudioTextSync(
         hasContentRef: !!contentRef.current,
       });
     }
-  }, [autoScrollEnabled, isRestoringScroll, contentRef, getHeaderOffset, onChapterChange]);
+  }, [autoScrollEnabled, isRestoringScroll, contentRef, getHeaderOffset, onChapterChange, onChapterReload]);
 
   const clearHighlight = useCallback(() => {
     setHighlightedElementId(null);
