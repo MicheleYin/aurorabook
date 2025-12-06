@@ -74,7 +74,7 @@ export function LibraryGrid({
   const booksToRender = [...allBooks, ...exitingBooks];
 
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 library-grid-transition">
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:flex 2xl:flex-wrap library-grid-transition">
       {booksToRender.map((book, index) => {
         const isExiting = exitingBookIds.has(book.id);
         const isVisible = books.some(b => b.id === book.id);
@@ -102,7 +102,8 @@ export function LibraryGrid({
             key={book.id}
             className={cn(
               isExiting ? "library-item-exit" : "library-item-enter",
-              staggerDelay(displayIndex, 30)
+              staggerDelay(displayIndex, 30),
+              "2xl:w-[200px]"
             )}
           >
             <BookCoverCard

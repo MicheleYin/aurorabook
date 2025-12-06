@@ -80,7 +80,7 @@ export function ReaderViewport({
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto p-8">
-          <p className="prose max-w-3xl text-muted-foreground">
+          <p className="prose text-muted-foreground">
             Loading reader...
           </p>
         </div>
@@ -285,7 +285,7 @@ export function ReaderViewport({
             paddingConfig?.outer || "p-8",
           )}
         >
-          <p className="prose max-w-3xl text-muted-foreground">
+          <p className="prose text-muted-foreground">
             Once you import an EPUB, pick a chapter to start reading.
           </p>
         </div>
@@ -362,7 +362,7 @@ export function ReaderViewport({
       >
         <div
           className={cn(
-            "mx-auto flex w-full max-w-3xl flex-col gap-8",
+            "mx-auto flex w-full flex-col gap-8",
             anim("normal", "padding"),
             paddingConfig.innerBase,
             innerVerticalPaddingClass,
