@@ -8,15 +8,25 @@
     "dialog:default",
     "store:default",
     "opener:default",
-    { "identifier": "fs:allow-read-file", "allow": [{ "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
-    { "identifier": "fs:allow-write-file", "allow": [{ "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }, { "path": "$DESKTOP/**" }] },
-    
+    "os:default",
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        { "path": "$DOWNLOAD/**" },
+        { "path": "$DOCUMENT/**" },
+        { "path": "$DESKTOP/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        { "path": "$DOWNLOAD/**" },
+        { "path": "$DOCUMENT/**" },
+        { "path": "$DESKTOP/**" }
+      ]
+    },
 
-    
-        "sql:default",
-        "sql:allow-execute"
-
-        
-    
+    "sql:default",
+    "sql:allow-execute"
   ]
 }

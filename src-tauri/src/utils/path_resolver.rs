@@ -175,5 +175,87 @@ impl ResourcePathResolver {
 
         Ok(canonical)
     }
+
+    /// Find G2P (Phonetisaurus) model file path.
+    ///
+    /// This function searches for G2P model files in multiple locations in order:
+    /// 1. Tauri resource directory (if AppHandle is provided) - for bundled apps
+    /// 2. Current working directory (development mode)
+    /// 3. Environment variable (`G2P_MODEL_DIR`)
+    ///
+    /// # Arguments
+    /// * `app` - Optional Tauri AppHandle for accessing resource directories
+    /// * `language` - Language code (e.g., "en-gb", "en-us")
+    ///
+    /// # Returns
+    /// Path to the model.fst file if found.
+    ///
+    /// # Errors
+    /// Returns `AppError::ResourceNotFound` if the model cannot be found.
+    pub fn find_g2p_model(app: Option<&AppHandle>, language: &str) -> AppResult<PathBuf> {
+        // Map language codes to MFA model directory names
+        let mfa_model_dir = match language {
+            "en" | "en-us" => "english_us_mfa",
+            "en-gb" => "english_uk_mfa",
+            _ => {
+                return Err(AppError::ResourceNotFound(format!(
+                    "Unsupported language code for G2P: {}",
+                    language
+                )));
+            }
+        };
+
+        let mut possible_paths: Vec<PathBuf> = Vec::new();
+
+        // 1. Try resource directory from app handle (bundled app)
+        if let Some(app) = app {
+            if let Ok(resource_dir) = app.path().resource_dir() {
+                possible_paths.push(resource_dir.join(mfa_model_dir).join("model.fst"));
+                possible_paths.push(
+                    resource_dir.join("resources").join(mfa_model_dir).join("model.fst"),
+                );
+            }
+        }
+
+        // 2. Try current directory (dev mode)
+        if let Ok(current_dir) = std::env::current_dir() {
+            possible_paths.push(
+                current_dir
+                    .join("src-tauri")
+                    .join("resources")
+                    .join(mfa_model_dir)
+                    .join("model.fst"),
+            );
+            possible_paths.push(
+                current_dir.join("resources").join(mfa_model_dir).join("model.fst"),
+            );
+        }
+
+        // 3. Try environment variable
+        if let Ok(env_dir) = std::env::var("G2P_MODEL_DIR") {
+            if !env_dir.is_empty() {
+                let env_buf = PathBuf::from(&env_dir);
+                if env_buf.is_file() && env_buf.extension().and_then(|s| s.to_str()) == Some("fst") {
+                    possible_paths.push(env_buf);
+                } else if env_buf.is_dir() {
+                    possible_paths.push(env_buf.join(mfa_model_dir).join("model.fst"));
+                }
+            }
+        }
+
+        // Find the first existing path
+        if let Some(path) = possible_paths.iter().find(|p| p.exists() && p.is_file()) {
+            Ok(path.clone())
+        } else {
+            let mut error_msg = format!(
+                "G2P model not found for language: {}\nChecked paths:\n",
+                language
+            );
+            for path in &possible_paths {
+                error_msg.push_str(&format!("  - {}\n", path.display()));
+            }
+            Err(AppError::ResourceNotFound(error_msg))
+        }
+    }
 }
 

@@ -15,7 +15,7 @@ use anyhow::{Context, Result as AnyhowResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// Conversion progress information for tracking EPUB to audiobook conversion.
 ///
@@ -122,9 +122,9 @@ pub fn get_parallelism() -> usize {
     let mut workers = logical.saturating_sub(1);
 
     // If the machine has many cores, avoid taking *all* of them.
-    // Example: 32-core machines → use 16 cores.
+    // Example: 32-core machines → use 24 cores.
     if logical >= 8 {
-        workers = workers.min((logical as f64 * 0.50).round() as usize);
+        workers = workers.min((logical as f64 * 0.75).round() as usize);
     }
 
     workers.max(1)
@@ -1163,6 +1163,9 @@ pub async fn convert_epub_to_audiobook(
     // Find model files
     let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(Some(&app))?;
     
+    // Note: RuleBasedG2p (voirs-g2p) doesn't require resource directories
+    // as it uses rule-based phonemization without model files
+    
     let onnx_path_str = onnx_path.to_str()
         .ok_or_else(|| AppError::Encoding("ONNX path contains invalid UTF-8".to_string()))?
         .to_string();
@@ -1271,6 +1274,9 @@ pub async fn convert_epub_to_audiobook_standalone(
     
     // Find model files (without AppHandle)
     let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(None)?;
+    
+    // Note: RuleBasedG2p (voirs-g2p) doesn't require resource directories
+    // as it uses rule-based phonemization without model files
     
     let onnx_path_str = onnx_path.to_str()
         .ok_or_else(|| AppError::Encoding("ONNX path contains invalid UTF-8".to_string()))?

@@ -4,6 +4,7 @@ use crate::utils::constants::{DEFAULT_MP3_BITRATE, DEFAULT_LAME_QUALITY};
 use crate::utils::errors::{AppError, AppResult};
 use crate::tts::engine::TtsEngineType;
 use std::sync::Arc;
+use tauri::Manager;
 
 /// Initialize the Kokoros TTS engine (Tauri command).
 ///
@@ -127,6 +128,9 @@ pub async fn generate_tts_cached(
         .transpose()?
         .unwrap_or(TtsEngineType::Onnx);
 
+    // Note: RuleBasedG2p (voirs-g2p) doesn't require resource directories
+    // as it uses rule-based phonemization without model files
+    
     let audio_samples = match engine_type {
         TtsEngineType::Onnx => {
             let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(

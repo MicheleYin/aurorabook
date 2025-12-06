@@ -13,29 +13,33 @@ use std::time::Instant;
 mod helpers;
 use helpers::*;
 
-/// Find all ONNX models in the Kokoro-82M-v1.0-ONNX-timestamped/onnx directory
+/// Find all ONNX models in the Kokoro-82M-v1.0-ONNX-timestamped/onnx and Kokoro-82M-v1.0-ONNX/onnx directories
 fn find_all_onnx_models() -> Vec<(String, PathBuf)> {
     let mut models = Vec::new();
     let mut possible_dirs = Vec::new();
     
-    // Try multiple possible locations
+    // Try multiple possible locations for both folder names
+    let folder_names = vec!["Kokoro-82M-v1.0-ONNX-timestamped", "Kokoro-82M-v1.0-ONNX"];
+    
+    for folder_name in &folder_names {
     if let Ok(current_dir) = std::env::current_dir() {
-        possible_dirs.push(current_dir.join("Kokoro-82M-v1.0-ONNX-timestamped").join("onnx"));
+            possible_dirs.push(current_dir.join(folder_name).join("onnx"));
         if let Some(parent) = current_dir.parent() {
-            possible_dirs.push(parent.join("Kokoro-82M-v1.0-ONNX-timestamped").join("onnx"));
+                possible_dirs.push(parent.join(folder_name).join("onnx"));
         }
     }
     
     if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
         let manifest_path = PathBuf::from(&manifest_dir);
         if let Some(parent) = manifest_path.parent() {
-            possible_dirs.push(parent.join("Kokoro-82M-v1.0-ONNX-timestamped").join("onnx"));
+                possible_dirs.push(parent.join(folder_name).join("onnx"));
+            }
         }
+        
+        // Also try relative to project root
+        possible_dirs.push(PathBuf::from(folder_name).join("onnx"));
+        possible_dirs.push(PathBuf::from("..").join(folder_name).join("onnx"));
     }
-    
-    // Also try relative to project root
-    possible_dirs.push(PathBuf::from("Kokoro-82M-v1.0-ONNX-timestamped").join("onnx"));
-    possible_dirs.push(PathBuf::from("../Kokoro-82M-v1.0-ONNX-timestamped").join("onnx"));
     
     for dir in possible_dirs {
         if dir.exists() && dir.is_dir() {
@@ -79,24 +83,28 @@ fn find_kokoro_voices_file() -> Option<PathBuf> {
         }
     }
     
-    // Try Kokoro-82M directory (might have voices-v1.0.bin at root)
+    // Try Kokoro-82M directories (might have voices-v1.0.bin at root)
+    let folder_names = vec!["Kokoro-82M-v1.0-ONNX-timestamped", "Kokoro-82M-v1.0-ONNX"];
+    
+    for folder_name in &folder_names {
     if let Ok(current_dir) = std::env::current_dir() {
-        possible_paths.push(current_dir.join("Kokoro-82M-v1.0-ONNX-timestamped").join("voices-v1.0.bin"));
+            possible_paths.push(current_dir.join(folder_name).join("voices-v1.0.bin"));
         if let Some(parent) = current_dir.parent() {
-            possible_paths.push(parent.join("Kokoro-82M-v1.0-ONNX-timestamped").join("voices-v1.0.bin"));
+                possible_paths.push(parent.join(folder_name).join("voices-v1.0.bin"));
         }
     }
     
     if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
         let manifest_path = PathBuf::from(&manifest_dir);
         if let Some(parent) = manifest_path.parent() {
-            possible_paths.push(parent.join("Kokoro-82M-v1.0-ONNX-timestamped").join("voices-v1.0.bin"));
+                possible_paths.push(parent.join(folder_name).join("voices-v1.0.bin"));
+            }
         }
+        
+        // Also try relative paths
+        possible_paths.push(PathBuf::from(folder_name).join("voices-v1.0.bin"));
+        possible_paths.push(PathBuf::from("..").join(folder_name).join("voices-v1.0.bin"));
     }
-    
-    // Also try relative paths
-    possible_paths.push(PathBuf::from("Kokoro-82M-v1.0-ONNX-timestamped").join("voices-v1.0.bin"));
-    possible_paths.push(PathBuf::from("../Kokoro-82M-v1.0-ONNX-timestamped").join("voices-v1.0.bin"));
     
     // Try src-tauri/resources
     if let Ok(current_dir) = std::env::current_dir() {
@@ -128,7 +136,7 @@ async fn test_compare_all_onnx_models() {
     // Find all models
     let models = find_all_onnx_models();
     if models.is_empty() {
-        println!("⚠️  No ONNX models found in Kokoro-82M-v1.0-ONNX-timestamped/onnx");
+        println!("⚠️  No ONNX models found in Kokoro-82M-v1.0-ONNX-timestamped/onnx or Kokoro-82M-v1.0-ONNX/onnx");
         println!("   Skipping test");
         return;
     }
@@ -153,6 +161,7 @@ async fn test_compare_all_onnx_models() {
             println!("     - src-tauri/resources/voices-v1.0.bin");
             println!("     - resources/voices-v1.0.bin");
             println!("     - Kokoro-82M-v1.0-ONNX-timestamped/voices-v1.0.bin");
+            println!("     - Kokoro-82M-v1.0-ONNX/voices-v1.0.bin");
             println!("     - KOKORO_VOICES_PATH environment variable");
             println!("   Note: kokoros expects a single NPZ file containing all voices, not individual .bin files");
             println!("   Skipping test");

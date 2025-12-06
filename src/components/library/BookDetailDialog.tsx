@@ -285,7 +285,7 @@ export function BookDetailDialog({
   const eta = useETA({
     progressPercent: targetConversionPercent,
     startTimeRef: conversionStartTimeRef,
-    isActive: displayProgress,
+    isActive: !!displayProgress ,
   });
   
   const progressSummary = getBookProgressSummary(book);

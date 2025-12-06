@@ -100,6 +100,9 @@ impl TtsEnginePool {
             engine_type
         );
 
+        // Note: RuleBasedG2p (voirs-g2p) doesn't require resource directories
+        // This is typically done in the calling code (e.g., tts_commands.rs, epub/converter.rs)
+        
         match engine_type {
             TtsEngineType::Onnx => {
                 let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
