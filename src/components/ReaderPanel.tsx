@@ -97,7 +97,7 @@ export function ReaderPanel({
     onNavigateLibrary?.();
   };
 
-  const appliedTheme: "light" | "dark" | "sepia" =
+  const appliedTheme: "light" | "dark" =
      preferences.theme === "system" ? resolvedUiTheme : preferences.theme;
   const audioTracks = activeBook?.audioTracks ?? [];
   const hasAudioTracks = audioTracks.length > 0;

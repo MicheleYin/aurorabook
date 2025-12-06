@@ -5,7 +5,6 @@ type ResolvedReaderTheme = Exclude<ReaderPreferences["theme"], "system">;
 export const themeClasses: Record<ResolvedReaderTheme, string> = {
   light: "bg-white text-slate-900",
   dark: "bg-zinc-950 text-zinc-100",
-  sepia: "bg-[#f4ecd8] text-[#403127]",
 };
 
 export const fontClassMap: Record<ReaderPreferences["fontFamily"], string> = {
@@ -123,7 +122,6 @@ export const contentPaddingConfigMap: Record<
 export const themeOptions: Array<{ id: ReaderPreferences["theme"]; label: string }> = [
   { id: "system", label: "System" },
   { id: "light", label: "Light" },
-  { id: "sepia", label: "Sepia" },
   { id: "dark", label: "Dark" },
 ];
 

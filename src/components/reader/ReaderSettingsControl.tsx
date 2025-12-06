@@ -55,7 +55,6 @@ export function ReaderSettingsControl({
     system: null,
     light: null,
     dark: null,
-    sepia: null,
   });
   const fontSizeOptionRefs = useRef<
     Record<ReaderPreferences["fontSize"], HTMLButtonElement | null>
@@ -127,7 +126,6 @@ export function ReaderSettingsControl({
                         "bg-gradient-to-br from-white via-[#f4ecd8] to-zinc-900 border-slate-300",
                       option.id === "light" && "bg-white border-slate-300",
                       option.id === "dark" && "bg-zinc-900 border-zinc-700",
-                      option.id === "sepia" && "bg-[#f4ecd8] border-[#e0cfb0]",
                     )}
                   />
                   <span className="font-medium">{option.label}</span>
@@ -139,7 +137,7 @@ export function ReaderSettingsControl({
                       ? "Bright background"
                       : option.id === "dark"
                         ? "Low-light friendly"
-                        : "Warm sepia tone"}
+                        : ""}
                 </span>
               </Button>
             ))}

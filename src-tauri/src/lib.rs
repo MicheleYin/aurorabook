@@ -8,6 +8,7 @@ mod tts_commands;
 mod tts;
 pub mod epub;  // Made public for testing
 mod utils;
+mod window;
 
 // Use kokoros crate directly on all platforms (it uses ONNX Runtime with CoreML EP on macOS/iOS)
 
@@ -56,6 +57,11 @@ pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     
     tauri::Builder::default()
+        .setup(|app| {
+            // Create and configure the main window
+            window::create_main_window(app)?;
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())

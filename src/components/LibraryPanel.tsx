@@ -49,7 +49,7 @@ export function LibraryPanel({
   const hasBooks = library.length > 0;
 
   return (
-    <div className="flex h-full flex-col gap-6">
+    <div className="flex h-full flex-col">
       <LibraryHeader
         totalBooks={totalBooks}
         filteredCount={library.length}
@@ -75,13 +75,15 @@ export function LibraryPanel({
         }
       />
 
-      <LibrarySearchBar
+      <div className="pt-6">
+        <LibrarySearchBar
         value={searchTerm}
         onChange={onSearchChange}
         disabled={isImporting}
-      />
+        />
+      </div>
 
-      <div className="flex-1">
+      <div className="flex-1 pt-6">
         {hasBooks ? (
           viewMode === "grid" ? (
             <LibraryGrid

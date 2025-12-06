@@ -24,7 +24,7 @@ type ReaderWrapperProps = {
   onChapterProgress?: (bookId: string, snapshot: ChapterProgressSnapshot) => void;
   onSaveProgress?: (saveFn: () => void) => void;
   chromeVisible: boolean;
-  resolvedTheme: "light" | "dark" | "sepia";
+  resolvedTheme: "light" | "dark" ;
   onToggleChrome: () => void;
   audioPlayerVisible?: boolean;
   onCloseAudioPlayer?: () => void;
