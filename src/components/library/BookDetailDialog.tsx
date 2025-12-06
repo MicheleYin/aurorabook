@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ImageOff, X, Loader2, Headphones, Share2 } from "lucide-react";
+import { ImageOff, X, Loader2, Headphones, Share2, Square, Play } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Button } from "../ui/button";
@@ -33,7 +33,9 @@ type BookDetailDialogProps = {
   isDeleting?: boolean;
   conversionProgress?: ConversionProgress;
   onConvertToAudiobook?: (book: Book, voiceId: VoiceId) => Promise<void>;
+  onCancelConversion?: (bookId: string) => void;
   conversionStartTimeRef?: React.MutableRefObject<number | null>;
+  isCancelling?: boolean;
 };
 
 const formatFileSize = (bytes?: number) => {
@@ -62,7 +64,9 @@ export function BookDetailDialog({
   isDeleting = false,
   conversionProgress,
   onConvertToAudiobook,
+  onCancelConversion,
   conversionStartTimeRef,
+  isCancelling = false,
 }: BookDetailDialogProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [showConvertDialog, setShowConvertDialog] = useState(false);
@@ -325,7 +329,25 @@ export function BookDetailDialog({
           <div className={cn("grid gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3", dialogSectionStagger(1))}>
             <div className="flex items-center justify-between">
               <span className="text-xs uppercase text-muted-foreground">Converting to Audiobook</span>
-              <span className="text-xs font-medium">{animatedConversionPercent}%</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium">{animatedConversionPercent}%</span>
+                {onCancelConversion && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2"
+                    onClick={() => onCancelConversion(book.id)}
+                    disabled={isCancelling}
+                  >
+                    {isCancelling ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Square className="h-3 w-3" />
+                    )}
+                    <span className="sr-only">Stop conversion</span>
+                  </Button>
+                )}
+              </div>
             </div>
             <Progress
               value={animatedConversionPercent}
@@ -437,32 +459,52 @@ export function BookDetailDialog({
     </div>
   );
 
-  const Actions = ({ layout }: { layout: "dialog" | "drawer" }) => (
-    <div className={cn("flex gap-2 pt-4", layout === "dialog" ? "justify-end" : "flex-col")}>
-      {!hasAudio && onConvertToAudiobook && (
-        <Button
-          variant="outline"
-          onClick={handleConvertClick}
-          disabled={isConverting}
-          className="gap-2"
-        >
-          {isConverting ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Converting…
-            </>
-          ) : (
-            <>
-              <Headphones className="h-4 w-4" />
-              Convert to Audiobook
-            </>
-          )}
-        </Button>
-      )}
+  const Actions = ({ layout }: { layout: "dialog" | "drawer" }) => {
+    const canResume = book.conversionStarted && !isConverting && !isCancelling && (!hasAudio || (book.completedChapters && book.completedChapters.length > 0 && book.completedChapters.length < book.chapters.length));
+    const isDisabled = isConverting || isCancelling;
+    
+    return (
+      <div className={cn("flex gap-2 pt-4", layout === "dialog" ? "justify-end" : "flex-col")}>
+        {canResume && onConvertToAudiobook && (
+          <Button
+            variant="outline"
+            onClick={handleConvertClick}
+            disabled={isDisabled}
+            className="gap-2"
+          >
+            <Play className="h-4 w-4" />
+            Resume Conversion
+          </Button>
+        )}
+        {!hasAudio && !canResume && onConvertToAudiobook && (
+          <Button
+            variant="outline"
+            onClick={handleConvertClick}
+            disabled={isDisabled}
+            className="gap-2"
+          >
+            {isConverting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Converting…
+              </>
+            ) : isCancelling ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Cancelling…
+              </>
+            ) : (
+              <>
+                <Headphones className="h-4 w-4" />
+                Convert to Audiobook
+              </>
+            )}
+          </Button>
+        )}
       <Button
         variant="outline"
         onClick={handleExportEpub}
-        disabled={isConverting}
+        disabled={isDisabled}
         className="gap-2"
       >
         <Share2 className="h-4 w-4" />
@@ -485,8 +527,9 @@ export function BookDetailDialog({
           "Delete book"
         )}
       </Button>
-    </div>
-  );
+      </div>
+    );
+  };
 
   const confirmDialog = (
     <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>

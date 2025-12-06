@@ -78,6 +78,8 @@ export type Book = {
   audioSyncMap?: AudioSyncMap;
   progress?: BookProgress;
   pageCount?: number;
+  conversionStarted?: boolean;
+  completedChapters?: string[];
 };
 
 export type NavItem = {

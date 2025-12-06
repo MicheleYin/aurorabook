@@ -566,6 +566,10 @@ fn merge_book_data(new_book: &Book, existing_book: &Book) -> Book {
     // Preserve the existing book ID to maintain continuity
     merged.id = existing_book.id.clone();
     
+    // Preserve conversion state from existing book
+    merged.conversion_started = existing_book.conversion_started;
+    merged.completed_chapters = existing_book.completed_chapters.clone();
+    
     // If audio_sync_map is missing but we have audio tracks, use the new one
     // This allows books imported before SMIL parsing to get sync maps
     if merged.audio_sync_map.is_none() && !merged.audio_tracks.is_empty() {
@@ -901,6 +905,8 @@ pub async fn ingest_epub(
         audio_sync_map,
         progress: None,
         page_count: None,
+        conversion_started: false,
+        completed_chapters: Vec::new(),
     };
     
     // Store book and EPUB data

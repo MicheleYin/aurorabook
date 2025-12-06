@@ -15,7 +15,7 @@ use crate::epub::converter::chunking::{extract_html_elements, HtmlElement};
 use anyhow::{Context, Result as AnyhowResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Conversion progress information for tracking EPUB to audiobook conversion.
@@ -73,6 +73,22 @@ pub struct ConversionChapter {
 pub struct ConversionOptions {
     pub voice_id: String,
     pub chapters: Vec<ConversionChapter>,
+}
+
+/// Event emitted when a chapter conversion is completed.
+///
+/// This event is sent to the frontend to trigger a book refresh
+/// so the user can listen to the book as soon as one chapter is ready.
+///
+/// # Fields
+/// * `source_path` - The source path of the book being converted
+/// * `chapter_index` - The chapter number that was just completed (1-indexed)
+/// * `total_chapters` - Total number of chapters in the book
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChapterCompletedEvent {
+    pub source_path: String,
+    pub chapter_index: usize,
+    pub total_chapters: usize,
 }
 
 /// Emit progress update to frontend
@@ -567,6 +583,7 @@ async fn process_chapter(
     total_chapters: usize,
     words_processed_atomic: Option<Arc<AtomicUsize>>,
     num_instances: usize,
+    cancel_token: Option<Arc<AtomicBool>>,
 ) -> AnyhowResult<ChapterProcessResult> {
     log::debug!("Processing chapter {}: '{}' (href: '{}', content_html: {} bytes, word_count: {})", 
         chapter_index + 1, chapter.title, chapter.href, chapter.content_html.len(), chapter.word_count);
@@ -659,6 +676,14 @@ async fn process_chapter(
         let result = handle.await
             .map_err(|e| anyhow::anyhow!("Task join error: {}", e))??;
         
+        // Check for cancellation after each element finishes processing
+        if let Some(ref token) = cancel_token {
+            if token.load(Ordering::Relaxed) {
+                log::info!("Conversion cancelled after processing element in chapter {}", chapter_index + 1);
+                return Err(anyhow::anyhow!("Conversion cancelled by user"));
+            }
+        }
+        
         // Update progress after each element completes
         let (idx, audio, alignments, text, element, word_count) = result;
         let chapter_words = chapter_words_processed.load(Ordering::Relaxed);
@@ -682,6 +707,14 @@ async fn process_chapter(
         });
         
         element_results.push((idx, audio, alignments, text, element));
+    }
+    
+    // Check for cancellation before merging audio segments
+    if let Some(ref token) = cancel_token {
+        if token.load(Ordering::Relaxed) {
+            log::info!("Conversion cancelled before merging audio in chapter {}", chapter_index + 1);
+            return Err(anyhow::anyhow!("Conversion cancelled by user"));
+        }
     }
     
     // Sort by element index to maintain document order
@@ -766,6 +799,14 @@ async fn process_chapter(
             cumulative_duration = word_alignments.last().unwrap().end_sec + cumulative_duration;
         } else {
             cumulative_duration += audio_samples.len() as f32 / SAMPLE_RATE as f32;
+        }
+        
+        // Check for cancellation after merging each element's audio
+        if let Some(ref token) = cancel_token {
+            if token.load(Ordering::Relaxed) {
+                log::info!("Conversion cancelled while merging audio in chapter {}", chapter_index + 1);
+                return Err(anyhow::anyhow!("Conversion cancelled by user"));
+            }
         }
         
         // Update HTML with spans (similar to extract_text_with_spans logic)
@@ -1068,6 +1109,48 @@ async fn rebuild_and_save_epub(
         save_epub_buffer_to_store(app_ref, source_path_ref, &epub_output).await
             .map_err(|e| anyhow::anyhow!("Failed to save EPUB to store: {}", e))?;
         log::debug!("Saved EPUB to store after chapter {}", chapter_index + 1);
+        
+        // Update book audio tracks so user can listen as soon as one chapter is ready
+        use crate::epub::update_book_audio_tracks;
+        if let Err(e) = update_book_audio_tracks(&epub_output, source_path_ref, app_ref).await {
+            log::warn!("Failed to update book audio tracks after chapter {}: {}", chapter_index + 1, e);
+            // Don't fail the conversion if audio track update fails
+        } else {
+            log::debug!("Updated book audio tracks after chapter {}", chapter_index + 1);
+            
+            // Mark chapter as completed in the book
+            use crate::book_service::storage::{load_all_books, save_all_books};
+            if let Ok(mut books) = load_all_books(app_ref).await {
+                if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path_ref) {
+                    // Get the chapter href for this chapter
+                    if chapter_index < chapter_hrefs.len() {
+                        let chapter_href = &chapter_hrefs[chapter_index];
+                        if !book.completed_chapters.contains(chapter_href) {
+                            book.completed_chapters.push(chapter_href.clone());
+                            log::debug!("Marked chapter {} as completed", chapter_href);
+                            
+                            // Save the updated book
+                            if let Err(e) = save_all_books(app_ref, &books).await {
+                                log::warn!("Failed to save completed chapter: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Emit event to frontend to refetch the book
+            let event = ChapterCompletedEvent {
+                source_path: source_path_ref.to_string(),
+                chapter_index: chapter_index + 1,
+                total_chapters,
+            };
+            
+            if let Err(e) = app_ref.emit("chapter-completed", event) {
+                log::warn!("Failed to emit chapter-completed event: {}", e);
+            } else {
+                log::debug!("Emitted chapter-completed event for chapter {}", chapter_index + 1);
+            }
+        }
     }
     
     Ok(epub_output)
@@ -1106,6 +1189,7 @@ async fn convert_epub_core_with_durations(
     voice_id: String,
     app: Option<AppHandle>,
     source_path: Option<String>,
+    cancel_token: Option<Arc<AtomicBool>>,
 ) -> AnyhowResult<Vec<u8>>
 {
     // Wrap progress_callback in Arc for sharing across tasks
@@ -1134,6 +1218,14 @@ async fn convert_epub_core_with_durations(
     
     // Process chapters sequentially (not in parallel)
     for (chapter_index, chapter) in options.chapters.iter().enumerate() {
+        // Check for cancellation before processing each chapter
+        if let Some(ref token) = cancel_token {
+            if token.load(Ordering::Relaxed) {
+                log::info!("Conversion cancelled at chapter {}", chapter_index + 1);
+                return Err(anyhow::anyhow!("Conversion cancelled by user"));
+            }
+        }
+        
         // Get worker_id using round-robin distribution (can use 0 since chapters are sequential)
         let worker_id = chapter_index % num_instances;
         
@@ -1166,6 +1258,7 @@ async fn convert_epub_core_with_durations(
             options.chapters.len(),
             Some(Arc::clone(&words_processed_atomic)),
             num_instances,
+            cancel_token.as_ref().map(Arc::clone),
         ).await?;
         
         // Update atomic counter with words processed by this chapter
@@ -1188,6 +1281,14 @@ async fn convert_epub_core_with_durations(
         log::debug!("Finished processing chapter {}. Total: {} audio files, {} SMIL files", 
             chapter_index + 1, context.audio_files.len(), context.smil_files.len());
         
+        // Check for cancellation before rebuilding
+        if let Some(ref token) = cancel_token {
+            if token.load(Ordering::Relaxed) {
+                log::info!("Conversion cancelled after chapter {}", chapter_index + 1);
+                return Err(anyhow::anyhow!("Conversion cancelled by user"));
+            }
+        }
+        
         // Rebuild EPUB and save after each chapter
         let words_processed = words_processed_atomic.load(Ordering::Relaxed);
         rebuild_and_save_epub(
@@ -1203,6 +1304,14 @@ async fn convert_epub_core_with_durations(
             app.as_ref(),
             source_path.as_deref(),
         ).await?;
+        
+        // Check for cancellation after saving
+        if let Some(ref token) = cancel_token {
+            if token.load(Ordering::Relaxed) {
+                log::info!("Conversion cancelled after saving chapter {}", chapter_index + 1);
+                return Err(anyhow::anyhow!("Conversion cancelled by user"));
+            }
+        }
     }
     
     log::debug!("All chapters processed. Total: {} audio files, {} SMIL files", 
@@ -1282,6 +1391,7 @@ pub async fn convert_epub_to_audiobook(
     options: ConversionOptions,
     app: AppHandle,
     source_path: Option<String>,
+    cancel_token: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) -> AppResult<Vec<u8>> {
     use crate::utils::path_resolver::ResourcePathResolver;
     
@@ -1355,6 +1465,7 @@ pub async fn convert_epub_to_audiobook(
         voice_id,
         Some(app),
         source_path,
+        cancel_token,
     )
         .await
         .map_err(|e| AppError::EpubParse(e.to_string()))
@@ -1390,6 +1501,7 @@ pub async fn convert_epub_to_audiobook(
 pub async fn convert_epub_to_audiobook_standalone(
     epub_data: Vec<u8>,
     options: ConversionOptions,
+    cancel_token: Option<Arc<AtomicBool>>,
 ) -> AppResult<Vec<u8>> {
     use crate::utils::path_resolver::ResourcePathResolver;
     
@@ -1467,6 +1579,7 @@ pub async fn convert_epub_to_audiobook_standalone(
         voice_id,
         None, // No AppHandle for standalone version
         None, // No source_path for standalone version
+        cancel_token, // Pass cancellation token
     )
         .await
         .map_err(|e| AppError::EpubParse(e.to_string()))

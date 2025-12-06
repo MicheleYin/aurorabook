@@ -78,6 +78,8 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 
 [patch.crates-io]
 audiopus_sys = { path = "../patches/audiopus_sys" }
+espeak-rs = { path = "../piper-rs/crates/espeak-rs" }
+espeak-rs-sys = { path = "../piper-rs/crates/espeak-rs-sys" }
 
 [profile.release]
 opt-level = 3

@@ -16,14 +16,14 @@ pub const DEFAULT_MP3_BITRATE: u32 = 128;
 /// Default LAME encoder quality (0-9, 2 is good balance)
 pub const DEFAULT_LAME_QUALITY: u8 = 2;
 
-/// Maximum EPUB file size (500MB)
-pub const MAX_EPUB_SIZE: usize = 500 * 1024 * 1024;
+/// Maximum EPUB file size (5GB)
+pub const MAX_EPUB_SIZE: usize = 5 * 1024 * 1024 * 1024; // 50GB
 
 /// Maximum number of chapters to process
 pub const MAX_CHAPTERS: usize = 1000;
 
-/// Maximum chapter size (50MB)
-pub const MAX_CHAPTER_SIZE: usize = 50 * 1024 * 1024;
+/// Maximum chapter size (500MB)
+pub const MAX_CHAPTER_SIZE: usize = 500 * 1024 * 1024;
 
 /// WAV file header size in bytes (standard WAV header is 44 bytes)
 pub const WAV_HEADER_SIZE: usize = 44;

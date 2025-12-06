@@ -69,6 +69,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     setPendingBookForConversion,
     isConverting,
     bookConversionProgress,
+    isCancelling,
+    cancellingBookId,
     conversionStartTimeRef,
     handleConvertToAudiobook,
     handleConvertBookFromDetail,
@@ -602,14 +604,16 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
           isDeleting={deletingBookId === detailBook.id}
           conversionProgress={bookConversionProgress[detailBook.id]}
           onConvertToAudiobook={handleConvertBookFromDetail}
+          onCancelConversion={cancelConversionForBook}
           conversionStartTimeRef={conversionStartTimeRef}
+          isCancelling={isCancelling && cancellingBookId === detailBook.id}
         />
       ) : null}
       {pendingBookForConversion ? (
         <ConvertToAudiobookDialog
-          open={showConvertDialog && !isConverting}
+          open={showConvertDialog && !isConverting && !isCancelling}
           onOpenChange={(open) => {
-            if (!isConverting) {
+            if (!isConverting && !isCancelling) {
               setShowConvertDialog(open);
               if (!open) {
                 setPendingBookForConversion(null);

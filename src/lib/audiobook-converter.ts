@@ -50,6 +50,11 @@ export async function convertEpubToAudiobook(
   
   // Set up event listener for progress updates
   const unlisten = await listen<any>("conversion-progress", (event) => {
+    // Check for cancellation on each progress update
+    if (signal?.aborted) {
+      return;
+    }
+    
     // Convert snake_case to camelCase if needed (Tauri should handle this, but just in case)
     const payload = event.payload;
     const progress: ConversionProgress = {
@@ -65,17 +70,49 @@ export async function convertEpubToAudiobook(
   });
   
   try {
+    // Check for cancellation before invoking
+    if (signal?.aborted) {
+      throw new Error("Conversion cancelled");
+    }
+    
     // Convert ArrayBuffer to number array for Tauri
     const epubBytes = Array.from(new Uint8Array(epubData));
     
-    // Call backend conversion function - backend handles everything and returns updated Book
-    const updatedBook = await invoke<Book | null>("convert_epub_to_audiobook_command", {
-      sourcePath,
-      epubData: epubBytes,
-      voiceId,
-    });
+    // Set up abort listener to throw error immediately when cancelled
+    let abortHandler: (() => void) | null = null;
+    if (signal) {
+      abortHandler = () => {
+        // Signal is aborted, the invoke will be rejected
+      };
+      signal.addEventListener('abort', abortHandler);
+    }
     
-    return updatedBook;
+    try {
+      // Call backend conversion function - backend handles everything and returns updated Book
+      const updatedBook = await invoke<Book | null>("convert_epub_to_audiobook_command", {
+        sourcePath,
+        epubData: epubBytes,
+        voiceId,
+      });
+      
+      // Check one more time after invoke completes
+      if (signal?.aborted) {
+        throw new Error("Conversion cancelled");
+      }
+      
+      return updatedBook;
+    } catch (error) {
+      // If aborted, throw cancellation error
+      if (signal?.aborted) {
+        throw new Error("Conversion cancelled");
+      }
+      throw error;
+    } finally {
+      // Clean up abort listener
+      if (signal && abortHandler) {
+        signal.removeEventListener('abort', abortHandler);
+      }
+    }
   } finally {
     // Clean up event listener
     unlisten();

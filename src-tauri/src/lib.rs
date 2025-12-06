@@ -76,6 +76,7 @@ pub fn run() {
             resources::copy_directory,
             tts_commands::convert_pcm_to_mp3,
             epub::convert_epub_to_audiobook_command,
+            epub::cancel_conversion_command,
             resources::read_resource_file,
             book_service::read_all_books,
             book_service::read_one_book,
@@ -91,6 +92,7 @@ pub fn run() {
             book_service::update_book_audio_state,
             book_service::ingest_epub,
         ])
+        .manage(epub::CancellationTokens::new())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

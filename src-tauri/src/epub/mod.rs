@@ -17,11 +17,114 @@ pub use converter::{
     convert_epub_to_audiobook,
 };
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::path_validation::validate_file_size;
 use crate::book_service::models::Book;
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Global cancellation token storage for conversions
+/// Maps source_path to cancellation token
+#[derive(Default)]
+pub struct CancellationTokens {
+    tokens: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+}
+
+impl CancellationTokens {
+    pub fn new() -> Self {
+        Self {
+            tokens: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+    
+    pub fn get(&self) -> Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> {
+        Arc::clone(&self.tokens)
+    }
+}
+
+/// Tauri command to cancel an ongoing conversion
+#[tauri::command]
+pub async fn cancel_conversion_command(
+    source_path: String,
+    app: AppHandle,
+) -> AppResult<()> {
+    let tokens = app.state::<CancellationTokens>();
+    let tokens_map = tokens.inner().get();
+    {
+        let tokens_guard = tokens_map.lock().map_err(|e| {
+            AppError::Store(format!("Failed to lock cancellation tokens: {}", e))
+        })?;
+        
+        if let Some(cancel_token) = tokens_guard.get(&source_path) {
+            cancel_token.store(true, Ordering::Relaxed);
+            log::info!("Cancellation requested for conversion: {}", source_path);
+        } else {
+            log::warn!("No active conversion found for: {}", source_path);
+        }
+    }
+    
+    Ok(())
+}
+
+/// Get or create a cancellation token for a conversion
+fn get_cancellation_token(
+    app: &AppHandle,
+    source_path: &str,
+) -> AppResult<Arc<AtomicBool>> {
+    let tokens = app.state::<CancellationTokens>();
+    let tokens_map = tokens.inner().get();
+    let cancel_token = {
+        let mut tokens_guard = tokens_map.lock().map_err(|e| {
+            AppError::Store(format!("Failed to lock cancellation tokens: {}", e))
+        })?;
+        
+        // Remove any existing token (cleanup from previous conversion)
+        tokens_guard.remove(source_path);
+        
+        // Create new cancellation token
+        Arc::new(AtomicBool::new(false))
+    };
+    
+    // Insert the token (need to lock again)
+    {
+        let mut tokens_guard = tokens_map.lock().map_err(|e| {
+            AppError::Store(format!("Failed to lock cancellation tokens: {}", e))
+        })?;
+        tokens_guard.insert(source_path.to_string(), Arc::clone(&cancel_token));
+    }
+    
+    Ok(cancel_token)
+}
+
+/// Clean up cancellation token after conversion completes
+fn cleanup_cancellation_token(app: &AppHandle, source_path: &str) {
+    // Extract the owned Arc first - it lives independently of the state reference
+    let tokens_map_opt = {
+        if let Some(tokens_state) = app.try_state::<CancellationTokens>() {
+            let cancellation_tokens = tokens_state.inner();
+            let arc: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> = cancellation_tokens.get();
+            Some(arc)
+        } else {
+            None
+        }
+    };
+    
+    if let Some(arc) = tokens_map_opt {
+        // Lock and remove - the guard will be dropped at the end of the match
+        match arc.lock() {
+            Ok(mut tokens_guard) => {
+                tokens_guard.remove(source_path);
+                log::debug!("Cleaned up cancellation token for: {}", source_path);
+            }
+            Err(_) => {
+                log::warn!("Failed to lock cancellation tokens for cleanup");
+            }
+        }
+    }
+}
 
 /// Tauri command wrapper for EPUB to audiobook conversion.
 ///
@@ -110,16 +213,59 @@ pub async fn convert_epub_to_audiobook_command(
     
     // Extract chapters with content loaded from EPUB
     use crate::epub::converter::extract_chapters;
-    let (conversion_chapters, stats) = extract_chapters(epub_data.clone())
+    let (all_conversion_chapters, stats) = extract_chapters(epub_data.clone())
         .map_err(|e| AppError::EpubParse(e.to_string()).with_context("Failed to extract chapters"))?;
     
     let (manifest_count, spine_itemref_count, missing_manifest_count, non_html_count, filtered_count) = stats;
     
-    if conversion_chapters.is_empty() {
+    if all_conversion_chapters.is_empty() {
         return Err(AppError::EpubParse(format!(
             "No chapters found in EPUB. Manifest had {} items, spine had {} itemrefs ({} missing from manifest, {} non-HTML, {} filtered), but no valid chapters were extracted.",
             manifest_count, spine_itemref_count, missing_manifest_count, non_html_count, filtered_count
         )));
+    }
+    
+    // Load existing book to check for completed chapters
+    use crate::book_service::storage::{load_all_books, save_all_books};
+    let mut books = load_all_books(&app).await
+        .map_err(|e| AppError::Store(format!("Failed to load books: {}", e)))?;
+    
+    let (completed_chapters_set, existing_book_clone) = if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
+        // Mark conversion as started
+        book.conversion_started = true;
+        let completed_set: std::collections::HashSet<String> = book.completed_chapters.iter().cloned().collect();
+        let book_clone = book.clone();
+        (completed_set, Some(book_clone))
+    } else {
+        (std::collections::HashSet::new(), None)
+    };
+    
+    // Filter out completed chapters
+    let conversion_chapters: Vec<_> = all_conversion_chapters
+        .into_iter()
+        .filter(|chapter| !completed_chapters_set.contains(&chapter.href))
+        .collect();
+    
+    if conversion_chapters.is_empty() {
+        log::info!("All chapters already converted for book at {}", source_path);
+        // Save the conversion_started flag if book exists
+        if existing_book_clone.is_some() {
+            save_all_books(&app, &books).await
+                .map_err(|e| AppError::Store(format!("Failed to save books: {}", e)))?;
+        }
+        return Ok(existing_book_clone);
+    }
+    
+    let total_chapters = completed_chapters_set.len() + conversion_chapters.len();
+    log::info!("Resuming conversion: {} chapters remaining out of {} total ({} already completed)", 
+        conversion_chapters.len(), 
+        total_chapters,
+        completed_chapters_set.len());
+    
+    // Save the conversion_started flag if book exists
+    if existing_book_clone.is_some() {
+        save_all_books(&app, &books).await
+            .map_err(|e| AppError::Store(format!("Failed to save books: {}", e)))?;
     }
     
     let options = ConversionOptions {
@@ -141,14 +287,32 @@ pub async fn convert_epub_to_audiobook_command(
         message: format!("Found {} chapters ({} words total). Preparing conversion...", conversion_chapters.len(), total_words),
     });
     
+    // Get cancellation token for this conversion
+    let cancel_token = get_cancellation_token(&app, &source_path)?;
+    
     // Perform conversion (with source_path for incremental saving)
     log::info!("Starting EPUB to audiobook conversion with {} chapters", conversion_chapters.len());
-    let converted_epub = convert_epub_to_audiobook(epub_data, options, app.clone(), Some(source_path.clone()))
-        .await
-        .map_err(|e| {
-            log::error!("Conversion failed: {}", e);
-            AppError::EpubParse(e.to_string()).with_context("Conversion failed")
-        })?;
+    let converted_epub_result = convert_epub_to_audiobook(
+        epub_data, 
+        options, 
+        app.clone(), 
+        Some(source_path.clone()),
+        Some(Arc::clone(&cancel_token)),
+    ).await;
+    
+    // Clean up cancellation token
+    cleanup_cancellation_token(&app, &source_path);
+    
+    // Check if conversion was cancelled
+    if cancel_token.load(Ordering::Relaxed) {
+        log::info!("Conversion was cancelled for: {}", source_path);
+        return Err(AppError::EpubParse("Conversion cancelled by user".to_string()));
+    }
+    
+    let converted_epub = converted_epub_result.map_err(|e| {
+        log::error!("Conversion failed: {}", e);
+        AppError::EpubParse(e.to_string()).with_context("Conversion failed")
+    })?;
     log::info!("EPUB conversion completed successfully");
     
     // Store converted EPUB
@@ -171,7 +335,7 @@ pub async fn convert_epub_to_audiobook_command(
 /// in the library store.
 /// 
 /// Returns the updated Book if found, or None if the book wasn't in the library.
-async fn update_book_audio_tracks(
+pub(crate) async fn update_book_audio_tracks(
     converted_epub: &[u8],
     source_path: &str,
     app: &AppHandle,

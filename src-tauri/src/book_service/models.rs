@@ -111,6 +111,12 @@ pub struct Book {
     pub progress: Option<BookProgress>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_count: Option<usize>,
+    /// Whether conversion has been started (even if not completed)
+    #[serde(default)]
+    pub conversion_started: bool,
+    /// List of chapter hrefs that have been successfully converted
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub completed_chapters: Vec<String>,
 }
 
 /// Library filter options

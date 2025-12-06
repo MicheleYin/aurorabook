@@ -1,5 +1,6 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { listen } from "@tauri-apps/api/event";
 import type { Book } from "../types/reader";
 import type { VoiceId } from "../types/reader";
 import type { ConversionProgress } from "../lib/audiobook-converter";
@@ -28,17 +29,65 @@ export function useBookConversion(
   const [isConverting, setIsConverting] = useState(false);
   const [conversionProgress, setConversionProgress] = useState<ConversionProgress | null>(null);
   const [bookConversionProgress, setBookConversionProgress] = useState<Record<string, ConversionProgress>>({});
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [cancellingBookId, setCancellingBookId] = useState<string | null>(null);
   const conversionAbortControllerRef = useRef<AbortController | null>(null);
   const convertingBookIdRef = useRef<string | null>(null);
+  const convertingSourcePathRef = useRef<string | null>(null);
   const conversionStartTimeRef = useRef<number | null>(null);
 
+  // Listen for chapter completion events to refresh the book
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+
+    const setupListener = async () => {
+      try {
+        unlisten = await listen<{
+          source_path: string;
+          chapter_index: number;
+          total_chapters: number;
+        }>("chapter-completed", async (event) => {
+          const { source_path } = event.payload;
+          
+          // Refetch the book to get updated audio tracks
+          try {
+            // Clear cache to ensure fresh data
+            clearBookCache(source_path);
+            
+            // Refresh the library to get updated book with new audio tracks
+            if (refreshLibrary) {
+              await refreshLibrary();
+            } else {
+              // Fallback: try to find and update the book manually
+              // This shouldn't happen if refreshLibrary is provided, but handle it gracefully
+              console.warn("refreshLibrary not available, cannot refresh book after chapter completion");
+            }
+          } catch (error) {
+            console.warn("Failed to refresh book after chapter completion:", error);
+          }
+        });
+      } catch (error) {
+        console.warn("Failed to set up chapter-completed event listener:", error);
+      }
+    };
+
+    void setupListener();
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [refreshLibrary]);
+
   const handleConvertToAudiobook = useCallback(async (voiceId: VoiceId) => {
-    if (!pendingBookForConversion || isConverting) return;
+    if (!pendingBookForConversion || isConverting || isCancelling) return;
     
     // Create abort controller for this conversion
     const abortController = new AbortController();
     conversionAbortControllerRef.current = abortController;
     convertingBookIdRef.current = pendingBookForConversion.book.id;
+    convertingSourcePathRef.current = pendingBookForConversion.book.sourcePath;
     
     setIsConverting(true);
     setShowConvertDialog(false);
@@ -128,17 +177,20 @@ export function useBookConversion(
       setIsConverting(false);
       conversionAbortControllerRef.current = null;
       convertingBookIdRef.current = null;
+      convertingSourcePathRef.current = null;
       conversionStartTimeRef.current = null;
     }
-  }, [pendingBookForConversion, isConverting, setLibrary, ingestEpub, refreshLibrary]);
+  }, [pendingBookForConversion, isConverting, isCancelling, setLibrary, ingestEpub, refreshLibrary]);
 
   const handleConvertBookFromDetail = useCallback(async (book: Book, voiceId: VoiceId) => {
     if (book.audioTracks.length > 0) return;
     
-    // Show warning if already converting
-    if (isConverting) {
+    // Show warning if already converting or cancelling
+    if (isConverting || isCancelling) {
       toast.warning("Conversion in progress", {
-        description: "Please wait for the current conversion to complete before starting another one.",
+        description: isCancelling 
+          ? "Please wait for the cancellation to complete before starting a new conversion."
+          : "Please wait for the current conversion to complete before starting another one.",
       });
       return;
     }
@@ -147,6 +199,7 @@ export function useBookConversion(
     const abortController = new AbortController();
     conversionAbortControllerRef.current = abortController;
     convertingBookIdRef.current = book.id;
+    convertingSourcePathRef.current = book.sourcePath;
     
     setIsConverting(true);
     setConversionProgress({
@@ -170,6 +223,7 @@ export function useBookConversion(
         setIsConverting(false);
         conversionAbortControllerRef.current = null;
         convertingBookIdRef.current = null;
+        convertingSourcePathRef.current = null;
         return;
       }
       
@@ -259,15 +313,35 @@ export function useBookConversion(
       setIsConverting(false);
       conversionAbortControllerRef.current = null;
       convertingBookIdRef.current = null;
+      convertingSourcePathRef.current = null;
       conversionStartTimeRef.current = null;
     }
-  }, [isConverting, setLibrary, ingestEpub, refreshLibrary]);
+  }, [isConverting, isCancelling, setLibrary, ingestEpub, refreshLibrary]);
 
-  const cancelConversionForBook = useCallback((bookId: string) => {
+  const cancelConversionForBook = useCallback(async (bookId: string) => {
+    // Immediately update UI to show cancellation in progress
+    setIsCancelling(true);
+    setCancellingBookId(bookId);
+    
     if (convertingBookIdRef.current === bookId && conversionAbortControllerRef.current) {
+      // Abort frontend signal immediately for responsive cancellation
       conversionAbortControllerRef.current.abort();
+      
+      // Call backend cancellation command if we have sourcePath
+      const sourcePath = convertingSourcePathRef.current;
+      if (sourcePath) {
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("cancel_conversion_command", { sourcePath });
+        } catch (error) {
+          console.error("Failed to cancel conversion on backend:", error);
+        }
+      }
+      
+      // Clear state immediately for instant UI feedback
       conversionAbortControllerRef.current = null;
       convertingBookIdRef.current = null;
+      convertingSourcePathRef.current = null;
       setIsConverting(false);
       setConversionProgress(null);
       conversionStartTimeRef.current = null;
@@ -276,14 +350,27 @@ export function useBookConversion(
         delete next[bookId];
         return next;
       });
+      
       // If it was pending conversion, clear that too
       if (pendingBookForConversion?.book.id === bookId) {
         setPendingBookForConversion(null);
         setShowConvertDialog(false);
       }
+      
+      // Keep the loading state visible briefly to show cancellation is processing
+      // This gives visual feedback that the action was registered
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      setIsCancelling(false);
+      setCancellingBookId(null);
+      
       toast.info("Conversion cancelled", {
-        description: "The conversion has been cancelled and the book has been removed.",
+        description: "The conversion has been cancelled.",
       });
+    } else {
+      // If no active conversion, just clear the cancelling state immediately
+      setIsCancelling(false);
+      setCancellingBookId(null);
     }
   }, [pendingBookForConversion]);
 
@@ -295,6 +382,8 @@ export function useBookConversion(
     isConverting,
     conversionProgress,
     bookConversionProgress,
+    isCancelling,
+    cancellingBookId,
     convertingBookIdRef,
     conversionStartTimeRef,
     handleConvertToAudiobook,
