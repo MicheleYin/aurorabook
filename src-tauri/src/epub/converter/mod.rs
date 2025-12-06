@@ -827,18 +827,20 @@ async fn process_chapter(
         &full_text,
     );
     
-    // Update progress with current total words processed
+    // Update progress with current total words processed (including current chapter)
     let current_words_processed = words_processed_atomic
         .as_ref()
         .map(|atomic| atomic.load(Ordering::Relaxed))
         .unwrap_or(0);
+    let chapter_words = chapter_words_processed.load(Ordering::Relaxed);
+    let total_words_processed = current_words_processed + chapter_words;
     
     progress_callback(ConversionProgress {
         current_chapter: chapter_index + 1,
         total_chapters,
-        words_processed: current_words_processed,
+        words_processed: total_words_processed,
         total_words,
-        words_in_current_chapter: chapter.word_count,
+        words_in_current_chapter: chapter_words,
         current_step: "converting-audio".to_string(),
         message: format!("Converting audio to MP3 for chapter {}...", chapter_index + 1),
     });
@@ -859,18 +861,20 @@ async fn process_chapter(
     let chapter_path_zip_clone = chapter_path_zip.clone();
     files.insert(chapter_path_zip, updated_html.into_bytes());
     
-    // Update progress with current total words processed
+    // Update progress with current total words processed (including current chapter)
     let current_words_processed = words_processed_atomic
         .as_ref()
         .map(|atomic| atomic.load(Ordering::Relaxed))
         .unwrap_or(0);
+    let chapter_words = chapter_words_processed.load(Ordering::Relaxed);
+    let total_words_processed = current_words_processed + chapter_words;
     
     progress_callback(ConversionProgress {
         current_chapter: chapter_index + 1,
         total_chapters,
-        words_processed: current_words_processed,
+        words_processed: total_words_processed,
         total_words,
-        words_in_current_chapter: chapter.word_count,
+        words_in_current_chapter: chapter_words,
         current_step: "creating-smil".to_string(),
         message: format!("Creating SMIL file for chapter {}...", chapter_index + 1),
     });
@@ -918,12 +922,15 @@ async fn process_chapter(
     log::debug!("Generated SMIL file: chapter_index={}, href={}", 
         chapter_index, smil_href_manifest);
     
+    // Get the actual words processed in this chapter (from the atomic counter)
+    let actual_words_processed = chapter_words_processed.load(Ordering::Relaxed);
+    
     Ok(ChapterProcessResult {
         chapter_index,
         files,
         audio_file: (chapter_index, audio_href_manifest),
         smil_file: (chapter_index, smil_href_manifest),
-        words_processed: chapter.word_count,
+        words_processed: actual_words_processed,
     })
 }
 
@@ -1261,8 +1268,12 @@ async fn convert_epub_core_with_durations(
             cancel_token.as_ref().map(Arc::clone),
         ).await?;
         
+        // Store words processed before moving result
+        let chapter_words_processed = result.words_processed;
+        
         // Update atomic counter with words processed by this chapter
-        let updated_total = words_processed_atomic.fetch_add(result.words_processed, Ordering::Relaxed) + result.words_processed;
+        // fetch_add returns the old value, so we add the new value to get the updated total
+        let updated_total = words_processed_atomic.fetch_add(chapter_words_processed, Ordering::Relaxed) + chapter_words_processed;
         
         // Report progress with updated total
         progress_callback(ConversionProgress {
@@ -1270,9 +1281,9 @@ async fn convert_epub_core_with_durations(
             total_chapters: options.chapters.len(),
             words_processed: updated_total,
             total_words,
-            words_in_current_chapter: chapter.word_count,
+            words_in_current_chapter: chapter_words_processed, // Use actual words processed
             current_step: "completed".to_string(),
-            message: format!("Completed chapter {}: {} ({} words processed, {} total)", chapter_index + 1, chapter.title, result.words_processed, updated_total),
+            message: format!("Completed chapter {}: {} ({} words processed, {} total)", chapter_index + 1, chapter.title, chapter_words_processed, updated_total),
         });
         
         // Merge chapter result into context
@@ -1299,7 +1310,7 @@ async fn convert_epub_core_with_durations(
             options.chapters.len(),
             words_processed,
             total_words,
-            chapter.word_count,
+            chapter_words_processed, // Use actual words processed, not chapter.word_count
             &*progress_callback,
             app.as_ref(),
             source_path.as_deref(),

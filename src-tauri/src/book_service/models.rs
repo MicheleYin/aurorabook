@@ -117,6 +117,9 @@ pub struct Book {
     /// List of chapter hrefs that have been successfully converted
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub completed_chapters: Vec<String>,
+    /// Voice ID used for TTS conversion
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voice_id: Option<String>,
 }
 
 /// Library filter options

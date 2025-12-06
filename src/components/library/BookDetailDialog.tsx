@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ImageOff, X, Loader2, Headphones, Share2, Square, Play } from "lucide-react";
+import { ImageOff, X, Loader2, Headphones, Share2, Play ,  Square} from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Button } from "../ui/button";
@@ -81,10 +81,43 @@ export function BookDetailDialog({
     setShowConvertDialog(true);
   }, []);
   
+  const handleResumeConversion = useCallback(async () => {
+    if (!onConvertToAudiobook) {
+      console.error("onConvertToAudiobook is not available");
+      return;
+    }
+    
+    // Use the voice ID stored in the book
+    const voiceId = book.voiceId;
+    
+    console.log("Resuming conversion", {
+      sourcePath: book.sourcePath,
+      hasVoiceId: !!voiceId,
+      voiceId,
+      conversionStarted: book.conversionStarted,
+      audioTracksCount: book.audioTracks.length,
+    });
+    
+    if (voiceId) {
+      // Resume with the stored voice ID
+      try {
+        await onConvertToAudiobook(book, voiceId);
+      } catch (error) {
+        console.error("Failed to resume conversion:", error);
+        throw error;
+      }
+    } else {
+      // No stored voice ID, show dialog to select one
+      console.log("No stored voice ID, showing dialog");
+      setShowConvertDialog(true);
+    }
+  }, [book, onConvertToAudiobook]);
+  
   const handleConvertConfirm = useCallback(async (voiceId: VoiceId) => {
     setShowConvertDialog(false);
     
     if (onConvertToAudiobook) {
+      // Voice ID will be stored by the backend when conversion starts
       await onConvertToAudiobook(book, voiceId);
     }
   }, [book, onConvertToAudiobook]);
@@ -331,22 +364,6 @@ export function BookDetailDialog({
               <span className="text-xs uppercase text-muted-foreground">Converting to Audiobook</span>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium">{animatedConversionPercent}%</span>
-                {onCancelConversion && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-2"
-                    onClick={() => onCancelConversion(book.id)}
-                    disabled={isCancelling}
-                  >
-                    {isCancelling ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <Square className="h-3 w-3" />
-                    )}
-                    <span className="sr-only">Stop conversion</span>
-                  </Button>
-                )}
               </div>
             </div>
             <Progress
@@ -468,7 +485,7 @@ export function BookDetailDialog({
         {canResume && onConvertToAudiobook && (
           <Button
             variant="outline"
-            onClick={handleConvertClick}
+            onClick={handleResumeConversion}
             disabled={isDisabled}
             className="gap-2"
           >
@@ -476,27 +493,33 @@ export function BookDetailDialog({
             Resume Conversion
           </Button>
         )}
-        {!hasAudio && !canResume && onConvertToAudiobook && (
+        {!canResume && onConvertToAudiobook && !isConverting && (
           <Button
             variant="outline"
             onClick={handleConvertClick}
             disabled={isDisabled}
             className="gap-2"
           >
-            {isConverting ? (
+            <Headphones className="h-4 w-4" />
+            Convert to Audiobook
+          </Button>
+        )}
+        {!canResume && isConverting && onCancelConversion && (
+          <Button
+            variant="outline"
+            onClick={() => onCancelConversion(book.id)}
+            disabled={isCancelling}
+            className="gap-2"
+          >
+            {isCancelling ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Converting…
-              </>
-            ) : isCancelling ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Cancelling…
+                Pausing…
               </>
             ) : (
               <>
-                <Headphones className="h-4 w-4" />
-                Convert to Audiobook
+                <Square className="h-4 w-4" />
+                Pause
               </>
             )}
           </Button>

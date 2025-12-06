@@ -80,6 +80,7 @@ export type Book = {
   pageCount?: number;
   conversionStarted?: boolean;
   completedChapters?: string[];
+  voiceId?: VoiceId;
 };
 
 export type NavItem = {

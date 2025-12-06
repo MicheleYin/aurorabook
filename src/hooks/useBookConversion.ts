@@ -183,7 +183,11 @@ export function useBookConversion(
   }, [pendingBookForConversion, isConverting, isCancelling, setLibrary, ingestEpub, refreshLibrary]);
 
   const handleConvertBookFromDetail = useCallback(async (book: Book, voiceId: VoiceId) => {
-    if (book.audioTracks.length > 0) return;
+    // Allow conversion if book has conversionStarted flag (for resuming) even if some tracks exist
+    if (book.audioTracks.length > 0 && !book.conversionStarted) {
+      console.log("Skipping conversion - book already has audio tracks and conversion not started");
+      return;
+    }
     
     // Show warning if already converting or cancelling
     if (isConverting || isCancelling) {

@@ -175,6 +175,9 @@ pub async fn convert_epub_to_audiobook_command(
     use base64::{engine::general_purpose, Engine as _};
     use crate::epub::converter::{ConversionProgress, emit_progress};
     
+    log::info!("convert_epub_to_audiobook_command called: source_path={}, voice_id={}, epub_data_len={}", 
+        source_path, voice_id, epub_data.len());
+    
     // Emit immediate progress update for responsive UI
     emit_progress(&app, ConversionProgress {
         current_chapter: 0,
@@ -188,6 +191,7 @@ pub async fn convert_epub_to_audiobook_command(
     
     // Validate EPUB file size before processing
     validate_file_size(epub_data.len(), MAX_EPUB_SIZE, "EPUB")?;
+    log::debug!("EPUB file size validated: {} bytes", epub_data.len());
     
     // Store EPUB in cache
     let epub_store = tauri_plugin_store::StoreBuilder::new(&app, "epub-cache.store.json")
@@ -231,8 +235,9 @@ pub async fn convert_epub_to_audiobook_command(
         .map_err(|e| AppError::Store(format!("Failed to load books: {}", e)))?;
     
     let (completed_chapters_set, existing_book_clone) = if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
-        // Mark conversion as started
+        // Mark conversion as started and store voice ID
         book.conversion_started = true;
+        book.voice_id = Some(voice_id.clone());
         let completed_set: std::collections::HashSet<String> = book.completed_chapters.iter().cloned().collect();
         let book_clone = book.clone();
         (completed_set, Some(book_clone))
