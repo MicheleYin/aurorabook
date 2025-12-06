@@ -14,7 +14,8 @@ export function useAudioTextSync(
   isRestoringScroll: boolean = false,
   chromeVisible: boolean = true,
   onChapterChange?: (chapterId: string, elementId?: string) => void,
-  onChapterReload?: (chapterId: string) => void
+  onChapterReload?: (chapterId: string) => void,
+  audioPlayerVisible: boolean = false
 ) {
   const [highlightedElementId, setHighlightedElementId] = useState<string | null>(null);
   const lastScrolledElementRef = useRef<string | null>(null);
@@ -41,10 +42,38 @@ export function useAudioTextSync(
           const fontSize = window.getComputedStyle(text).fontSize;
           return parseInt(fontSize) + rect.height;
         }
+        return rect.height;
       }
     }
     return 0;
   }, [chromeVisible]);
+
+  // Calculate player offset dynamically when scrolling
+  const getPlayerOffset = useCallback((): number => {
+    if (!audioPlayerVisible || typeof document === "undefined") return 0;
+    // Find the audio player element - it's typically a fixed element at the bottom
+    // Look for common audio player selectors or data attributes
+    const player = document.querySelector<HTMLElement>("[data-audio-player], [role='region'][aria-label*='audio'], .audio-player");
+    if (player) {
+      const rect = player.getBoundingClientRect();
+      const style = window.getComputedStyle(player);
+      // Only return height if player is actually visible
+      if (rect.height > 0 && style.opacity !== "0" && style.display !== "none" && style.visibility !== "hidden") {
+        // Calculate offset from bottom of viewport
+        // For fixed elements at bottom, this is the height plus any bottom spacing
+        const viewportHeight = window.innerHeight;
+        const distanceFromBottom = viewportHeight - rect.top;
+        // add the font size of a text in the window to the distance from bottom
+        const text = document.querySelector<HTMLElement>("p");
+        if (text) {
+          const fontSize = window.getComputedStyle(text).fontSize;
+          return Math.max(0, distanceFromBottom + parseInt(fontSize));
+        }
+        return Math.max(0, distanceFromBottom);
+      }
+    }
+    return 0;
+  }, [audioPlayerVisible]);
 
   const updateHighlight = useCallback((
     book: Book,
@@ -211,13 +240,15 @@ export function useAudioTextSync(
       
       if (shouldScroll) {
         const headerOffset = getHeaderOffset();
+        const playerOffset = getPlayerOffset();
         console.log("[Audio Sync] Attempting scroll", {
           elementId: segment.textElementId,
           headerOffset,
+          playerOffset,
           hasContentRef: !!contentRef.current,
         });
         
-        const scrolled = scrollToElement(contentRef.current, segment.textElementId, "smooth", headerOffset);
+        const scrolled = scrollToElement(contentRef.current, segment.textElementId, "smooth", headerOffset, playerOffset);
         
         console.log("[Audio Sync] Scroll result", {
           scrolled,
@@ -241,7 +272,7 @@ export function useAudioTextSync(
         hasContentRef: !!contentRef.current,
       });
     }
-  }, [autoScrollEnabled, isRestoringScroll, contentRef, getHeaderOffset, onChapterChange, onChapterReload]);
+  }, [autoScrollEnabled, isRestoringScroll, contentRef, getHeaderOffset, getPlayerOffset, onChapterChange, onChapterReload]);
 
   const clearHighlight = useCallback(() => {
     setHighlightedElementId(null);

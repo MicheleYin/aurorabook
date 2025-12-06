@@ -20,6 +20,7 @@ type UseAudioPlayerProgressParams = {
   chromeVisible?: boolean;
   onChapterChange?: (chapterId: string, elementId?: string) => void;
   onChapterReload?: (chapterId: string) => void;
+  audioPlayerVisible?: boolean;
 };
 
 export function useAudioPlayerProgress({
@@ -33,12 +34,13 @@ export function useAudioPlayerProgress({
   chromeVisible = true,
   onChapterChange,
   onChapterReload,
+  audioPlayerVisible = false,
 }: UseAudioPlayerProgressParams) {
   const audioLoader = useAudioTrackLoader();
   
   // Calculate header offset - will be computed dynamically in useAudioTextSync
-  // Pass chromeVisible so it can calculate the offset when needed
-  const audioSync = useAudioTextSync(contentRef, autoScrollEnabled, isRestoringScroll, chromeVisible, onChapterChange, onChapterReload);
+  // Pass chromeVisible and audioPlayerVisible so it can calculate the offsets when needed
+  const audioSync = useAudioTextSync(contentRef, autoScrollEnabled, isRestoringScroll, chromeVisible, onChapterChange, onChapterReload, audioPlayerVisible);
 
   // Get cached audio tracks
   const cachedAudioTracks = useMemo(() => {

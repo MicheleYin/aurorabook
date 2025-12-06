@@ -449,6 +449,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     chromeVisible,
     onChapterChange: handleAudioSyncChapterChange,
     onChapterReload: handleChapterReload,
+    audioPlayerVisible,
   });
 
   // Handle audio progress updates from App.tsx

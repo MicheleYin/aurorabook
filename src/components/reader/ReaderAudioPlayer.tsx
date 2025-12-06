@@ -1137,6 +1137,7 @@ export function ReaderAudioPlayer({
 
   return (
     <div
+      data-audio-player
       className={cn(
         "fixed inset-x-0 bottom-14 z-50 flex justify-center px-4 pb-6 sm:px-6",
         animPatterns.navBar,

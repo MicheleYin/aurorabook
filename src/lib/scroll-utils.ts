@@ -181,13 +181,14 @@ export function restoreWindowScrollPosition(savedMetrics: {
 
 /**
  * Check if an element is visible in its scrollable container
- * Accounts for header offset to determine if element is properly positioned
+ * Accounts for header offset at top and player offset at bottom to determine if element is properly positioned
  */
 export function isElementVisible(
   element: HTMLElement,
   container: HTMLElement,
   headerOffset: number = 0,
-  tolerance: number = 10
+  tolerance: number = 10,
+  playerOffset: number = 0
 ): boolean {
   const elementRect = element.getBoundingClientRect();
   const containerRect = container.getBoundingClientRect();
@@ -199,7 +200,8 @@ export function isElementVisible(
   
   // Account for header offset - element should be visible below the header
   const visibleTop = containerTop + headerOffset;
-  const visibleBottom = containerBottom;
+  // Account for player offset - element should be visible above the audio player
+  const visibleBottom = containerBottom - playerOffset;
   
   // Check if element is within the visible area (with tolerance)
   const isTopVisible = elementRect.top >= visibleTop - tolerance;
@@ -273,6 +275,7 @@ export function scrollToElement(
   elementId: string,
   behavior: ScrollBehavior = "smooth",
   headerOffset: number = 0,
+  playerOffset: number = 0,
 ): boolean {
   console.log("[Scroll] scrollToElement called", {
     elementId,
@@ -282,6 +285,7 @@ export function scrollToElement(
     rootId: root.id,
     rootScrollHeight: root.scrollHeight,
     rootClientHeight: root.clientHeight,
+    playerOffset,
   });
 
   const selector = typeof CSS !== "undefined" && CSS.escape
@@ -310,6 +314,7 @@ export function scrollToElement(
     elementId,
     elementTag: element.tagName,
     headerOffset,
+    playerOffset,
   });
 
   // Find the actual scrollable container
@@ -342,11 +347,12 @@ export function scrollToElement(
     containerMaxScroll: scrollContainer.scrollHeight - scrollContainer.clientHeight,
   });
 
-  // Check if element is already visible (accounting for header offset)
-  const isVisible = isElementVisible(element, scrollContainer, headerOffset);
+  // Check if element is already visible (accounting for header and player offsets)
+  const isVisible = isElementVisible(element, scrollContainer, headerOffset, 10, playerOffset);
   console.log("[Scroll] Element visibility check", {
     isVisible,
     headerOffset,
+    playerOffset,
   });
   
   if (isVisible) {
@@ -384,7 +390,7 @@ export function scrollToElement(
     return true;
   }
 
-  // Calculate scroll position accounting for header
+  // Calculate scroll position accounting for header and player offsets
   const elementRect = element.getBoundingClientRect();
   const containerRect = scrollContainer.getBoundingClientRect();
   
@@ -397,6 +403,7 @@ export function scrollToElement(
     containerTop,
     currentScrollTop,
     headerOffset,
+    playerOffset,
     containerScrollHeight: scrollContainer.scrollHeight,
     containerClientHeight: scrollContainer.clientHeight,
     isDocumentElement,
@@ -409,6 +416,8 @@ export function scrollToElement(
   const elementTopRelativeToContainer = elementRect.top - containerTop + currentScrollTop;
   
   // Subtract header offset to position element below header
+  // Note: player offset doesn't affect scroll position calculation, only visibility check
+  // The element should be positioned accounting for header, and player offset is handled in visibility
   const targetScrollTop = elementTopRelativeToContainer - headerOffset;
   
   // Ensure we don't scroll past the bounds
@@ -421,6 +430,8 @@ export function scrollToElement(
     maxScroll,
     currentScrollTop,
     behavior,
+    headerOffset,
+    playerOffset,
   });
   
   // Scroll the container
