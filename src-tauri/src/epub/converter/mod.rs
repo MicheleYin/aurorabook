@@ -84,11 +84,15 @@ pub struct ConversionOptions {
 /// * `source_path` - The source path of the book being converted
 /// * `chapter_index` - The chapter number that was just completed (1-indexed)
 /// * `total_chapters` - Total number of chapters in the book
+/// * `chapter_title` - The title of the chapter that was just completed
+/// * `audio_generated` - Whether audio was actually generated for this chapter
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChapterCompletedEvent {
     pub source_path: String,
     pub chapter_index: usize,
     pub total_chapters: usize,
+    pub chapter_title: String,
+    pub audio_generated: bool,
 }
 
 /// Emit progress update to frontend
@@ -1084,6 +1088,7 @@ async fn rebuild_and_save_epub(
     progress_callback: &ProgressCallback,
     app: Option<&AppHandle>,
     source_path: Option<&str>,
+    chapter_title: Option<&str>,
 ) -> AnyhowResult<Vec<u8>> {
     // Update progress
     progress_callback(ConversionProgress {
@@ -1150,17 +1155,24 @@ async fn rebuild_and_save_epub(
                 }
             }
             
+            // Check if audio was generated for this chapter
+            // Audio files are stored as (chapter_index, audio_path) tuples
+            let audio_generated = context.audio_files.iter()
+                .any(|(idx, _)| *idx == chapter_index);
+            
             // Emit event to frontend to refetch the book
             let event = ChapterCompletedEvent {
                 source_path: source_path_ref.to_string(),
                 chapter_index: chapter_index + 1,
                 total_chapters,
+                chapter_title: chapter_title.unwrap_or(&format!("Chapter {}", chapter_index + 1)).to_string(),
+                audio_generated,
             };
             
             if let Err(e) = app_ref.emit("chapter-completed", event) {
                 log::warn!("Failed to emit chapter-completed event: {}", e);
             } else {
-                log::debug!("Emitted chapter-completed event for chapter {}", chapter_index + 1);
+                log::debug!("Emitted chapter-completed event for chapter {} (audio_generated: {})", chapter_index + 1, audio_generated);
             }
         }
     }
@@ -1340,6 +1352,7 @@ async fn convert_epub_core_with_durations(
             &*progress_callback,
             app.as_ref(),
             source_path.as_deref(),
+            Some(&chapter.title),
         ).await?;
         
         // Check for cancellation after rebuilding (in case it was cancelled during rebuild)

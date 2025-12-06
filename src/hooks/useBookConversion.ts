@@ -5,7 +5,7 @@ import type { Book } from "../types/reader";
 import type { VoiceId } from "../types/reader";
 import type { ConversionProgress } from "../lib/audiobook-converter";
 import { convertEpubToAudiobook } from "../lib/audiobook-converter";
-import { getEpubBuffer } from "../lib/book-service";
+import { getEpubBuffer, readAllBooks, readOneBook } from "../lib/book-service";
 import { clearBookCache } from "../lib/lazy-chapter-loader";
 
 export type PendingBookForConversion = {
@@ -35,9 +35,15 @@ export function useBookConversion(
   const convertingBookIdRef = useRef<string | null>(null);
   const convertingSourcePathRef = useRef<string | null>(null);
   const conversionStartTimeRef = useRef<number | null>(null);
+  const listenerSetupRef = useRef<boolean>(false);
 
   // Listen for chapter completion events to refresh the book
   useEffect(() => {
+    // Only set up listener once
+    if (listenerSetupRef.current) {
+      return;
+    }
+    
     let unlisten: (() => void) | null = null;
 
     const setupListener = async () => {
@@ -46,26 +52,79 @@ export function useBookConversion(
           source_path: string;
           chapter_index: number;
           total_chapters: number;
+          chapter_title: string;
+          audio_generated: boolean;
         }>("chapter-completed", async (event) => {
-          const { source_path } = event.payload;
+          const { source_path, chapter_title, audio_generated } = event.payload;
           
-          // Refetch the book to get updated audio tracks
+          // Fetch the updated book and merge only audio-related fields
+          // This preserves the existing book state so audio playback doesn't stop
           try {
-            // Clear cache to ensure fresh data
-            clearBookCache(source_path);
+            // First, get all books to find the one with matching sourcePath
+            const allBooks = await readAllBooks();
+            const existingBook = allBooks.find(
+              (book) => book.sourcePath === source_path
+            );
             
-            // Refresh the library to get updated book with new audio tracks
-            if (refreshLibrary) {
-              await refreshLibrary();
-            } else {
-              // Fallback: try to find and update the book manually
-              // This shouldn't happen if refreshLibrary is provided, but handle it gracefully
-              console.warn("refreshLibrary not available, cannot refresh book after chapter completion");
+            if (!existingBook) {
+              console.warn("Book not found in library for source_path:", source_path);
+              return;
+            }
+            
+            // Fetch the updated book from backend
+            const updatedBook = await readOneBook(existingBook.id);
+            
+            if (!updatedBook) {
+              console.warn("Failed to fetch updated book:", existingBook.id);
+              return;
+            }
+            
+            // Merge only audio-related fields into the existing book
+            // This preserves all other state including loaded chapters, audio playback state, etc.
+            setLibrary((currentLibrary) => {
+              const bookIndex = currentLibrary.findIndex(
+                (book) => book.id === existingBook.id || book.sourcePath === source_path
+              );
+              
+              if (bookIndex === -1) {
+                // Book not in current library state, add it
+                return [...currentLibrary, updatedBook];
+              }
+              
+              const currentBook = currentLibrary[bookIndex];
+              
+              // Create merged book with only audio fields updated
+              const mergedBook: Book = {
+                ...currentBook,
+                fileSizeBytes: updatedBook.fileSizeBytes,
+                // Only update audio-related fields
+                audioTracks: updatedBook.audioTracks,
+                audioSyncMap: updatedBook.audioSyncMap,
+                // Also update conversion status and completed chapters
+                conversionStatus: updatedBook.conversionStatus,
+                completedChapters: updatedBook.completedChapters,
+              };
+
+              
+              const updated = [...currentLibrary];
+              updated[bookIndex] = mergedBook;
+              
+              return updated;
+            });
+            
+            // Show notification that a new chapter is available only if audio was generated
+            if (audio_generated) {
+              toast.info("New chapter available", {
+                description: `"${chapter_title}" has been converted and is ready to play.`,
+                duration: 5000,
+              });
             }
           } catch (error) {
             console.warn("Failed to refresh book after chapter completion:", error);
           }
         });
+        
+        listenerSetupRef.current = true;
       } catch (error) {
         console.warn("Failed to set up chapter-completed event listener:", error);
       }
@@ -76,9 +135,10 @@ export function useBookConversion(
     return () => {
       if (unlisten) {
         unlisten();
+        listenerSetupRef.current = false;
       }
     };
-  }, [refreshLibrary]);
+  }, []); // Empty dependency array - only set up once
 
   const handleConvertToAudiobook = useCallback(async (voiceId: VoiceId) => {
     if (!pendingBookForConversion || isConverting || isCancelling) return;
