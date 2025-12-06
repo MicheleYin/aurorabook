@@ -4,16 +4,14 @@ use tauri::{AppHandle, WebviewWindow};
 #[derive(Debug, Clone)]
 pub struct WindowState {
     pub size: (f64, f64),
-    // pub position: Option<(f64, f64)>,
-    pub maximized: bool,
+    
 }
 
 impl Default for WindowState {
     fn default() -> Self {
         Self {
             size: (800.0, 600.0),
-            // position: None,
-            maximized: false,
+            
         }
     }
 }
@@ -36,25 +34,13 @@ pub fn load_window_state(app: &AppHandle) -> WindowState {
                     size.get("height").and_then(|v| v.as_f64()),
                 ) {
                     // Validate size is reasonable
-                    if w >= 300.0 && h >= 300.0 && w <= 10000.0 && h <= 10000.0 {
+                    if w >= 300.0 && h >= 300.0 && w <= 15000.0 && h <= 15000.0 {
                         state.size = (w, h);
                     }
                 }
             }
-            // if let Some(pos) = saved_state.get("position") {
-            //     if let (Some(x), Some(y)) = (
-            //         pos.get("x").and_then(|v| v.as_f64()),
-            //         pos.get("y").and_then(|v| v.as_f64()),
-            //     ) {
-            //         // Validate position is reasonable
-            //         if x >= -10000.0 && x <= 10000.0 && y >= -10000.0 && y <= 10000.0 {
-            //             state.position = Some((x, y));
-            //         }
-            //     }
-            // }
-            if let Some(max) = saved_state.get("maximized").and_then(|v| v.as_bool()) {
-                state.maximized = max;
-            }
+           
+           
         }
     }
     
@@ -74,11 +60,7 @@ pub fn save_window_state(window: &WebviewWindow, app: &AppHandle) {
                         "width": size.width as f64,
                         "height": size.height as f64,
                     },
-                    // "position": {
-                    //     "x": position.x as f64,
-                    //     "y": position.y as f64,
-                    // },
-                    "maximized": window.is_maximized().unwrap_or(false),
+                  
                 });
                 
                 store.set("main_window_state", state);
@@ -125,19 +107,8 @@ pub fn create_main_window(app: &tauri::App) -> Result<WebviewWindow, String> {
     // Restore window state only on non-iOS platforms
     #[cfg(not(target_os = "ios"))]
     {
-        // Restore window position if available
-        // if let Some((x, y)) = window_state.position {
-        //     if let Err(e) = window.set_position(tauri::LogicalPosition::new(x, y)) {
-        //         log::warn!("Failed to restore window position: {}", e);
-        //     }
-        // }
-        
-        // Restore maximized state if it was maximized
-        if window_state.maximized {
-            if let Err(e) = window.maximize() {
-                log::warn!("Failed to restore maximized state: {}", e);
-            }
-        }
+       
+       
     }
 
     // Set background color only when building for macOS
