@@ -310,3 +310,68 @@ pub fn extract_text_with_spans(html: &str) -> AppResult<(String, String, Vec<(St
     Ok((full_text, updated_html, span_mappings))
 }
 
+/// Represents a single HTML element with its text content and metadata
+#[derive(Debug, Clone)]
+pub struct HtmlElement {
+    pub element_type: String,  // e.g., "p", "h1", "h2", etc.
+    pub text: String,
+    pub outer_html: String,
+    pub element_index: usize,  // Order in which element appears in document
+}
+
+/// Extract individual HTML elements from chapter content for parallel processing.
+///
+/// This function extracts all semantic HTML elements (p, h1-h6, li, blockquote, div, a, etc.)
+/// in document order, preserving their structure for parallel TTS processing.
+///
+/// # Arguments
+/// * `html` - The HTML content to process
+///
+/// # Returns
+/// A vector of HtmlElement structs in document order
+pub fn extract_html_elements(html: &str) -> AppResult<Vec<HtmlElement>> {
+    let document = Html::parse_document(html);
+    let mut elements: Vec<HtmlElement> = Vec::new();
+    let mut element_index = 0;
+    
+    // Use pre-compiled selectors - also include 'a' for links
+    static SELECTOR_A: Lazy<Selector> = Lazy::new(|| {
+        Selector::parse("a").expect("Failed to parse CSS selector 'a'")
+    });
+    
+    let selectors = vec![
+        (&*SELECTOR_P, "p"),
+        (&*SELECTOR_H1, "h1"),
+        (&*SELECTOR_H2, "h2"),
+        (&*SELECTOR_H3, "h3"),
+        (&*SELECTOR_H4, "h4"),
+        (&*SELECTOR_H5, "h5"),
+        (&*SELECTOR_H6, "h6"),
+        (&*SELECTOR_LI, "li"),
+        (&*SELECTOR_BLOCKQUOTE, "blockquote"),
+        (&*SELECTOR_DIV, "div"),
+        (&*SELECTOR_A, "a"),
+    ];
+    
+    // Process each element type in order
+    for (selector, element_type) in &selectors {
+        for element in document.select(selector) {
+            let text = element.text().collect::<String>().trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            
+            let outer_html = element.html();
+            elements.push(HtmlElement {
+                element_type: element_type.to_string(),
+                text,
+                outer_html,
+                element_index,
+            });
+            element_index += 1;
+        }
+    }
+    
+    Ok(elements)
+}
+

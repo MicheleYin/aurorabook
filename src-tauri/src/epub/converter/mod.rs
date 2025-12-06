@@ -11,6 +11,7 @@ pub use opf::*;
 use crate::utils::constants::*;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::path_validation::{validate_epub_path, validate_file_size, validate_chapter_count};
+use crate::epub::converter::chunking::{extract_html_elements, HtmlElement};
 use anyhow::{Context, Result as AnyhowResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -515,8 +516,45 @@ fn resolve_chapter_path(href: &str, base_path: &str) -> String {
     }
 }
 
+/// Process a single HTML element: generate audio and return result
+async fn process_html_element(
+    element: &HtmlElement,
+    element_index: usize,
+    engine: &Arc<kokoros::tts::koko::TTSKokoParallel>,
+    worker_id: usize,
+    voice_id: &str,
+) -> AnyhowResult<(Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String)> {
+    let text = element.text.trim();
+    if text.is_empty() {
+        return Ok((Vec::new(), Vec::new(), String::new()));
+    }
+    
+    let model_instance = engine.get_model_instance(worker_id);
+    let result = engine
+        .tts_timestamped_raw_audio_with_instance(
+            text,
+            "en",
+            voice_id,
+            1.0,
+            None, None, None, None,
+            model_instance,
+        )
+        .map_err(|e| anyhow::anyhow!("TTS generation failed for element {}: {}", element_index, e))?;
+    
+    match result {
+        Some((audio, alignments)) => Ok((audio, alignments, text.to_string())),
+        None => Err(anyhow::anyhow!(
+            "Element {}: TTS engine did not return word alignments. Model may not support durations.",
+            element_index
+        )),
+    }
+}
+
 /// Process a single chapter: generate audio, create SMIL, and store files
 /// Returns a result struct with all generated files and metadata
+/// 
+/// This function processes HTML elements in parallel within the chapter,
+/// then merges the audio segments in order.
 async fn process_chapter(
     chapter: &ConversionChapter,
     chapter_index: usize,
@@ -528,6 +566,7 @@ async fn process_chapter(
     total_words: usize,
     total_chapters: usize,
     words_processed_atomic: Option<Arc<AtomicUsize>>,
+    num_instances: usize,
 ) -> AnyhowResult<ChapterProcessResult> {
     log::debug!("Processing chapter {}: '{}' (href: '{}', content_html: {} bytes, word_count: {})", 
         chapter_index + 1, chapter.title, chapter.href, chapter.content_html.len(), chapter.word_count);
@@ -557,15 +596,16 @@ async fn process_chapter(
     validate_file_size(chapter.content_html.len(), MAX_CHAPTER_SIZE, "Chapter HTML")?;
     validate_epub_path(&chapter.href)?;
     
-    let (full_text, updated_html, span_mappings) = extract_text_with_spans(&chapter.content_html)
-        .map_err(|e| AppError::EpubParse(format!("Failed to extract text from chapter HTML: {}", e)))?;
+    // Extract HTML elements for parallel processing
+    let html_elements = extract_html_elements(&chapter.content_html)
+        .map_err(|e| AppError::EpubParse(format!("Failed to extract HTML elements: {}", e)))?;
     
     let mut files = std::collections::HashMap::new();
     
-    if full_text.trim().is_empty() {
-        log::debug!("Chapter {} has no text content after extraction - skipping audio generation", chapter_index + 1);
+    if html_elements.is_empty() {
+        log::debug!("Chapter {} has no HTML elements - skipping audio generation", chapter_index + 1);
         let chapter_path = resolve_chapter_path(&chapter.href, base_path);
-        files.insert(chapter_path, updated_html.into_bytes());
+        files.insert(chapter_path, chapter.content_html.clone().into_bytes());
         return Ok(ChapterProcessResult {
             chapter_index,
             files,
@@ -575,34 +615,174 @@ async fn process_chapter(
         });
     }
     
-    // Generate TTS audio using round-robin engine instance
-    let model_instance = engine.get_model_instance(worker_id);
-    let result = engine
-        .tts_timestamped_raw_audio_with_instance(
-            &full_text,
-            "en",
-            voice_id,
-            1.0,
-            None, None, None, None,
-            model_instance,
-        )
-        .map_err(|e| AppError::TtsGeneration(format!("TTS generation failed: {}", e)))?;
+    log::debug!("Chapter {}: Processing {} HTML elements in parallel", chapter_index + 1, html_elements.len());
     
-    let (audio_samples, word_alignments) = match result {
-        Some((audio, alignments)) => (audio, alignments),
-        None => {
-            return Err(anyhow::anyhow!(
-                "Chapter {}: TTS engine did not return word alignments. Model may not support durations.",
-                chapter_index + 1
-            ));
+    // Create semaphore to limit concurrent element processing
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(num_instances));
+    let instance_counter = Arc::new(AtomicUsize::new(0));
+    
+    // Atomic counter to track words processed in this chapter
+    let chapter_words_processed = Arc::new(AtomicUsize::new(0));
+    
+    // Process all HTML elements in parallel
+    let mut handles = Vec::new();
+    for (idx, element) in html_elements.iter().enumerate() {
+        let semaphore = Arc::clone(&semaphore);
+        let engine = Arc::clone(engine);
+        let instance_counter = Arc::clone(&instance_counter);
+        let chapter_words_processed = Arc::clone(&chapter_words_processed);
+        let element = element.clone();
+        let voice_id = voice_id.to_string();
+        
+        let handle = tokio::spawn(async move {
+            let _permit = semaphore.acquire().await
+                .map_err(|e| anyhow::anyhow!("Failed to acquire semaphore: {}", e))?;
+            
+            let worker_id = instance_counter.fetch_add(1, Ordering::Relaxed) % num_instances;
+            let result = process_html_element(&element, idx, &engine, worker_id, &voice_id).await?;
+            
+            // Count words in this element and update atomic counter
+            let element_word_count = result.2.split_whitespace().filter(|s| !s.is_empty()).count();
+            chapter_words_processed.fetch_add(element_word_count, Ordering::Relaxed);
+            
+            Ok::<(usize, Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String, HtmlElement, usize), anyhow::Error>(
+                (idx, result.0, result.1, result.2, element, element_word_count)
+            )
+        });
+        
+        handles.push(handle);
+    }
+    
+    // Collect results and update progress as each element completes
+    let mut element_results: Vec<(usize, Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String, HtmlElement)> = Vec::new();
+    for handle in handles {
+        let result = handle.await
+            .map_err(|e| anyhow::anyhow!("Task join error: {}", e))??;
+        
+        // Update progress after each element completes
+        let (idx, audio, alignments, text, element, word_count) = result;
+        let chapter_words = chapter_words_processed.load(Ordering::Relaxed);
+        
+        // Get current total words processed
+        let current_total = words_processed_atomic
+            .as_ref()
+            .map(|atomic| atomic.load(Ordering::Relaxed))
+            .unwrap_or(0);
+        
+        // Update progress callback with cumulative chapter word count
+        progress_callback(ConversionProgress {
+            current_chapter: chapter_index + 1,
+            total_chapters,
+            words_processed: current_total+chapter_words,
+            total_words,
+            words_in_current_chapter: chapter_words,
+            current_step: "generating-audio".to_string(),
+            message: format!("Processing chapter {}: {} )", 
+                chapter_index + 1, chapter.title),
+        });
+        
+        element_results.push((idx, audio, alignments, text, element));
+    }
+    
+    // Sort by element index to maintain document order
+    element_results.sort_by_key(|(idx, _, _, _, _)| *idx);
+    
+    // Merge audio segments in order and build span mappings
+    let mut merged_audio: Vec<f32> = Vec::new();
+    let mut all_word_alignments: Vec<kokoros::tts::koko::WordAlignment> = Vec::new();
+    let mut span_mappings: Vec<(String, usize, usize)> = Vec::new();
+    let mut full_text = String::new();
+    let mut current_word_index = 0;
+    let mut span_index = 0;
+    let mut updated_html = chapter.content_html.clone();
+    
+    // Track cumulative audio duration for alignment offset
+    let mut cumulative_duration = 0.0;
+    
+    for (element_idx, audio_samples, word_alignments, text, element) in element_results {
+        if audio_samples.is_empty() {
+            continue;
         }
-    };
+        
+        // Count words in this element
+        let word_count = text.split_whitespace().filter(|s| !s.is_empty()).count();
+        let start_word = current_word_index;
+        let end_word = current_word_index + word_count;
+        
+        // Add text to full text
+        if !full_text.is_empty() {
+            full_text.push(' ');
+        }
+        full_text.push_str(&text);
+        current_word_index = end_word;
+        
+        // Create span mappings for this element
+        // Split element text into sentences for span mapping
+        use regex::Regex;
+        use once_cell::sync::Lazy;
+        static SENTENCE_PATTERN: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(r"([^.!?]+[.!?]+)\s*")
+                .expect("Failed to compile sentence regex pattern")
+        });
+        
+        let sentences: Vec<&str> = SENTENCE_PATTERN
+            .find_iter(&text)
+            .map(|m| m.as_str().trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        
+        let sentences = if sentences.is_empty() {
+            vec![text.as_str()]
+        } else {
+            sentences
+        };
+        
+        let mut element_word_offset = start_word;
+        for sentence in sentences {
+            let sentence_word_count = sentence.split_whitespace().filter(|s| !s.is_empty()).count();
+            let span_id = format!("f{:06}", span_index + 1);
+            span_mappings.push((span_id, element_word_offset, element_word_offset + sentence_word_count));
+            element_word_offset += sentence_word_count;
+            span_index += 1;
+        }
+        
+        // Offset word alignments by cumulative duration
+        let mut offset_alignments: Vec<kokoros::tts::koko::WordAlignment> = word_alignments
+            .iter()
+            .map(|wa| kokoros::tts::koko::WordAlignment {
+                word: wa.word.clone(),
+                start_sec: wa.start_sec + cumulative_duration,
+                end_sec: wa.end_sec + cumulative_duration,
+            })
+            .collect();
+        
+        all_word_alignments.append(&mut offset_alignments);
+        
+        // Merge audio samples
+        merged_audio.extend_from_slice(&audio_samples);
+        
+        // Update cumulative duration for next element
+        if !word_alignments.is_empty() {
+            cumulative_duration = word_alignments.last().unwrap().end_sec + cumulative_duration;
+        } else {
+            cumulative_duration += audio_samples.len() as f32 / SAMPLE_RATE as f32;
+        }
+        
+        // Update HTML with spans (similar to extract_text_with_spans logic)
+        // For simplicity, we'll use the existing extract_text_with_spans for HTML updates
+        // but use our parallel-processed audio
+    }
     
-    // Map alignments to segments
+    // Use extract_text_with_spans to get updated HTML with spans
+    let (_, updated_html_with_spans, _) = extract_text_with_spans(&chapter.content_html)
+        .map_err(|e| AppError::EpubParse(format!("Failed to extract text with spans: {}", e)))?;
+    let updated_html = updated_html_with_spans;
+    
+    // Map alignments to segments using merged audio
     let audio_segments = map_alignments_to_segments(
-        span_mappings,
-        &word_alignments,
-        &audio_samples,
+        span_mappings.clone(),
+        &all_word_alignments,
+        &merged_audio,
         &full_text,
     );
     
@@ -622,8 +802,8 @@ async fn process_chapter(
         message: format!("Converting audio to MP3 for chapter {}...", chapter_index + 1),
     });
     
-    // Convert to MP3
-    let mp3_bytes = convert_audio_to_mp3(&audio_samples)?;
+    // Convert merged audio to MP3
+    let mp3_bytes = convert_audio_to_mp3(&merged_audio)?;
     
     // Generate audio file paths
     let (audio_href_zip, audio_href_manifest) = generate_audio_path(&chapter.href, chapter_index, base_path)?;
@@ -949,105 +1129,67 @@ async fn convert_epub_core_with_durations(
     let base_path = context.base_path.clone();
     let chapter_hrefs: Vec<String> = options.chapters.iter().map(|c| c.href.clone()).collect();
     
-    // Create semaphore to limit concurrent operations to available engine instances
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(num_instances));
-    
-    // Atomic counter to track total words processed across all parallel tasks
+    // Atomic counter to track total words processed
     let words_processed_atomic = Arc::new(AtomicUsize::new(0));
     
-    // Process chapters in parallel with semaphore limiting
-    let mut handles = Vec::new();
+    // Process chapters sequentially (not in parallel)
     for (chapter_index, chapter) in options.chapters.iter().enumerate() {
-        let semaphore = Arc::clone(&semaphore);
-        let engine = Arc::clone(&engine);
-        let instance_counter = Arc::clone(&instance_counter);
-        let progress_callback = Arc::clone(&progress_callback);
-        let words_processed_atomic = Arc::clone(&words_processed_atomic);
-        let base_path = base_path.clone();
-        let voice_id = voice_id.clone();
-        let chapter = chapter.clone();
-        let total_chapters = options.chapters.len();
+        // Get worker_id using round-robin distribution (can use 0 since chapters are sequential)
+        let worker_id = chapter_index % num_instances;
         
-        let handle = tokio::spawn(async move {
-            // Acquire semaphore permit (blocks if all engines are busy)
-            let _permit = semaphore.acquire().await
-                .map_err(|e| anyhow::anyhow!("Failed to acquire semaphore: {}", e))?;
-            
-            // Get worker_id using round-robin distribution
-            let worker_id = instance_counter.fetch_add(1, Ordering::Relaxed) % num_instances;
-            
-            log::debug!("Processing chapter {}: '{}' with engine instance {}", 
-                chapter_index + 1, chapter.title, worker_id);
-            
-            // Get current total words processed before starting
-            let current_total = words_processed_atomic.load(Ordering::Relaxed);
-            progress_callback(ConversionProgress {
-                current_chapter: chapter_index + 1,
-                total_chapters,
-                words_processed: current_total,
-                total_words,
-                words_in_current_chapter: chapter.word_count,
-                current_step: "generating-audio".to_string(),
-                message: format!("Processing chapter {}: {} ({} words)", chapter_index + 1, chapter.title, chapter.word_count),
-            });
-            
-            // Process the chapter with atomic counter for progress tracking
-            let result = process_chapter(
-                &chapter,
-                chapter_index,
-                &base_path,
-                &engine,
-                worker_id,
-                &voice_id,
-                &*progress_callback,
-                total_words,
-                total_chapters,
-                Some(Arc::clone(&words_processed_atomic)),
-            ).await?;
-            
-            // Update atomic counter with words processed by this task
-            let updated_total = words_processed_atomic.fetch_add(result.words_processed, Ordering::Relaxed) + result.words_processed;
-            
-            // Report progress with updated total
-            progress_callback(ConversionProgress {
-                current_chapter: chapter_index + 1,
-                total_chapters,
-                words_processed: updated_total,
-                total_words,
-                words_in_current_chapter: chapter.word_count,
-                current_step: "completed".to_string(),
-                message: format!("Completed chapter {}: {} ({} words processed, {} total)", chapter_index + 1, chapter.title, result.words_processed, updated_total),
-            });
-            
-            Ok::<(usize, ChapterProcessResult), anyhow::Error>((chapter_index, result))
+        log::debug!("Processing chapter {}: '{}' with engine instance {}", 
+            chapter_index + 1, chapter.title, worker_id);
+        
+        // Get current total words processed before starting
+        let current_total = words_processed_atomic.load(Ordering::Relaxed);
+        progress_callback(ConversionProgress {
+            current_chapter: chapter_index + 1,
+            total_chapters: options.chapters.len(),
+            words_processed: current_total,
+            total_words,
+            words_in_current_chapter: chapter.word_count,
+            current_step: "generating-audio".to_string(),
+            message: format!("Processing chapter {}: {} ({} words)", chapter_index + 1, chapter.title, chapter.word_count),
         });
         
-        handles.push(handle);
-    }
-    
-    // Collect results and merge them in order
-    let mut results: Vec<(usize, ChapterProcessResult)> = Vec::new();
-    for handle in handles {
-        let result = handle.await
-            .map_err(|e| anyhow::anyhow!("Task join error: {}", e))??;
-        results.push(result);
-    }
-    
-    // Sort by chapter index to maintain order
-    results.sort_by_key(|(idx, _)| *idx);
-    
-    // Merge results in order
-    // Use atomic counter value as the source of truth for words processed
-    let words_processed = words_processed_atomic.load(Ordering::Relaxed);
-    for (chapter_index, result) in results {
-        // Verify words_processed matches (should already be updated by tasks)
+        // Process the chapter with atomic counter for progress tracking
+        // HTML elements within the chapter will be processed in parallel
+        let result = process_chapter(
+            chapter,
+            chapter_index,
+            &base_path,
+            &engine,
+            worker_id,
+            &voice_id,
+            &*progress_callback,
+            total_words,
+            options.chapters.len(),
+            Some(Arc::clone(&words_processed_atomic)),
+            num_instances,
+        ).await?;
+        
+        // Update atomic counter with words processed by this chapter
+        let updated_total = words_processed_atomic.fetch_add(result.words_processed, Ordering::Relaxed) + result.words_processed;
+        
+        // Report progress with updated total
+        progress_callback(ConversionProgress {
+            current_chapter: chapter_index + 1,
+            total_chapters: options.chapters.len(),
+            words_processed: updated_total,
+            total_words,
+            words_in_current_chapter: chapter.word_count,
+            current_step: "completed".to_string(),
+            message: format!("Completed chapter {}: {} ({} words processed, {} total)", chapter_index + 1, chapter.title, result.words_processed, updated_total),
+        });
+        
+        // Merge chapter result into context
         merge_chapter_result(&mut context, result);
         
         log::debug!("Finished processing chapter {}. Total: {} audio files, {} SMIL files", 
             chapter_index + 1, context.audio_files.len(), context.smil_files.len());
         
         // Rebuild EPUB and save after each chapter
-        let chapter = &options.chapters[chapter_index];
+        let words_processed = words_processed_atomic.load(Ordering::Relaxed);
         rebuild_and_save_epub(
             &context,
             &original_opf_content,
@@ -1069,10 +1211,13 @@ async fn convert_epub_core_with_durations(
     // Build final EPUB
     let output = build_final_epub(&context, &original_opf_content, &chapter_hrefs)?;
     
+    // Get final words processed count
+    let final_words_processed = words_processed_atomic.load(Ordering::Relaxed);
+    
     progress_callback(ConversionProgress {
         current_chapter: options.chapters.len(),
         total_chapters: options.chapters.len(),
-        words_processed,
+        words_processed: final_words_processed,
         total_words,
         words_in_current_chapter: 0,
         current_step: "complete".to_string(),
@@ -1174,7 +1319,7 @@ pub async fn convert_epub_to_audiobook(
         .to_string();
     
     // Create TTS engine pool with at most get_parallelism() instances, capped by num_chapters
-    let num_instances = get_parallelism().min(num_chapters);
+    let num_instances = get_parallelism();
     let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
         &onnx_path_str,
         &voices_path_str,
@@ -1286,7 +1431,7 @@ pub async fn convert_epub_to_audiobook_standalone(
         .to_string();
     
     // Create TTS engine pool with at most get_parallelism() instances, capped by num_chapters
-    let num_instances = get_parallelism().min(num_chapters);
+    let num_instances = get_parallelism();
     let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
         &onnx_path_str,
         &voices_path_str,
