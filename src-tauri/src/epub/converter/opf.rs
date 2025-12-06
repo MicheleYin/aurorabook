@@ -228,16 +228,45 @@ pub fn update_content_opf(
                     
                     // Create new item element with media-overlay if needed
                     let mut new_item = BytesStart::new("item");
+                    let mut existing_media_overlay: Option<String> = None;
+                    
                     for attr in &attrs {
                         let key = attr.key.as_ref();
-                        // Skip existing media-overlay
+                        // Preserve existing media-overlay if this chapter isn't being converted now
                         if key == b"media-overlay" {
+                            // Check if this chapter is in the current conversion batch
+                            let is_in_current_batch = if let Some(ref href) = href_attr {
+                                let normalized_href = strip_base_path_prefix(href);
+                                chapters.iter().any(|ch| {
+                                    let normalized_ch = strip_base_path_prefix(ch);
+                                    normalized_href == normalized_ch || 
+                                    normalized_href.split('/').last() == normalized_ch.split('/').last()
+                                })
+                            } else {
+                                false
+                            };
+                            
+                                if !is_in_current_batch {
+                                    // Preserve existing media-overlay for chapters not in current batch
+                                    if let Ok(value_str) = std::str::from_utf8(&attr.value) {
+                                        existing_media_overlay = Some(value_str.to_string());
+                                        log::debug!("Preserving existing media-overlay='{}' for chapter href='{}' (not in current conversion batch)", 
+                                            value_str,
+                                            href_attr.as_ref().map(|h| h.as_ref()).unwrap_or("unknown"));
+                                    }
+                                }
+                            // Skip adding it now - we'll add it back if preserving, or add new one if converting
                             continue;
                         }
                         new_item.push_attribute((key, attr.value.as_ref()));
                     }
                     
-                    if needs_media_overlay {
+                    // Add media-overlay: either preserve existing or add new one
+                    if let Some(existing) = existing_media_overlay {
+                        // Preserve existing media-overlay for already-converted chapters
+                        new_item.push_attribute(("media-overlay", existing.as_str()));
+                    } else if needs_media_overlay {
+                        // Add new media-overlay for chapters being converted now
                         if let Some(ref smil_id) = smil_id_to_add {
                             new_item.push_attribute(("media-overlay", smil_id.as_str()));
                             log::debug!("Added media-overlay='{}' to chapter item with href='{}'", smil_id, href_attr.as_ref().unwrap_or(&"unknown".to_string()));
@@ -407,15 +436,45 @@ pub fn update_content_opf(
                     }
                     
                     let mut new_item = BytesStart::new("item");
+                    let mut existing_media_overlay: Option<String> = None;
+                    
                     for attr in &attrs {
                         let key = attr.key.as_ref();
+                        // Preserve existing media-overlay if this chapter isn't being converted now
                         if key == b"media-overlay" {
+                            // Check if this chapter is in the current conversion batch
+                            let is_in_current_batch = if let Some(ref href) = href_attr {
+                                let normalized_href = strip_base_path_prefix(href);
+                                chapters.iter().any(|ch| {
+                                    let normalized_ch = strip_base_path_prefix(ch);
+                                    normalized_href == normalized_ch || 
+                                    normalized_href.split('/').last() == normalized_ch.split('/').last()
+                                })
+                            } else {
+                                false
+                            };
+                            
+                            if !is_in_current_batch {
+                                // Preserve existing media-overlay for chapters not in current batch
+                                if let Ok(value_str) = std::str::from_utf8(&attr.value) {
+                                    existing_media_overlay = Some(value_str.to_string());
+                                    log::debug!("Preserving existing media-overlay='{}' for chapter href='{}' (empty item, not in current conversion batch)", 
+                                        value_str,
+                                        href_attr.as_ref().map(|h| h.as_ref()).unwrap_or("unknown"));
+                                }
+                            }
+                            // Skip adding it now - we'll add it back if preserving, or add new one if converting
                             continue;
                         }
                         new_item.push_attribute((key, attr.value.as_ref()));
                     }
                     
-                    if needs_media_overlay {
+                    // Add media-overlay: either preserve existing or add new one
+                    if let Some(existing) = existing_media_overlay {
+                        // Preserve existing media-overlay for already-converted chapters
+                        new_item.push_attribute(("media-overlay", existing.as_str()));
+                    } else if needs_media_overlay {
+                        // Add new media-overlay for chapters being converted now
                         if let Some(ref smil_id) = smil_id_to_add {
                             new_item.push_attribute(("media-overlay", smil_id.as_str()));
                             log::debug!("Added media-overlay='{}' to chapter item with href='{}' (empty item)", smil_id, href_attr.as_ref().unwrap_or(&"unknown".to_string()));

@@ -346,3 +346,364 @@ async fn test_tts_duration_accuracy() {
     println!("💡 All WAV and TSV files are kept for inspection.");
 }
 
+/// Comprehensive test for TTS timestamp accuracy
+/// 
+/// This test verifies:
+/// 1. Consistency: Same text produces similar timestamps across multiple runs
+/// 2. Speed scaling: Timestamps scale correctly with different speeds
+/// 3. Sequential ordering: Words are in correct order with no invalid overlaps
+/// 4. Duration matching: Total alignment duration matches audio duration
+/// 5. Word boundary accuracy: Each word has reasonable duration
+/// 6. Monotonic timestamps: Timestamps are non-decreasing
+#[tokio::test]
+async fn test_tts_timestamp_accuracy() {
+    println!("🧪 Testing TTS timestamp accuracy");
+    
+    // Find model and voices files
+    let onnx_model = find_onnx_model();
+    let resources_dir = find_resources_dir();
+    
+    if onnx_model.is_none() || resources_dir.is_none() {
+        println!("⚠️  Skipping test: Model files not found");
+        println!("   Set KOKORO_MODEL_DIR or place model files in resources/");
+        return;
+    }
+    
+    let onnx_path = onnx_model.unwrap();
+    let voices_path = find_voices_file(&resources_dir.unwrap())
+        .expect("Voices file should exist if resources dir exists");
+    
+    let onnx_path_str = onnx_path.to_str().expect("ONNX path should be valid UTF-8");
+    let voices_path_str = voices_path.to_str().expect("Voices path should be valid UTF-8");
+    
+    let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+        onnx_path_str,
+        voices_path_str,
+        1,
+    ).await;
+    
+    // Create output directory for this test
+    let test_dir = std::env::current_dir()
+        .unwrap_or_else(|_| std::env::temp_dir())
+        .join("test_output")
+        .join("tts_timestamp_accuracy");
+    fs::create_dir_all(&test_dir).expect("Failed to create test directory");
+    
+    let test_text = "The quick brown fox jumps over the lazy dog.";
+    let voice_id = "af_heart";
+    let language = "en";
+    
+    println!("\n📝 Test text: '{}'", test_text);
+    println!("   Voice: {}", voice_id);
+    println!("   Language: {}", language);
+    
+    // Test 1: Consistency across multiple runs
+    println!("\n🔬 Test 1: Consistency across multiple runs");
+    let num_runs = 3;
+    let mut previous_alignments: Option<Vec<kokoros::tts::koko::WordAlignment>> = None;
+    
+    for run in 0..num_runs {
+        println!("   Run {} of {}", run + 1, num_runs);
+        let model_instance = engine.get_model_instance(0);
+        let (audio_samples, word_alignments) = match engine.tts_timestamped_raw_audio_with_instance(
+            test_text,
+            language,
+            voice_id,
+            1.0,
+            None,
+            None,
+            None,
+            None,
+            model_instance,
+        ) {
+            Ok(Some((audio, alignments))) => (audio, alignments),
+            Ok(None) => {
+                panic!("TTS engine returned None - model may not support durations");
+            }
+            Err(e) => {
+                panic!("Failed to generate audio: {}", e);
+            }
+        };
+        
+        // Verify basic structure
+        assert!(!word_alignments.is_empty(), "Should have word alignments");
+        
+        // Verify that engine normalization is working (alignment duration should match audio)
+        let audio_duration = audio_samples.len() as f32 / 24000.0;
+        let alignment_duration = word_alignments.last().unwrap().end_sec;
+        let duration_diff = (alignment_duration - audio_duration).abs();
+        let duration_diff_percent = (duration_diff / audio_duration) * 100.0;
+        
+        // After normalization, alignment should be very close to audio duration (within 2%)
+        assert!(
+            duration_diff_percent < 2.0,
+            "Engine normalization failed: alignment={:.3}s, audio={:.3}s, diff={:.1}%",
+            alignment_duration, audio_duration, duration_diff_percent
+        );
+        
+        // Compare with previous run (if available)
+        if let Some(ref prev) = previous_alignments {
+            assert_eq!(
+                prev.len(),
+                word_alignments.len(),
+                "Word count should be consistent across runs"
+            );
+            
+            // Check that words match
+            for (i, (prev_align, curr_align)) in prev.iter().zip(word_alignments.iter()).enumerate() {
+                assert_eq!(
+                    prev_align.word, curr_align.word,
+                    "Word at index {} should match: prev='{}', curr='{}'",
+                    i, prev_align.word, curr_align.word
+                );
+            }
+            
+            // Check that timestamps are similar (within 10% tolerance for consistency)
+            let tolerance = 0.10; // 10% tolerance (allowing for some variance in TTS)
+            for (i, (prev_align, curr_align)) in prev.iter().zip(word_alignments.iter()).enumerate() {
+                let prev_duration = prev_align.end_sec - prev_align.start_sec;
+                let curr_duration = curr_align.end_sec - curr_align.start_sec;
+                
+                // Allow some variance but timestamps should be reasonably consistent
+                if prev_duration > 0.01 && curr_duration > 0.01 {
+                    let duration_diff = (prev_duration - curr_duration).abs() / prev_duration;
+                    assert!(
+                        duration_diff < tolerance,
+                        "Word '{}' (index {}) duration variance too high: prev={:.3}s, curr={:.3}s (diff={:.1}%)",
+                        prev_align.word, i, prev_duration, curr_duration, duration_diff * 100.0
+                    );
+                }
+                
+                // Check start time consistency (within 5% of total duration)
+                let total_duration = prev_align.end_sec.max(curr_align.end_sec);
+                if total_duration > 0.01 {
+                    let start_diff = (prev_align.start_sec - curr_align.start_sec).abs() / total_duration;
+                    assert!(
+                        start_diff < tolerance,
+                        "Word '{}' (index {}) start time variance too high: prev={:.3}s, curr={:.3}s (diff={:.1}%)",
+                        prev_align.word, i, prev_align.start_sec, curr_align.start_sec, start_diff * 100.0
+                    );
+                }
+            }
+        }
+        
+        previous_alignments = Some(word_alignments);
+    }
+    println!("   ✅ Consistency test passed");
+    
+    // Test 2: Speed scaling accuracy
+    println!("\n🔬 Test 2: Speed scaling accuracy");
+    let speeds = vec![0.75, 1.0, 1.25, 1.5];
+    let mut baseline_duration: Option<f32> = None;
+    
+    for speed in speeds {
+        println!("   Testing speed: {:.2}x", speed);
+        let model_instance = engine.get_model_instance(0);
+        let (audio_samples, word_alignments) = match engine.tts_timestamped_raw_audio_with_instance(
+            test_text,
+            language,
+            voice_id,
+            speed,
+            None,
+            None,
+            None,
+            None,
+            model_instance,
+        ) {
+            Ok(Some((audio, alignments))) => (audio, alignments),
+            Ok(None) => {
+                panic!("TTS engine returned None - model may not support durations");
+            }
+            Err(e) => {
+                panic!("Failed to generate audio: {}", e);
+            }
+        };
+        
+        let audio_duration = audio_samples.len() as f32 / 24000.0;
+        let alignment_duration = word_alignments.last().unwrap().end_sec;
+        
+        println!("      Audio duration: {:.3}s", audio_duration);
+        println!("      Alignment duration: {:.3}s", alignment_duration);
+        
+        // Verify normalization is working (alignment should match audio within 2%)
+        let duration_diff_percent = ((alignment_duration - audio_duration).abs() / audio_duration) * 100.0;
+        assert!(
+            duration_diff_percent < 2.0,
+            "Normalization failed at speed {:.2}x: alignment={:.3}s, audio={:.3}s, diff={:.1}%",
+            speed, alignment_duration, audio_duration, duration_diff_percent
+        );
+        
+        // Verify that duration scales inversely with speed
+        if let Some(baseline) = baseline_duration {
+            let actual_ratio = alignment_duration / baseline;
+            let ratio_diff = (actual_ratio - (1.0 / speed)).abs();
+            
+            // Allow 10% tolerance for speed scaling
+            assert!(
+                ratio_diff < 0.1,
+                "Speed scaling inaccurate: speed={:.2}x, expected_ratio={:.3}, actual_ratio={:.3}, diff={:.1}%",
+                speed, 1.0 / speed, actual_ratio, ratio_diff * 100.0
+            );
+        } else {
+            baseline_duration = Some(alignment_duration);
+        }
+        
+        // Verify timestamps are still valid at this speed
+        for i in 1..word_alignments.len() {
+            assert!(
+                word_alignments[i].start_sec >= word_alignments[i-1].start_sec,
+                "Timestamps should be monotonic at speed {:.2}x",
+                speed
+            );
+        }
+    }
+    println!("   ✅ Speed scaling test passed");
+    
+    // Test 3: Sequential ordering and monotonic timestamps
+    println!("\n🔬 Test 3: Sequential ordering and monotonic timestamps");
+    let model_instance = engine.get_model_instance(0);
+    let (audio_samples, word_alignments) = match engine.tts_timestamped_raw_audio_with_instance(
+        test_text,
+        language,
+        voice_id,
+        1.0,
+        None,
+        None,
+        None,
+        None,
+        model_instance,
+    ) {
+        Ok(Some((audio, alignments))) => (audio, alignments),
+        Ok(None) => {
+            panic!("TTS engine returned None - model may not support durations");
+        }
+        Err(e) => {
+            panic!("Failed to generate audio: {}", e);
+        }
+    };
+    
+    // Verify monotonic timestamps
+    for i in 1..word_alignments.len() {
+        assert!(
+            word_alignments[i].start_sec >= word_alignments[i-1].start_sec,
+            "Timestamp {} ({:.3}s) should be >= previous ({:.3}s)",
+            i, word_alignments[i].start_sec, word_alignments[i-1].start_sec
+        );
+        
+        // Verify no invalid overlaps (words can't end before they start)
+        assert!(
+            word_alignments[i-1].end_sec <= word_alignments[i].end_sec,
+            "Previous word end ({:.3}s) should be <= current word end ({:.3}s)",
+            word_alignments[i-1].end_sec, word_alignments[i].end_sec
+        );
+    }
+    
+    // Verify all timestamps are non-negative
+    for (i, alignment) in word_alignments.iter().enumerate() {
+        assert!(
+            alignment.start_sec >= 0.0,
+            "Word {} start time should be non-negative: {:.3}s",
+            i, alignment.start_sec
+        );
+        assert!(
+            alignment.end_sec >= 0.0,
+            "Word {} end time should be non-negative: {:.3}s",
+            i, alignment.end_sec
+        );
+    }
+    println!("   ✅ Sequential ordering test passed");
+    
+    // Test 4: Duration matching (verify engine normalization)
+    println!("\n🔬 Test 4: Duration matching (engine normalization)");
+    let audio_duration = audio_samples.len() as f32 / 24000.0;
+    let alignment_duration = word_alignments.last().unwrap().end_sec;
+    let duration_diff = (audio_duration - alignment_duration).abs();
+    let duration_diff_percent = (duration_diff / audio_duration) * 100.0;
+    
+    println!("   Audio duration: {:.3}s", audio_duration);
+    println!("   Alignment duration: {:.3}s", alignment_duration);
+    println!("   Difference: {:.3}s ({:.1}%)", duration_diff, duration_diff_percent);
+    
+    // After engine normalization, alignment duration should match audio duration very closely (within 2%)
+    assert!(
+        duration_diff_percent < 2.0,
+        "Engine normalization failed: alignment duration ({:.3}s) should match audio duration ({:.3}s) within 2%, but difference is {:.1}%",
+        alignment_duration, audio_duration, duration_diff_percent
+    );
+    println!("   ✅ Duration matching test passed (normalization working correctly)");
+    
+    // Test 5: Word boundary accuracy
+    println!("\n🔬 Test 5: Word boundary accuracy");
+    let mut total_word_duration = 0.0;
+    let mut word_count = 0;
+    
+    for (i, alignment) in word_alignments.iter().enumerate() {
+        let word_duration = alignment.end_sec - alignment.start_sec;
+        
+        // Punctuation may have zero or very short duration
+        let is_punctuation = alignment.word.len() == 1 && 
+            ".,!?:;!?".contains(alignment.word.as_str());
+        
+        if !is_punctuation {
+            // Regular words should have reasonable duration (0.05s to 2.0s)
+            assert!(
+                word_duration >= 0.05 && word_duration <= 2.0,
+                "Word '{}' (index {}) has unusual duration: {:.3}s (expected 0.05-2.0s)",
+                alignment.word, i, word_duration
+            );
+            
+            total_word_duration += word_duration;
+            word_count += 1;
+        } else {
+            // Punctuation can have zero or short duration
+            assert!(
+                word_duration >= 0.0 && word_duration <= 0.5,
+                "Punctuation '{}' (index {}) has unusual duration: {:.3}s (expected 0.0-0.5s)",
+                alignment.word, i, word_duration
+            );
+        }
+    }
+    
+    if word_count > 0 {
+        let avg_word_duration = total_word_duration / word_count as f32;
+        println!("   Average word duration: {:.3}s", avg_word_duration);
+        println!("   Total words analyzed: {}", word_count);
+        
+        // Average word duration should be reasonable (0.1s to 1.0s)
+        assert!(
+            avg_word_duration >= 0.1 && avg_word_duration <= 1.0,
+            "Average word duration ({:.3}s) is outside reasonable range (0.1-1.0s)",
+            avg_word_duration
+        );
+    }
+    println!("   ✅ Word boundary accuracy test passed");
+    
+    // Test 6: Save results for inspection
+    println!("\n💾 Saving test results...");
+    let wav_path = test_dir.join("timestamp_accuracy_test.wav");
+    let tsv_path = test_dir.join("timestamp_accuracy_test_alignments.tsv");
+    
+    save_audio_as_wav(&audio_samples, 24000, wav_path.to_str().unwrap())
+        .expect("Failed to save WAV file");
+    save_alignments_to_tsv(&word_alignments, tsv_path.to_str().unwrap())
+        .expect("Failed to save alignments");
+    
+    // Print summary statistics
+    println!("\n📊 Timestamp Accuracy Summary:");
+    println!("   Total words: {}", word_alignments.len());
+    println!("   Audio duration: {:.3}s", audio_duration);
+    println!("   Alignment duration: {:.3}s", alignment_duration);
+    println!("   Duration accuracy: {:.1}%", (1.0 - duration_diff_percent / 100.0) * 100.0);
+    println!("   First word starts at: {:.3}s", word_alignments[0].start_sec);
+    println!("   Last word ends at: {:.3}s", word_alignments.last().unwrap().end_sec);
+    
+    if word_count > 0 {
+        println!("   Average word duration: {:.3}s", total_word_duration / word_count as f32);
+    }
+    
+    println!("\n✅ All timestamp accuracy tests passed!");
+    println!("\n📁 Test files saved at: {}", test_dir.display());
+    println!("   🔊 WAV file: {}", wav_path.display());
+    println!("   📊 TSV file: {}", tsv_path.display());
+}
+

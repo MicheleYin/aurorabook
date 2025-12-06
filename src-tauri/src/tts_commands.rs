@@ -4,7 +4,6 @@ use crate::utils::constants::{DEFAULT_MP3_BITRATE, DEFAULT_LAME_QUALITY};
 use crate::utils::errors::{AppError, AppResult};
 use crate::tts::engine::TtsEngineType;
 use std::sync::Arc;
-use tauri::Manager;
 
 /// Initialize the Kokoros TTS engine (Tauri command).
 ///

@@ -16,7 +16,7 @@ use anyhow::{Context, Result as AnyhowResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 /// Conversion progress information for tracking EPUB to audiobook conversion.
 ///
@@ -576,7 +576,7 @@ async fn process_chapter(
     chapter_index: usize,
     base_path: &str,
     engine: &Arc<kokoros::tts::koko::TTSKokoParallel>,
-    worker_id: usize,
+    _worker_id: usize,
     voice_id: &str,
     progress_callback: &ProgressCallback,
     total_words: usize,
@@ -607,7 +607,7 @@ async fn process_chapter(
         total_words,
         words_in_current_chapter: chapter.word_count,
         current_step: "generating-audio".to_string(),
-        message: format!("Generating audio for chapter {}: {} ({} words)", chapter_index + 1, chapter.title, chapter.word_count),
+        message: format!("Generating audio for chapter {} ({} words)", chapter.title, chapter.word_count),
     });
     
     validate_file_size(chapter.content_html.len(), MAX_CHAPTER_SIZE, "Chapter HTML")?;
@@ -636,7 +636,7 @@ async fn process_chapter(
     
     // Create semaphore to limit concurrent element processing
     let semaphore = Arc::new(tokio::sync::Semaphore::new(num_instances));
-    let instance_counter = Arc::new(AtomicUsize::new(0));
+    let _instance_counter = Arc::new(AtomicUsize::new(0));
     
     // Atomic counter to track words processed in this chapter
     let chapter_words_processed = Arc::new(AtomicUsize::new(0));
@@ -646,7 +646,6 @@ async fn process_chapter(
     for (idx, element) in html_elements.iter().enumerate() {
         let semaphore = Arc::clone(&semaphore);
         let engine = Arc::clone(engine);
-        let instance_counter = Arc::clone(&instance_counter);
         let chapter_words_processed = Arc::clone(&chapter_words_processed);
         let element = element.clone();
         let voice_id = voice_id.to_string();
@@ -655,7 +654,7 @@ async fn process_chapter(
             let _permit = semaphore.acquire().await
                 .map_err(|e| anyhow::anyhow!("Failed to acquire semaphore: {}", e))?;
             
-            let worker_id = instance_counter.fetch_add(1, Ordering::Relaxed) % num_instances;
+            let worker_id = idx % num_instances;
             let result = process_html_element(&element, idx, &engine, worker_id, &voice_id).await?;
             
             // Count words in this element and update atomic counter
@@ -685,7 +684,7 @@ async fn process_chapter(
         }
         
         // Update progress after each element completes
-        let (idx, audio, alignments, text, element, word_count) = result;
+        let (idx, audio, alignments, text, element, _word_count) = result;
         let chapter_words = chapter_words_processed.load(Ordering::Relaxed);
         
         // Get current total words processed
@@ -727,12 +726,11 @@ async fn process_chapter(
     let mut full_text = String::new();
     let mut current_word_index = 0;
     let mut span_index = 0;
-    let mut updated_html = chapter.content_html.clone();
     
     // Track cumulative audio duration for alignment offset
     let mut cumulative_duration = 0.0;
     
-    for (element_idx, audio_samples, word_alignments, text, element) in element_results {
+    for (_element_idx, audio_samples, word_alignments, text, _element) in element_results {
         if audio_samples.is_empty() {
             continue;
         }
@@ -1127,6 +1125,7 @@ async fn rebuild_and_save_epub(
             
             // Mark chapter as completed in the book
             use crate::book_service::storage::{load_all_books, save_all_books};
+            use crate::book_service::models::ConversionStatus;
             if let Ok(mut books) = load_all_books(app_ref).await {
                 if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path_ref) {
                     // Get the chapter href for this chapter
@@ -1135,6 +1134,12 @@ async fn rebuild_and_save_epub(
                         if !book.completed_chapters.contains(chapter_href) {
                             book.completed_chapters.push(chapter_href.clone());
                             log::debug!("Marked chapter {} as completed", chapter_href);
+                            
+                            // Check if all chapters are completed
+                            if book.completed_chapters.len() >= book.chapters.len() {
+                                book.conversion_status = ConversionStatus::Done;
+                                log::info!("All chapters completed, marking conversion as done");
+                            }
                             
                             // Save the updated book
                             if let Err(e) = save_all_books(app_ref, &books).await {
@@ -1191,23 +1196,29 @@ async fn convert_epub_core_with_durations(
     options: ConversionOptions,
     progress_callback: ProgressCallback,
     engine: Arc<kokoros::tts::koko::TTSKokoParallel>,
-    instance_counter: Arc<AtomicUsize>,
+    _instance_counter: Arc<AtomicUsize>,
     num_instances: usize,
     voice_id: String,
     app: Option<AppHandle>,
     source_path: Option<String>,
     cancel_token: Option<Arc<AtomicBool>>,
+    initial_words_processed: usize,
+    total_words_all: usize,
+    initial_chapter_index: usize,
+    total_chapters_all: usize,
 ) -> AnyhowResult<Vec<u8>>
 {
     // Wrap progress_callback in Arc for sharing across tasks
     let progress_callback = Arc::new(progress_callback);
-    let total_words: usize = options.chapters.iter().map(|c| c.word_count).sum();
+    
+    // Initialize atomic counter with words already processed
+    let words_processed_atomic = Arc::new(AtomicUsize::new(initial_words_processed));
     
     progress_callback(ConversionProgress {
-        current_chapter: 0,
-        total_chapters: options.chapters.len(),
-        words_processed: 0,
-        total_words,
+        current_chapter: initial_chapter_index,
+        total_chapters: total_chapters_all,
+        words_processed: initial_words_processed,
+        total_words: total_words_all,
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
         message: "Initializing EPUB conversion with single TTS engine...".to_string(),
@@ -1219,9 +1230,6 @@ async fn convert_epub_core_with_durations(
     let (mut context, original_opf_content) = initialize_conversion_context(&epub_data)?;
     let base_path = context.base_path.clone();
     let chapter_hrefs: Vec<String> = options.chapters.iter().map(|c| c.href.clone()).collect();
-    
-    // Atomic counter to track total words processed
-    let words_processed_atomic = Arc::new(AtomicUsize::new(0));
     
     // Process chapters sequentially (not in parallel)
     for (chapter_index, chapter) in options.chapters.iter().enumerate() {
@@ -1242,13 +1250,13 @@ async fn convert_epub_core_with_durations(
         // Get current total words processed before starting
         let current_total = words_processed_atomic.load(Ordering::Relaxed);
         progress_callback(ConversionProgress {
-            current_chapter: chapter_index + 1,
-            total_chapters: options.chapters.len(),
+            current_chapter: initial_chapter_index + chapter_index + 1,
+            total_chapters: total_chapters_all,
             words_processed: current_total,
-            total_words,
+            total_words: total_words_all,
             words_in_current_chapter: chapter.word_count,
             current_step: "generating-audio".to_string(),
-            message: format!("Processing chapter {}: {} ({} words)", chapter_index + 1, chapter.title, chapter.word_count),
+            message: format!("Processing chapter {}: {} ({} words)", initial_chapter_index + chapter_index + 1, chapter.title, chapter.word_count),
         });
         
         // Process the chapter with atomic counter for progress tracking
@@ -1261,8 +1269,8 @@ async fn convert_epub_core_with_durations(
             worker_id,
             &voice_id,
             &*progress_callback,
-            total_words,
-            options.chapters.len(),
+            total_words_all,
+            total_chapters_all,
             Some(Arc::clone(&words_processed_atomic)),
             num_instances,
             cancel_token.as_ref().map(Arc::clone),
@@ -1277,13 +1285,13 @@ async fn convert_epub_core_with_durations(
         
         // Report progress with updated total
         progress_callback(ConversionProgress {
-            current_chapter: chapter_index + 1,
-            total_chapters: options.chapters.len(),
+            current_chapter: initial_chapter_index + chapter_index + 1,
+            total_chapters: total_chapters_all,
             words_processed: updated_total,
-            total_words,
+            total_words: total_words_all,
             words_in_current_chapter: chapter_words_processed, // Use actual words processed
             current_step: "completed".to_string(),
-            message: format!("Completed chapter {}: {} ({} words processed, {} total)", chapter_index + 1, chapter.title, chapter_words_processed, updated_total),
+            message: format!("Completed chapter {}: {} ({} words processed, {} total)", initial_chapter_index + chapter_index + 1, chapter.title, chapter_words_processed, updated_total),
         });
         
         // Merge chapter result into context
@@ -1296,6 +1304,24 @@ async fn convert_epub_core_with_durations(
         if let Some(ref token) = cancel_token {
             if token.load(Ordering::Relaxed) {
                 log::info!("Conversion cancelled after chapter {}", chapter_index + 1);
+                // Save current progress before returning
+                let words_processed = words_processed_atomic.load(Ordering::Relaxed);
+                if let (Some(app_ref), Some(source_path_ref)) = (app.as_ref(), source_path.as_ref()) {
+                    use crate::book_service::storage::{load_all_books, save_all_books};
+                    if let Ok(mut books) = load_all_books(app_ref).await {
+                        if let Some(book) = books.iter_mut().find(|b| b.source_path == *source_path_ref) {
+                            if book.total_words.is_none() {
+                                book.total_words = Some(total_words_all);
+                            }
+                            book.words_processed = Some(words_processed);
+                            if let Err(e) = save_all_books(app_ref, &books).await {
+                                log::warn!("Failed to save words_processed on cancellation: {}", e);
+                            } else {
+                                log::debug!("Saved words_processed on cancellation: {} / {}", words_processed, total_words_all);
+                            }
+                        }
+                    }
+                }
                 return Err(anyhow::anyhow!("Conversion cancelled by user"));
             }
         }
@@ -1307,22 +1333,43 @@ async fn convert_epub_core_with_durations(
             &original_opf_content,
             &chapter_hrefs,
             chapter_index,
-            options.chapters.len(),
+            total_chapters_all,
             words_processed,
-            total_words,
+            total_words_all,
             chapter_words_processed, // Use actual words processed, not chapter.word_count
             &*progress_callback,
             app.as_ref(),
             source_path.as_deref(),
         ).await?;
         
-        // Check for cancellation after saving
+        // Check for cancellation after rebuilding (in case it was cancelled during rebuild)
         if let Some(ref token) = cancel_token {
             if token.load(Ordering::Relaxed) {
-                log::info!("Conversion cancelled after saving chapter {}", chapter_index + 1);
+                log::info!("Conversion cancelled after rebuilding chapter {}", chapter_index + 1);
+                // Save current progress before returning
+                let words_processed = words_processed_atomic.load(Ordering::Relaxed);
+                if let (Some(app_ref), Some(source_path_ref)) = (app.as_ref(), source_path.as_ref()) {
+                    use crate::book_service::storage::{load_all_books, save_all_books};
+                    if let Ok(mut books) = load_all_books(app_ref).await {
+                        if let Some(book) = books.iter_mut().find(|b| b.source_path == *source_path_ref) {
+                            if book.total_words.is_none() {
+                                book.total_words = Some(total_words_all);
+                            }
+                            book.words_processed = Some(words_processed);
+                            if let Err(e) = save_all_books(app_ref, &books).await {
+                                log::warn!("Failed to save words_processed on cancellation: {}", e);
+                            } else {
+                                log::debug!("Saved words_processed on cancellation: {} / {}", words_processed, total_words_all);
+                            }
+                        }
+                    }
+                }
                 return Err(anyhow::anyhow!("Conversion cancelled by user"));
             }
         }
+        
+        // Note: We don't save words_processed to DB after each chapter anymore
+        // It's tracked in atomics and will be saved only on cancellation or completion
     }
     
     log::debug!("All chapters processed. Total: {} audio files, {} SMIL files", 
@@ -1335,10 +1382,10 @@ async fn convert_epub_core_with_durations(
     let final_words_processed = words_processed_atomic.load(Ordering::Relaxed);
     
     progress_callback(ConversionProgress {
-        current_chapter: options.chapters.len(),
-        total_chapters: options.chapters.len(),
+        current_chapter: total_chapters_all,
+        total_chapters: total_chapters_all,
         words_processed: final_words_processed,
-        total_words,
+        total_words: total_words_all,
         words_in_current_chapter: 0,
         current_step: "complete".to_string(),
         message: "Completing conversion...".to_string(),
@@ -1403,6 +1450,10 @@ pub async fn convert_epub_to_audiobook(
     app: AppHandle,
     source_path: Option<String>,
     cancel_token: Option<Arc<std::sync::atomic::AtomicBool>>,
+    initial_words_processed: Option<usize>,
+    total_words_all: Option<usize>,
+    initial_chapter_index: Option<usize>,
+    total_chapters_all: Option<usize>,
 ) -> AppResult<Vec<u8>> {
     use crate::utils::path_resolver::ResourcePathResolver;
     
@@ -1412,18 +1463,31 @@ pub async fn convert_epub_to_audiobook(
         emit_progress(&app_progress, progress);
     });
     
-    // Calculate total words
-    let total_words: usize = options.chapters.iter().map(|c| c.word_count).sum();
+    // Calculate total words for remaining chapters
+    let total_words_remaining: usize = options.chapters.iter().map(|c| c.word_count).sum();
     let num_chapters = options.chapters.len();
-    // Emit initial progress event when conversion starts
+    
+    // Use provided values if resuming, otherwise use defaults
+    let words_processed_start = initial_words_processed.unwrap_or(0);
+    let total_words_display = total_words_all.unwrap_or(total_words_remaining);
+    let current_chapter_start = initial_chapter_index.unwrap_or(0);
+    let total_chapters_display = total_chapters_all.unwrap_or(num_chapters);
+    let num_chapters_for_call = num_chapters; // Store before options is moved
+    
+    // Emit initial progress event when conversion starts (with restored values if resuming)
     progress_callback(ConversionProgress {
-        current_chapter: 0,
-        total_chapters: options.chapters.len(),
-        words_processed: 0,
-        total_words,
+        current_chapter: current_chapter_start,
+        total_chapters: total_chapters_display,
+        words_processed: words_processed_start,
+        total_words: total_words_display,
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
-        message: format!("Starting conversion of {} chapters ({} words)...", options.chapters.len(), total_words),
+        message: if words_processed_start > 0 {
+            format!("Resuming conversion: {} chapters remaining ({} words), {} words already processed out of {} total", 
+                num_chapters, total_words_remaining, words_processed_start, total_words_display)
+        } else {
+            format!("Starting conversion of {} chapters ({} words)...", num_chapters, total_words_remaining)
+        },
     });
     
     // Find model files
@@ -1451,12 +1515,12 @@ pub async fn convert_epub_to_audiobook(
     log::info!("Created {} TTS engine instances for conversion (parallelism: {}, chapters: {})", 
         num_instances, get_parallelism(), num_chapters);
     
-    // Emit progress event for engine creation
+    // Emit progress event for engine creation (use provided values if resuming)
     progress_callback(ConversionProgress {
-        current_chapter: 0,
-        total_chapters: options.chapters.len(),
-        words_processed: 0,
-        total_words,
+        current_chapter: initial_chapter_index.unwrap_or(0),
+        total_chapters: total_chapters_all.unwrap_or(options.chapters.len()),
+        words_processed: initial_words_processed.unwrap_or(0),
+        total_words: total_words_all.unwrap_or(total_words_remaining),
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
         message: "TTS engine created - ready to process chapters".to_string(),
@@ -1477,6 +1541,10 @@ pub async fn convert_epub_to_audiobook(
         Some(app),
         source_path,
         cancel_token,
+        initial_words_processed.unwrap_or(0),
+        total_words_all.unwrap_or(total_words_remaining),
+        initial_chapter_index.unwrap_or(0),
+        total_chapters_all.unwrap_or(num_chapters_for_call),
     )
         .await
         .map_err(|e| AppError::EpubParse(e.to_string()))
@@ -1528,16 +1596,17 @@ pub async fn convert_epub_to_audiobook_standalone(
     // Calculate total words
     let total_words: usize = options.chapters.iter().map(|c| c.word_count).sum();
     let num_chapters = options.chapters.len();
+    let num_chapters_for_call = num_chapters; // Store before options is moved
     
     // Emit initial progress event when conversion starts
     progress_callback(ConversionProgress {
         current_chapter: 0,
-        total_chapters: options.chapters.len(),
+        total_chapters: num_chapters,
         words_processed: 0,
         total_words,
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
-        message: format!("Starting conversion of {} chapters ({} words)...", options.chapters.len(), total_words),
+        message: format!("Starting conversion of {} chapters ({} words)...", num_chapters, total_words),
     });
     
     // Find model files (without AppHandle)
@@ -1565,12 +1634,15 @@ pub async fn convert_epub_to_audiobook_standalone(
     log::info!("Created {} TTS engine instances for conversion (parallelism: {}, chapters: {})", 
         num_instances, get_parallelism(), num_chapters);
     
+    // Calculate total words for remaining chapters
+    let total_words_remaining: usize = options.chapters.iter().map(|c| c.word_count).sum();
+    
     // Emit progress event for engine creation
     progress_callback(ConversionProgress {
         current_chapter: 0,
-        total_chapters: options.chapters.len(),
+        total_chapters: num_chapters,
         words_processed: 0,
-        total_words,
+        total_words: total_words_remaining,
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
         message: "TTS engine created - ready to process chapters".to_string(),
@@ -1591,6 +1663,10 @@ pub async fn convert_epub_to_audiobook_standalone(
         None, // No AppHandle for standalone version
         None, // No source_path for standalone version
         cancel_token, // Pass cancellation token
+        0, // Initial words processed (standalone version starts fresh)
+        total_words_remaining, // Total words across all chapters
+        0, // Initial chapter index
+        num_chapters_for_call, // Total chapters across all
     )
         .await
         .map_err(|e| AppError::EpubParse(e.to_string()))

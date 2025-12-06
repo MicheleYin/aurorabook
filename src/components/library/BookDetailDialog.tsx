@@ -94,7 +94,7 @@ export function BookDetailDialog({
       sourcePath: book.sourcePath,
       hasVoiceId: !!voiceId,
       voiceId,
-      conversionStarted: book.conversionStarted,
+      conversionStatus: book.conversionStatus,
       audioTracksCount: book.audioTracks.length,
     });
     
@@ -477,7 +477,9 @@ export function BookDetailDialog({
   );
 
   const Actions = ({ layout }: { layout: "dialog" | "drawer" }) => {
-    const canResume = book.conversionStarted && !isConverting && !isCancelling && (!hasAudio || (book.completedChapters && book.completedChapters.length > 0 && book.completedChapters.length < book.chapters.length));
+    const conversionStatus = book.conversionStatus ?? "notStarted";
+    const canResume = conversionStatus === "started" && !isConverting && !isCancelling;
+    const canConvert = conversionStatus === "notStarted" && !isConverting && !isCancelling;
     const isDisabled = isConverting || isCancelling;
     
     return (
@@ -493,7 +495,7 @@ export function BookDetailDialog({
             Resume Conversion
           </Button>
         )}
-        {!canResume && onConvertToAudiobook && !isConverting && (
+        {canConvert && onConvertToAudiobook && (
           <Button
             variant="outline"
             onClick={handleConvertClick}
@@ -504,7 +506,7 @@ export function BookDetailDialog({
             Convert to Audiobook
           </Button>
         )}
-        {!canResume && isConverting && onCancelConversion && (
+        {isConverting && onCancelConversion && (
           <Button
             variant="outline"
             onClick={() => onCancelConversion(book.id)}

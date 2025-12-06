@@ -21,7 +21,7 @@ use tauri::{AppHandle, Manager};
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::path_validation::validate_file_size;
-use crate::book_service::models::Book;
+use crate::book_service::models::{Book, ConversionStatus};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -236,7 +236,7 @@ pub async fn convert_epub_to_audiobook_command(
     
     let (completed_chapters_set, existing_book_clone) = if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
         // Mark conversion as started and store voice ID
-        book.conversion_started = true;
+        book.conversion_status = ConversionStatus::Started;
         book.voice_id = Some(voice_id.clone());
         let completed_set: std::collections::HashSet<String> = book.completed_chapters.iter().cloned().collect();
         let book_clone = book.clone();
@@ -245,16 +245,44 @@ pub async fn convert_epub_to_audiobook_command(
         (std::collections::HashSet::new(), None)
     };
     
+    // Calculate total words across ALL chapters (for progress tracking)
+    let total_words_all_chapters: usize = all_conversion_chapters.iter().map(|c| c.word_count).sum();
+    
     // Filter out completed chapters
     let conversion_chapters: Vec<_> = all_conversion_chapters
-        .into_iter()
+        .iter()
         .filter(|chapter| !completed_chapters_set.contains(&chapter.href))
+        .cloned()
         .collect();
+    
+    // Calculate words processed from completed chapters
+    let words_processed_from_completed: usize = if let Some(ref existing_book) = existing_book_clone {
+        // Use stored words_processed if available, otherwise calculate from completed chapters
+        existing_book.words_processed.unwrap_or_else(|| {
+            // Calculate from completed chapter hrefs by matching with all chapters
+            all_conversion_chapters.iter()
+                .filter(|c| completed_chapters_set.contains(&c.href))
+                .map(|c| c.word_count)
+                .sum()
+        })
+    } else {
+        0
+    };
+    
+    // Update book with total words if not already set
+    if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
+        if book.total_words.is_none() {
+            book.total_words = Some(total_words_all_chapters);
+        }
+    }
     
     if conversion_chapters.is_empty() {
         log::info!("All chapters already converted for book at {}", source_path);
-        // Save the conversion_started flag if book exists
-        if existing_book_clone.is_some() {
+        // Mark conversion as done and save word counts if book exists
+        if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
+            book.conversion_status = ConversionStatus::Done;
+            book.total_words = Some(total_words_all_chapters);
+            book.words_processed = Some(total_words_all_chapters);
             save_all_books(&app, &books).await
                 .map_err(|e| AppError::Store(format!("Failed to save books: {}", e)))?;
         }
@@ -267,29 +295,27 @@ pub async fn convert_epub_to_audiobook_command(
         total_chapters,
         completed_chapters_set.len());
     
-    // Save the conversion_started flag if book exists
-    if existing_book_clone.is_some() {
-        save_all_books(&app, &books).await
-            .map_err(|e| AppError::Store(format!("Failed to save books: {}", e)))?;
-    }
+    // Note: We don't save total_words/words_processed here - they'll be tracked in atomics
+    // and only saved when conversion completes or is cancelled
     
     let options = ConversionOptions {
         voice_id,
         chapters: conversion_chapters.clone(),
     };
     
-    // Calculate total words for progress tracking
-    let total_words: usize = conversion_chapters.iter().map(|c| c.word_count).sum();
+    // Calculate total words for remaining chapters
+    let total_words_remaining: usize = conversion_chapters.iter().map(|c| c.word_count).sum();
     
-    // Emit progress with chapter count before starting conversion
+    // Emit progress with restored progress from completed chapters
     emit_progress(&app, ConversionProgress {
-        current_chapter: 0,
-        total_chapters: conversion_chapters.len(),
-        words_processed: 0,
-        total_words,
+        current_chapter: completed_chapters_set.len(),
+        total_chapters: total_chapters,
+        words_processed: words_processed_from_completed,
+        total_words: total_words_all_chapters,
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
-        message: format!("Found {} chapters ({} words total). Preparing conversion...", conversion_chapters.len(), total_words),
+        message: format!("Resuming: {} chapters remaining ({} words), {} words already processed out of {} total", 
+            conversion_chapters.len(), total_words_remaining, words_processed_from_completed, total_words_all_chapters),
     });
     
     // Get cancellation token for this conversion
@@ -303,6 +329,10 @@ pub async fn convert_epub_to_audiobook_command(
         app.clone(), 
         Some(source_path.clone()),
         Some(Arc::clone(&cancel_token)),
+        Some(words_processed_from_completed),
+        Some(total_words_all_chapters),
+        Some(completed_chapters_set.len()),
+        Some(total_chapters),
     ).await;
     
     // Clean up cancellation token
@@ -311,6 +341,7 @@ pub async fn convert_epub_to_audiobook_command(
     // Check if conversion was cancelled
     if cancel_token.load(Ordering::Relaxed) {
         log::info!("Conversion was cancelled for: {}", source_path);
+        // Note: words_processed was already saved in the converter when cancellation was detected
         return Err(AppError::EpubParse("Conversion cancelled by user".to_string()));
     }
     
@@ -325,6 +356,23 @@ pub async fn convert_epub_to_audiobook_command(
     epub_store.set(&key, serde_json::Value::String(converted_base64));
     epub_store.save()
         .map_err(|e| AppError::Store(format!("Failed to save converted EPUB: {}", e)))?;
+    
+    // Save final words_processed now that conversion is complete
+    // All chapters should be completed, so words_processed equals total_words
+    if let Ok(mut books) = load_all_books(&app).await {
+        if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
+            if book.total_words.is_none() {
+                book.total_words = Some(total_words_all_chapters);
+            }
+            // All chapters completed, so words_processed equals total_words
+            book.words_processed = Some(total_words_all_chapters);
+            if let Err(e) = save_all_books(&app, &books).await {
+                log::warn!("Failed to save final words_processed: {}", e);
+            } else {
+                log::debug!("Saved final words_processed: {} / {}", total_words_all_chapters, total_words_all_chapters);
+            }
+        }
+    }
     
     // Extract audio tracks from converted EPUB and update book in library
     let updated_book = update_book_audio_tracks(&converted_epub, &source_path, &app).await
@@ -424,6 +472,13 @@ pub(crate) async fn update_book_audio_tracks(
     if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
         book.audio_tracks = audio_tracks;
         book.audio_sync_map = audio_sync_map;
+        
+        // Check if all chapters are completed
+        if book.completed_chapters.len() >= book.chapters.len() {
+            book.conversion_status = ConversionStatus::Done;
+            log::info!("All chapters completed, marking conversion as done");
+        }
+        
         log::info!("Updated audio tracks for book '{}' ({} tracks) and audio sync map", book.title, book.audio_tracks.len());
         
         // Clone the updated book before saving

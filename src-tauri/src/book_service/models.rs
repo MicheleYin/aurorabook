@@ -1,5 +1,23 @@
 use serde::{Deserialize, Serialize};
 
+/// Conversion status for a book
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConversionStatus {
+    /// Conversion has not been started
+    NotStarted,
+    /// Conversion has been started but not completed
+    Started,
+    /// Conversion is complete (all chapters converted)
+    Done,
+}
+
+impl Default for ConversionStatus {
+    fn default() -> Self {
+        ConversionStatus::NotStarted
+    }
+}
+
 /// Audio track information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -111,15 +129,21 @@ pub struct Book {
     pub progress: Option<BookProgress>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_count: Option<usize>,
-    /// Whether conversion has been started (even if not completed)
+    /// Conversion status: not started, started, or done
     #[serde(default)]
-    pub conversion_started: bool,
+    pub conversion_status: ConversionStatus,
     /// List of chapter hrefs that have been successfully converted
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub completed_chapters: Vec<String>,
     /// Voice ID used for TTS conversion
     #[serde(skip_serializing_if = "Option::is_none")]
     pub voice_id: Option<String>,
+    /// Total number of words across all chapters
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_words: Option<usize>,
+    /// Number of words that have been converted so far
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub words_processed: Option<usize>,
 }
 
 /// Library filter options

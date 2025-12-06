@@ -78,9 +78,11 @@ export type Book = {
   audioSyncMap?: AudioSyncMap;
   progress?: BookProgress;
   pageCount?: number;
-  conversionStarted?: boolean;
+  conversionStatus?: "notStarted" | "started" | "done";
   completedChapters?: string[];
   voiceId?: VoiceId;
+  totalWords?: number;
+  wordsProcessed?: number;
 };
 
 export type NavItem = {
