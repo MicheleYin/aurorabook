@@ -472,6 +472,8 @@ pub(crate) async fn update_book_audio_tracks(
     if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
         book.audio_tracks = audio_tracks;
         book.audio_sync_map = audio_sync_map;
+        // Update file size with the converted EPUB size
+        book.file_size_bytes = Some(converted_epub.len());
         
         // Check if all chapters are completed
         if book.completed_chapters.len() >= book.chapters.len() {
@@ -479,7 +481,8 @@ pub(crate) async fn update_book_audio_tracks(
             log::info!("All chapters completed, marking conversion as done");
         }
         
-        log::info!("Updated audio tracks for book '{}' ({} tracks) and audio sync map", book.title, book.audio_tracks.len());
+        log::info!("Updated audio tracks for book '{}' ({} tracks), audio sync map, and file size ({} bytes)", 
+            book.title, book.audio_tracks.len(), converted_epub.len());
         
         // Clone the updated book before saving
         let updated_book = book.clone();
