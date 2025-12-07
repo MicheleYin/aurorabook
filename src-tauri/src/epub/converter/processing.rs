@@ -133,7 +133,15 @@ pub(crate) async fn process_sentence(
     engine: &Arc<kokoros::tts::koko::TTSKokoParallel>,
     worker_id: usize,
     voice_id: &str,
+    cancel_token: Option<Arc<AtomicBool>>,
 ) -> AnyhowResult<(Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String)> {
+    // Check for cancellation before starting TTS generation
+    if let Some(ref token) = cancel_token {
+        if token.load(Ordering::Relaxed) {
+            return Err(anyhow::anyhow!("Conversion cancelled by user"));
+        }
+    }
+    
     let text = sentence.trim();
     if text.is_empty() {
         return Ok((Vec::new(), Vec::new(), String::new()));
@@ -151,6 +159,13 @@ pub(crate) async fn process_sentence(
             model_instance,
         )
         .map_err(|e| anyhow::anyhow!("TTS generation failed for sentence {}: {}", sentence_index, e))?;
+    
+    // Check for cancellation after TTS generation completes
+    if let Some(ref token) = cancel_token {
+        if token.load(Ordering::Relaxed) {
+            return Err(anyhow::anyhow!("Conversion cancelled by user"));
+        }
+    }
     
     if audio_samples.is_empty() {
         return Ok((Vec::new(), Vec::new(), String::new()));
@@ -263,18 +278,34 @@ pub(crate) async fn process_chapter(
     // Process all sentences in parallel with round-robin distribution
     let mut handles = Vec::new();
     for (idx, sentence) in sentences.iter().enumerate() {
+        // Check for cancellation before spawning each sentence task
+        if let Some(ref token) = cancel_token {
+            if token.load(Ordering::Relaxed) {
+                log::info!("Conversion cancelled before spawning sentence {} in chapter {}", idx + 1, chapter_index + 1);
+                return Err(anyhow::anyhow!("Conversion cancelled by user"));
+            }
+        }
+        
         let semaphore = Arc::clone(&semaphore);
         let engine = Arc::clone(engine);
         let sentence = sentence.clone();
         let voice_id = voice_id.to_string();
+        let cancel_token_clone = cancel_token.as_ref().map(Arc::clone);
         
         let handle = tokio::spawn(async move {
             let _permit = semaphore.acquire().await
                 .map_err(|e| anyhow::anyhow!("Failed to acquire semaphore: {}", e))?;
             
+            // Check for cancellation after acquiring semaphore permit
+            if let Some(ref token) = cancel_token_clone {
+                if token.load(Ordering::Relaxed) {
+                    return Err(anyhow::anyhow!("Conversion cancelled by user"));
+                }
+            }
+            
             // Round-robin distribution: sentence index % num_instances
             let worker_id = idx % num_instances;
-            let result = process_sentence(&sentence, idx, &engine, worker_id, &voice_id).await?;
+            let result = process_sentence(&sentence, idx, &engine, worker_id, &voice_id, cancel_token_clone).await?;
             
             Ok::<(usize, Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String), anyhow::Error>(
                 (idx, result.0, result.1, result.2)
@@ -285,9 +316,46 @@ pub(crate) async fn process_chapter(
     }
     
     // Collect results and update progress as each sentence completes
+    // Use a more responsive approach: check cancellation while waiting for results
     let mut sentence_results: Vec<(usize, Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String)> = Vec::new();
+    
+    // Process handles with periodic cancellation checks
     for handle in handles {
-        let result = handle.await
+        // Check for cancellation before waiting for next result
+        if let Some(ref token) = cancel_token {
+            if token.load(Ordering::Relaxed) {
+                log::info!("Conversion cancelled while processing sentences in chapter {}", chapter_index + 1);
+                return Err(anyhow::anyhow!("Conversion cancelled by user"));
+            }
+        }
+        
+        // Use tokio::select to allow cancellation to interrupt waiting
+        let result = if let Some(ref token) = cancel_token {
+            let token_clone = Arc::clone(token);
+            tokio::select! {
+                result = handle => {
+                    result
+                }
+                _ = async move {
+                    // Poll cancellation token periodically while waiting (every 100ms)
+                    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
+                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    loop {
+                        interval.tick().await;
+                        if token_clone.load(Ordering::Relaxed) {
+                            break;
+                        }
+                    }
+                } => {
+                    log::info!("Conversion cancelled while waiting for sentence result in chapter {}", chapter_index + 1);
+                    return Err(anyhow::anyhow!("Conversion cancelled by user"));
+                }
+            }
+        } else {
+            handle.await
+        };
+        
+        let result = result
             .map_err(|e| anyhow::anyhow!("Task join error: {}", e))??;
         
         // Check for cancellation after each sentence finishes processing
