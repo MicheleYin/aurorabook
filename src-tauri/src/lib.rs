@@ -3,11 +3,11 @@
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 
 pub mod book_service;  // Made public for testing
-mod resources;
-mod tts_commands;
-mod tts;
+pub mod resources;  // Made public for testing
+pub mod tts_commands;  // Made public for testing
+pub mod tts;  // Made public for testing
 pub mod epub;  // Made public for testing
-mod utils;
+pub mod utils;  // Made public for testing
 mod window;
 
 // Use kokoros crate directly on all platforms (it uses ONNX Runtime with CoreML EP on macOS/iOS)

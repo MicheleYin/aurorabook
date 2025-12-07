@@ -351,6 +351,7 @@ dependencies = [
  "env_logger",
  "epub",
  "hex",
+ "htmlparser",
  "kokoros",
  "lame",
  "log",
@@ -2620,6 +2621,12 @@ dependencies = [
  "markup5ever 0.14.1",
  "match_token",
 ]
+
+[[package]]
+name = "htmlparser"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48ce8546b993eaf241d69ded33b1be6d205dd9857ec879d9d18bd05d3676e144"
 
 [[package]]
 name = "http"

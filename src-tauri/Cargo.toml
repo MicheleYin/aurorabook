@@ -39,6 +39,7 @@ quick-xml = { version = "0.31", features = ["serialize"] }
 
 # Text processing
 scraper = "0.19"
+htmlparser = "0.2"
 regex = "1.10"
 
 # Utilities

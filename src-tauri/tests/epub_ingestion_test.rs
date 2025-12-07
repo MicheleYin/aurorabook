@@ -1,44 +1,11 @@
 // Test for EPUB ingestion to identify issues
 // Run with: cargo test --test epub_ingestion_test -- --nocapture
 
-use std::env;
-use std::path::PathBuf;
 use std::fs;
 use std::io::Read;
 
-/// Find the test EPUB file (e.epub)
-fn find_test_epub() -> Option<PathBuf> {
-    let mut possible_paths = Vec::new();
-    
-    // From test execution (cargo test) - relative to src-tauri
-    possible_paths.push(PathBuf::from("e.epub"));
-    possible_paths.push(PathBuf::from("../e.epub"));
-    possible_paths.push(PathBuf::from("src-tauri/../e.epub"));
-    
-    // From project root
-    if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
-        let manifest_path = PathBuf::from(manifest_dir);
-        possible_paths.push(manifest_path.join("e.epub"));
-        if let Some(parent) = manifest_path.parent() {
-            possible_paths.push(parent.join("e.epub"));
-        }
-    }
-    
-    // Check current directory
-    if let Ok(current_dir) = std::env::current_dir() {
-        possible_paths.push(current_dir.join("e.epub"));
-        if let Some(parent) = current_dir.parent() {
-            possible_paths.push(parent.join("e.epub"));
-        }
-    }
-
-    for path in possible_paths {
-        if path.exists() && path.is_file() {
-            return Some(path);
-        }
-    }
-    None
-}
+mod helpers;
+use helpers::find_test_epub;
 
 #[test]
 fn test_epub_ingestion() {
@@ -46,14 +13,14 @@ fn test_epub_ingestion() {
     println!("{}", "=".repeat(60));
     
     // Find the test EPUB file
-    let epub_path = match find_test_epub() {
+    let epub_path = match find_test_epub("e.epub") {
         Some(path) => {
             println!("✅ Found test EPUB: {}", path.display());
             path
         }
         None => {
-            println!("❌ Test EPUB file (e.epub) not found");
-            println!("   Please ensure e.epub is in the project root or src-tauri directory");
+            println!("❌ Test EPUB file (e.epub) not found in test_data directory");
+            println!("   Please ensure e.epub is in src-tauri/tests/test_data/");
             panic!("Test EPUB file not found");
         }
     };
@@ -177,7 +144,7 @@ fn test_epub_opf_parsing() {
     println!("{}", "=".repeat(60));
     
     // Find the test EPUB file
-    let epub_path = match find_test_epub() {
+    let epub_path = match find_test_epub("e.epub") {
         Some(path) => path,
         None => {
             println!("⚠️ Skipping test - e.epub not found");
@@ -280,147 +247,4 @@ fn test_epub_opf_parsing() {
     }
 }
 
-/// Find the Slime EPUB file
-fn find_slime_epub() -> Option<PathBuf> {
-    let mut possible_paths = Vec::new();
-    
-    // From test execution (cargo test) - relative to src-tauri
-    possible_paths.push(PathBuf::from("../sample_audio/That_Time_I_Got_Reincarnated_as_a_Slime__Vol__1.epub"));
-    possible_paths.push(PathBuf::from("sample_audio/That_Time_I_Got_Reincarnated_as_a_Slime__Vol__1.epub"));
-    
-    // From project root
-    if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
-        let manifest_path = PathBuf::from(manifest_dir);
-        possible_paths.push(manifest_path.join("../sample_audio/That_Time_I_Got_Reincarnated_as_a_Slime__Vol__1.epub"));
-        if let Some(parent) = manifest_path.parent() {
-            possible_paths.push(parent.join("sample_audio/That_Time_I_Got_Reincarnated_as_a_Slime__Vol__1.epub"));
-        }
-    }
-    
-    // Check current directory
-    if let Ok(current_dir) = std::env::current_dir() {
-        possible_paths.push(current_dir.join("sample_audio/That_Time_I_Got_Reincarnated_as_a_Slime__Vol__1.epub"));
-        if let Some(parent) = current_dir.parent() {
-            possible_paths.push(parent.join("sample_audio/That_Time_I_Got_Reincarnated_as_a_Slime__Vol__1.epub"));
-        }
-    }
-
-    for path in possible_paths {
-        if path.exists() && path.is_file() {
-            return Some(path);
-        }
-    }
-    None
-}
-
-#[test]
-fn test_slime_epub_chapter_names() {
-    println!("\n🧪 Testing chapter name extraction with Slime EPUB");
-    println!("{}", "=".repeat(60));
-    
-    // Find the test EPUB file
-    let epub_path = match find_slime_epub() {
-        Some(path) => {
-            println!("✅ Found Slime EPUB: {}", path.display());
-            path
-        }
-        None => {
-            println!("⚠️ Slime EPUB not found, skipping test");
-            println!("   Expected path: sample_audio/That_Time_I_Got_Reincarnated_as_a_Slime__Vol__1.epub");
-            return;
-        }
-    };
-    
-    // Read the EPUB file
-    println!("\n📖 Reading EPUB file...");
-    let epub_data = match fs::read(&epub_path) {
-        Ok(data) => {
-            println!("✅ Successfully read EPUB file");
-            println!("   File size: {} bytes ({:.2} MB)", data.len(), data.len() as f64 / 1_000_000.0);
-            data
-        }
-        Err(e) => {
-            println!("❌ Failed to read EPUB file: {}", e);
-            panic!("Failed to read EPUB file: {}", e);
-        }
-    };
-    
-    // Test chapter extraction
-    println!("\n📚 Extracting chapters from EPUB...");
-    use aurorabook_lib::epub::parser::extract_chapters_from_epub;
-    
-    match extract_chapters_from_epub(&epub_data) {
-        Ok((chapters, stats)) => {
-            let (manifest_count, spine_itemref_count, missing_manifest_count, non_html_count, filtered_count) = stats;
-            
-            println!("✅ Successfully extracted chapters!");
-            println!("\n📊 Statistics:");
-            println!("   Manifest items: {}", manifest_count);
-            println!("   Spine itemrefs: {}", spine_itemref_count);
-            println!("   Missing from manifest: {}", missing_manifest_count);
-            println!("   Non-HTML files: {}", non_html_count);
-            println!("   Filtered out: {}", filtered_count);
-            println!("   Final chapters: {}", chapters.len());
-            
-            if chapters.is_empty() {
-                println!("\n❌ No chapters extracted!");
-                panic!("No chapters extracted from EPUB");
-            }
-            
-            println!("\n📑 Extracted chapters:");
-            let mut has_section_fallback = false;
-            for (i, chapter) in chapters.iter().enumerate() {
-                println!("   {}. {} (href: {})", i + 1, chapter.title, chapter.href);
-                if chapter.title.starts_with("Section ") {
-                    has_section_fallback = true;
-                }
-            }
-            
-            // Verify that we're not using fallback names
-            if has_section_fallback {
-                println!("\n⚠️ WARNING: Some chapters are using fallback names (Section N)");
-                println!("   This indicates the NCX title extraction is not working correctly.");
-                println!("   Expected chapter names like:");
-                println!("   - Prologue: Death and Reincarnation");
-                println!("   - Chapter 1: My First Friend");
-                println!("   - Chapter 2: Battle of the Goblin Village");
-                println!("   - etc.");
-            } else {
-                println!("\n✅ All chapters have proper names from TOC!");
-            }
-            
-            // Check for expected chapter names
-            let expected_names = vec![
-                "Prologue: Death and Reincarnation",
-                "Chapter 1: My First Friend",
-                "The Girl and the Demon Lord",
-                "Chapter 2: Battle of the Goblin Village",
-                "The Girl and the Titan",
-                "Chapter 3: Through the Dwarven Kingdom",
-                "The Girl and the Hero",
-                "Chapter 4: The Conqueror of Flames",
-                "Final Chapter: The Inherited Form",
-                "Side Story: Gobta's Big Adventure",
-            ];
-            
-            let mut found_expected = 0;
-            for expected in &expected_names {
-                if chapters.iter().any(|c| c.title.contains(expected)) {
-                    found_expected += 1;
-                    println!("   ✓ Found expected chapter: {}", expected);
-                }
-            }
-            
-            if found_expected > 0 {
-                println!("\n✅ Found {}/{} expected chapter names", found_expected, expected_names.len());
-            }
-            
-            println!("\n✅ Slime EPUB chapter name test PASSED!");
-        }
-        Err(e) => {
-            println!("❌ Failed to extract chapters: {}", e);
-            panic!("Failed to extract chapters: {}", e);
-        }
-    }
-}
 

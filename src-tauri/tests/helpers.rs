@@ -161,6 +161,41 @@ pub fn f32_to_pcm_le_bytes_for_wav(samples: &[f32]) -> Vec<u8> {
     pcm_bytes
 }
 
+/// Find a test EPUB file from the test_data directory
+pub fn find_test_epub(filename: &str) -> Option<PathBuf> {
+    use std::env;
+    
+    let mut possible_paths = Vec::new();
+    
+    // From test execution (cargo test) - relative to src-tauri/tests
+    possible_paths.push(PathBuf::from("test_data").join(filename));
+    possible_paths.push(PathBuf::from("tests/test_data").join(filename));
+    
+    // From project root
+    if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+        let manifest_path = PathBuf::from(manifest_dir);
+        possible_paths.push(manifest_path.join("tests").join("test_data").join(filename));
+        possible_paths.push(manifest_path.join("test_data").join(filename));
+        if let Some(parent) = manifest_path.parent() {
+            possible_paths.push(parent.join("src-tauri").join("tests").join("test_data").join(filename));
+        }
+    }
+    
+    // Check current directory
+    if let Ok(current_dir) = std::env::current_dir() {
+        possible_paths.push(current_dir.join("src-tauri").join("tests").join("test_data").join(filename));
+        possible_paths.push(current_dir.join("tests").join("test_data").join(filename));
+        possible_paths.push(current_dir.join("test_data").join(filename));
+    }
+
+    for path in possible_paths {
+        if path.exists() && path.is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
 /// Helper function to save audio samples as WAV file
 pub fn save_audio_as_wav(audio_samples: &[f32], sample_rate: u32, file_path: &str) -> Result<(), String> {
     use std::fs::File;

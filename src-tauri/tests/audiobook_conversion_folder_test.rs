@@ -2,44 +2,12 @@
 // Run with: cargo test --test audiobook_conversion_folder_test -- --nocapture
 // Or with debug logs: RUST_LOG=debug cargo test --test audiobook_conversion_folder_test -- --nocapture
 
-use std::env;
-use std::path::PathBuf;
 use std::fs;
 use std::io::{Cursor, Read};
+use std::path::PathBuf;
 
-/// Find the test EPUB file (e.epub)
-fn find_test_epub() -> Option<PathBuf> {
-    let mut possible_paths = Vec::new();
-    
-    // From test execution (cargo test) - relative to src-tauri
-    possible_paths.push(PathBuf::from("e.epub"));
-    possible_paths.push(PathBuf::from("../e.epub"));
-    possible_paths.push(PathBuf::from("src-tauri/../e.epub"));
-    
-    // From project root
-    if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
-        let manifest_path = PathBuf::from(manifest_dir);
-        possible_paths.push(manifest_path.join("e.epub"));
-        if let Some(parent) = manifest_path.parent() {
-            possible_paths.push(parent.join("e.epub"));
-        }
-    }
-    
-    // Check current directory
-    if let Ok(current_dir) = std::env::current_dir() {
-        possible_paths.push(current_dir.join("e.epub"));
-        if let Some(parent) = current_dir.parent() {
-            possible_paths.push(parent.join("e.epub"));
-        }
-    }
-
-    for path in possible_paths {
-        if path.exists() && path.is_file() {
-            return Some(path);
-        }
-    }
-    None
-}
+mod helpers;
+use helpers::find_test_epub;
 
 #[tokio::test]
 async fn test_complete_audiobook_conversion_to_folder() {
@@ -50,14 +18,14 @@ async fn test_complete_audiobook_conversion_to_folder() {
     println!("{}", "=".repeat(60));
     
     // Find the test EPUB file
-    let epub_path = match find_test_epub() {
+    let epub_path = match find_test_epub("e.epub") {
         Some(path) => {
             println!("✅ Found test EPUB: {}", path.display());
             path
         }
         None => {
-            println!("❌ Test EPUB file (e.epub) not found");
-            println!("   Please ensure e.epub is in the project root or src-tauri directory");
+            println!("❌ Test EPUB file (e.epub) not found in test_data directory");
+            println!("   Please ensure e.epub is in src-tauri/tests/test_data/");
             panic!("Test EPUB file not found");
         }
     };
@@ -124,7 +92,7 @@ async fn test_complete_audiobook_conversion_to_folder() {
     // Perform conversion using standalone function (no AppHandle needed)
     use aurorabook_lib::epub::converter::convert_epub_to_audiobook_standalone;
     
-    let converted_epub = match convert_epub_to_audiobook_standalone(epub_data, options).await {
+    let converted_epub = match convert_epub_to_audiobook_standalone(epub_data, options, None).await {
         Ok(data) => {
             println!("\n✅ Conversion completed successfully!");
             println!("   Output size: {} bytes ({:.2} MB)", data.len(), data.len() as f64 / 1_000_000.0);

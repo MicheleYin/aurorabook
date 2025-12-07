@@ -1,5 +1,8 @@
 // Integration tests for aurorabook_lib
 // These tests were moved from src/lib.rs to improve code organization
+//
+// NOTE: This file is kept for backward compatibility.
+// New tests should be added to the modular test structure in tests/mod.rs
 
 use std::env;
 use std::path::PathBuf;
@@ -203,33 +206,8 @@ async fn test_simple_tts_generation() {
     }
     }
 
-#[test]
-fn test_find_resources_dir() {
-    let resources_dir = find_resources_dir();
-    if let Some(dir) = resources_dir {
-        println!("✅ Found resources directory: {}", dir.display());
-        assert!(dir.exists(), "Resources directory should exist");
-    } else {
-        println!("⚠️ Resources directory not found - this is OK if models are not present");
-    }
-    }
-
-#[test]
-fn test_find_voices_file() {
-    let resources_dir = find_resources_dir();
-    if let Some(dir) = resources_dir {
-        let voices_path = find_voices_file(&dir);
-        if let Some(path) = voices_path {
-            println!("✅ Found voices file: {}", path.display());
-            assert!(path.exists(), "Voices file should exist");
-            assert!(path.is_file(), "Voices path should be a file");
-        } else {
-            println!("⚠️ Voices file not found - this is OK if voices-v1.0.bin is not present");
-        }
-    } else {
-        println!("⚠️ Skipping voices file test - resources directory not found");
-    }
-    }
+// Note: Resource discovery tests are now in tests/model_discovery.rs
+// These tests have been moved to avoid duplication
 
 
 

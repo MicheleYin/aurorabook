@@ -48,8 +48,9 @@ fn test_prologue_smil_xhtml_alignment() {
         .expect("Failed to read prologue.xhtml");
     
     // Extract text with spans (simulating the conversion process)
+    // Pass None to let it extract spans internally
     let (extracted_full_text, updated_html_with_spans, extracted_span_mappings) = 
-        extract_text_with_spans(&original_html)
+        extract_text_with_spans(&original_html, None)
             .expect("Failed to extract text with spans");
     
     // Extract actual span IDs from the generated HTML
@@ -335,7 +336,7 @@ async fn test_prologue_with_real_tts() {
     
     println!("\n📖 Processing HTML with spans...");
     let (extracted_full_text, updated_html_with_spans, extracted_span_mappings) = 
-        extract_text_with_spans(&original_html)
+        extract_text_with_spans(&original_html, None)
             .expect("Failed to extract text with spans");
     
     // Extract actual span IDs from HTML
@@ -372,8 +373,9 @@ async fn test_prologue_with_real_tts() {
     
     // Extract sentences for round-robin processing
     println!("\n📝 Extracting sentences...");
-    let sentences = extract_all_sentences(&original_html)
+    let sentences_with_spans = extract_all_sentences(&original_html)
         .expect("Failed to extract sentences");
+    let sentences: Vec<String> = sentences_with_spans.iter().map(|s| s.text.clone()).collect();
     
     println!("   Found {} sentences", sentences.len());
     
