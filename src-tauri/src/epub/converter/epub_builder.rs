@@ -199,27 +199,25 @@ pub(crate) async fn rebuild_and_save_epub(
             log::debug!("Updated book audio tracks after chapter {}", chapter_index + 1);
             
             // Mark chapter as completed in the book
-            use crate::book_service::storage::{load_all_books, save_all_books};
+            use crate::book_service::storage::{get_book_by_source_path, add_book};
             use crate::book_service::models::ConversionStatus;
-            if let Ok(mut books) = load_all_books(app_ref).await {
-                if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path_ref) {
-                    // Get the chapter href for this chapter
-                    if chapter_index < chapter_hrefs.len() {
-                        let chapter_href = &chapter_hrefs[chapter_index];
-                        if !book.completed_chapters.contains(chapter_href) {
-                            book.completed_chapters.push(chapter_href.clone());
-                            log::debug!("Marked chapter {} as completed", chapter_href);
-                            
-                            // Check if all chapters are completed
-                            if book.completed_chapters.len() >= book.chapters.len() {
-                                book.conversion_status = ConversionStatus::Done;
-                                log::info!("All chapters completed, marking conversion as done");
-                            }
-                            
-                            // Save the updated book
-                            if let Err(e) = save_all_books(app_ref, &books).await {
-                                log::warn!("Failed to save completed chapter: {}", e);
-                            }
+            if let Ok(Some(mut book)) = get_book_by_source_path(app_ref, source_path_ref).await {
+                // Get the chapter href for this chapter
+                if chapter_index < chapter_hrefs.len() {
+                    let chapter_href = &chapter_hrefs[chapter_index];
+                    if !book.completed_chapters.contains(chapter_href) {
+                        book.completed_chapters.push(chapter_href.clone());
+                        log::debug!("Marked chapter {} as completed", chapter_href);
+                        
+                        // Check if all chapters are completed
+                        if book.completed_chapters.len() >= book.chapters.len() {
+                            book.conversion_status = ConversionStatus::Done;
+                            log::info!("All chapters completed, marking conversion as done");
+                        }
+                        
+                        // Save the updated book
+                        if let Err(e) = add_book(app_ref, &book).await {
+                            log::warn!("Failed to save completed chapter: {}", e);
                         }
                     }
                 }

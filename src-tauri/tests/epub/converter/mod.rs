@@ -11,3 +11,6 @@ pub mod chunking;
 pub mod smil;
 pub mod progress;
 pub mod conversion;
+pub mod opf;
+#[cfg(test)]
+mod opf_resume_test;

@@ -12,8 +12,11 @@ pub struct SentenceWithSpan {
 }
 
 // Compile regex once at startup instead of on every call
+// Pattern matches sentences ending with: . ! ? … (ellipsis U+2026) or multiple periods (...)
 static SENTENCE_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"([^.!?]+[.!?]+)\s*")
+    // Match sentences ending with: . ! ? … or ... (three periods)
+    // The ellipsis character (U+2026) is included as a sentence ending
+    Regex::new(r"([^.!?…]+(?:[.!?]+|…|\.\.\.))\s*")
         .expect("Failed to compile sentence regex pattern")
 });
 
@@ -102,16 +105,38 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
         let start_html = find_char_boundary(&updated_html, start_html);
         let end_html = find_char_boundary(&updated_html, end_html);
         
-        // Check if already wrapped
-        let before = &updated_html[..start_html];
-        if !before.ends_with(&format!(r#"<span id="{}">"#, span_id)) {
-            // Extract sentence HTML (preserving all tags)
-            let sentence_html = &updated_html[start_html..end_html];
-            
-            // Wrap with span
-            let wrapped = format!(r#"<span id="{}">{}</span>"#, span_id, sentence_html);
-            updated_html.replace_range(start_html..end_html, &wrapped);
+        // Validate bounds
+        if start_html >= updated_html.len() || end_html > updated_html.len() || start_html >= end_html {
+            log::warn!(
+                "Invalid byte positions for sentence {}: start={}, end={}, html_len={}",
+                sentence_idx + 1,
+                start_html,
+                end_html,
+                updated_html.len()
+            );
+            continue;
         }
+        
+        // Check if already wrapped - look for any span with this ID in the vicinity
+        let before = &updated_html[..start_html.min(updated_html.len())];
+        let check_pattern = format!(r#"<span id="{}">"#, span_id);
+        if before.ends_with(&check_pattern) {
+            log::debug!("Sentence {} already wrapped, skipping", sentence_idx + 1);
+            continue;
+        }
+        
+        // Also check if we're inside an existing span with this ID
+        if updated_html[start_html..end_html.min(updated_html.len())].contains(&check_pattern) {
+            log::debug!("Sentence {} already contains span, skipping", sentence_idx + 1);
+            continue;
+        }
+        
+        // Extract sentence HTML (preserving all tags)
+        let sentence_html = &updated_html[start_html..end_html];
+        
+        // Wrap with span
+        let wrapped = format!(r#"<span id="{}">{}</span>"#, span_id, sentence_html);
+        updated_html.replace_range(start_html..end_html, &wrapped);
     }
     
     log::debug!(
@@ -231,6 +256,7 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
     }
     
     // Build mapping from character positions in combined_text to HTML byte positions
+    // This maps each character in the combined text to its byte position in the original HTML
     let mut char_to_html: Vec<Option<usize>> = Vec::new();
     for (html_byte_pos, text) in text_parts.iter() {
         let mut byte_offset = 0;
@@ -272,7 +298,7 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
             end_byte,
         }]
     } else {
-        sentence_matches.into_iter().map(|(sent_start, sent_end, text)| {
+        sentence_matches.into_iter().map(|(sent_start, _sent_end, text)| {
             // Map from trimmed_text character positions to combined_text character positions
             let sent_start_chars = trimmed_text[..sent_start].chars().count();
             let sent_end_chars = sent_start_chars + text.chars().count();
@@ -280,12 +306,55 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
             let start_in_combined = trim_offset_chars + sent_start_chars;
             let end_in_combined = trim_offset_chars + sent_end_chars;
             
-            // Get HTML byte positions
-            let start_byte = char_to_html.get(start_in_combined).and_then(|&pos| pos)
-                .or_else(|| text_parts.first().map(|(pos, _)| *pos))
+            // Get HTML byte positions with better fallback handling
+            let start_byte = char_to_html.get(start_in_combined)
+                .and_then(|&pos| pos)
+                .or_else(|| {
+                    // Find the text part that contains this character position
+                    let mut char_count = 0;
+                    for (html_byte_pos, text_part) in text_parts.iter() {
+                        let part_char_count = text_part.chars().count();
+                        if char_count <= start_in_combined && start_in_combined < char_count + part_char_count {
+                            // Calculate byte offset within this text part
+                            let offset_in_part = start_in_combined - char_count;
+                            let mut byte_offset = 0;
+                            for (i, ch) in text_part.chars().enumerate() {
+                                if i == offset_in_part {
+                                    break;
+                                }
+                                byte_offset += ch.len_utf8();
+                            }
+                            return Some(*html_byte_pos + byte_offset);
+                        }
+                        char_count += part_char_count;
+                    }
+                    text_parts.first().map(|(pos, _)| *pos)
+                })
                 .unwrap_or(0);
-            let end_byte = char_to_html.get(end_in_combined).and_then(|&pos| pos)
-                .or_else(|| text_parts.last().map(|(pos, text)| *pos + text.len()))
+            
+            let end_byte = char_to_html.get(end_in_combined)
+                .and_then(|&pos| pos)
+                .or_else(|| {
+                    // Find the text part that contains this character position
+                    let mut char_count = 0;
+                    for (html_byte_pos, text_part) in text_parts.iter() {
+                        let part_char_count = text_part.chars().count();
+                        if char_count <= end_in_combined && end_in_combined <= char_count + part_char_count {
+                            // Calculate byte offset within this text part
+                            let offset_in_part = end_in_combined - char_count;
+                            let mut byte_offset = 0;
+                            for (i, ch) in text_part.chars().enumerate() {
+                                if i >= offset_in_part {
+                                    break;
+                                }
+                                byte_offset += ch.len_utf8();
+                            }
+                            return Some(*html_byte_pos + byte_offset);
+                        }
+                        char_count += part_char_count;
+                    }
+                    text_parts.last().map(|(pos, text)| *pos + text.len())
+                })
                 .unwrap_or(html.len());
             
             SentenceWithSpan {

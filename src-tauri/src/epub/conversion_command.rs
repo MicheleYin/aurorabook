@@ -72,6 +72,23 @@ pub async fn convert_epub_to_audiobook_command(
         return handle_all_chapters_completed(&app, &source_path, book_data.total_words_all_chapters, book_data.existing_book).await;
     }
     
+    // If resuming (has completed chapters), try to load the converted EPUB from store
+    // This ensures we have existing audio tracks in the OPF
+    let epub_data_for_conversion = if !book_data.completed_chapters_set.is_empty() {
+        log::info!("Resuming conversion - attempting to load converted EPUB from store");
+        use crate::book_service::storage::get_epub_buffer_from_store;
+        if let Ok(Some(converted_epub)) = get_epub_buffer_from_store(&app, &source_path).await {
+            log::info!("Loaded converted EPUB from store ({} bytes) - will preserve existing audio tracks", converted_epub.len());
+            converted_epub
+        } else {
+            log::warn!("Could not load converted EPUB from store, using original EPUB - existing audio tracks may be missing");
+            epub_data
+        }
+    } else {
+        log::info!("Starting new conversion - using original EPUB");
+        epub_data
+    };
+    
     // Prepare conversion
     let conversion_prep = prepare_conversion(&app, &source_path, &book_data).await?;
     
@@ -79,7 +96,7 @@ pub async fn convert_epub_to_audiobook_command(
     let converted_epub = perform_conversion(
         &app,
         &source_path,
-        epub_data,
+        epub_data_for_conversion,
         &book_data,
         &conversion_prep,
     ).await?;
@@ -399,17 +416,16 @@ async fn save_converted_epub_and_update_book(
         .map_err(|e| AppError::Store(format!("Failed to save converted EPUB: {}", e)))?;
     
     // Save final words_processed now that conversion is complete
-    if let Ok(mut books) = load_all_books(app).await {
-        if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
-            if book.total_words.is_none() {
-                book.total_words = Some(total_words_all_chapters);
-            }
-            book.words_processed = Some(total_words_all_chapters);
-            if let Err(e) = save_all_books(app, &books).await {
-                log::warn!("Failed to save final words_processed: {}", e);
-            } else {
-                log::debug!("Saved final words_processed: {} / {}", total_words_all_chapters, total_words_all_chapters);
-            }
+    use crate::book_service::storage::{get_book_by_source_path, add_book};
+    if let Ok(Some(mut book)) = get_book_by_source_path(app, source_path).await {
+        if book.total_words.is_none() {
+            book.total_words = Some(total_words_all_chapters);
+        }
+        book.words_processed = Some(total_words_all_chapters);
+        if let Err(e) = add_book(app, &book).await {
+            log::warn!("Failed to save final words_processed: {}", e);
+        } else {
+            log::debug!("Saved final words_processed: {} / {}", total_words_all_chapters, total_words_all_chapters);
         }
     }
     

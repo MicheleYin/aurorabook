@@ -164,18 +164,16 @@ pub(crate) async fn convert_epub_core_with_durations(
                 // Save current progress before returning
                 let words_processed = words_processed_atomic.load(Ordering::Relaxed);
                 if let (Some(app_ref), Some(source_path_ref)) = (app.as_ref(), source_path.as_ref()) {
-                    use crate::book_service::storage::{load_all_books, save_all_books};
-                    if let Ok(mut books) = load_all_books(app_ref).await {
-                        if let Some(book) = books.iter_mut().find(|b| b.source_path == *source_path_ref) {
-                            if book.total_words.is_none() {
-                                book.total_words = Some(total_words_all);
-                            }
-                            book.words_processed = Some(words_processed);
-                            if let Err(e) = save_all_books(app_ref, &books).await {
-                                log::warn!("Failed to save words_processed on cancellation: {}", e);
-                            } else {
-                                log::debug!("Saved words_processed on cancellation: {} / {}", words_processed, total_words_all);
-                            }
+                    use crate::book_service::storage::{get_book_by_source_path, add_book};
+                    if let Ok(Some(mut book)) = get_book_by_source_path(app_ref, source_path_ref).await {
+                        if book.total_words.is_none() {
+                            book.total_words = Some(total_words_all);
+                        }
+                        book.words_processed = Some(words_processed);
+                        if let Err(e) = add_book(app_ref, &book).await {
+                            log::warn!("Failed to save words_processed on cancellation: {}", e);
+                        } else {
+                            log::debug!("Saved words_processed on cancellation: {} / {}", words_processed, total_words_all);
                         }
                     }
                 }
@@ -207,18 +205,16 @@ pub(crate) async fn convert_epub_core_with_durations(
                 // Save current progress before returning
                 let words_processed = words_processed_atomic.load(Ordering::Relaxed);
                 if let (Some(app_ref), Some(source_path_ref)) = (app.as_ref(), source_path.as_ref()) {
-                    use crate::book_service::storage::{load_all_books, save_all_books};
-                    if let Ok(mut books) = load_all_books(app_ref).await {
-                        if let Some(book) = books.iter_mut().find(|b| b.source_path == *source_path_ref) {
-                            if book.total_words.is_none() {
-                                book.total_words = Some(total_words_all);
-                            }
-                            book.words_processed = Some(words_processed);
-                            if let Err(e) = save_all_books(app_ref, &books).await {
-                                log::warn!("Failed to save words_processed on cancellation: {}", e);
-                            } else {
-                                log::debug!("Saved words_processed on cancellation: {} / {}", words_processed, total_words_all);
-                            }
+                    use crate::book_service::storage::{get_book_by_source_path, add_book};
+                    if let Ok(Some(mut book)) = get_book_by_source_path(app_ref, source_path_ref).await {
+                        if book.total_words.is_none() {
+                            book.total_words = Some(total_words_all);
+                        }
+                        book.words_processed = Some(words_processed);
+                        if let Err(e) = add_book(app_ref, &book).await {
+                            log::warn!("Failed to save words_processed on cancellation: {}", e);
+                        } else {
+                            log::debug!("Saved words_processed on cancellation: {} / {}", words_processed, total_words_all);
                         }
                     }
                 }
