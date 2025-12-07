@@ -37,18 +37,20 @@ export function useBookConversion(
   const conversionStartTimeRef = useRef<number | null>(null);
   const listenerSetupRef = useRef<boolean>(false);
 
-  // Listen for chapter completion events to refresh the book
+  // Listen for chapter completion events and conversion cancellation events to refresh the book
   useEffect(() => {
     // Only set up listener once
     if (listenerSetupRef.current) {
       return;
     }
     
-    let unlisten: (() => void) | null = null;
+    let unlistenChapter: (() => void) | null = null;
+    let unlistenCancelled: (() => void) | null = null;
 
-    const setupListener = async () => {
+    const setupListeners = async () => {
       try {
-        unlisten = await listen<{
+        // Listen for chapter completion events
+        unlistenChapter = await listen<{
           source_path: string;
           chapter_index: number;
           total_chapters: number;
@@ -104,6 +106,8 @@ export function useBookConversion(
                 // Also update conversion status and completed chapters
                 conversionStatus: updatedBook.conversionStatus,
                 completedChapters: updatedBook.completedChapters,
+                // Preserve voiceId from backend (important for resuming conversion)
+                voiceId: updatedBook.voiceId,
               };
 
               
@@ -125,19 +129,107 @@ export function useBookConversion(
           }
         });
         
+        // Listen for conversion cancellation events
+        unlistenCancelled = await listen<{
+          source_path: string;
+        }>("conversion-cancelled", async (event) => {
+          const { source_path } = event.payload;
+          
+          // Fetch the updated book and merge the new info, just like when a chapter is done
+          try {
+            // First, get all books to find the one with matching sourcePath
+            const allBooks = await readAllBooks();
+            const existingBook = allBooks.find(
+              (book) => book.sourcePath === source_path
+            );
+            
+            if (!existingBook) {
+              console.warn("Book not found in library for source_path:", source_path);
+              return;
+            }
+            
+            // Fetch the updated book from backend
+            const updatedBook = await readOneBook(existingBook.id);
+            
+            if (!updatedBook) {
+              console.warn("Failed to fetch updated book:", existingBook.id);
+              return;
+            }
+            
+            // Merge the updated book data into the existing book
+            setLibrary((currentLibrary) => {
+              const bookIndex = currentLibrary.findIndex(
+                (book) => book.id === existingBook.id || book.sourcePath === source_path
+              );
+              
+              if (bookIndex === -1) {
+                // Book not in current library state, add it
+                return [...currentLibrary, updatedBook];
+              }
+              
+              const currentBook = currentLibrary[bookIndex];
+              
+              // Create merged book with updated fields
+              const mergedBook: Book = {
+                ...currentBook,
+                chapters: updatedBook.chapters,
+                fileSizeBytes: updatedBook.fileSizeBytes,
+                audioTracks: updatedBook.audioTracks,
+                audioSyncMap: updatedBook.audioSyncMap,
+                conversionStatus: updatedBook.conversionStatus,
+                completedChapters: updatedBook.completedChapters,
+                wordsProcessed: updatedBook.wordsProcessed,
+                totalWords: updatedBook.totalWords,
+                // Preserve voiceId from backend (important for resuming conversion)
+                voiceId: updatedBook.voiceId,
+              };
+              
+              const updated = [...currentLibrary];
+              updated[bookIndex] = mergedBook;
+              
+              return updated;
+            });
+            
+            // Clear cancelling state and show toast only after receiving the event
+            setIsCancelling(false);
+            setCancellingBookId(null);
+            
+            // Clear conversion progress for this book
+            setConversionProgress(null);
+            setBookConversionProgress((prev) => {
+              const next = { ...prev };
+              delete next[existingBook.id];
+              return next;
+            });
+            
+            // Show toast notification
+            toast.info("Conversion cancelled", {
+              description: "The conversion has been cancelled.",
+            });
+          } catch (error) {
+            console.warn("Failed to refresh book after conversion cancellation:", error);
+            // Still clear the cancelling state even if refresh failed
+            setIsCancelling(false);
+            setCancellingBookId(null);
+          }
+        });
+        
         listenerSetupRef.current = true;
       } catch (error) {
-        console.warn("Failed to set up chapter-completed event listener:", error);
+        console.warn("Failed to set up event listeners:", error);
       }
     };
 
-    void setupListener();
+    void setupListeners();
 
     return () => {
-      if (unlisten) {
-        unlisten();
-        listenerSetupRef.current = false;
+      if (unlistenChapter) {
+        unlistenChapter();
       }
+      if (unlistenCancelled) {
+        unlistenCancelled();
+      }
+      listenerSetupRef.current = false;
     };
   }, []); // Empty dependency array - only set up once
 
@@ -164,6 +256,7 @@ export function useBookConversion(
     
     conversionStartTimeRef.current = Date.now();
     const bookId = pendingBookForConversion.book.id;
+    let wasCancelled = false;
     
     try {
       const { book } = pendingBookForConversion;
@@ -220,13 +313,19 @@ export function useBookConversion(
       });
     } catch (error) {
       // Don't show error toast if conversion was cancelled
+      // The cancellation event handler will show the toast and clear cancelling state
       if (error instanceof Error && error.message === "Conversion cancelled") {
         console.log("Conversion cancelled by user");
+        wasCancelled = true;
+        // Don't clear cancelling state here - wait for the event from backend
       } else {
         console.error("Conversion error:", error);
         toast.error("Conversion failed", {
           description: error instanceof Error ? error.message : "An error occurred during conversion",
         });
+        // Clear cancelling state if conversion failed (not cancelled)
+        setIsCancelling(false);
+        setCancellingBookId(null);
       }
       setConversionProgress(null);
       setBookConversionProgress((prev) => {
@@ -240,6 +339,13 @@ export function useBookConversion(
       convertingBookIdRef.current = null;
       convertingSourcePathRef.current = null;
       conversionStartTimeRef.current = null;
+      // Only clear cancelling state if conversion completed successfully (not cancelled)
+      // If cancelled, the event handler will clear it when it receives the event
+      if (!wasCancelled && cancellingBookId === bookId) {
+        // Conversion completed successfully, clear cancelling state
+        setIsCancelling(false);
+        setCancellingBookId(null);
+      }
     }
   }, [pendingBookForConversion, isConverting, isCancelling, setLibrary, ingestEpub, refreshLibrary]);
 
@@ -279,6 +385,22 @@ export function useBookConversion(
     });
     conversionStartTimeRef.current = Date.now();
     const bookId = book.id;
+    let wasCancelled = false;
+    
+    // Update local book state immediately with voice_id so it's available for resuming
+    setLibrary((prev) => {
+      const index = prev.findIndex((b) => b.id === book.id || b.sourcePath === book.sourcePath);
+      if (index !== -1) {
+        const updated = [...prev];
+        updated[index] = {
+          ...updated[index],
+          voiceId,
+          conversionStatus: "started" as const,
+        };
+        return updated;
+      }
+      return prev;
+    });
     
     try {
       if (book.sourcePath.startsWith("web://")) {
@@ -361,13 +483,19 @@ export function useBookConversion(
       });
     } catch (error) {
       // Don't show error toast if conversion was cancelled
+      // The cancellation event handler will show the toast and clear cancelling state
       if (error instanceof Error && error.message === "Conversion cancelled") {
         console.log("Conversion cancelled by user");
+        wasCancelled = true;
+        // Don't clear cancelling state here - wait for the event from backend
       } else {
         console.error("Conversion error:", error);
         toast.error("Conversion failed", {
           description: error instanceof Error ? error.message : "An error occurred during conversion",
         });
+        // Clear cancelling state if conversion failed (not cancelled)
+        setIsCancelling(false);
+        setCancellingBookId(null);
       }
       setConversionProgress(null);
       setBookConversionProgress((prev) => {
@@ -381,11 +509,18 @@ export function useBookConversion(
       convertingBookIdRef.current = null;
       convertingSourcePathRef.current = null;
       conversionStartTimeRef.current = null;
+      // Only clear cancelling state if conversion completed successfully (not cancelled)
+      // If cancelled, the event handler will clear it when it receives the event
+      if (!wasCancelled && cancellingBookId === bookId) {
+        // Conversion completed successfully, clear cancelling state
+        setIsCancelling(false);
+        setCancellingBookId(null);
+      }
     }
   }, [isConverting, isCancelling, setLibrary, ingestEpub, refreshLibrary]);
 
   const cancelConversionForBook = useCallback(async (bookId: string) => {
-    // Immediately update UI to show cancellation in progress
+    // Immediately update UI to show "pausing" state
     setIsCancelling(true);
     setCancellingBookId(bookId);
     
@@ -401,21 +536,23 @@ export function useBookConversion(
           await invoke("cancel_conversion_command", { sourcePath });
         } catch (error) {
           console.error("Failed to cancel conversion on backend:", error);
+          // If backend call fails, still clear the cancelling state
+          setIsCancelling(false);
+          setCancellingBookId(null);
         }
+      } else {
+        // No source path, clear state immediately
+        setIsCancelling(false);
+        setCancellingBookId(null);
       }
       
-      // Clear state immediately for instant UI feedback
+      // Clear frontend conversion state immediately for instant UI feedback
+      // But keep isCancelling true until we receive the event from backend
       conversionAbortControllerRef.current = null;
       convertingBookIdRef.current = null;
       convertingSourcePathRef.current = null;
       setIsConverting(false);
-      setConversionProgress(null);
       conversionStartTimeRef.current = null;
-      setBookConversionProgress((prev) => {
-        const next = { ...prev };
-        delete next[bookId];
-        return next;
-      });
       
       // If it was pending conversion, clear that too
       if (pendingBookForConversion?.book.id === bookId) {
@@ -423,16 +560,9 @@ export function useBookConversion(
         setShowConvertDialog(false);
       }
       
-      // Keep the loading state visible briefly to show cancellation is processing
-      // This gives visual feedback that the action was registered
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      setIsCancelling(false);
-      setCancellingBookId(null);
-      
-      toast.info("Conversion cancelled", {
-        description: "The conversion has been cancelled.",
-      });
+      // Note: We don't clear isCancelling or show toast here
+      // That will happen when we receive the conversion-cancelled event from backend
+      // This ensures the UI shows "pausing" state immediately but final state only after backend confirms
     } else {
       // If no active conversion, just clear the cancelling state immediately
       setIsCancelling(false);

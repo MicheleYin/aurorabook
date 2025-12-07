@@ -598,53 +598,15 @@ pub async fn add_book(
     epub_data: Option<Vec<u8>>,
     app: tauri::AppHandle,
 ) -> AppResult<Book> {
-    use storage::{get_book_by_hash, get_book_by_source_path, add_book as add_book_storage};
+    use storage::add_book as add_book_storage;
     
     // Clone source_path before we might move book
     let source_path = book.source_path.clone();
     
-    // Check for duplicates by content hash first (if available), then fall back to source_path
-    let result_book = if let Some(ref hash) = book.content_hash {
-        log::debug!("Checking for duplicate book with hash: {}", hash);
-        // Check if book with same content hash already exists
-        if let Some(existing_book) = get_book_by_hash(&app, hash).await
-            .map_err(|e| AppError::Store(e))?
-        {
-            log::info!("Duplicate book detected by hash {}: existing ID={}, new ID={}", 
-                hash, existing_book.id, book.id);
-            // Update existing book instead, but preserve progress and state
-            let updated_book = merge_book_data(&book, &existing_book);
-            add_book_storage(&app, &updated_book).await
-                .map_err(|e| AppError::Store(e))?;
-            updated_book
-        } else {
-            log::debug!("No duplicate found for hash {}, adding new book", hash);
-            // New book - just add it
-            add_book_storage(&app, &book).await
-                .map_err(|e| AppError::Store(e))?;
-            book
-        }
-    } else {
-        log::debug!("No content hash available, checking for duplicate by source_path: {}", source_path);
-        // Fall back to source_path check if no hash available (backward compatibility)
-        if let Some(existing_book) = get_book_by_source_path(&app, &source_path).await
-            .map_err(|e| AppError::Store(e))?
-        {
-            log::info!("Duplicate book detected by source_path {}: existing ID={}, new ID={}", 
-                source_path, existing_book.id, book.id);
-            // Update existing book instead, but preserve progress and state
-            let updated_book = merge_book_data(&book, &existing_book);
-            add_book_storage(&app, &updated_book).await
-                .map_err(|e| AppError::Store(e))?;
-            updated_book
-        } else {
-            log::debug!("No duplicate found for source_path {}, adding new book", source_path);
-            // New book - just add it
-            add_book_storage(&app, &book).await
-                .map_err(|e| AppError::Store(e))?;
-            book
-        }
-    };
+    // Add the book directly without checking for duplicates
+    log::debug!("Adding new book: ID={}, title='{}'", book.id, book.title);
+    add_book_storage(&app, &book).await
+        .map_err(|e| AppError::Store(e))?;
     
     // Store EPUB data if provided
     if let Some(data) = epub_data {
@@ -652,7 +614,7 @@ pub async fn add_book(
             .map_err(|e| AppError::Store(e))?;
     }
     
-    Ok(result_book)
+    Ok(book)
 }
 /// Get EPUB buffer for a book
 #[tauri::command]
@@ -748,26 +710,6 @@ pub async fn ingest_epub(
     // Validate EPUB signature (should start with PK for ZIP)
     if epub_data.len() < 4 || &epub_data[0..4] != b"PK\x03\x04" {
         return Err(AppError::EpubParse("Invalid EPUB file: not a valid ZIP archive".to_string()));
-    }
-    
-    // Compute content hash for duplicate detection (synchronously since data is already in memory)
-    use sha2::{Sha256, Digest};
-    let mut hasher = Sha256::new();
-    hasher.update(&epub_data);
-    let content_hash = hex::encode(hasher.finalize());
-    log::debug!("Computed content hash for EPUB ({} bytes): {}", epub_data.len(), content_hash);
-    
-    // Check for duplicate by hash BEFORE doing expensive parsing
-    use storage::get_book_by_hash;
-    if let Some(existing_book) = get_book_by_hash(&app, &content_hash).await
-        .map_err(|e| AppError::Store(format!("Failed to check for duplicate: {}", e)))?
-    {
-        log::info!("Duplicate EPUB detected by hash {}: existing book ID={}, title='{}'.", 
-            content_hash, existing_book.id, existing_book.title);
-        return Err(AppError::DuplicateBook(format!(
-            "This EPUB is already in your library: \"{}\"",
-            existing_book.title
-        )));
     }
     
     // Parse EPUB in a blocking task
@@ -906,7 +848,6 @@ pub async fn ingest_epub(
         chapters,
         cover_url,
         source_path: source_path.clone(),
-        content_hash: Some(content_hash.clone()),
         publisher: metadata.publisher,
         published_year,
         subjects: if metadata.subjects.is_empty() {
@@ -928,7 +869,6 @@ pub async fn ingest_epub(
     };
     
     // Store book and EPUB data
-    // add_book will check for duplicates by hash and merge if found
     let result_book = add_book(book, Some(epub_data), app).await?;
     
     Ok(result_book)

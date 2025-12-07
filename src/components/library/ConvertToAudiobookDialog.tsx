@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -11,6 +11,7 @@ import {
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "../ui/select";
 import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
 import type { VoiceId } from "../../types/reader";
+import { usePersistentSettings } from "../../hooks/usePersistentSettings";
 
 type ConvertToAudiobookDialogProps = {
   open: boolean;
@@ -25,7 +26,15 @@ export function ConvertToAudiobookDialog({
   onConfirm,
   bookTitle,
 }: ConvertToAudiobookDialogProps) {
-  const [selectedVoice, setSelectedVoice] = useState<VoiceId>("af_heart");
+  const { settings } = usePersistentSettings();
+  const [selectedVoice, setSelectedVoice] = useState<VoiceId>(settings.ttsVoiceId);
+
+  // Update selected voice when dialog opens or settings change
+  useEffect(() => {
+    if (open) {
+      setSelectedVoice(settings.ttsVoiceId);
+    }
+  }, [open, settings.ttsVoiceId]);
 
   const handleConfirm = () => {
     onConfirm(selectedVoice);

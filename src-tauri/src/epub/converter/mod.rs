@@ -11,7 +11,7 @@ pub use opf::*;
 use crate::utils::constants::*;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::path_validation::{validate_epub_path, validate_file_size, validate_chapter_count};
-use crate::epub::converter::chunking::{extract_html_elements, HtmlElement};
+// extract_html_elements and HtmlElement are already re-exported via `pub use chunking::*;` above
 use anyhow::{Context, Result as AnyhowResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -93,6 +93,18 @@ pub struct ChapterCompletedEvent {
     pub total_chapters: usize,
     pub chapter_title: String,
     pub audio_generated: bool,
+}
+
+/// Event emitted when a conversion is cancelled.
+///
+/// This event is sent to the frontend to trigger a book refresh
+/// and update the UI to show the cancellation state.
+///
+/// # Fields
+/// * `source_path` - The source path of the book being converted
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversionCancelledEvent {
+    pub source_path: String,
 }
 
 /// Emit progress update to frontend
@@ -1121,7 +1133,7 @@ async fn rebuild_and_save_epub(
         log::debug!("Saved EPUB to store after chapter {}", chapter_index + 1);
         
         // Update book audio tracks so user can listen as soon as one chapter is ready
-        use crate::epub::update_book_audio_tracks;
+        use crate::epub::book_update::update_book_audio_tracks;
         if let Err(e) = update_book_audio_tracks(&epub_output, source_path_ref, app_ref).await {
             log::warn!("Failed to update book audio tracks after chapter {}: {}", chapter_index + 1, e);
             // Don't fail the conversion if audio track update fails

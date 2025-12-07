@@ -151,32 +151,6 @@ pub async fn get_book(app: &AppHandle, book_id: &str) -> Result<Option<Book>, St
     }
 }
 
-/// Get a single book by content_hash from storage
-pub async fn get_book_by_hash(app: &AppHandle, content_hash: &str) -> Result<Option<Book>, String> {
-    let pool = get_db_pool(app).await?;
-    
-    // We need to deserialize all books to find by content_hash
-    // This is less efficient but necessary since content_hash is in JSON
-    // TODO: Consider adding a content_hash index column for better performance
-    let rows = sqlx::query("SELECT data FROM books")
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| format!("Failed to query books: {}", e))?;
-    
-    for row in rows {
-        let data: String = row.get(0);
-        if let Ok(book) = serde_json::from_str::<Book>(&data) {
-            if let Some(ref hash) = book.content_hash {
-                if hash == content_hash {
-                    return Ok(Some(book));
-                }
-            }
-        }
-    }
-    
-    Ok(None)
-}
-
 /// Get a single book by source_path from storage
 pub async fn get_book_by_source_path(app: &AppHandle, source_path: &str) -> Result<Option<Book>, String> {
     let pool = get_db_pool(app).await?;
