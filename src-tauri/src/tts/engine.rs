@@ -121,37 +121,16 @@ impl TtsEnginePool {
                     )));
                 }
 
-                // Wrap the kokoros call to catch any panics and convert them to errors
-                // The kokoros library may panic when it tries to download models or initialize
-                let engine_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    // We need to use a blocking approach since catch_unwind doesn't work with async
-                    // So we'll use tokio::runtime::Handle to run the async code
-                    let handle = tokio::runtime::Handle::try_current()
-                        .expect("Must be called from within a tokio runtime");
-                    handle.block_on(async {
-                        kokoros::tts::koko::TTSKokoParallel::new_with_instances(
-                            onnx_path,
-                            voices_path,
-                            num_instances,
-                        )
-                        .await
-                    })
-                }));
-
-                let engine = match engine_result {
-                    Ok(engine) => engine,
-                    Err(panic_payload) => {
-                        // Extract panic message if possible
-                        let error_msg = if let Some(s) = panic_payload.downcast_ref::<String>() {
-                            format!("TTS engine initialization panicked: {}", s)
-                        } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
-                            format!("TTS engine initialization panicked: {}", s)
-                        } else {
-                            "TTS engine initialization panicked (unknown reason)".to_string()
-                        };
-                        return Err(AppError::TtsGeneration(error_msg));
-                    }
-                };
+                // Call kokoros - it may panic if files are invalid or download fails
+                // We check file existence above, but kokoros may still panic during initialization
+                // For now, we let the panic propagate since catch_unwind doesn't work well with async
+                // The file existence check should prevent most panics
+                let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+                    onnx_path,
+                    voices_path,
+                    num_instances,
+                )
+                .await;
 
                 Ok(Self {
                     engine_type,
