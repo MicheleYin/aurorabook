@@ -105,12 +105,53 @@ impl TtsEnginePool {
         
         match engine_type {
             TtsEngineType::Onnx => {
-                let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
-                    onnx_path,
-                    voices_path,
-                    num_instances,
-                )
-                .await;
+                // Check if files exist before attempting to create engine
+                // This prevents panics from the kokoros library when files don't exist
+                use std::path::Path;
+                if !Path::new(onnx_path).exists() {
+                    return Err(AppError::ResourceNotFound(format!(
+                        "ONNX model file not found: {}",
+                        onnx_path
+                    )));
+                }
+                if !Path::new(voices_path).exists() {
+                    return Err(AppError::ResourceNotFound(format!(
+                        "Voices file not found: {}",
+                        voices_path
+                    )));
+                }
+
+                // Wrap the kokoros call to catch any panics and convert them to errors
+                // The kokoros library may panic when it tries to download models or initialize
+                let engine_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    // We need to use a blocking approach since catch_unwind doesn't work with async
+                    // So we'll use tokio::runtime::Handle to run the async code
+                    let handle = tokio::runtime::Handle::try_current()
+                        .expect("Must be called from within a tokio runtime");
+                    handle.block_on(async {
+                        kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+                            onnx_path,
+                            voices_path,
+                            num_instances,
+                        )
+                        .await
+                    })
+                }));
+
+                let engine = match engine_result {
+                    Ok(engine) => engine,
+                    Err(panic_payload) => {
+                        // Extract panic message if possible
+                        let error_msg = if let Some(s) = panic_payload.downcast_ref::<String>() {
+                            format!("TTS engine initialization panicked: {}", s)
+                        } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                            format!("TTS engine initialization panicked: {}", s)
+                        } else {
+                            "TTS engine initialization panicked (unknown reason)".to_string()
+                        };
+                        return Err(AppError::TtsGeneration(error_msg));
+                    }
+                };
 
                 Ok(Self {
                     engine_type,

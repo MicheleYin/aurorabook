@@ -33,6 +33,7 @@ fn test_tts_engine_type_equality() {
 #[tokio::test]
 async fn test_tts_engine_pool_creation_invalid_path() {
     // Test creating TTS engine pool with invalid paths
+    // The function should return an error (not panic) when files don't exist
     let result = TtsEnginePool::new(
         "/nonexistent/model.onnx",
         "/nonexistent/voices.bin",
@@ -40,8 +41,18 @@ async fn test_tts_engine_pool_creation_invalid_path() {
         TtsEngineType::Onnx,
     ).await;
     
-    // Should fail with resource not found or similar error
-    assert!(result.is_err());
+    // Should return an error, not panic
+    assert!(result.is_err(), "Expected error when creating engine pool with invalid paths");
+    
+    // Verify the error message indicates the file was not found
+    if let Err(e) = result {
+        let error_msg = format!("{}", e);
+        assert!(
+            error_msg.contains("not found") || error_msg.contains("panicked") || error_msg.contains("ResourceNotFound"),
+            "Error message should indicate file not found or initialization failure. Got: {}",
+            error_msg
+        );
+    }
 }
 
 #[tokio::test]
@@ -76,7 +87,7 @@ async fn test_tts_engine_pool_creation() {
     ).await;
     
     assert!(pool.is_ok(), "Engine pool creation should succeed with valid model files");
-    let pool = pool.unwrap();
+    let _pool = pool.unwrap();
     
     println!("✅ Engine pool created successfully");
 }
@@ -103,7 +114,7 @@ async fn test_tts_engine_pool_clone() {
     ).await.unwrap();
     
     // Clone the pool
-    let cloned_pool = pool.clone();
+    let _cloned_pool = pool.clone();
     
     // Both should be usable
     assert!(true, "Pool cloning should succeed");

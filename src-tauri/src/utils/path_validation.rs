@@ -23,7 +23,22 @@ use crate::utils::errors::{AppError, AppResult};
 /// let safe_path = validate_epub_path("chapter1.xhtml")?; // Returns Ok
 /// ```
 pub fn validate_epub_path(href: &str) -> AppResult<String> {
+    // Check if path is absolute (starts with /) and has multiple components
+    // Reject paths like /absolute/path but allow /chapter1.xhtml (single component)
+    if href.starts_with('/') {
+        let without_slash = &href[1..];
+        // If it has multiple path components (contains /), reject it as a system path
+        // Single component paths like /chapter1.xhtml are common in EPUBs and should be normalized
+        if without_slash.contains('/') {
+            return Err(AppError::InvalidPath(format!(
+                "Path is absolute with multiple components (not allowed in EPUB): {}",
+                href
+            )));
+        }
+    }
+    
     // Remove leading slash if present (normalize)
+    // EPUB paths often start with / but should be treated as relative
     let normalized = if href.starts_with('/') {
         &href[1..]
     } else {
@@ -34,15 +49,6 @@ pub fn validate_epub_path(href: &str) -> AppResult<String> {
     if normalized.contains("..") {
         return Err(AppError::InvalidPath(format!(
             "Path contains traversal sequence: {}",
-            href
-        )));
-    }
-    
-    // Check if path is absolute (shouldn't happen in EPUB, but check anyway)
-    let path = Path::new(normalized);
-    if path.is_absolute() {
-        return Err(AppError::InvalidPath(format!(
-            "Path is absolute (not allowed in EPUB): {}",
             href
         )));
     }

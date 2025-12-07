@@ -281,7 +281,7 @@ pub fn parse_opf_content(opf_content: &str) -> Result<(EpubMetadata, HashMap<Str
                                 metadata.pubdate = Some(text);
                             }
                         }
-                    } else if name_bytes == b"meta" {
+                    } else if name_bytes == b"meta" || local_name_bytes == b"meta" {
                         let mut name_attr = String::new();
                         let mut content_attr = String::new();
                         let mut is_modified = false;
@@ -403,6 +403,41 @@ pub fn parse_opf_content(opf_content: &str) -> Result<(EpubMetadata, HashMap<Str
                 } else if name_bytes == b"spine" || local_name == "spine" {
                     in_spine = true;
                     debug!("Entered <spine> section (empty)");
+                } else if in_metadata && (name_bytes == b"meta" || local_name == "meta") {
+                    // Handle self-closing <meta /> elements
+                    debug!("Found self-closing <meta> in metadata");
+                    let mut name_attr = String::new();
+                    let mut content_attr = String::new();
+                    let mut is_modified = false;
+                    
+                    for attr in e.attributes() {
+                        if let Ok(attr) = attr {
+                            match attr.key.as_ref() {
+                                b"name" => {
+                                    name_attr = String::from_utf8_lossy(&attr.value).to_string();
+                                }
+                                b"content" => {
+                                    content_attr = String::from_utf8_lossy(&attr.value).to_string();
+                                }
+                                b"property" => {
+                                    if String::from_utf8_lossy(&attr.value) == "dcterms:modified" {
+                                        is_modified = true;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    
+                    if is_modified {
+                        // For dcterms:modified, the value might be in the content attribute
+                        if !content_attr.is_empty() {
+                            metadata.modified_date = Some(content_attr);
+                        }
+                    } else if name_attr == "cover" && !content_attr.is_empty() {
+                        debug!("  Setting cover_id to: {}", content_attr);
+                        metadata.cover_id = Some(content_attr);
+                    }
                 } else if in_manifest && (name_bytes == b"item" || local_name == "item") {
                     // Handle self-closing <item /> elements - store immediately
                     debug!("Found self-closing <item> in manifest");

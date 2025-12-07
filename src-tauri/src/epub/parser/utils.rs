@@ -13,6 +13,9 @@ pub fn extract_year(date: Option<&String>) -> Option<String> {
 
 /// Derive title from file path
 pub fn derive_title_from_path(path: &str) -> String {
+    if path.is_empty() || path == "/" {
+        return "Unknown".to_string();
+    }
     path.split('/')
         .last()
         .unwrap_or("Unknown")
