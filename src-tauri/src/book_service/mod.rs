@@ -566,8 +566,13 @@ fn merge_book_data(new_book: &Book, existing_book: &Book) -> Book {
     // Preserve the existing book ID to maintain continuity
     merged.id = existing_book.id.clone();
     
-    // Preserve conversion state from existing book
-    merged.conversion_status = existing_book.conversion_status;
+    // Set conversion status: if new book has audio tracks, mark as Done
+    // Otherwise preserve existing conversion status
+    if !merged.audio_tracks.is_empty() {
+        merged.conversion_status = crate::book_service::models::ConversionStatus::Done;
+    } else {
+        merged.conversion_status = existing_book.conversion_status;
+    }
     merged.completed_chapters = existing_book.completed_chapters.clone();
     merged.voice_id = existing_book.voice_id.clone();
     merged.total_words = existing_book.total_words;
@@ -886,6 +891,13 @@ pub async fn ingest_epub(
     let title = metadata.title
         .unwrap_or_else(|| derive_title_from_path(&source_path));
     
+    // Determine conversion status: if book already has audio tracks, mark as Done
+    let conversion_status = if !audio_tracks.is_empty() {
+        crate::book_service::models::ConversionStatus::Done
+    } else {
+        crate::book_service::models::ConversionStatus::NotStarted
+    };
+    
     // Create Book object
     let book = Book {
         id: book_id,
@@ -908,7 +920,7 @@ pub async fn ingest_epub(
         audio_sync_map,
         progress: None,
         page_count: None,
-        conversion_status: crate::book_service::models::ConversionStatus::NotStarted,
+        conversion_status,
         completed_chapters: Vec::new(),
         voice_id: None,
         total_words: None,

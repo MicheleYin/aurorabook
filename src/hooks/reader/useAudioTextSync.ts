@@ -5,7 +5,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import type { Book, Chapter } from "../../types/reader";
-import { findCurrentAudioSegment } from "../../lib/epub";
+import { findCurrentAudioSegment, chapterHrefsMatch, normalizeChapterHref } from "../../lib/epub";
 import { scrollToElement } from "../../lib/scroll-utils";
 
 export function useAudioTextSync(
@@ -25,6 +25,7 @@ export function useAudioTextSync(
   const chapterChangeThrottleMs = 500; // Throttle chapter changes to avoid rapid switching
   const lastReloadAttemptRef = useRef<{ chapterId: string; timestamp: number } | null>(null);
   const reloadThrottleMs = 2000; // Throttle reload attempts to avoid infinite loops
+  const lastChapterIdRef = useRef<string | undefined>(undefined); // Track last chapter ID to detect stale references
   
   // Calculate header offset dynamically when scrolling
   const getHeaderOffset = useCallback((): number => {
@@ -75,6 +76,7 @@ export function useAudioTextSync(
     return 0;
   }, [audioPlayerVisible]);
 
+
   const updateHighlight = useCallback((
     book: Book,
     chapter: Chapter | undefined,
@@ -109,12 +111,61 @@ export function useAudioTextSync(
       return;
     }
 
-    const chapterHref = chapter.href.split("#")[0];
-    if (segment.chapterHref !== chapterHref) {
-      console.log("[Audio Sync] Segment chapter mismatch", {
+    const chapterHref = normalizeChapterHref(chapter.href);
+    const segmentChapterHref = normalizeChapterHref(segment.chapterHref);
+    
+    // Debug: Always log the comparison to see what's happening
+    const hrefsMatch = chapterHrefsMatch(segment.chapterHref, chapter.href);
+    
+    // Also find what chapter the segment actually points to
+    const segmentChapter = book.chapters.find((ch) => {
+      return chapterHrefsMatch(segment.chapterHref, ch.href);
+    });
+    
+    // Check if chapter ID changed (to detect stale chapter references)
+    const chapterIdChanged = lastChapterIdRef.current !== undefined && lastChapterIdRef.current !== chapter.id;
+    if (chapterIdChanged) {
+      console.log("[Audio Sync] Chapter ID changed - updating reference", {
+        oldChapterId: lastChapterIdRef.current,
+        newChapterId: chapter.id,
+      });
+      lastChapterIdRef.current = chapter.id;
+    } else if (lastChapterIdRef.current === undefined) {
+      lastChapterIdRef.current = chapter.id;
+    }
+    
+    console.log("[Audio Sync] Chapter href comparison", {
+      segmentChapterHref: segment.chapterHref,
+      segmentChapterHrefNormalized: segmentChapterHref,
+      currentChapterHref: chapter.href,
+      currentChapterHrefNormalized: chapterHref,
+      hrefsMatch,
+      chapterId: chapter.id,
+      segmentChapterId: segmentChapter?.id,
+      segmentChapterHrefFromMatch: segmentChapter?.href,
+      chapterIdMatches: segmentChapter?.id === chapter.id,
+      autoScrollEnabled,
+      timeSinceLastChange: Date.now() - lastChapterChangeTimeRef.current,
+    });
+    
+    // Use flexible matching instead of direct comparison
+    // Also check if the segment's chapter ID differs from current chapter ID
+    // This handles cases where hrefs match but we're actually in the wrong chapter
+    const chapterIdMismatch = segmentChapter && segmentChapter.id !== chapter.id;
+    const shouldChangeChapter = !hrefsMatch || chapterIdMismatch;
+    
+    if (shouldChangeChapter) {
+      console.log("[Audio Sync] Segment chapter mismatch detected", {
         segmentChapterHref: segment.chapterHref,
-        currentChapterHref: chapterHref,
+        segmentChapterHrefNormalized: segmentChapterHref,
+        currentChapterHref: chapter.href,
+        currentChapterHrefNormalized: chapterHref,
+        hrefsMatch,
+        chapterIdMismatch,
+        currentChapterId: chapter.id,
+        segmentChapterId: segmentChapter?.id,
         autoScrollEnabled,
+        hasOnChapterChange: !!onChapterChange,
       });
       
       // If auto scroll is enabled, navigate to the correct chapter
@@ -124,54 +175,88 @@ export function useAudioTextSync(
         
         // Throttle chapter changes to avoid rapid switching
         if (timeSinceLastChange >= chapterChangeThrottleMs) {
-          // Find the chapter that matches the segment's chapterHref
-          const matchingChapter = book.chapters.find((ch) => {
-            const chHref = ch.href.split("#")[0];
-            // Compare with and without OEBPS prefix, handle various path formats
-            return (
-              chHref === segment.chapterHref ||
-              chHref === segment.chapterHref.replace(/^OEBPS\//, "") ||
-              chHref === `OEBPS/${segment.chapterHref}` ||
-              `OEBPS/${chHref}` === segment.chapterHref ||
-              chHref.endsWith(segment.chapterHref) ||
-              segment.chapterHref.endsWith(chHref)
-            );
+          // Use the segmentChapter we already found, or find it again
+          const matchingChapter = segmentChapter || book.chapters.find((ch) => {
+            return chapterHrefsMatch(segment.chapterHref, ch.href);
           });
 
-          if (matchingChapter && matchingChapter.id !== chapter.id) {
-            console.log("[Audio Sync] Navigating to correct chapter", {
-              fromChapterId: chapter.id,
-              toChapterId: matchingChapter.id,
-              segmentChapterHref: segment.chapterHref,
-              elementId: segment.textElementId,
-            });
-            
-            lastChapterChangeTimeRef.current = now;
-            // Navigate to the chapter, passing the element ID to scroll to after load
-            onChapterChange(matchingChapter.id, segment.textElementId);
-            setHighlightedElementId(null);
-            return;
+          if (matchingChapter) {
+            if (matchingChapter.id !== chapter.id) {
+              console.log("[Audio Sync] Navigating to correct chapter", {
+                fromChapterId: chapter.id,
+                fromChapterHref: chapter.href,
+                toChapterId: matchingChapter.id,
+                toChapterHref: matchingChapter.href,
+                segmentChapterHref: segment.chapterHref,
+                elementId: segment.textElementId,
+                timeSinceLastChange,
+              });
+              
+              // Update throttle time BEFORE calling onChapterChange to prevent race conditions
+              // This ensures that if updateHighlight is called again quickly with stale chapter data,
+              // we don't immediately trigger another change
+              lastChapterChangeTimeRef.current = now;
+              
+              // Also update the chapter ID ref to track what we're changing to
+              lastChapterIdRef.current = matchingChapter.id;
+              
+              console.log("[Audio Sync] Calling onChapterChange", {
+                chapterId: matchingChapter.id,
+                chapterHref: matchingChapter.href,
+                elementId: segment.textElementId,
+                currentChapterId: chapter.id,
+                currentChapterHref: chapter.href,
+              });
+              
+              // Navigate to the chapter, passing the element ID to scroll to after load
+              onChapterChange(matchingChapter.id, segment.textElementId);
+              setHighlightedElementId(null);
+              return;
+            } else {
+              // This can happen if the chapter object reference is stale but the ID matches
+              // Log it but don't treat it as an error - the chapter is already correct
+              console.log("[Audio Sync] Matching chapter found with same ID - chapter already correct", {
+                chapterId: chapter.id,
+                chapterHref: chapter.href,
+                segmentChapterHref: segment.chapterHref,
+                note: "This is normal if chapter was just changed and React hasn't updated the reference yet",
+              });
+            }
           } else {
             console.log("[Audio Sync] No matching chapter found for segment", {
               segmentChapterHref: segment.chapterHref,
-              availableChapters: book.chapters.map(ch => ch.href.split("#")[0]),
+              segmentChapterHrefNormalized: segmentChapterHref,
+              availableChapters: book.chapters.map(ch => ({
+                id: ch.id,
+                href: ch.href,
+                normalized: normalizeChapterHref(ch.href),
+              })),
             });
           }
         } else {
           console.log("[Audio Sync] Chapter change throttled", {
             timeSinceLastChange,
             throttleMs: chapterChangeThrottleMs,
+            remainingMs: chapterChangeThrottleMs - timeSinceLastChange,
           });
         }
+      } else {
+        console.log("[Audio Sync] Chapter change blocked", {
+          autoScrollEnabled,
+          hasOnChapterChange: !!onChapterChange,
+        });
       }
       
       setHighlightedElementId(null);
       return;
     }
 
-    console.log("[Audio Sync] Segment found", {
+    console.log("[Audio Sync] Segment found - chapter matches", {
       textElementId: segment.textElementId,
-      chapterHref: segment.chapterHref,
+      segmentChapterHref: segment.chapterHref,
+      segmentChapterHrefNormalized: segmentChapterHref,
+      currentChapterHref: chapter.href,
+      currentChapterHrefNormalized: chapterHref,
     });
 
     // Check if the element exists in the DOM

@@ -282,6 +282,46 @@ export const findCurrentAudioSegment = (
 };
 
 /**
+ * Normalize a chapter href by removing fragment and leading slashes
+ */
+export const normalizeChapterHref = (href: string): string => {
+  return href.split("#")[0].replace(/^\/+/, "");
+};
+
+/**
+ * Check if two chapter hrefs match, handling various path format differences
+ * This handles cases like:
+ * - "OEBPS/chapter_2.xhtml" vs "chapter_2.xhtml"
+ * - "chapter_2.xhtml" vs "OEBPS/chapter_2.xhtml"
+ * - Different path separators or leading slashes
+ */
+export const chapterHrefsMatch = (href1: string, href2: string): boolean => {
+  const norm1 = normalizeChapterHref(href1);
+  const norm2 = normalizeChapterHref(href2);
+  
+  // Exact match
+  if (norm1 === norm2) return true;
+  
+  // Match with/without OEBPS prefix
+  const withoutOEBPS1 = norm1.replace(/^OEBPS\//, "");
+  const withoutOEBPS2 = norm2.replace(/^OEBPS\//, "");
+  if (withoutOEBPS1 === withoutOEBPS2) return true;
+  
+  // Match with OEBPS prefix added
+  if (`OEBPS/${withoutOEBPS1}` === norm2 || `OEBPS/${withoutOEBPS2}` === norm1) return true;
+  
+  // End-with matching (for partial paths)
+  if (norm1.endsWith(norm2) || norm2.endsWith(norm1)) return true;
+  
+  // Filename-only matching (last resort)
+  const filename1 = norm1.split("/").pop() || norm1;
+  const filename2 = norm2.split("/").pop() || norm2;
+  if (filename1 === filename2) return true;
+  
+  return false;
+};
+
+/**
  * Find chapters that use a specific audio track
  */
 export const findChaptersForAudioTrack = (

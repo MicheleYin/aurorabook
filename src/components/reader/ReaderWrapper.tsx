@@ -282,9 +282,6 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       return;
     }
     
-    // Update previousChapterIdRef
-    previousChapterIdRef.current = chapterId;
-
     // Save progress for previous chapter before changing
     if (activeChapter && activeChapter.id !== chapterId) {
       await saveProgress(activeChapter.id);
@@ -315,6 +312,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       scrollPosition: options?.scrollPosition,
       isManualSelection: options?.isManualSelection,
       savedChapterId: activeBook.progress?.currentChapterId,
+      previousChapterIdBefore: previousChapterIdRef.current,
     });
 
     // Reset restore state for new chapter
@@ -326,6 +324,12 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     // Load chapter
     const loaded = await ensureChapterLoaded(activeBook.id, chapter);
     if (loaded && loaded.contentHtml) {
+      // Update previousChapterIdRef AFTER chapter is loaded to prevent render-time check from interfering
+      previousChapterIdRef.current = chapterId;
+      
+      // Update chapterLoader with the loaded chapter
+      chapterLoader.setLoadedChapter(loaded);
+      
       setChapterAnimationState("entering");
       setTimeout(() => {
         setChapterAnimationState("entered");
@@ -340,6 +344,12 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       
       // Trigger restoration if needed (for cached chapters, restore immediately)
       triggerRestorationIfNeeded(loaded, wasAlreadyLoaded, shouldRestore);
+      
+      console.log("[ReaderWrapper] Chapter loaded successfully", {
+        chapterId,
+        hasContent: !!loaded.contentHtml,
+        contentLength: loaded.contentHtml?.length,
+      });
     } else {
       console.error("[ReaderWrapper] Failed to load chapter", { chapterId, loaded });
     }
@@ -376,6 +386,9 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       // Load chapter asynchronously
       ensureChapterLoaded(activeBook.id, activeChapter).then(loaded => {
         if (loaded && loaded.contentHtml) {
+          // IMPORTANT: Update chapterLoader state so UI displays the new chapter
+          chapterLoader.setLoadedChapter(loaded);
+          
           setChapterAnimationState("entering");
           setTimeout(() => {
             setChapterAnimationState("entered");
@@ -383,6 +396,12 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
           
           // Trigger restoration if needed (for cached chapters, restore immediately)
           triggerRestorationIfNeeded(loaded, wasAlreadyLoaded, shouldRestore);
+          
+          console.log("[ReaderWrapper] Chapter loaded in render-time check", {
+            chapterId,
+            hasContent: !!loaded.contentHtml,
+            contentLength: loaded.contentHtml?.length,
+          });
         } else {
           console.error("[ReaderWrapper] Failed to load chapter in render-time check", { chapterId, loaded });
         }
@@ -427,15 +446,31 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
 
   // Wrapper for chapter change from audio sync
   // Converts the audio sync format (chapterId, elementId) to the chapter change format
-  const handleAudioSyncChapterChange = useCallback((chapterId: string, elementId?: string) => {
+  const handleAudioSyncChapterChange = useCallback(async (chapterId: string, elementId?: string) => {
+    console.log("[ReaderWrapper] handleAudioSyncChapterChange called", {
+      chapterId,
+      elementId,
+      currentChapterId: activeChapter?.id,
+      currentChapterHref: activeChapter?.href,
+      previousChapterIdRef: previousChapterIdRef.current,
+    });
+    
     if (elementId) {
       // Store the element ID to scroll to after chapter loads
       pendingScrollToElementIdRef.current = elementId;
     }
+    
     // Navigate to chapter with scrollPosition: "top" so it loads at the top,
     // then handlePendingScrollTarget will scroll to the element after load
-    handleChapterChange(chapterId, { scrollPosition: "top", isManualSelection: false });
-  }, [handleChapterChange]);
+    // Note: handleChapterChange will update previousChapterIdRef AFTER loading
+    await handleChapterChange(chapterId, { scrollPosition: "top", isManualSelection: false });
+    
+    console.log("[ReaderWrapper] handleAudioSyncChapterChange completed", {
+      chapterId,
+      activeChapterIdAfter: activeChapter?.id,
+      previousChapterIdRefAfter: previousChapterIdRef.current,
+    });
+  }, [handleChapterChange, activeChapter]);
 
   // Audio player progress logic
   const audioPlayerProgress = useAudioPlayerProgress({

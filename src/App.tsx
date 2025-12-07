@@ -20,7 +20,7 @@ import { useResolvedTheme } from "./hooks/useResolvedTheme";
 import type { ChapterSelectionOptions, AudioProgressSnapshot } from "./components/reader/types";
 import { cn } from "./lib/utils";
 import { animPatterns, viewTransition } from "./lib/animations";
-import { findChaptersForAudioTrack } from "./lib/epub";
+import { findChaptersForAudioTrack, chapterHrefsMatch } from "./lib/epub";
 
 function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary> }) {
   const {
@@ -307,18 +307,10 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       return;
     }
 
-    // Find the first matching chapter by comparing hrefs
-    // Normalize hrefs by removing fragment identifiers for comparison
-    const normalizedChapterHrefs = chapterHrefs.map(href => href.split("#")[0]);
-    
+    // Find the first matching chapter by comparing hrefs using flexible matching
     const matchingChapter = activeBook.chapters.find((chapter) => {
-      const chapterBaseHref = chapter.href.split("#")[0];
-      return normalizedChapterHrefs.some(normalizedHref => {
-        // Compare with and without OEBPS prefix
-        return chapterBaseHref === normalizedHref ||
-               chapterBaseHref === normalizedHref.replace(/^OEBPS\//, "") ||
-               chapterBaseHref === `OEBPS/${normalizedHref}` ||
-               `OEBPS/${chapterBaseHref}` === normalizedHref;
+      return chapterHrefs.some(segmentChapterHref => {
+        return chapterHrefsMatch(segmentChapterHref, chapter.href);
       });
     });
 
