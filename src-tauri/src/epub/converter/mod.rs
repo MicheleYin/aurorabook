@@ -11,7 +11,6 @@ pub use opf::*;
 use crate::utils::constants::*;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::path_validation::{validate_epub_path, validate_file_size, validate_chapter_count};
-// extract_html_elements and HtmlElement are already re-exported via `pub use chunking::*;` above
 use anyhow::{Context, Result as AnyhowResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -548,22 +547,24 @@ fn resolve_chapter_path(href: &str, base_path: &str) -> String {
     }
 }
 
-/// Process a single HTML element: generate audio and return result
-async fn process_html_element(
-    element: &HtmlElement,
-    element_index: usize,
+/// Process a single sentence: generate audio and return result
+/// The new model doesn't provide timestamps, so we calculate them from audio duration
+async fn process_sentence(
+    sentence: &str,
+    sentence_index: usize,
     engine: &Arc<kokoros::tts::koko::TTSKokoParallel>,
     worker_id: usize,
     voice_id: &str,
 ) -> AnyhowResult<(Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String)> {
-    let text = element.text.trim();
+    let text = sentence.trim();
     if text.is_empty() {
         return Ok((Vec::new(), Vec::new(), String::new()));
     }
     
     let model_instance = engine.get_model_instance(worker_id);
-    let result = engine
-        .tts_timestamped_raw_audio_with_instance(
+    // Use tts_raw_audio_with_instance since the new model doesn't provide timestamps
+    let audio_samples = engine
+        .tts_raw_audio_with_instance(
             text,
             "en",
             voice_id,
@@ -571,15 +572,33 @@ async fn process_html_element(
             None, None, None, None,
             model_instance,
         )
-        .map_err(|e| anyhow::anyhow!("TTS generation failed for element {}: {}", element_index, e))?;
+        .map_err(|e| anyhow::anyhow!("TTS generation failed for sentence {}: {}", sentence_index, e))?;
     
-    match result {
-        Some((audio, alignments)) => Ok((audio, alignments, text.to_string())),
-        None => Err(anyhow::anyhow!(
-            "Element {}: TTS engine did not return word alignments. Model may not support durations.",
-            element_index
-        )),
+    if audio_samples.is_empty() {
+        return Ok((Vec::new(), Vec::new(), String::new()));
     }
+    
+    // Calculate word alignments from audio duration
+    // Split text into words and distribute duration proportionally
+    let words: Vec<&str> = text.split_whitespace().filter(|s| !s.is_empty()).collect();
+    let audio_duration_sec = audio_samples.len() as f32 / SAMPLE_RATE as f32;
+    
+    let mut word_alignments = Vec::new();
+    if !words.is_empty() {
+        // Distribute duration evenly across words
+        let duration_per_word = audio_duration_sec / words.len() as f32;
+        for (idx, word) in words.iter().enumerate() {
+            let start_sec = idx as f32 * duration_per_word;
+            let end_sec = (idx + 1) as f32 * duration_per_word;
+            word_alignments.push(kokoros::tts::koko::WordAlignment {
+                word: word.to_string(),
+                start_sec,
+                end_sec,
+            });
+        }
+    }
+    
+    Ok((audio_samples, word_alignments, text.to_string()))
 }
 
 /// Process a single chapter: generate audio, create SMIL, and store files
@@ -629,14 +648,14 @@ async fn process_chapter(
     validate_file_size(chapter.content_html.len(), MAX_CHAPTER_SIZE, "Chapter HTML")?;
     validate_epub_path(&chapter.href)?;
     
-    // Extract HTML elements for parallel processing
-    let html_elements = extract_html_elements(&chapter.content_html)
-        .map_err(|e| AppError::EpubParse(format!("Failed to extract HTML elements: {}", e)))?;
+    // Extract all sentences from chapter for round-robin processing
+    let sentences = extract_all_sentences(&chapter.content_html)
+        .map_err(|e| AppError::EpubParse(format!("Failed to extract sentences: {}", e)))?;
     
     let mut files = std::collections::HashMap::new();
     
-    if html_elements.is_empty() {
-        log::debug!("Chapter {} has no HTML elements - skipping audio generation", chapter_index + 1);
+    if sentences.is_empty() {
+        log::debug!("Chapter {} has no sentences - skipping audio generation", chapter_index + 1);
         let chapter_path = resolve_chapter_path(&chapter.href, base_path);
         files.insert(chapter_path, chapter.content_html.clone().into_bytes());
         return Ok(ChapterProcessResult {
@@ -648,65 +667,62 @@ async fn process_chapter(
         });
     }
     
-    log::debug!("Chapter {}: Processing {} HTML elements in parallel", chapter_index + 1, html_elements.len());
+    log::debug!("Chapter {}: Processing {} sentences in round-robin fashion", chapter_index + 1, sentences.len());
     
-    // Create semaphore to limit concurrent element processing
+    // Create semaphore to limit concurrent sentence processing
     let semaphore = Arc::new(tokio::sync::Semaphore::new(num_instances));
-    let _instance_counter = Arc::new(AtomicUsize::new(0));
     
-    // Track elements processed for proportional progress tracking
-    // Use chapter.word_count from ingestion to avoid double-counting nested elements
-    let elements_processed = Arc::new(AtomicUsize::new(0));
-    let total_elements = html_elements.len();
+    // Track sentences processed for proportional progress tracking
+    let sentences_processed = Arc::new(AtomicUsize::new(0));
+    let total_sentences = sentences.len();
     
-    // Process all HTML elements in parallel
+    // Process all sentences in parallel with round-robin distribution
     let mut handles = Vec::new();
-    for (idx, element) in html_elements.iter().enumerate() {
+    for (idx, sentence) in sentences.iter().enumerate() {
         let semaphore = Arc::clone(&semaphore);
         let engine = Arc::clone(engine);
-        let element = element.clone();
+        let sentence = sentence.clone();
         let voice_id = voice_id.to_string();
         
         let handle = tokio::spawn(async move {
             let _permit = semaphore.acquire().await
                 .map_err(|e| anyhow::anyhow!("Failed to acquire semaphore: {}", e))?;
             
+            // Round-robin distribution: sentence index % num_instances
             let worker_id = idx % num_instances;
-            let result = process_html_element(&element, idx, &engine, worker_id, &voice_id).await?;
+            let result = process_sentence(&sentence, idx, &engine, worker_id, &voice_id).await?;
             
-            Ok::<(usize, Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String, HtmlElement), anyhow::Error>(
-                (idx, result.0, result.1, result.2, element)
+            Ok::<(usize, Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String), anyhow::Error>(
+                (idx, result.0, result.1, result.2)
             )
         });
         
         handles.push(handle);
     }
     
-    // Collect results and update progress as each element completes
-    let mut element_results: Vec<(usize, Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String, HtmlElement)> = Vec::new();
+    // Collect results and update progress as each sentence completes
+    let mut sentence_results: Vec<(usize, Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String)> = Vec::new();
     for handle in handles {
         let result = handle.await
             .map_err(|e| anyhow::anyhow!("Task join error: {}", e))??;
         
-        // Check for cancellation after each element finishes processing
+        // Check for cancellation after each sentence finishes processing
         if let Some(ref token) = cancel_token {
             if token.load(Ordering::Relaxed) {
-                log::info!("Conversion cancelled after processing element in chapter {}", chapter_index + 1);
+                log::info!("Conversion cancelled after processing sentence in chapter {}", chapter_index + 1);
                 return Err(anyhow::anyhow!("Conversion cancelled by user"));
             }
         }
         
-        // Update progress after each element completes
-        let (idx, audio, alignments, text, element) = result;
+        // Update progress after each sentence completes
+        let (idx, audio, alignments, text) = result;
         
-        // Increment elements processed counter
-        let elements_done = elements_processed.fetch_add(1, Ordering::Relaxed) + 1;
+        // Increment sentences processed counter
+        let sentences_done = sentences_processed.fetch_add(1, Ordering::Relaxed) + 1;
         
-        // Calculate progress proportionally based on elements processed
-        // This avoids double-counting nested elements by using the chapter's word_count from ingestion
-        let chapter_words_progress = if total_elements > 0 {
-            // Distribute chapter.word_count proportionally across elements for progress tracking
-            ((chapter.word_count as f64 * elements_done as f64) / total_elements as f64).round() as usize
+        // Calculate progress proportionally based on sentences processed
+        let chapter_words_progress = if total_sentences > 0 {
+            ((chapter.word_count as f64 * sentences_done as f64) / total_sentences as f64).round() as usize
         } else {
             chapter.word_count
         };
@@ -717,21 +733,19 @@ async fn process_chapter(
             .map(|atomic| atomic.load(Ordering::Relaxed))
             .unwrap_or(0);
         
-        // Update progress callback with proportional progress within chapter
-        // words_in_current_chapter shows the full chapter word count
-        // words_processed shows cumulative progress including proportional progress in current chapter
+        // Update progress callback
         progress_callback(ConversionProgress {
             current_chapter: chapter_index + 1,
             total_chapters,
             words_processed: current_total + chapter_words_progress,
             total_words,
-            words_in_current_chapter: chapter.word_count, // Full chapter word count
+            words_in_current_chapter: chapter.word_count,
             current_step: "generating-audio".to_string(),
-            message: format!("Processing chapter {}: {} )", 
-                chapter_index + 1, chapter.title),
+            message: format!("Processing chapter {}: {} ({}/{})", 
+                chapter_index + 1, chapter.title, sentences_done, total_sentences),
         });
         
-        element_results.push((idx, audio, alignments, text, element));
+        sentence_results.push((idx, audio, alignments, text));
     }
     
     // Check for cancellation before merging audio segments
@@ -742,65 +756,19 @@ async fn process_chapter(
         }
     }
     
-    // Sort by element index to maintain document order
-    element_results.sort_by_key(|(idx, _, _, _, _)| *idx);
+    // Sort by sentence index to maintain document order
+    sentence_results.sort_by_key(|(idx, _, _, _)| *idx);
     
-    // Merge audio segments in order and build span mappings
+    // Merge audio segments in order and build word alignments
     let mut merged_audio: Vec<f32> = Vec::new();
     let mut all_word_alignments: Vec<kokoros::tts::koko::WordAlignment> = Vec::new();
-    let mut span_mappings: Vec<(String, usize, usize)> = Vec::new();
-    let mut full_text = String::new();
-    let mut current_word_index = 0;
-    let mut span_index = 0;
     
     // Track cumulative audio duration for alignment offset
     let mut cumulative_duration = 0.0;
     
-    for (_element_idx, audio_samples, word_alignments, text, _element) in element_results {
+    for (_sentence_idx, audio_samples, word_alignments, _text) in sentence_results {
         if audio_samples.is_empty() {
             continue;
-        }
-        
-        // Count words in this element
-        let word_count = text.split_whitespace().filter(|s| !s.is_empty()).count();
-        let start_word = current_word_index;
-        let end_word = current_word_index + word_count;
-        
-        // Add text to full text
-        if !full_text.is_empty() {
-            full_text.push(' ');
-        }
-        full_text.push_str(&text);
-        current_word_index = end_word;
-        
-        // Create span mappings for this element
-        // Split element text into sentences for span mapping
-        use regex::Regex;
-        use once_cell::sync::Lazy;
-        static SENTENCE_PATTERN: Lazy<Regex> = Lazy::new(|| {
-            Regex::new(r"([^.!?]+[.!?]+)\s*")
-                .expect("Failed to compile sentence regex pattern")
-        });
-        
-        let sentences: Vec<&str> = SENTENCE_PATTERN
-            .find_iter(&text)
-            .map(|m| m.as_str().trim())
-            .filter(|s| !s.is_empty())
-            .collect();
-        
-        let sentences = if sentences.is_empty() {
-            vec![text.as_str()]
-        } else {
-            sentences
-        };
-        
-        let mut element_word_offset = start_word;
-        for sentence in sentences {
-            let sentence_word_count = sentence.split_whitespace().filter(|s| !s.is_empty()).count();
-            let span_id = format!("f{:06}", span_index + 1);
-            span_mappings.push((span_id, element_word_offset, element_word_offset + sentence_word_count));
-            element_word_offset += sentence_word_count;
-            span_index += 1;
         }
         
         // Offset word alignments by cumulative duration
@@ -818,38 +786,86 @@ async fn process_chapter(
         // Merge audio samples
         merged_audio.extend_from_slice(&audio_samples);
         
-        // Update cumulative duration for next element
+        // Update cumulative duration for next sentence
         if !word_alignments.is_empty() {
             cumulative_duration = word_alignments.last().unwrap().end_sec + cumulative_duration;
         } else {
             cumulative_duration += audio_samples.len() as f32 / SAMPLE_RATE as f32;
         }
         
-        // Check for cancellation after merging each element's audio
+        // Check for cancellation after merging each sentence's audio
         if let Some(ref token) = cancel_token {
             if token.load(Ordering::Relaxed) {
                 log::info!("Conversion cancelled while merging audio in chapter {}", chapter_index + 1);
                 return Err(anyhow::anyhow!("Conversion cancelled by user"));
             }
         }
-        
-        // Update HTML with spans (similar to extract_text_with_spans logic)
-        // For simplicity, we'll use the existing extract_text_with_spans for HTML updates
-        // but use our parallel-processed audio
     }
     
     // Use extract_text_with_spans to get updated HTML with spans
-    let (_, updated_html_with_spans, _) = extract_text_with_spans(&chapter.content_html)
+    // This function generates the actual span IDs that will be in the HTML
+    let (extracted_full_text, updated_html_with_spans, extracted_span_mappings) = extract_text_with_spans(&chapter.content_html)
         .map_err(|e| AppError::EpubParse(format!("Failed to extract text with spans: {}", e)))?;
     let updated_html = updated_html_with_spans;
     
+    // Extract actual span IDs from the generated HTML to ensure we only create segments for spans that exist
+    use regex::Regex;
+    use once_cell::sync::Lazy;
+    static SPAN_ID_PATTERN: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"<span\s+id="(f\d{6})""#).expect("Failed to compile span ID regex")
+    });
+    
+    let mut actual_span_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for cap in SPAN_ID_PATTERN.captures_iter(&updated_html) {
+        if let Some(span_id) = cap.get(1) {
+            actual_span_ids.insert(span_id.as_str().to_string());
+        }
+    }
+    
+    // Filter span_mappings to only include spans that actually exist in the HTML
+    let total_mappings = extracted_span_mappings.len();
+    let filtered_span_mappings: Vec<(String, usize, usize)> = extracted_span_mappings
+        .into_iter()
+        .filter(|(span_id, _, _)| actual_span_ids.contains(span_id))
+        .collect();
+    
+    log::debug!(
+        "Filtered span mappings: {} total mappings, {} exist in HTML, {} after filtering",
+        total_mappings,
+        actual_span_ids.len(),
+        filtered_span_mappings.len()
+    );
+    
+    // Use the filtered span_mappings to ensure IDs match the HTML
     // Map alignments to segments using merged audio
     let audio_segments = map_alignments_to_segments(
-        span_mappings.clone(),
+        filtered_span_mappings.clone(),
         &all_word_alignments,
         &merged_audio,
-        &full_text,
+        &extracted_full_text,
     );
+    
+    log::debug!(
+        "Created {} audio segments from {} filtered span mappings (word alignments: {}, full text words: {})",
+        audio_segments.len(),
+        filtered_span_mappings.len(),
+        all_word_alignments.len(),
+        extracted_full_text.split_whitespace().filter(|s| !s.is_empty()).count()
+    );
+    
+    // Verify all segment IDs exist in the HTML
+    let segment_ids: std::collections::HashSet<String> = audio_segments.iter().map(|(id, _, _)| id.clone()).collect();
+    let missing_ids: Vec<String> = segment_ids.iter()
+        .filter(|id| !actual_span_ids.contains(*id))
+        .cloned()
+        .collect();
+    if !missing_ids.is_empty() {
+        log::warn!(
+            "Found {} segment IDs that don't exist in HTML: {:?}",
+            missing_ids.len(),
+            missing_ids.iter().take(10).collect::<Vec<_>>()
+        );
+    }
     
     // Update progress with current total words processed (including current chapter)
     // Use chapter.word_count from ingestion to avoid double-counting nested elements
