@@ -69,7 +69,71 @@ fn extract_audio_data_from_epub(
         log::debug!("Chapter href: {}", chapter.href);
     }
     
-    Ok((audio_tracks, chapters))
+    // Order audio tracks to match chapter order
+    // Audio tracks are named like "Audio/prologue.mp3" and should match chapters like "prologue.xhtml"
+    let ordered_audio_tracks = order_audio_tracks_by_chapters(&audio_tracks, &chapters);
+    log::info!("Ordered {} audio tracks to match {} chapters", ordered_audio_tracks.len(), chapters.len());
+    
+    Ok((ordered_audio_tracks, chapters))
+}
+
+/// Order audio tracks to match the chapter order.
+/// 
+/// This function matches audio tracks to chapters by comparing their base filenames
+/// (e.g., "Audio/prologue.mp3" matches "prologue.xhtml") and orders the audio tracks
+/// in the same sequence as the chapters appear in the spine.
+pub fn order_audio_tracks_by_chapters(
+    audio_tracks: &[crate::book_service::models::AudioTrack],
+    chapters: &[crate::book_service::models::Chapter],
+) -> Vec<crate::book_service::models::AudioTrack> {
+    use std::collections::HashMap;
+    
+    // Helper to extract base filename (without extension and path)
+    let get_base_name = |href: &str| -> String {
+        href.split('/')
+            .last()
+            .unwrap_or(href)
+            .split('.')
+            .next()
+            .unwrap_or(href)
+            .to_lowercase()
+    };
+    
+    // Create a map of base name -> audio track for quick lookup
+    let mut audio_track_map: HashMap<String, Vec<crate::book_service::models::AudioTrack>> = HashMap::new();
+    for track in audio_tracks {
+        let base_name = get_base_name(&track.href);
+        audio_track_map.entry(base_name).or_insert_with(Vec::new).push(track.clone());
+    }
+    
+    // Build ordered list by matching chapters to audio tracks
+    let mut ordered_tracks = Vec::new();
+    let mut used_tracks: HashMap<String, usize> = HashMap::new(); // Track which index we're at for each base name
+    
+    for chapter in chapters {
+        let chapter_base = get_base_name(&chapter.href);
+        
+        // Try to find matching audio track
+        if let Some(tracks) = audio_track_map.get(&chapter_base) {
+            let index = used_tracks.get(&chapter_base).copied().unwrap_or(0);
+            if index < tracks.len() {
+                ordered_tracks.push(tracks[index].clone());
+                used_tracks.insert(chapter_base.clone(), index + 1);
+                log::debug!("Matched audio track '{}' to chapter '{}'", tracks[index].href, chapter.href);
+            }
+        }
+    }
+    
+    // Add any remaining audio tracks that didn't match chapters (shouldn't happen, but be safe)
+    for (base_name, tracks) in &audio_track_map {
+        let used_count = used_tracks.get(base_name).copied().unwrap_or(0);
+        for track in tracks.iter().skip(used_count) {
+            log::warn!("Audio track '{}' didn't match any chapter, appending to end", track.href);
+            ordered_tracks.push(track.clone());
+        }
+    }
+    
+    ordered_tracks
 }
 
 

@@ -765,6 +765,10 @@ pub async fn ingest_epub(
     // Extract audio tracks from manifest
     let mut audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
     
+    // Order audio tracks to match chapter order (chapters are already in spine order)
+    use crate::epub::order_audio_tracks_by_chapters;
+    audio_tracks = order_audio_tracks_by_chapters(&audio_tracks, &chapters);
+    
     // Compute durations for audio tracks
     if !audio_tracks.is_empty() {
         let epub_data_for_durations = epub_data.clone();

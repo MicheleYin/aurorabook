@@ -117,7 +117,7 @@ export function ReaderAudioPlayer({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isPlayingRef = useRef(false);
   const userScrubbingRef = useRef(false);
-  const currentTimeRef = useRef(0);
+  // Note: audio.currentTime is the single source of truth - always read from audioRef.current.currentTime
   const lastEmitTimestampRef = useRef(0);
   const lastEmittedSecondsRef = useRef(0);
   const lastCurrentTimeUpdateRef = useRef(0);
@@ -159,9 +159,21 @@ export function ReaderAudioPlayer({
       const normalized = Math.max(targetSeconds, 0);
       try {
         audio.currentTime = normalized;
+        // Read back the actual position the browser set (may differ slightly from what we requested)
+        // This is the single source of truth - always read from audio element
         const appliedTime = audio.currentTime || normalized;
+        const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+        
+        // Immediately update UI state to keep it in sync
         setCurrentTime(appliedTime);
-        currentTimeRef.current = appliedTime;
+        
+        // Reset throttling timers so next timeupdate event can update immediately
+        // This prevents the UI from lagging behind after a seek
+        lastCurrentTimeUpdateRef.current = now;
+        lastEmitTimestampRef.current = now;
+        lastEmittedSecondsRef.current = appliedTime;
+        
+        // Emit progress immediately to save the new position
         emitProgressRef.current(appliedTime);
       } catch (error) {
         console.warn("[Audio Player] Failed to seek:", error);
@@ -222,9 +234,8 @@ export function ReaderAudioPlayer({
     audioRef.current = audio;
 
     const handleTimeUpdate = () => {
+      // Single source of truth: always read from audio element
       const seconds = audio.currentTime || 0;
-      // Always update ref immediately (used for internal logic, doesn't cause re-renders)
-      currentTimeRef.current = seconds;
       
       // Sync play state with audio element to handle external pause/play
       // BUT: Don't sync if we're auto-advancing (track ended and moving to next)
@@ -279,10 +290,9 @@ export function ReaderAudioPlayer({
       const newDuration = Number.isFinite(audio.duration) ? audio.duration : 0;
       setDuration(newDuration);
       
-      // Update current time from audio element
+      // Update current time from audio element (single source of truth)
       const audioTime = audio.currentTime || 0;
       setCurrentTime(audioTime);
-      currentTimeRef.current = audioTime;
       
       // Handle restoration if needed
       if (trackLoadedForRestorationRef.current) {
@@ -361,10 +371,30 @@ export function ReaderAudioPlayer({
       }
     };
 
+    const handleSeeked = () => {
+      // When a seek completes, sync the position immediately
+      // This ensures the UI reflects the actual audio position after seeking
+      // Single source of truth: always read from audio element
+      const seconds = audio.currentTime || 0;
+      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      
+      // Update state immediately
+      setCurrentTime(seconds);
+      
+      // Reset throttling timers so timeupdate can continue updating normally
+      lastCurrentTimeUpdateRef.current = now;
+      lastEmitTimestampRef.current = now;
+      lastEmittedSecondsRef.current = seconds;
+      
+      // Emit progress to save the new position
+      emitProgressRef.current(seconds);
+    };
+
     audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
     audio.addEventListener("canplay", handleAudioReady);
     audio.addEventListener("ended", handleEnded);
+    audio.addEventListener("seeked", handleSeeked);
 
     return () => {
       audio.pause();
@@ -372,6 +402,7 @@ export function ReaderAudioPlayer({
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
       audio.removeEventListener("canplay", handleAudioReady);
       audio.removeEventListener("ended", handleEnded);
+      audio.removeEventListener("seeked", handleSeeked);
     };
   }, [currentIndex, tracks.length, isRestoring, restoreTime]);
 
@@ -411,8 +442,9 @@ export function ReaderAudioPlayer({
         setIsPlaying(audioIsPlaying);
         isPlayingRef.current = audioIsPlaying;
         // If paused externally, emit progress to save state
+        // Single source of truth: read from audio element
         if (!audioIsPlaying) {
-          const audioTime = audio.currentTime || currentTimeRef.current;
+          const audioTime = audio.currentTime || 0;
           emitProgressRef.current(audioTime);
         }
       }
@@ -676,7 +708,6 @@ export function ReaderAudioPlayer({
     if (!isRestoringRef.current) {
       audio.currentTime = 0;
       setCurrentTime(0);
-      currentTimeRef.current = 0;
     }
     
     // Try immediate play if audio is already ready (cached)
@@ -859,7 +890,8 @@ export function ReaderAudioPlayer({
     if (isPlayingRef.current) {
       console.log("[Audio Player] Pausing playback");
       audio.pause();
-      emitProgressRef.current(audio.currentTime || currentTimeRef.current);
+      // Single source of truth: read from audio element
+      emitProgressRef.current(audio.currentTime || 0);
       setIsPlaying(false);
       isPlayingRef.current = false;
       return;
@@ -1006,7 +1038,8 @@ export function ReaderAudioPlayer({
     if (!audio) {
       return;
     }
-    const newTime = Math.max(0, (audio.currentTime || currentTimeRef.current) - 10);
+    // Single source of truth: read from audio element
+    const newTime = Math.max(0, (audio.currentTime || 0) - 10);
     commitSeek(newTime);
   }, [commitSeek]);
 
@@ -1015,7 +1048,8 @@ export function ReaderAudioPlayer({
     if (!audio) {
       return;
     }
-    const currentTime = audio.currentTime || currentTimeRef.current;
+    // Single source of truth: read from audio element
+    const currentTime = audio.currentTime || 0;
     const maxTime = duration > 0 ? duration : currentTime;
     const newTime = Math.min(maxTime, currentTime + 10);
     commitSeek(newTime);
@@ -1097,11 +1131,12 @@ export function ReaderAudioPlayer({
     // Use a microtask to save progress without delaying the animation start
     Promise.resolve().then(() => {
       const audio = audioRef.current;
+      // Single source of truth: always read from audio element
       if (audio && Number.isFinite(audio.currentTime)) {
         emitProgressRef.current(audio.currentTime);
       } else {
-        // Even if audio isn't ready, emit current time from ref
-        emitProgressRef.current(currentTimeRef.current);
+        // Fallback to 0 if audio isn't ready
+        emitProgressRef.current(0);
       }
     });
     
@@ -1120,11 +1155,13 @@ export function ReaderAudioPlayer({
     // Skip if we're dismissing (handleDismiss already saves progress)
     if (previousVisibleRef.current && !isVisible && !isDismissing && !hasBeenDismissedRef.current) {
       // Component became hidden - save progress
+      // Single source of truth: always read from audio element
       const audio = audioRef.current;
       if (audio && Number.isFinite(audio.currentTime)) {
         emitProgressRef.current(audio.currentTime);
-      } else if (currentTimeRef.current > 0) {
-        emitProgressRef.current(currentTimeRef.current);
+      } else {
+        // Fallback to 0 if audio isn't ready
+        emitProgressRef.current(0);
       }
     }
     previousVisibleRef.current = isVisible;

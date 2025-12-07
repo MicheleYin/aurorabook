@@ -4,6 +4,8 @@ pub mod cancellation;
 pub mod conversion_command;
 pub mod book_update;
 
+pub use book_update::order_audio_tracks_by_chapters;
+
 // Re-export specific items to avoid ambiguous glob re-exports
 pub use parser::{
     EpubMetadata, ManifestItem,

@@ -654,15 +654,16 @@ async fn process_chapter(
     let semaphore = Arc::new(tokio::sync::Semaphore::new(num_instances));
     let _instance_counter = Arc::new(AtomicUsize::new(0));
     
-    // Atomic counter to track words processed in this chapter
-    let chapter_words_processed = Arc::new(AtomicUsize::new(0));
+    // Track elements processed for proportional progress tracking
+    // Use chapter.word_count from ingestion to avoid double-counting nested elements
+    let elements_processed = Arc::new(AtomicUsize::new(0));
+    let total_elements = html_elements.len();
     
     // Process all HTML elements in parallel
     let mut handles = Vec::new();
     for (idx, element) in html_elements.iter().enumerate() {
         let semaphore = Arc::clone(&semaphore);
         let engine = Arc::clone(engine);
-        let chapter_words_processed = Arc::clone(&chapter_words_processed);
         let element = element.clone();
         let voice_id = voice_id.to_string();
         
@@ -673,12 +674,8 @@ async fn process_chapter(
             let worker_id = idx % num_instances;
             let result = process_html_element(&element, idx, &engine, worker_id, &voice_id).await?;
             
-            // Count words in this element and update atomic counter
-            let element_word_count = result.2.split_whitespace().filter(|s| !s.is_empty()).count();
-            chapter_words_processed.fetch_add(element_word_count, Ordering::Relaxed);
-            
-            Ok::<(usize, Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String, HtmlElement, usize), anyhow::Error>(
-                (idx, result.0, result.1, result.2, element, element_word_count)
+            Ok::<(usize, Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String, HtmlElement), anyhow::Error>(
+                (idx, result.0, result.1, result.2, element)
             )
         });
         
@@ -700,22 +697,35 @@ async fn process_chapter(
         }
         
         // Update progress after each element completes
-        let (idx, audio, alignments, text, element, _word_count) = result;
-        let chapter_words = chapter_words_processed.load(Ordering::Relaxed);
+        let (idx, audio, alignments, text, element) = result;
         
-        // Get current total words processed
+        // Increment elements processed counter
+        let elements_done = elements_processed.fetch_add(1, Ordering::Relaxed) + 1;
+        
+        // Calculate progress proportionally based on elements processed
+        // This avoids double-counting nested elements by using the chapter's word_count from ingestion
+        let chapter_words_progress = if total_elements > 0 {
+            // Distribute chapter.word_count proportionally across elements for progress tracking
+            ((chapter.word_count as f64 * elements_done as f64) / total_elements as f64).round() as usize
+        } else {
+            chapter.word_count
+        };
+        
+        // Get current total words processed from previous chapters
         let current_total = words_processed_atomic
             .as_ref()
             .map(|atomic| atomic.load(Ordering::Relaxed))
             .unwrap_or(0);
         
-        // Update progress callback with cumulative chapter word count
+        // Update progress callback with proportional progress within chapter
+        // words_in_current_chapter shows the full chapter word count
+        // words_processed shows cumulative progress including proportional progress in current chapter
         progress_callback(ConversionProgress {
             current_chapter: chapter_index + 1,
             total_chapters,
-            words_processed: current_total+chapter_words,
+            words_processed: current_total + chapter_words_progress,
             total_words,
-            words_in_current_chapter: chapter_words,
+            words_in_current_chapter: chapter.word_count, // Full chapter word count
             current_step: "generating-audio".to_string(),
             message: format!("Processing chapter {}: {} )", 
                 chapter_index + 1, chapter.title),
@@ -842,11 +852,12 @@ async fn process_chapter(
     );
     
     // Update progress with current total words processed (including current chapter)
+    // Use chapter.word_count from ingestion to avoid double-counting nested elements
     let current_words_processed = words_processed_atomic
         .as_ref()
         .map(|atomic| atomic.load(Ordering::Relaxed))
         .unwrap_or(0);
-    let chapter_words = chapter_words_processed.load(Ordering::Relaxed);
+    let chapter_words = chapter.word_count;
     let total_words_processed = current_words_processed + chapter_words;
     
     progress_callback(ConversionProgress {
@@ -876,11 +887,12 @@ async fn process_chapter(
     files.insert(chapter_path_zip, updated_html.into_bytes());
     
     // Update progress with current total words processed (including current chapter)
+    // Use chapter.word_count from ingestion to avoid double-counting nested elements
     let current_words_processed = words_processed_atomic
         .as_ref()
         .map(|atomic| atomic.load(Ordering::Relaxed))
         .unwrap_or(0);
-    let chapter_words = chapter_words_processed.load(Ordering::Relaxed);
+    let chapter_words = chapter.word_count;
     let total_words_processed = current_words_processed + chapter_words;
     
     progress_callback(ConversionProgress {
@@ -936,8 +948,9 @@ async fn process_chapter(
     log::debug!("Generated SMIL file: chapter_index={}, href={}", 
         chapter_index, smil_href_manifest);
     
-    // Get the actual words processed in this chapter (from the atomic counter)
-    let actual_words_processed = chapter_words_processed.load(Ordering::Relaxed);
+    // Use chapter.word_count from ingestion to avoid double-counting nested elements
+    // This matches the word count calculated during ingestion
+    let actual_words_processed = chapter.word_count;
     
     Ok(ChapterProcessResult {
         chapter_index,

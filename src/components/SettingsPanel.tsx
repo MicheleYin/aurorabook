@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from "react";
-import { Check, Play, Pause, Volume2 } from "lucide-react";
+import { Check, Play, Pause, Volume2, ChevronDown, ChevronUp, HelpCircle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { KOKORO_VOICE_GROUPS } from "../constants/kokoro";
 import type { AppSettings } from "../types/settings";
@@ -24,10 +24,51 @@ type SettingsPanelProps = {
   onSettingsChange: (update: Partial<AppSettings>) => void;
 };
 
+type FAQItem = {
+  question: string;
+  answer: string;
+};
+
+const FAQ_DATA: FAQItem[] = [
+  {
+    question: "How does it work?",
+    answer: "The application uses local TTS (Text-to-Speech) models, specifically Kokoro, combined with Espeak or Phonetisaurus. These tools provide grapheme-to-phoneme conversion (converting written text to phonetic sounds) and phoneme-to-audio conversion (turning phonetic sounds into spoken audio). Everything runs entirely on your device—no cloud services required.",
+  },
+  {
+    question: "Is my data safe?",
+    answer: "Yes, your data is completely safe. All processing happens locally on your device. No internet connection is required, and your books, audio files, and personal information never leave your computer. Your privacy is fully protected.",
+  },
+  {
+    question: "Why is it so slow?",
+    answer: "Text-to-speech conversion is computationally demanding. The process involves complex neural network models that generate high-quality audio, which requires significant processing power. The speed depends on your device's CPU capabilities and the length of the content being converted. There are plans to improve the speed in the future",
+  },
+  {
+    question: "Can I listen to chapters immediately?",
+    answer: "Yes! You can listen to a chapter as soon as that specific chapter finishes converting. You don't need to wait for the entire book to be completed. This allows you to start enjoying your audiobook while the rest of the book continues processing in the background.",
+  },
+  {
+    question: "What file formats are supported?",
+    answer: "The application supports EPUB files for conversion to audiobooks. EPUB is a widely-used ebook format that preserves the structure and formatting of books, making it ideal for creating well-organized audiobooks with proper chapter divisions.",
+  },
+  {
+    question: "Can I customize the voice?",
+    answer: "Yes! You can choose from multiple voices available in the Kokoro model. Each voice has different characteristics including language, gender, and speaking style. You can preview voices before selecting one, and your choice will be saved as your default preference.",
+  },
+  {
+    question: "Where are the audio files stored?",
+    answer: "All generated audio files are stored locally on your device. They are organized alongside your book library and remain accessible even when offline. You can manage and delete these files through the application's library interface.",
+  },
+  {
+    question: "Can I pause or cancel a conversion?",
+    answer: "Yes, you can cancel an ongoing conversion at any time. If you cancel, any chapters that have already been completed will remain available for listening. You can resume or restart the conversion later if needed.",
+  },
+];
+
 export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps) {
   const [showSaved, setShowSaved] = useState(false);
   const [previousSettings, setPreviousSettings] = useState(settings);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+  const [expandedFAQ, setExpandedFAQ] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
 
@@ -125,6 +166,10 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
       }
     };
   }, []);
+
+  const toggleFAQ = (index: number) => {
+    setExpandedFAQ(expandedFAQ === index ? null : index);
+  };
 
   return (
     <div className="flex h-full flex-col gap-6">
@@ -241,6 +286,55 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
                 </div>
               </div>
             )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* FAQ Section */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <HelpCircle className="h-5 w-5 text-muted-foreground" />
+            <CardTitle className="text-xl">Frequently Asked Questions</CardTitle>
+          </div>
+          <CardDescription>Find answers to common questions about the application.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            {FAQ_DATA.map((faq, index) => {
+              const isExpanded = expandedFAQ === index;
+              return (
+              <div
+                key={index}
+                className="rounded-lg border bg-card transition-all duration-200 hover:bg-muted/30"
+              >
+                <button
+                  onClick={() => toggleFAQ(index)}
+                  className="w-full flex items-center justify-between p-4 text-left gap-4 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded-lg"
+                  {...(isExpanded ? { "aria-expanded": "true" } : { "aria-expanded": "false" })}
+                >
+                  <span className="font-semibold text-sm sm:text-base pr-4">{faq.question}</span>
+                  <div className="shrink-0">
+                    {isExpanded ? (
+                      <ChevronUp className="h-5 w-5 text-muted-foreground transition-transform" />
+                    ) : (
+                      <ChevronDown className="h-5 w-5 text-muted-foreground transition-transform" />
+                    )}
+                  </div>
+                </button>
+                {isExpanded && (
+                  <div
+                    className={cn(
+                      "px-4 pb-4 text-sm text-muted-foreground leading-relaxed",
+                      "animate-in slide-in-from-top-1 fade-in-0 duration-200"
+                    )}
+                  >
+                    <p className="whitespace-pre-line">{faq.answer}</p>
+                  </div>
+                )}
+              </div>
+              );
+            })}
           </div>
         </CardContent>
       </Card>

@@ -233,140 +233,11 @@ export function useBookConversion(
     };
   }, []); // Empty dependency array - only set up once
 
-  const handleConvertToAudiobook = useCallback(async (voiceId: VoiceId) => {
-    if (!pendingBookForConversion || isConverting || isCancelling) return;
-    
-    // Create abort controller for this conversion
-    const abortController = new AbortController();
-    conversionAbortControllerRef.current = abortController;
-    convertingBookIdRef.current = pendingBookForConversion.book.id;
-    convertingSourcePathRef.current = pendingBookForConversion.book.sourcePath;
-    
-    setIsConverting(true);
-    setShowConvertDialog(false);
-    setConversionProgress({
-      currentChapter: 0,
-      totalChapters: 1,
-      wordsProcessed: 0,
-      totalWords: 0,
-      wordsInCurrentChapter: 0,
-      currentStep: "initializing",
-      message: "Starting conversion...",
-    });
-    
-    conversionStartTimeRef.current = Date.now();
-    const bookId = pendingBookForConversion.book.id;
-    let wasCancelled = false;
-    
-    try {
-      const { book } = pendingBookForConversion;
-      
-      // Load EPUB buffer before conversion
-      const epubBuffer = await getEpubBuffer(book.sourcePath);
-      if (!epubBuffer) {
-        throw new Error("Failed to load EPUB file for conversion");
-      }
-      
-      // Convert EPUB to audiobook - backend handles everything and returns updated Book
-      const updatedBook = await convertEpubToAudiobook({
-        sourcePath: book.sourcePath,
-        epubData: epubBuffer,
-        voiceId,
-        signal: abortController.signal,
-        onProgress: (progress) => {
-          setConversionProgress(progress);
-          setBookConversionProgress((prev) => ({
-            ...prev,
-            [bookId]: progress,
-          }));
-        },
-      });
-      
-      // Clear book cache to force fresh data from backend
-      clearBookCache(book.sourcePath);
-      
-      // Update library with the returned book data directly
-      if (updatedBook) {
-        setLibrary((prev) => {
-          const index = prev.findIndex((b) => b.id === updatedBook.id || b.sourcePath === updatedBook.sourcePath);
-          if (index !== -1) {
-            // Replace existing book with updated version
-            const updated = [...prev];
-            updated[index] = updatedBook;
-            return updated;
-          } else {
-            // Book not found, add it (shouldn't happen, but safe)
-            return [...prev, updatedBook];
-          }
-        });
-      }
-      
-      setPendingBookForConversion(null);
-      setConversionProgress(null);
-      setBookConversionProgress((prev) => {
-        const next = { ...prev };
-        delete next[bookId];
-        return next;
-      });
-      toast.success("Audiobook ready!", {
-        description: "Your ebook has been converted to an audiobook.",
-      });
-    } catch (error) {
-      // Don't show error toast if conversion was cancelled
-      // The cancellation event handler will show the toast and clear cancelling state
-      if (error instanceof Error && error.message === "Conversion cancelled") {
-        console.log("Conversion cancelled by user");
-        wasCancelled = true;
-        // Don't clear cancelling state here - wait for the event from backend
-      } else {
-        console.error("Conversion error:", error);
-        toast.error("Conversion failed", {
-          description: error instanceof Error ? error.message : "An error occurred during conversion",
-        });
-        // Clear cancelling state if conversion failed (not cancelled)
-        setIsCancelling(false);
-        setCancellingBookId(null);
-      }
-      setConversionProgress(null);
-      setBookConversionProgress((prev) => {
-        const next = { ...prev };
-        delete next[bookId];
-        return next;
-      });
-    } finally {
-      setIsConverting(false);
-      conversionAbortControllerRef.current = null;
-      convertingBookIdRef.current = null;
-      convertingSourcePathRef.current = null;
-      conversionStartTimeRef.current = null;
-      // Only clear cancelling state if conversion completed successfully (not cancelled)
-      // If cancelled, the event handler will clear it when it receives the event
-      if (!wasCancelled && cancellingBookId === bookId) {
-        // Conversion completed successfully, clear cancelling state
-        setIsCancelling(false);
-        setCancellingBookId(null);
-      }
-    }
-  }, [pendingBookForConversion, isConverting, isCancelling, setLibrary, ingestEpub, refreshLibrary]);
-
-  const handleConvertBookFromDetail = useCallback(async (book: Book, voiceId: VoiceId) => {
-    // Allow conversion if book has started status (for resuming) even if some tracks exist
-    const conversionStatus = book.conversionStatus ?? "notStarted";
-    if (book.audioTracks.length > 0 && conversionStatus === "notStarted") {
-      console.log("Skipping conversion - book already has audio tracks and conversion not started");
-      return;
-    }
-    
-    // Show warning if already converting or cancelling
-    if (isConverting || isCancelling) {
-      toast.warning("Conversion in progress", {
-        description: isCancelling 
-          ? "Please wait for the cancellation to complete before starting a new conversion."
-          : "Please wait for the current conversion to complete before starting another one.",
-      });
-      return;
-    }
-    
+  // Shared conversion logic used by both handlers
+  const performConversion = useCallback(async (book: Book, voiceId: VoiceId, options?: {
+    updateBookStateBeforeConversion?: boolean;
+    closeDialog?: boolean;
+  }) => {
     // Create abort controller for this conversion
     const abortController = new AbortController();
     conversionAbortControllerRef.current = abortController;
@@ -374,6 +245,9 @@ export function useBookConversion(
     convertingSourcePathRef.current = book.sourcePath;
     
     setIsConverting(true);
+    if (options?.closeDialog) {
+      setShowConvertDialog(false);
+    }
     setConversionProgress({
       currentChapter: 0,
       totalChapters: 0,
@@ -383,24 +257,27 @@ export function useBookConversion(
       currentStep: "initializing",
       message: "Starting conversion...",
     });
+    
     conversionStartTimeRef.current = Date.now();
     const bookId = book.id;
     let wasCancelled = false;
     
-    // Update local book state immediately with voice_id so it's available for resuming
-    setLibrary((prev) => {
-      const index = prev.findIndex((b) => b.id === book.id || b.sourcePath === book.sourcePath);
-      if (index !== -1) {
-        const updated = [...prev];
-        updated[index] = {
-          ...updated[index],
-          voiceId,
-          conversionStatus: "started" as const,
-        };
-        return updated;
-      }
-      return prev;
-    });
+    // Update local book state immediately with voice_id so it's available for resuming (for detail view)
+    if (options?.updateBookStateBeforeConversion) {
+      setLibrary((prev) => {
+        const index = prev.findIndex((b) => b.id === book.id || b.sourcePath === book.sourcePath);
+        if (index !== -1) {
+          const updated = [...prev];
+          updated[index] = {
+            ...updated[index],
+            voiceId,
+            conversionStatus: "started" as const,
+          };
+          return updated;
+        }
+        return prev;
+      });
+    }
     
     try {
       if (book.sourcePath.startsWith("web://")) {
@@ -428,25 +305,19 @@ export function useBookConversion(
         epubSize: epubBuffer.byteLength,
       });
       
-      let updatedBook: Book | null = null;
-      try {
-        updatedBook = await convertEpubToAudiobook({
-          sourcePath: book.sourcePath,
-          epubData: epubBuffer,
-          voiceId,
-          signal: abortController.signal,
-          onProgress: (progress) => {
-            setConversionProgress(progress);
-            setBookConversionProgress((prev) => ({
-              ...prev,
-              [bookId]: progress,
-            }));
-          },
-        });
-      } catch (conversionError) {
-        console.error("EPUB conversion failed", conversionError);
-        throw conversionError; // Re-throw to be caught by outer catch
-      }
+      const updatedBook = await convertEpubToAudiobook({
+        sourcePath: book.sourcePath,
+        epubData: epubBuffer,
+        voiceId,
+        signal: abortController.signal,
+        onProgress: (progress) => {
+          setConversionProgress(progress);
+          setBookConversionProgress((prev) => ({
+            ...prev,
+            [bookId]: progress,
+          }));
+        },
+      });
       
       console.debug("Conversion completed, updating library with returned book data", {
         sourcePath: book.sourcePath,
@@ -517,7 +388,40 @@ export function useBookConversion(
         setCancellingBookId(null);
       }
     }
-  }, [isConverting, isCancelling, setLibrary, ingestEpub, refreshLibrary]);
+  }, [setLibrary, cancellingBookId]);
+
+  const handleConvertToAudiobook = useCallback(async (voiceId: VoiceId) => {
+    if (!pendingBookForConversion || isConverting || isCancelling) return;
+    
+    await performConversion(pendingBookForConversion.book, voiceId, {
+      closeDialog: true,
+    });
+    
+    setPendingBookForConversion(null);
+  }, [pendingBookForConversion, isConverting, isCancelling, performConversion]);
+
+  const handleConvertBookFromDetail = useCallback(async (book: Book, voiceId: VoiceId) => {
+    // Allow conversion if book has started status (for resuming) even if some tracks exist
+    const conversionStatus = book.conversionStatus ?? "notStarted";
+    if (book.audioTracks.length > 0 && conversionStatus === "notStarted") {
+      console.log("Skipping conversion - book already has audio tracks and conversion not started");
+      return;
+    }
+    
+    // Show warning if already converting or cancelling
+    if (isConverting || isCancelling) {
+      toast.warning("Conversion in progress", {
+        description: isCancelling 
+          ? "Please wait for the cancellation to complete before starting a new conversion."
+          : "Please wait for the current conversion to complete before starting another one.",
+      });
+      return;
+    }
+    
+    await performConversion(book, voiceId, {
+      updateBookStateBeforeConversion: true,
+    });
+  }, [isConverting, isCancelling, performConversion]);
 
   const cancelConversionForBook = useCallback(async (bookId: string) => {
     // Immediately update UI to show "pausing" state
