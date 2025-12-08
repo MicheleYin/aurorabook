@@ -822,11 +822,14 @@ pub async fn add_book(
 /// This function is kept for API compatibility but returns None
 #[tauri::command]
 pub async fn get_epub_buffer(
-    _source_path: String,
-    _app: tauri::AppHandle,
+    source_path: String,
+    app: tauri::AppHandle,
 ) -> AppResult<Option<Vec<u8>>> {
-    // EPUB buffer is no longer stored - all content is in structured database tables
-    Ok(None)
+    use repositories::EpubRepository;
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
+    EpubRepository::find_by_source_path(&db, &source_path).await
+        .map_err(|e| AppError::Store(e))
 }
 
 

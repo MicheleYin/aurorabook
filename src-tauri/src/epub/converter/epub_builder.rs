@@ -183,14 +183,28 @@ pub(crate) async fn rebuild_and_save_epub(
     // Build EPUB with current progress
     let epub_output = build_epub_zip(context, &updated_opf)?;
     
-    // Save to Tauri store if app and source_path are provided
+    // Save to database if app and source_path are provided
     if let (Some(app_ref), Some(source_path_ref)) = (app, source_path) {
-        // EPUB buffer is no longer stored separately - all content is in structured tables
-        // The converted EPUB is not stored, only the structured data
-        log::debug!("EPUB conversion complete - structured data stored in database");
-        log::debug!("Saved EPUB to store after chapter {}", chapter_index + 1);
+        // Save partial EPUB to database so it can be resumed if conversion is interrupted
+        use crate::book_service::database::get_db_connection;
+        use crate::book_service::repositories::{BookRepository, EpubRepository};
+        if let Ok(db) = get_db_connection(app_ref).await {
+            // Get book_id from source_path
+            if let Ok(Some(book)) = BookRepository::find_by_source_path(&db, source_path_ref).await {
+                if let Err(e) = EpubRepository::save(&db, source_path_ref, &book.id, &epub_output).await {
+                    log::warn!("Failed to save partial EPUB to database after chapter {}: {}", chapter_index + 1, e);
+                } else {
+                    log::debug!("Saved partial EPUB to database after chapter {} ({} bytes)", chapter_index + 1, epub_output.len());
+                }
+            } else {
+                log::warn!("Book not found for source_path '{}', cannot save partial EPUB", source_path_ref);
+            }
+        } else {
+            log::warn!("Failed to connect to database for partial EPUB save");
+        }
         
         // Update book audio tracks so user can listen as soon as one chapter is ready
+        // Note: This will compute durations and save audio bytes to database
         use crate::epub::book_update::update_book_audio_tracks;
         if let Err(e) = update_book_audio_tracks(&epub_output, source_path_ref, app_ref).await {
             log::warn!("Failed to update book audio tracks after chapter {}: {}", chapter_index + 1, e);

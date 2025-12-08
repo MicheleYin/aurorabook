@@ -29,7 +29,8 @@ pub async fn update_book_audio_tracks(
     // Parse EPUB to extract audio tracks (same as ingestion)
     let (mut audio_tracks, chapters) = extract_audio_data_from_epub(converted_epub)?;
     
-    // Compute durations for audio tracks (same as ingestion)
+    // Compute durations for audio tracks and collect audio bytes for saving
+    let mut audio_bytes_map = std::collections::HashMap::new();
     if !audio_tracks.is_empty() {
         let epub_data_for_durations = converted_epub.to_vec();
         // Get OPF path from the EPUB
@@ -41,24 +42,26 @@ pub async fn update_book_audio_tracks(
         };
         let opf_path_for_durations = opf_path.clone();
         let audio_tracks_clone = audio_tracks.clone();
-        audio_tracks = match tokio::task::spawn_blocking(move || {
+        let (updated_tracks, bytes_map) = match tokio::task::spawn_blocking(move || {
             use crate::epub::parser::compute_audio_track_durations;
             let mut tracks = audio_tracks_clone;
-            compute_audio_track_durations(
+            let bytes = compute_audio_track_durations(
                 &epub_data_for_durations,
                 &mut tracks,
                 &opf_path_for_durations,
             );
-            tracks
+            (tracks, bytes)
         })
         .await
         {
-            Ok(tracks) => tracks,
+            Ok((tracks, bytes)) => (tracks, bytes),
             Err(e) => {
                 log::warn!("Failed to compute audio track durations in background task: {}", e);
-                audio_tracks
+                (audio_tracks, std::collections::HashMap::new())
             }
         };
+        audio_tracks = updated_tracks;
+        audio_bytes_map = bytes_map;
     }
     
     // Build audio sync map from SMIL files (same as ingestion)
@@ -97,8 +100,15 @@ pub async fn update_book_audio_tracks(
         log::debug!("No audio sync map available for this book");
     }
     
+    log::info!("Updating book in library with audio sync map: {}", 
+        if audio_sync_map.is_some() { 
+            format!("{} segments", audio_sync_map.as_ref().unwrap().segments.len()) 
+        } else { 
+            "None".to_string() 
+        });
+    
     // Update book in library
-    update_book_in_library(app, source_path, audio_tracks, audio_sync_map, converted_epub.len()).await
+    update_book_in_library(app, source_path, audio_tracks, audio_sync_map, converted_epub.len(), audio_bytes_map).await
 }
 
 /// Extract audio tracks and chapters from converted EPUB
@@ -595,14 +605,15 @@ async fn update_book_in_library(
     audio_tracks: Vec<crate::book_service::models::AudioTrack>,
     audio_sync_map: Option<crate::book_service::models::AudioSyncMap>,
     epub_size: usize,
+    audio_bytes_map: std::collections::HashMap<String, Vec<u8>>,
 ) -> Result<Option<Book>, String> {
     let db = get_db_connection(app).await?;
     if let Ok(Some(mut book)) = BookRepository::find_by_source_path(&db, source_path).await {
         // Preserve existing track IDs by matching tracks by href
         let preserved_tracks = preserve_existing_track_ids(&book.audio_tracks, audio_tracks);
         
-        book.audio_tracks = preserved_tracks;
-        book.audio_sync_map = audio_sync_map;
+        book.audio_tracks = preserved_tracks.clone();
+        book.audio_sync_map = audio_sync_map.clone();
         // Update file size with the converted EPUB size
         book.file_size_bytes = Some(epub_size);
         
@@ -618,14 +629,36 @@ async fn update_book_in_library(
                 book.completed_chapters.len(), book.chapters.len());
         }
         
-        log::info!("Updated audio tracks for book '{}' ({} tracks), audio sync map, and file size ({} bytes)", 
-            book.title, book.audio_tracks.len(), epub_size);
+        log::info!("Updated audio tracks for book '{}' ({} tracks), audio sync map ({} segments), and file size ({} bytes)", 
+            book.title, 
+            book.audio_tracks.len(), 
+            book.audio_sync_map.as_ref().map(|m| m.segments.len()).unwrap_or(0),
+            epub_size);
         
         // Clone the updated book before saving
         let updated_book = book.clone();
         
+        // Save book metadata (this saves audio track metadata and audio sync map)
+        log::debug!("Saving book with audio_sync_map: {}", 
+            if book.audio_sync_map.is_some() { 
+                format!("{} segments", book.audio_sync_map.as_ref().unwrap().segments.len()) 
+            } else { 
+                "None".to_string() 
+            });
         BookRepository::save(&db, &book).await
             .map_err(|e| format!("Failed to save book: {}", e))?;
+        log::debug!("Book saved successfully, audio sync map should be persisted");
+        
+        // Save audio track data after metadata is saved
+        use crate::book_service::repositories::AudioRepository;
+        log::info!("Saving {} audio track data files to database", audio_bytes_map.len());
+        for (href, audio_data) in audio_bytes_map {
+            if let Err(e) = AudioRepository::save_data(&db, &book.id, &href, &audio_data).await {
+                log::warn!("Failed to save audio track data for '{}': {}", href, e);
+            } else {
+                log::debug!("Saved audio track data for '{}' ({} bytes)", href, audio_data.len());
+            }
+        }
         
         Ok(Some(updated_book))
     } else {

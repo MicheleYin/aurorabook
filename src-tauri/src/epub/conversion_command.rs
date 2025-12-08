@@ -9,7 +9,7 @@ use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::path_validation::validate_file_size;
 use crate::book_service::models::{Book, ConversionStatus};
 use crate::book_service::database::get_db_connection;
-use crate::book_service::repositories::BookRepository;
+use crate::book_service::repositories::{BookRepository, EpubRepository};
 use crate::epub::converter::{ConversionOptions, ConversionProgress, ConversionChapter, emit_progress};
 use crate::epub::converter::extract_chapters;
 use crate::epub::cancellation::{get_cancellation_token, cleanup_cancellation_token};
@@ -17,7 +17,6 @@ use crate::epub::book_update::update_book_audio_tracks;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::fs;
-use base64::{engine::general_purpose, Engine as _};
 
 /// Tauri command wrapper for EPUB to audiobook conversion.
 ///
@@ -75,7 +74,7 @@ pub async fn convert_epub_to_audiobook_command(
     let epub_data = load_epub_from_file_system(&source_path)?;
     log::info!("Loaded EPUB from file system: {} bytes", epub_data.len());
     
-    // Validate and cache EPUB
+    // Validate EPUB (no longer caching - EPUB is saved to database during conversion)
     validate_and_cache_epub(&app, &source_path, &epub_data)?;
     
     // Extract chapters
@@ -89,34 +88,17 @@ pub async fn convert_epub_to_audiobook_command(
         return handle_all_chapters_completed(&app, &source_path, book_data.total_words_all_chapters, book_data.existing_book).await;
     }
     
-    // If resuming (has completed chapters), try to load the converted EPUB from store
+    // If resuming (has completed chapters), try to load the converted EPUB from database
     // This ensures we have existing audio tracks in the OPF
     let epub_data_for_conversion = if !book_data.completed_chapters_set.is_empty() {
-        log::info!("Resuming conversion - attempting to load converted EPUB from store");
-        let epub_store = tauri_plugin_store::StoreBuilder::new(&app, "epub-cache.store.json")
-            .build()
-            .ok();
+        log::info!("Resuming conversion - attempting to load converted EPUB from database");
         
-        if let Some(store) = epub_store {
-            let key = format!("epub:{}", source_path);
-            if let Some(serde_json::Value::String(base64_data)) = store.get(&key) {
-                match general_purpose::STANDARD.decode(&base64_data) {
-                    Ok(loaded_epub) => {
-                        log::info!("Successfully loaded partial EPUB from store ({} bytes, {} chapters completed)", 
-                            loaded_epub.len(), book_data.completed_chapters_set.len());
-                        loaded_epub
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to decode EPUB from store: {}, using original EPUB", e);
-                        epub_data
-                    }
-                }
-            } else {
-                log::warn!("No partial EPUB found in store, using original EPUB - existing audio tracks may be missing");
-                epub_data
-            }
+        if let Ok(Some(loaded_epub)) = EpubRepository::find_by_source_path(&db, &source_path).await {
+            log::info!("Successfully loaded partial EPUB from database ({} bytes, {} chapters completed)", 
+                loaded_epub.len(), book_data.completed_chapters_set.len());
+            loaded_epub
         } else {
-            log::warn!("Failed to open EPUB store, using original EPUB - existing audio tracks may be missing");
+            log::warn!("No partial EPUB found in database, using original EPUB - existing audio tracks may be missing");
             epub_data
         }
     } else {
@@ -181,26 +163,15 @@ fn emit_initial_progress(app: &AppHandle) {
     });
 }
 
-/// Validate EPUB file size and cache it
+/// Validate EPUB file size (no longer caching - EPUB is loaded from file system when needed)
 fn validate_and_cache_epub(
-    app: &AppHandle,
-    source_path: &str,
+    _app: &AppHandle,
+    _source_path: &str,
     epub_data: &[u8],
 ) -> AppResult<()> {
     validate_file_size(epub_data.len(), MAX_EPUB_SIZE, "EPUB")?;
     log::debug!("EPUB file size validated: {} bytes", epub_data.len());
-    
-    // Store EPUB in cache
-    let epub_store = tauri_plugin_store::StoreBuilder::new(app, "epub-cache.store.json")
-        .build()
-        .map_err(|e| AppError::Store(format!("Failed to create EPUB store: {}", e)))?;
-    let key = format!("epub:{}", source_path);
-    
-    let base64_data = general_purpose::STANDARD.encode(epub_data);
-    epub_store.set(&key, serde_json::Value::String(base64_data));
-    epub_store.save()
-        .map_err(|e| AppError::Store(format!("Failed to save EPUB store: {}", e)))?;
-    
+    // EPUB is no longer cached here - it's saved to database during conversion
     Ok(())
 }
 
@@ -491,20 +462,20 @@ async fn save_converted_epub_and_update_book(
     converted_epub: &[u8],
     total_words_all_chapters: usize,
 ) -> AppResult<Option<Book>> {
-    // Store converted EPUB
-    let epub_store = tauri_plugin_store::StoreBuilder::new(app, "epub-cache.store.json")
-        .build()
-        .map_err(|e| AppError::Store(format!("Failed to create EPUB store: {}", e)))?;
-    let key = format!("epub:{}", source_path);
+    // Store converted EPUB in database
+    let db = get_db_connection(app).await
+        .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
     
-    let converted_base64 = general_purpose::STANDARD.encode(converted_epub);
-    epub_store.set(&key, serde_json::Value::String(converted_base64));
-    epub_store.save()
+    if let Ok(Some(book)) = BookRepository::find_by_source_path(&db, source_path).await {
+        EpubRepository::save(&db, source_path, &book.id, converted_epub).await
         .map_err(|e| AppError::Store(format!("Failed to save converted EPUB: {}", e)))?;
+        log::debug!("Saved converted EPUB to database ({} bytes)", converted_epub.len());
+    } else {
+        log::warn!("Book not found for source_path '{}', cannot save converted EPUB", source_path);
+    }
     
     // Save final words_processed now that conversion is complete
     use crate::book_service::database::get_db_connection;
-    use crate::book_service::repositories::BookRepository;
     let db = get_db_connection(app).await
         .map_err(|e| AppError::Store(e))?;
     if let Ok(Some(mut book)) = BookRepository::find_by_source_path(&db, source_path).await {

@@ -213,6 +213,8 @@ pub(crate) async fn process_chapter(
     words_processed_atomic: Option<Arc<AtomicUsize>>,
     num_instances: usize,
     cancel_token: Option<Arc<AtomicBool>>,
+    app: Option<&tauri::AppHandle>,
+    source_path: Option<&str>,
 ) -> AnyhowResult<ChapterProcessResult> {
     use crate::epub::converter::types::ConversionProgress;
     
@@ -459,6 +461,26 @@ pub(crate) async fn process_chapter(
     let (extracted_full_text, updated_html_with_spans, extracted_span_mappings) = extract_text_with_spans(&chapter.content_html, Some(&sentences_with_spans))
         .map_err(|e| AppError::EpubParse(format!("Failed to extract text with spans: {}", e)))?;
     let updated_html = updated_html_with_spans;
+    
+    // Update chapter HTML in database immediately after it's generated
+    if let (Some(app_ref), Some(source_path_ref)) = (app, source_path) {
+        use crate::book_service::database::get_db_connection;
+        use crate::book_service::repositories::{BookRepository, ChapterRepository};
+        if let Ok(db) = get_db_connection(app_ref).await {
+            if let Ok(Some(book)) = BookRepository::find_by_source_path(&db, source_path_ref).await {
+                // Find chapter by href
+                if let Ok(Some(chapter_entity)) = ChapterRepository::find_by_href(&db, &book.id, &chapter.href).await {
+                    if let Err(e) = ChapterRepository::update_content(&db, &book.id, &chapter_entity.id, &updated_html, None).await {
+                        log::warn!("Failed to update chapter HTML in database for '{}': {}", chapter.href, e);
+                    } else {
+                        log::debug!("Updated chapter HTML in database for '{}' ({} bytes)", chapter.href, updated_html.len());
+                    }
+                } else {
+                    log::debug!("Chapter not found in database for href '{}', skipping HTML update", chapter.href);
+                }
+            }
+        }
+    }
     
     // Extract actual span IDs from the generated HTML to ensure we only create segments for spans that exist
     use regex::Regex;

@@ -131,6 +131,8 @@ pub(crate) async fn convert_epub_core_with_durations(
             Some(Arc::clone(&words_processed_atomic)),
             num_instances,
             cancel_token.as_ref().map(Arc::clone),
+            app.as_ref(),
+            source_path.as_deref(),
         ).await?;
         
         // Store words processed before moving result

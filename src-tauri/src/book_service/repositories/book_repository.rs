@@ -97,7 +97,18 @@ impl BookRepository {
         };
         
         let audio_sync_map_json = model.audio_sync_map.as_ref()
-            .and_then(|m| serde_json::to_string(m).ok());
+            .and_then(|m| {
+                match serde_json::to_string(m) {
+                    Ok(json) => {
+                        log::debug!("Serialized audio_sync_map to JSON ({} bytes)", json.len());
+                        Some(json)
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to serialize audio_sync_map: {}", e);
+                        None
+                    }
+                }
+            });
         
         book::ActiveModel {
             id: Set(model.id.clone()),
@@ -194,6 +205,18 @@ impl BookRepository {
         
         // Save book
         let active_model = Self::model_to_active_model(model);
+        // Log audio sync map status for debugging
+        match &active_model.audio_sync_map {
+            sea_orm::Set(Some(json)) => {
+                log::debug!("Saving book with audio_sync_map JSON ({} bytes)", json.len());
+            }
+            sea_orm::Set(None) => {
+                log::debug!("Saving book without audio_sync_map (None)");
+            }
+            _ => {
+                log::debug!("Saving book with audio_sync_map (NotSet)");
+            }
+        }
         book::Entity::insert(active_model.clone())
             .on_conflict(
                 sea_orm::sea_query::OnConflict::column(book::Column::Id)

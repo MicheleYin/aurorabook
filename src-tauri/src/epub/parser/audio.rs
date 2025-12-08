@@ -118,23 +118,27 @@ pub fn extract_audio_tracks_from_manifest(
 }
 
 /// Compute durations for audio tracks by reading them from the EPUB archive
+/// Returns a map of href -> audio bytes for saving to database
 pub fn compute_audio_track_durations(
     epub_data: &[u8],
     audio_tracks: &mut [crate::book_service::models::AudioTrack],
     opf_path: &str,
-) {
+) -> std::collections::HashMap<String, Vec<u8>> {
     use log::debug;
+    use std::collections::HashMap;
     
     let mut archive = match ZipArchive::new(Cursor::new(epub_data)) {
         Ok(archive) => archive,
         Err(e) => {
             log::warn!("Failed to open EPUB for duration computation: {}", e);
-            return;
+            return HashMap::new();
         }
     };
     
     // Determine base path from OPF location
     let base_path = derive_base_path_from_opf(opf_path);
+    
+    let mut audio_bytes_map = HashMap::new();
     
     for track in audio_tracks.iter_mut() {
         // Resolve audio path relative to OPF location
@@ -212,9 +216,14 @@ pub fn compute_audio_track_durations(
             } else {
                 debug!("Failed to compute duration for track '{}'", track.href);
             }
+            
+            // Store audio bytes for saving to database
+            audio_bytes_map.insert(track.href.clone(), audio_bytes);
         } else {
             debug!("Could not find audio file for track '{}'", track.href);
         }
     }
+    
+    audio_bytes_map
 }
 

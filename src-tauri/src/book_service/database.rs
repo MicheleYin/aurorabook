@@ -186,12 +186,29 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
     db.execute_unprepared(&stmt.to_string()).await
         .map_err(|e| format!("Failed to create audio_tracks table: {}", e))?;
     
+    // Create epub_data table
+    let stmt = Statement::from_string(
+        sea_orm::DatabaseBackend::Sqlite,
+        r#"
+        CREATE TABLE IF NOT EXISTS epub_data (
+            source_path TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL,
+            data BLOB NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+        )
+        "#.to_string(),
+    );
+    db.execute_unprepared(&stmt.to_string()).await
+        .map_err(|e| format!("Failed to create epub_data table: {}", e))?;
+    
     // Create indexes
     let indexes = vec![
         "CREATE INDEX IF NOT EXISTS idx_chapters_book_id ON chapters(book_id)",
         "CREATE INDEX IF NOT EXISTS idx_images_book_id ON images(book_id)",
         "CREATE INDEX IF NOT EXISTS idx_audio_tracks_book_id ON audio_tracks(book_id)",
         "CREATE INDEX IF NOT EXISTS idx_books_source_path ON books(source_path)",
+        "CREATE INDEX IF NOT EXISTS idx_epub_data_book_id ON epub_data(book_id)",
     ];
     
     for index_sql in indexes {
