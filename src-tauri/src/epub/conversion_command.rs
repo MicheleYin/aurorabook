@@ -16,23 +16,24 @@ use crate::epub::cancellation::{get_cancellation_token, cleanup_cancellation_tok
 use crate::epub::book_update::update_book_audio_tracks;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::fs;
 use base64::{engine::general_purpose, Engine as _};
 
 /// Tauri command wrapper for EPUB to audiobook conversion.
 ///
 /// This is the main entry point for converting EPUB files to audiobooks
-/// from the frontend. It handles EPUB caching, chapter extraction, and
+/// from the frontend. It handles EPUB loading, chapter extraction, and
 /// the full conversion process.
 ///
 /// The function:
-/// 1. Stores the original EPUB in the Tauri store for later retrieval
-/// 2. Extracts chapters from the EPUB
-/// 3. Converts chapters to audiobook format with TTS
-/// 4. Stores the converted EPUB back in the store
+/// 1. Loads the book from the database using book_id
+/// 2. Loads the EPUB file from the file system using source_path
+/// 3. Extracts chapters from the EPUB
+/// 4. Converts chapters to audiobook format with TTS
+/// 5. Stores the converted EPUB back in the store
 ///
 /// # Arguments
-/// * `source_path` - Original file path of the EPUB (used as cache key)
-/// * `epub_data` - The EPUB file as a byte vector
+/// * `book_id` - The book ID to load from the database
 /// * `voice_id` - Voice identifier for TTS (e.g., "af_heart", "af_bella")
 /// * `app` - Tauri application handle
 ///
@@ -42,22 +43,37 @@ use base64::{engine::general_purpose, Engine as _};
 ///
 /// # Errors
 /// Returns an error if:
+/// - Book not found in database
+/// - EPUB file cannot be loaded from file system
 /// - EPUB store creation fails
 /// - Chapter extraction fails
 /// - No chapters are found
 /// - Conversion fails
 #[tauri::command]
 pub async fn convert_epub_to_audiobook_command(
-    source_path: String,
-    epub_data: Vec<u8>,
+    book_id: String,
     voice_id: String,
     app: AppHandle,
 ) -> AppResult<Option<Book>> {
-    log::info!("convert_epub_to_audiobook_command called: source_path={}, voice_id={}, epub_data_len={}", 
-        source_path, voice_id, epub_data.len());
+    log::info!("convert_epub_to_audiobook_command called: book_id={}, voice_id={}", 
+        book_id, voice_id);
     
     // Emit initial progress
     emit_initial_progress(&app);
+    
+    // Load book from database to get source_path
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
+    let book = BookRepository::find_by_id(&db, &book_id).await
+        .map_err(|e| AppError::Store(format!("Failed to load book: {}", e)))?
+        .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
+    
+    let source_path = book.source_path.clone();
+    log::info!("Loaded book from database: id={}, source_path={}", book_id, source_path);
+    
+    // Load EPUB from file system using source_path
+    let epub_data = load_epub_from_file_system(&source_path)?;
+    log::info!("Loaded EPUB from file system: {} bytes", epub_data.len());
     
     // Validate and cache EPUB
     validate_and_cache_epub(&app, &source_path, &epub_data)?;
@@ -77,13 +93,30 @@ pub async fn convert_epub_to_audiobook_command(
     // This ensures we have existing audio tracks in the OPF
     let epub_data_for_conversion = if !book_data.completed_chapters_set.is_empty() {
         log::info!("Resuming conversion - attempting to load converted EPUB from store");
-        // EPUB buffer is no longer stored separately
-        // For resuming, we'll work with the structured data in the database
-        if false {
-            // This branch is unreachable but kept for structure
-            Vec::new()
+        let epub_store = tauri_plugin_store::StoreBuilder::new(&app, "epub-cache.store.json")
+            .build()
+            .ok();
+        
+        if let Some(store) = epub_store {
+            let key = format!("epub:{}", source_path);
+            if let Some(serde_json::Value::String(base64_data)) = store.get(&key) {
+                match general_purpose::STANDARD.decode(&base64_data) {
+                    Ok(loaded_epub) => {
+                        log::info!("Successfully loaded partial EPUB from store ({} bytes, {} chapters completed)", 
+                            loaded_epub.len(), book_data.completed_chapters_set.len());
+                        loaded_epub
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to decode EPUB from store: {}, using original EPUB", e);
+                        epub_data
+                    }
+                }
+            } else {
+                log::warn!("No partial EPUB found in store, using original EPUB - existing audio tracks may be missing");
+                epub_data
+            }
         } else {
-            log::warn!("Could not load converted EPUB from store, using original EPUB - existing audio tracks may be missing");
+            log::warn!("Failed to open EPUB store, using original EPUB - existing audio tracks may be missing");
             epub_data
         }
     } else {
@@ -105,6 +138,34 @@ pub async fn convert_epub_to_audiobook_command(
     
     // Save converted EPUB and update book
     save_converted_epub_and_update_book(&app, &source_path, &converted_epub, book_data.total_words_all_chapters).await
+}
+
+/// Load EPUB file from file system using source_path
+fn load_epub_from_file_system(source_path: &str) -> AppResult<Vec<u8>> {
+    // Handle file:// URL prefix
+    let actual_path = if source_path.starts_with("file://") {
+        source_path.replacen("file://", "", 1)
+    } else if source_path.starts_with("web://") {
+        return Err(AppError::EpubParse(
+            format!("Cannot load EPUB from web source: {}", source_path)
+        ));
+    } else {
+        source_path.to_string()
+    };
+    
+    log::info!("Loading EPUB from file system: {}", actual_path);
+    let epub_data = fs::read(&actual_path)
+        .map_err(|e| AppError::Io(e).with_context(format!("Failed to read EPUB file from path '{}'", actual_path)))?;
+    
+    // Validate EPUB file size
+    validate_file_size(epub_data.len(), MAX_EPUB_SIZE, "EPUB")?;
+    
+    // Validate EPUB signature (should start with PK for ZIP)
+    if epub_data.len() < 4 || &epub_data[0..4] != b"PK\x03\x04" {
+        return Err(AppError::EpubParse("Invalid EPUB file: not a valid ZIP archive".to_string()));
+    }
+    
+    Ok(epub_data)
 }
 
 /// Emit initial progress update for responsive UI

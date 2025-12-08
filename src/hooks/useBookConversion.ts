@@ -5,7 +5,7 @@ import type { Book } from "../types/reader";
 import type { VoiceId } from "../types/reader";
 import type { ConversionProgress } from "../lib/audiobook-converter";
 import { convertEpubToAudiobook } from "../lib/audiobook-converter";
-import { getEpubBuffer, readAllBooks, readOneBook } from "../lib/book-service";
+import { readAllBooks, readOneBook } from "../lib/book-service";
 import { clearBookCache } from "../lib/lazy-chapter-loader";
 
 export type PendingBookForConversion = {
@@ -280,34 +280,15 @@ export function useBookConversion(
     }
     
     try {
-      if (book.sourcePath.startsWith("web://")) {
-        // Web file - we can't reload it, show error
-        toast.error("Cannot convert web files", {
-          description: "Please re-import the file to convert it.",
-        });
-        setIsConverting(false);
-        conversionAbortControllerRef.current = null;
-        convertingBookIdRef.current = null;
-        convertingSourcePathRef.current = null;
-        return;
-      }
-      
-      // Load EPUB buffer before conversion
-      const epubBuffer = await getEpubBuffer(book.sourcePath);
-      if (!epubBuffer) {
-        throw new Error("Failed to load EPUB file for conversion");
-      }
-      
-      // Convert EPUB to audiobook - backend handles everything (extracts chapters, generates audio, stores result)
+      // Convert EPUB to audiobook - backend loads EPUB from database and handles everything
       console.debug("Starting EPUB conversion", {
+        bookId: book.id,
         sourcePath: book.sourcePath,
         voiceId,
-        epubSize: epubBuffer.byteLength,
       });
       
       const updatedBook = await convertEpubToAudiobook({
-        sourcePath: book.sourcePath,
-        epubData: epubBuffer,
+        bookId: book.id,
         voiceId,
         signal: abortController.signal,
         onProgress: (progress) => {
