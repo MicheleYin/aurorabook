@@ -30,7 +30,6 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     isHydrated,
     isImporting,
     importFromDialog,
-    ingestEpub,
     refreshLibrary,
     updateBookProgress,
     updateBookAudioState,
@@ -76,7 +75,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     handleConvertToAudiobook,
     handleConvertBookFromDetail,
     cancelConversionForBook,
-  } = useBookConversion(setLibrary, ingestEpub, refreshLibrary);
+  } = useBookConversion(setLibrary);
 
   const {
     activeView,
