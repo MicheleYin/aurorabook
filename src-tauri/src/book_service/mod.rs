@@ -136,9 +136,10 @@ fn find_chapter_by_href(book: &Book, chapter_href: &str) -> Option<Chapter> {
     }).cloned()
 }
 
-/// Load chapter content from database
+/// Load chapter content from database and resolve images
 /// 
-/// This function reads chapter content directly from the database without opening EPUB zip.
+/// This function reads chapter content directly from the database and resolves all images
+/// to data URLs before returning.
 #[tauri::command]
 pub async fn load_chapter_content(
     book_id: String,
@@ -149,18 +150,104 @@ pub async fn load_chapter_content(
         .map_err(|e| AppError::Store(e))?;
     
     // Try to get chapter from database first
-    if let Some(chapter) = ChapterRepository::find_by_href(&db, &book_id, &chapter_href).await
+    let mut chapter = if let Some(ch) = ChapterRepository::find_by_href(&db, &book_id, &chapter_href).await
         .map_err(|e| AppError::Store(e))?
     {
-        // If content is already stored, return it
-        if chapter.content_html.is_some() {
-            return Ok(Some(chapter));
+        ch
+    } else {
+        // Chapter content should already be in database from ingestion
+        return Ok(None);
+    };
+    
+    // If content is not stored, return None
+    let content_html = match chapter.content_html.as_ref() {
+        Some(html) => html,
+        None => return Ok(None),
+    };
+    
+    // Process images in the HTML: resolve relative paths to data URLs
+    let processed_html = process_images_in_html(&db, &book_id, content_html, &chapter_href).await?;
+    
+    // Update chapter with processed HTML
+    chapter.content_html = Some(processed_html);
+    
+    Ok(Some(chapter))
+}
+
+/// Process images in HTML content by resolving them to data URLs
+async fn process_images_in_html(
+    db: &sea_orm::DatabaseConnection,
+    book_id: &str,
+    html: &str,
+    chapter_href: &str,
+) -> Result<String, AppError> {
+    use scraper::{Html, Selector};
+    use regex::Regex;
+    
+    // Parse HTML synchronously to extract image sources
+    // We need to do this in a block to ensure the document is dropped before async operations
+    let image_sources: Vec<String> = {
+        let document = Html::parse_document(html);
+        let img_selector = Selector::parse("img").map_err(|e| AppError::EpubParse(format!("Failed to parse img selector: {}", e)))?;
+        
+        // Collect all image sources that need to be resolved
+        let mut sources = Vec::new();
+        for img in document.select(&img_selector) {
+            if let Some(src) = img.value().attr("src") {
+                // Skip if already a data URL or absolute URL
+                if !src.starts_with("data:") && !src.starts_with("http://") && !src.starts_with("https://") && !src.starts_with("blob:") {
+                    sources.push(src.to_string());
+                }
+            }
+        }
+        sources
+    }; // document is dropped here
+    
+    // Now resolve images asynchronously (document is no longer in scope)
+    let mut processed_html = html.to_string();
+    let mut replacements: Vec<(String, String)> = Vec::new();
+    
+    for src in image_sources {
+        // Try to load image from database
+        let href_variations = vec![
+            src.clone(),
+            src.trim_start_matches('/').to_string(),
+            if src.starts_with('/') {
+                src[1..].to_string()
+            } else {
+                format!("/{}", src)
+            },
+        ];
+        
+        let mut image_data_url: Option<String> = None;
+        for href in &href_variations {
+            if let Ok(Some((mime_type, image_data))) = ImageRepository::find_by_href(db, book_id, href).await {
+                let data_url = create_data_url(&mime_type, &image_data);
+                image_data_url = Some(data_url);
+                log::debug!("Resolved image '{}' to data URL using href variation: '{}'", src, href);
+                break;
+            }
+        }
+        
+        if let Some(data_url) = image_data_url {
+            // Use regex to replace src attribute, handling both single and double quotes
+            // Escape special regex characters in src
+            let escaped_src = regex::escape(&src);
+            let pattern = format!(r#"(?i)src\s*=\s*["']{}["']"#, escaped_src);
+            replacements.push((pattern, format!(r#"src="{}""#, data_url)));
+        } else {
+            log::warn!("Could not resolve image '{}' in chapter '{}'", src, chapter_href);
         }
     }
     
-    // Chapter content should already be in database from ingestion
-    // If not found, return None (content should have been extracted during ingestion)
-    Ok(None)
+    // Apply all replacements using regex
+    for (pattern, replacement) in replacements {
+        if let Ok(re) = Regex::new(&pattern) {
+            processed_html = re.replace_all(&processed_html, replacement.as_str()).to_string();
+        }
+    }
+    
+    Ok(processed_html)
 }
 
 /// Helper function to resolve image path for storage (used during ingestion)

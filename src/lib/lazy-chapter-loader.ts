@@ -3,7 +3,7 @@
  * This prevents keeping all chapter content in memory at once
  */
 
-import { loadChapterContent as loadChapterContentFromBackend, loadEpubImage, loadEpubAudio } from "./book-service";
+import { loadChapterContent as loadChapterContentFromBackend, loadEpubAudio } from "./book-service";
 import type { Chapter, AudioTrack } from "../types/reader";
 import {
   normalizeChapterContent,
@@ -104,25 +104,10 @@ export async function loadChapterContent(
   // Check cache first
   if (chapterCache.has(cacheKey)) {
     const cached = chapterCache.get(cacheKey)!;
-    // Check if cached content has unprocessed images (not data URLs)
-    const hasUnprocessedImages = cached.contentHtml.includes('src="') && 
-      !cached.contentHtml.includes('src="data:');
-    console.log(`${LOADER_LOG_PREFIX} using cached chapter`, { 
+    console.debug(`${LOADER_LOG_PREFIX} using cached chapter`, { 
       bookId, 
       href: chapter.href,
-      hasUnprocessedImages,
-      contentLength: cached.contentHtml.length,
     });
-    
-    // If cached content has unprocessed images, we should reprocess them
-    // But for now, just return cached and log a warning
-    if (hasUnprocessedImages) {
-      console.warn(`${LOADER_LOG_PREFIX} Cached chapter has unprocessed images - they may not display correctly`, {
-        bookId,
-        href: chapter.href,
-      });
-    }
-    
     return cached;
   }
 
@@ -156,91 +141,14 @@ export async function loadChapterContent(
       throw new Error(`Failed to load chapter content: ${chapter.href}`);
     }
     
+    // Backend now handles image resolution, so we just normalize and sanitize
     const rawHtml = loadedChapter.contentHtml;
     const normalizedHtml = await normalizeChapterContent(rawHtml);
     if (!normalizedHtml) {
       throw new Error(`Failed to normalize chapter: ${chapter.href}`);
     }
 
-    // Process images: resolve relative paths and load from EPUB
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(normalizedHtml, "text/html");
-    
-    // Find all img tags and resolve their src attributes
-    const imgTags = doc.querySelectorAll("img");
-    const imagePromises: Promise<void>[] = [];
-    
-    console.log(`${LOADER_LOG_PREFIX} Found ${imgTags.length} image(s) in chapter`, {
-      bookId,
-      chapterHref: chapter.href,
-      imageCount: imgTags.length,
-    });
-    
-    for (const img of Array.from(imgTags)) {
-      const src = img.getAttribute("src");
-      if (!src) {
-        console.warn(`${LOADER_LOG_PREFIX} Image tag without src attribute`, {
-          bookId,
-          chapterHref: chapter.href,
-        });
-        continue;
-      }
-      
-      // Skip if already a data URL or absolute URL
-      if (src.startsWith("data:") || src.startsWith("http://") || src.startsWith("https://") || src.startsWith("blob:")) {
-        console.log(`${LOADER_LOG_PREFIX} Skipping already-processed image`, {
-          bookId,
-          src: src.substring(0, 50) + (src.length > 50 ? "..." : ""),
-          chapterHref: chapter.href,
-        });
-        continue;
-      }
-      
-      console.log(`${LOADER_LOG_PREFIX} Loading image`, {
-        bookId,
-        originalSrc: src,
-        chapterHref: chapter.href,
-      });
-      
-      // Load image from EPUB
-      const imagePromise = (async () => {
-        try {
-          const dataUrl = await loadEpubImage(bookId, src, chapter.href);
-          if (dataUrl) {
-            img.setAttribute("src", dataUrl);
-            console.log(`${LOADER_LOG_PREFIX} ✓ Successfully resolved image`, {
-              bookId,
-              originalSrc: src,
-              chapterHref: chapter.href,
-              dataUrlLength: dataUrl.length,
-            });
-          } else {
-            console.warn(`${LOADER_LOG_PREFIX} ✗ Failed to load image (returned null)`, {
-              bookId,
-              src,
-              chapterHref: chapter.href,
-            });
-          }
-        } catch (error) {
-          console.error(`${LOADER_LOG_PREFIX} ✗ Error loading image`, {
-            bookId,
-            src,
-            chapterHref: chapter.href,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      })();
-      
-      imagePromises.push(imagePromise);
-    }
-    
-    // Wait for all images to load
-    console.log(`${LOADER_LOG_PREFIX} Waiting for ${imagePromises.length} image(s) to load...`);
-    await Promise.all(imagePromises);
-    console.log(`${LOADER_LOG_PREFIX} Finished loading all images`);
-
-    const substitutedHtml = new XMLSerializer().serializeToString(doc);
-    const sanitized = sanitizeChapterHtml(substitutedHtml);
+    const sanitized = sanitizeChapterHtml(normalizedHtml);
     
     if (!sanitized.trim()) {
       throw new Error(`Chapter content is empty: ${chapter.href}`);
@@ -271,124 +179,14 @@ export async function loadChapterContent(
 }
 
 /**
- * Process images in chapter HTML if they haven't been processed yet
- */
-async function processImagesInChapter(
-  bookId: string,
-  chapter: Chapter,
-  contentHtml: string
-): Promise<string> {
-  // Check if content has unprocessed images (has img tags but no data URLs)
-  const hasUnprocessedImages = contentHtml.includes('<img') && 
-    contentHtml.includes('src="') && 
-    !contentHtml.includes('src="data:');
-  
-  if (!hasUnprocessedImages) {
-    return contentHtml;
-  }
-
-  console.log(`${LOADER_LOG_PREFIX} Processing images in chapter that already has contentHtml`, {
-    bookId,
-    chapterHref: chapter.href,
-  });
-
-  // Process images: resolve relative paths and load from EPUB
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(contentHtml, "text/html");
-  
-  // Find all img tags and resolve their src attributes
-  const imgTags = doc.querySelectorAll("img");
-  const imagePromises: Promise<void>[] = [];
-  
-  console.log(`${LOADER_LOG_PREFIX} Found ${imgTags.length} unprocessed image(s) in chapter`, {
-    bookId,
-    chapterHref: chapter.href,
-    imageCount: imgTags.length,
-  });
-  
-  for (const img of Array.from(imgTags)) {
-    const src = img.getAttribute("src");
-    if (!src) {
-      console.warn(`${LOADER_LOG_PREFIX} Image tag without src attribute`, {
-        bookId,
-        chapterHref: chapter.href,
-      });
-      continue;
-    }
-    
-    // Skip if already a data URL or absolute URL
-    if (src.startsWith("data:") || src.startsWith("http://") || src.startsWith("https://") || src.startsWith("blob:")) {
-      continue;
-    }
-    
-    console.log(`${LOADER_LOG_PREFIX} Loading image`, {
-      bookId,
-      originalSrc: src,
-      chapterHref: chapter.href,
-    });
-    
-    // Load image from EPUB
-    const imagePromise = (async () => {
-      try {
-        const dataUrl = await loadEpubImage(bookId, src, chapter.href);
-        if (dataUrl) {
-          img.setAttribute("src", dataUrl);
-          console.log(`${LOADER_LOG_PREFIX} ✓ Successfully resolved image`, {
-            bookId,
-            originalSrc: src,
-            chapterHref: chapter.href,
-            dataUrlLength: dataUrl.length,
-          });
-        } else {
-          console.warn(`${LOADER_LOG_PREFIX} ✗ Failed to load image (returned null)`, {
-            bookId,
-            src,
-            chapterHref: chapter.href,
-          });
-        }
-      } catch (error) {
-        console.error(`${LOADER_LOG_PREFIX} ✗ Error loading image`, {
-          bookId,
-          src,
-          chapterHref: chapter.href,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    })();
-    
-    imagePromises.push(imagePromise);
-  }
-  
-  // Wait for all images to load
-  if (imagePromises.length > 0) {
-    console.log(`${LOADER_LOG_PREFIX} Waiting for ${imagePromises.length} image(s) to load...`);
-    await Promise.all(imagePromises);
-    console.log(`${LOADER_LOG_PREFIX} Finished loading all images`);
-    
-    // Return processed HTML
-    return new XMLSerializer().serializeToString(doc);
-  }
-  
-  return contentHtml;
-}
-
-/**
  * Ensure a chapter is loaded, loading it if necessary
  */
 export async function ensureChapterLoaded(
   bookId: string,
   chapter: Chapter,
 ): Promise<Chapter> {
-  // If already loaded, check if images need processing
+  // If already loaded, return as-is (images are now resolved by backend)
   if (chapter.contentHtml && chapter.plainText) {
-    const processedHtml = await processImagesInChapter(bookId, chapter, chapter.contentHtml);
-    if (processedHtml !== chapter.contentHtml) {
-      // Images were processed, return updated chapter
-      return {
-        ...chapter,
-        contentHtml: processedHtml,
-      };
-    }
     return chapter;
   }
 

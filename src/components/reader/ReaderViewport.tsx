@@ -124,6 +124,9 @@ export function ReaderViewport({
   const transitions = useChapterTransitions();
   const highlighting = useHighlighting(contentRef);
   const linkHandling = useLinkHandling(contentRef, activeBook, onSelectChapter);
+  
+  // Use the chapter from state (which is loadedChapter || activeChapter) for the callback
+  // This ensures we detect when the loaded chapter is rendered
   useChapterLoadedCallback(activeChapter, onChapterLoaded);
 
   // Handle fragment navigation (explicit call)
