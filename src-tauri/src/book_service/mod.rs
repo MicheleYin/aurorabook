@@ -1,10 +1,13 @@
 pub mod models;
-pub mod storage;
 pub mod filters;
+pub mod database;
+pub mod entities;
+pub mod repositories;
 
 pub use models::*;
-use storage::*;
 use filters::*;
+use database::get_db_connection;
+use repositories::*;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::path_validation::validate_file_size;
@@ -23,7 +26,9 @@ pub async fn read_all_books(
     filter: Option<LibraryFilter>,
     app: tauri::AppHandle,
 ) -> AppResult<Vec<Book>> {
-    let books = load_all_books(&app).await
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
+    let books = BookRepository::find_all(&db).await
         .map_err(|e| AppError::Store(e))?;
     Ok(filter_books(books, filter))
 }
@@ -34,8 +39,9 @@ pub async fn read_one_book(
     book_id: String,
     app: tauri::AppHandle,
 ) -> AppResult<Option<Book>> {
-    use storage::get_book;
-    get_book(&app, &book_id).await
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
+    BookRepository::find_by_id(&db, &book_id).await
         .map_err(|e| AppError::Store(e))
 }
 
@@ -47,7 +53,9 @@ pub async fn read_single_chapter(
     chapter_id: String,
     app: tauri::AppHandle,
 ) -> AppResult<Option<Chapter>> {
-    let book = get_book(&app, &book_id).await
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
+    let book = BookRepository::find_by_id(&db, &book_id).await
         .map_err(|e| AppError::Store(e))?;
     if let Some(book) = book {
         Ok(book.chapters.into_iter().find(|c| c.id == chapter_id))
@@ -128,50 +136,94 @@ fn find_chapter_by_href(book: &Book, chapter_href: &str) -> Option<Chapter> {
     }).cloned()
 }
 
-/// Load chapter content from EPUB file
+/// Load chapter content from database
 /// 
-/// This function reads the EPUB from storage and extracts the chapter content.
-/// It uses direct database queries instead of loading all books for better performance.
+/// This function reads chapter content directly from the database without opening EPUB zip.
 #[tauri::command]
 pub async fn load_chapter_content(
     book_id: String,
     chapter_href: String,
     app: tauri::AppHandle,
 ) -> AppResult<Option<Chapter>> {
-    use storage::get_book;
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
     
-    // Get the specific book (not all books)
-    let book = get_book(&app, &book_id).await
+    // Try to get chapter from database first
+    if let Some(chapter) = ChapterRepository::find_by_href(&db, &book_id, &chapter_href).await
         .map_err(|e| AppError::Store(e))?
-        .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
+    {
+        // If content is already stored, return it
+        if chapter.content_html.is_some() {
+            return Ok(Some(chapter));
+        }
+    }
     
-    // Get EPUB buffer from store
-    let epub_data = get_epub_buffer_from_store(&app, &book.source_path).await
-        .map_err(|e| AppError::Store(e))?
-        .ok_or_else(|| AppError::Store("EPUB not found in store".to_string()))?;
-    
-    // Load chapter content in a blocking task with timeout
-    let epub_data_clone = epub_data.clone();
-    let chapter_href_clone = chapter_href.clone();
-    let chapter_content = tokio::time::timeout(
-        std::time::Duration::from_secs(30), // 30 second timeout
-        tokio::task::spawn_blocking(move || {
-            extract_chapter_content_from_archive(&epub_data_clone, &chapter_href_clone)
-        })
-    )
-    .await
-    .map_err(|_| AppError::EpubParse("Chapter loading timed out after 30 seconds".to_string()))?
-    .map_err(|e| AppError::EpubParse(format!("Task join error: {}", e)))?
-    .map_err(|e| AppError::EpubParse(e))?;
-    
-    // Find the chapter in the book to get metadata
-    let mut chapter = find_chapter_by_href(&book, &chapter_href)
-        .ok_or_else(|| AppError::Store("Chapter not found in book".to_string()))?;
-    
-    // Set the content
-    chapter.content_html = Some(chapter_content);
-    
-    Ok(Some(chapter))
+    // Chapter content should already be in database from ingestion
+    // If not found, return None (content should have been extracted during ingestion)
+    Ok(None)
+}
+
+/// Helper function to resolve image path for storage (used during ingestion)
+fn resolve_image_path_for_storage_simple(
+    image_href: &str,
+    chapter_href: Option<&str>,
+    base_path: &str,
+) -> String {
+    if image_href.starts_with("/") {
+        image_href[1..].to_string()
+    } else if let Some(chapter) = chapter_href {
+        // Resolve relative to chapter location
+        let chapter_path = if chapter.starts_with("/") {
+            chapter[1..].to_string()
+        } else if !base_path.is_empty() && chapter.starts_with(base_path) {
+            chapter.to_string()
+        } else {
+            format!("{}{}", base_path, chapter)
+        };
+        
+        // Get chapter directory
+        let chapter_dir = if chapter_path.contains("/") {
+            chapter_path.rfind("/")
+                .map(|pos| chapter_path[..pos + 1].to_string())
+                .unwrap_or_else(|| base_path.to_string())
+        } else {
+            base_path.to_string()
+        };
+        
+        // Resolve image path relative to chapter directory
+        resolve_relative_path(&chapter_dir, image_href)
+    } else {
+        // Resolve relative to OPF location
+        resolve_relative_path(base_path, image_href)
+    }
+}
+
+/// Helper function to detect image MIME type for storage
+fn detect_image_mime_type_storage(image_path: &str, image_href: &str, image_bytes: &[u8]) -> String {
+    if image_path.ends_with(".png") || image_href.ends_with(".png") {
+        "image/png".to_string()
+    } else if image_path.ends_with(".jpg") || image_path.ends_with(".jpeg") ||
+              image_href.ends_with(".jpg") || image_href.ends_with(".jpeg") {
+        "image/jpeg".to_string()
+    } else if image_path.ends_with(".gif") || image_href.ends_with(".gif") {
+        "image/gif".to_string()
+    } else if image_path.ends_with(".webp") || image_href.ends_with(".webp") {
+        "image/webp".to_string()
+    } else if image_path.ends_with(".svg") || image_href.ends_with(".svg") {
+        "image/svg+xml".to_string()
+    } else {
+        // Try to detect from magic bytes
+        if image_bytes.len() >= 4 {
+            match &image_bytes[0..4] {
+                [0x89, 0x50, 0x4E, 0x47] => "image/png".to_string(),
+                [0xFF, 0xD8, 0xFF, _] => "image/jpeg".to_string(),
+                [0x47, 0x49, 0x46, 0x38] => "image/gif".to_string(),
+                _ => "image/jpeg".to_string(), // Default fallback
+            }
+        } else {
+            "image/jpeg".to_string()
+        }
+    }
 }
 
 /// Resolve a relative path against a base path, handling ".." and "." components
@@ -430,84 +482,158 @@ fn extract_audio_from_archive(
     Ok(Some(data_url))
 }
 
-/// Load an image from EPUB file and return as base64 data URL
-/// This function resolves relative image paths relative to the chapter location
+/// Load an image from database and return as base64 data URL
+/// This function reads images directly from the database without opening EPUB zip.
+/// Images are stored with the original src attribute from HTML during ingestion.
 #[tauri::command]
 pub async fn load_epub_image(
     book_id: String,
     image_href: String,
-    chapter_href: Option<String>,
+    _chapter_href: Option<String>, // Not used - images are stored with original src from HTML
     app: tauri::AppHandle,
 ) -> AppResult<Option<String>> {
-    use storage::get_book;
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
     
-    // Get the specific book (not all books)
-    let book = get_book(&app, &book_id).await
-        .map_err(|e| AppError::Store(e))?
-        .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
+    // Try multiple variations of the image href to find a match
+    // During ingestion, images are stored with the original src from HTML (line 1027)
+    // So we need to try various path formats that might match
+    let mut href_variations = Vec::new();
     
-    // Get EPUB buffer from store
-    let epub_data = get_epub_buffer_from_store(&app, &book.source_path).await
-        .map_err(|e| AppError::Store(e))?
-        .ok_or_else(|| AppError::Store("EPUB not found in store".to_string()))?;
+    // Add the exact href as-is (most likely to match since it's stored with original src)
+    href_variations.push(image_href.clone());
     
-    // Load image in a blocking task with timeout
-    let epub_data_clone = epub_data.clone();
-    let image_href_clone = image_href.clone();
-    let chapter_href_clone = chapter_href.clone();
-    let image_data_url = tokio::time::timeout(
-        std::time::Duration::from_secs(10), // 10 second timeout
-        tokio::task::spawn_blocking(move || {
-            extract_image_from_archive(
-                &epub_data_clone,
-                &image_href_clone,
-                chapter_href_clone.as_deref(),
-            )
-        })
-    )
-    .await
-    .map_err(|_| AppError::EpubParse("Image loading timed out after 10 seconds".to_string()))?
-    .map_err(|e| AppError::EpubParse(format!("Task join error: {}", e)))?
-    .map_err(|e| AppError::EpubParse(e))?;
+    // Try with/without leading slash
+    if image_href.starts_with('/') {
+        href_variations.push(image_href[1..].to_string());
+    } else {
+        href_variations.push(format!("/{}", image_href));
+    }
     
-    Ok(image_data_url)
+    // Try trimmed version (remove leading/trailing whitespace)
+    let trimmed = image_href.trim();
+    if trimmed != image_href {
+        href_variations.push(trimmed.to_string());
+        if trimmed.starts_with('/') {
+            href_variations.push(trimmed[1..].to_string());
+        } else {
+            href_variations.push(format!("/{}", trimmed));
+        }
+    }
+    
+    // Remove duplicates while preserving order
+    let mut seen = std::collections::HashSet::new();
+    let mut unique_variations = Vec::new();
+    for href in href_variations {
+        if seen.insert(href.clone()) {
+            unique_variations.push(href);
+        }
+    }
+    
+    log::debug!("Trying to load image '{}' for book '{}' with {} variations", 
+        image_href, book_id, unique_variations.len());
+    
+    // Try to get image from database with each variation
+    for (idx, href) in unique_variations.iter().enumerate() {
+        match ImageRepository::find_by_href(&db, &book_id, href).await {
+            Ok(Some((mime_type, image_data))) => {
+                // Create data URL from stored image
+                let data_url = create_data_url(&mime_type, &image_data);
+                log::info!("✓ Found image with href variation #{}: '{}' (original: '{}', {} bytes, type: {})", 
+                    idx + 1, href, image_href, image_data.len(), mime_type);
+                return Ok(Some(data_url));
+            }
+            Ok(None) => {
+                log::trace!("  Variation #{} '{}' not found", idx + 1, href);
+            }
+            Err(e) => {
+                log::warn!("Error querying image with href '{}': {}", href, e);
+            }
+        }
+    }
+    
+    log::warn!("✗ Image not found in database: '{}' for book '{}' (tried {} variations: {:?})", 
+        image_href, book_id, unique_variations.len(), unique_variations);
+    
+    // Image should already be in database from ingestion
+    // If not found, return None (images should have been extracted during ingestion)
+    Ok(None)
 }
 
-/// Load an audio track from EPUB file and return as base64 data URL
-/// This resolves relative audio paths relative to the OPF location
+/// Load an audio track from database and return as base64 data URL
+/// This function reads audio directly from the database without opening EPUB zip.
 #[tauri::command]
 pub async fn load_epub_audio(
     book_id: String,
     audio_href: String,
     app: tauri::AppHandle,
 ) -> AppResult<Option<String>> {
-    use storage::get_book;
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
     
-    // Get the specific book (not all books)
-    let book = get_book(&app, &book_id).await
-        .map_err(|e| AppError::Store(e))?
-        .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
+    // Try multiple variations of the audio href to find a match
+    // During ingestion, audio tracks are stored with their original href from the manifest
+    let mut href_variations = Vec::new();
     
-    // Get EPUB buffer from store
-    let epub_data = get_epub_buffer_from_store(&app, &book.source_path).await
-        .map_err(|e| AppError::Store(e))?
-        .ok_or_else(|| AppError::Store("EPUB not found in store".to_string()))?;
+    // Add the exact href as-is (most likely to match since it's stored with original href)
+    href_variations.push(audio_href.clone());
     
-    // Load audio in a blocking task with timeout
-    let epub_data_clone = epub_data.clone();
-    let audio_href_clone = audio_href.clone();
-    let audio_data_url = tokio::time::timeout(
-        std::time::Duration::from_secs(30), // 30 second timeout for audio files
-        tokio::task::spawn_blocking(move || {
-            extract_audio_from_archive(&epub_data_clone, &audio_href_clone)
-        })
-    )
-    .await
-    .map_err(|_| AppError::EpubParse("Audio loading timed out after 30 seconds".to_string()))?
-    .map_err(|e| AppError::EpubParse(format!("Task join error: {}", e)))?
-    .map_err(|e| AppError::EpubParse(e))?;
+    // Try with/without leading slash
+    if audio_href.starts_with('/') {
+        href_variations.push(audio_href[1..].to_string());
+    } else {
+        href_variations.push(format!("/{}", audio_href));
+    }
     
-    Ok(audio_data_url)
+    // Try trimmed version (remove leading/trailing whitespace)
+    let trimmed = audio_href.trim();
+    if trimmed != audio_href {
+        href_variations.push(trimmed.to_string());
+        if trimmed.starts_with('/') {
+            href_variations.push(trimmed[1..].to_string());
+        } else {
+            href_variations.push(format!("/{}", trimmed));
+        }
+    }
+    
+    // Remove duplicates while preserving order
+    let mut seen = std::collections::HashSet::new();
+    let mut unique_variations = Vec::new();
+    for href in href_variations {
+        if seen.insert(href.clone()) {
+            unique_variations.push(href);
+        }
+    }
+    
+    log::debug!("Trying to load audio '{}' for book '{}' with {} variations", 
+        audio_href, book_id, unique_variations.len());
+    
+    // Try to get audio from database with each variation
+    for (idx, href) in unique_variations.iter().enumerate() {
+        match AudioRepository::find_data_by_href(&db, &book_id, href).await {
+            Ok(Some(audio_data)) => {
+                // Detect MIME type from extension
+                let mime_type = detect_audio_mime_type(href, &audio_href);
+                let data_url = create_data_url(&mime_type, &audio_data);
+                log::info!("✓ Found audio with href variation #{}: '{}' (original: '{}', {} bytes, type: {})", 
+                    idx + 1, href, audio_href, audio_data.len(), mime_type);
+                return Ok(Some(data_url));
+            }
+            Ok(None) => {
+                log::trace!("  Variation #{} '{}' not found", idx + 1, href);
+            }
+            Err(e) => {
+                log::warn!("Error querying audio with href '{}': {}", href, e);
+            }
+        }
+    }
+    
+    log::warn!("✗ Audio not found in database: '{}' for book '{}' (tried {} variations: {:?})", 
+        audio_href, book_id, unique_variations.len(), unique_variations);
+    
+    // Audio should already be in database from ingestion
+    // If not found, return None (audio should have been extracted during ingestion)
+    Ok(None)
 }
 
 /// Read a single audio track by book ID and track ID
@@ -517,7 +643,9 @@ pub async fn read_single_audio_track(
     track_id: String,
     app: tauri::AppHandle,
 ) -> AppResult<Option<AudioTrack>> {
-    let book = get_book(&app, &book_id).await
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
+    let book = BookRepository::find_by_id(&db, &book_id).await
         .map_err(|e| AppError::Store(e))?;
     if let Some(book) = book {
         Ok(book.audio_tracks.into_iter().find(|t| t.id == track_id))
@@ -532,23 +660,13 @@ pub async fn delete_book(
     book_id: String,
     app: tauri::AppHandle,
 ) -> AppResult<()> {
-    use storage::{get_book, delete_book as delete_book_storage};
-    
-    // Get the book first to find its source_path for EPUB cleanup
-    let book = get_book(&app, &book_id).await
+    let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
     
-    let source_path = book.as_ref().map(|b| b.source_path.clone());
-    
-    // Delete the book from storage
-    delete_book_storage(&app, &book_id).await
+    // Delete the book from storage (CASCADE will delete related records)
+    // All related data (chapters, images, audio tracks) will be automatically deleted
+    BookRepository::delete(&db, &book_id).await
         .map_err(|e| AppError::Store(e))?;
-    
-    // Clean up EPUB from store if it exists
-    if let Some(path) = source_path {
-        delete_epub_from_store(&app, path.as_str()).await
-            .map_err(|e| AppError::Store(e))?;
-    }
     
     Ok(())
 }
@@ -598,32 +716,30 @@ pub async fn add_book(
     epub_data: Option<Vec<u8>>,
     app: tauri::AppHandle,
 ) -> AppResult<Book> {
-    use storage::add_book as add_book_storage;
-    
-    // Clone source_path before we might move book
-    let source_path = book.source_path.clone();
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
     
     // Add the book directly without checking for duplicates
     log::debug!("Adding new book: ID={}, title='{}'", book.id, book.title);
-    add_book_storage(&app, &book).await
+    BookRepository::save(&db, &book).await
         .map_err(|e| AppError::Store(e))?;
     
-    // Store EPUB data if provided
-    if let Some(data) = epub_data {
-        save_epub_buffer_to_store(&app, &source_path, &data).await
-            .map_err(|e| AppError::Store(e))?;
-    }
+    // EPUB data is no longer stored separately - all content is in structured tables
+    // The epub_data parameter is kept for API compatibility but not used
+    let _ = epub_data;
     
     Ok(book)
 }
 /// Get EPUB buffer for a book
+/// Note: EPUB buffer is no longer stored separately - all content is in structured tables
+/// This function is kept for API compatibility but returns None
 #[tauri::command]
 pub async fn get_epub_buffer(
-    source_path: String,
-    app: tauri::AppHandle,
+    _source_path: String,
+    _app: tauri::AppHandle,
 ) -> AppResult<Option<Vec<u8>>> {
-    get_epub_buffer_from_store(&app, &source_path).await
-        .map_err(|e| AppError::Store(e))
+    // EPUB buffer is no longer stored - all content is in structured database tables
+    Ok(None)
 }
 
 
@@ -634,15 +750,16 @@ pub async fn update_book_progress(
     progress: BookProgress,
     app: tauri::AppHandle,
 ) -> AppResult<Book> {
-    use storage::{get_book, add_book as add_book_storage};
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
     
-    let mut book = get_book(&app, &book_id).await
+    let mut book = BookRepository::find_by_id(&db, &book_id).await
         .map_err(|e| AppError::Store(e))?
         .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
     
     book.progress = Some(progress);
     
-    add_book_storage(&app, &book).await
+    BookRepository::save(&db, &book).await
         .map_err(|e| AppError::Store(e))?;
     
     Ok(book)
@@ -655,15 +772,16 @@ pub async fn update_book_audio_state(
     audio_state: BookAudioState,
     app: tauri::AppHandle,
 ) -> AppResult<Book> {
-    use storage::{get_book, add_book as add_book_storage};
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
     
-    let mut book = get_book(&app, &book_id).await
+    let mut book = BookRepository::find_by_id(&db, &book_id).await
         .map_err(|e| AppError::Store(e))?
         .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
     
     book.audio_state = Some(audio_state);
     
-    add_book_storage(&app, &book).await
+    BookRepository::save(&db, &book).await
         .map_err(|e| AppError::Store(e))?;
     
     Ok(book)
@@ -684,25 +802,17 @@ pub async fn ingest_epub(
     use uuid::Uuid;
     use std::fs;
 
-    // First, try to get EPUB from store (might be converted audiobook)
-    let epub_data = if let Some(stored_data) = get_epub_buffer_from_store(&app, &source_path).await
-        .map_err(|e| AppError::Store(format!("Failed to check EPUB store: {}", e)))?
-    {
-        log::info!("Using EPUB from store for source_path: {}", source_path);
-        stored_data
+    // Read EPUB from file system
+    // Handle file:// URL prefix
+    let actual_path = if epub_path.starts_with("file://") {
+        epub_path.replacen("file://", "", 1)
     } else {
-        // Fall back to reading from file system
-        // Handle file:// URL prefix
-        let actual_path = if epub_path.starts_with("file://") {
-            epub_path.replacen("file://", "", 1)
-        } else {
-            epub_path.clone()
-        };
-        
-        log::info!("Reading EPUB from file system: {}", actual_path);
-        fs::read(&actual_path)
-            .map_err(|e| AppError::Io(e).with_context(format!("Failed to read EPUB file from path '{}'", actual_path)))?
+        epub_path.clone()
     };
+    
+    log::info!("Reading EPUB from file system: {}", actual_path);
+    let epub_data = fs::read(&actual_path)
+        .map_err(|e| AppError::Io(e).with_context(format!("Failed to read EPUB file from path '{}'", actual_path)))?;
     
     // Validate EPUB file size
     validate_file_size(epub_data.len(), MAX_EPUB_SIZE, "EPUB")?;
@@ -844,12 +954,234 @@ pub async fn ingest_epub(
         crate::book_service::models::ConversionStatus::NotStarted
     };
     
-    // Create Book object
+    // Extract all content during ingestion
+    log::info!("Extracting chapter content, images, and audio during ingestion...");
+    
+    // Extract chapter content HTML for all chapters
+    let epub_data_for_content = epub_data.clone();
+    let chapters_for_content = chapters.clone();
+    let opf_path_for_content = opf_path.clone();
+    let chapters_with_content = tokio::task::spawn_blocking(move || {
+        use std::io::{Cursor, Read};
+        use zip::ZipArchive;
+        use crate::epub::parser::derive_base_path_from_opf;
+        use crate::utils::path_validation::validate_epub_path;
+        use log::warn;
+        
+        let epub_slice: &[u8] = &epub_data_for_content;
+        let mut archive = ZipArchive::new(Cursor::new(epub_slice))
+            .map_err(|e| format!("Failed to open EPUB: {}", e))?;
+        
+        let base_path = derive_base_path_from_opf(&opf_path_for_content);
+        
+        let mut updated_chapters = Vec::new();
+        for mut chapter in chapters_for_content {
+            // Resolve chapter path
+            let validated_href = validate_epub_path(&chapter.href)
+                .map_err(|e| format!("Invalid chapter path: {}", e))?;
+            
+            let chapter_path = if validated_href.starts_with("/") {
+                validated_href[1..].to_string()
+            } else if !base_path.is_empty() && validated_href.starts_with(&base_path) {
+                validated_href.to_string()
+            } else {
+                format!("{}{}", base_path, validated_href)
+            };
+            
+            // Try to read chapter content
+            let mut found_content = false;
+            let paths_to_try = vec![
+                chapter_path.clone(),
+                validated_href.clone(),
+                validated_href.trim_start_matches('/').to_string(),
+                format!("{}{}", base_path, validated_href.trim_start_matches('/')),
+            ];
+            
+            for path in paths_to_try {
+                if let Ok(mut file) = archive.by_name(&path) {
+                    let mut content = String::new();
+                    if file.read_to_string(&mut content).is_ok() {
+                        chapter.content_html = Some(content);
+                        found_content = true;
+                        break;
+                    }
+                }
+            }
+            
+            if !found_content {
+                warn!("Could not find chapter content for: {}", chapter.href);
+            }
+            
+            updated_chapters.push(chapter);
+        }
+        
+        Ok::<Vec<Chapter>, String>(updated_chapters)
+    })
+    .await
+    .map_err(|e| AppError::EpubParse(format!("Failed to extract chapter content: {}", e)))?
+    .map_err(|e| AppError::EpubParse(e))?;
+    
+    // Extract all images from chapters and store them
+    let epub_data_for_images = epub_data.clone();
+    let chapters_for_images = chapters_with_content.clone();
+    let opf_path_for_images = opf_path.clone();
+    let images_extracted = tokio::task::spawn_blocking(move || {
+        use std::io::{Cursor, Read};
+        use zip::ZipArchive;
+        use crate::epub::parser::derive_base_path_from_opf;
+        use scraper::{Html, Selector};
+        use log::debug;
+        
+        let epub_slice: &[u8] = &epub_data_for_images;
+        let mut archive = ZipArchive::new(Cursor::new(epub_slice))
+            .map_err(|e| format!("Failed to open EPUB: {}", e))?;
+        
+        let base_path = derive_base_path_from_opf(&opf_path_for_images);
+        let mut images_to_store = Vec::new();
+        
+        // Collect all image hrefs from chapter HTML
+        let mut total_images_found = 0;
+        let mut total_images_extracted = 0;
+        
+        for chapter in &chapters_for_images {
+            if let Some(ref html) = chapter.content_html {
+                let document = Html::parse_document(html);
+                let img_selector = Selector::parse("img").unwrap();
+                
+                for img in document.select(&img_selector) {
+                    if let Some(src) = img.value().attr("src") {
+                        total_images_found += 1;
+                        
+                        // Skip data URLs and absolute URLs
+                        if src.starts_with("data:") || src.starts_with("http://") || src.starts_with("https://") {
+                            debug!("Skipping data/absolute URL image: {}", src);
+                            continue;
+                        }
+                        
+                        // Resolve image path relative to chapter
+                        let image_path = resolve_image_path_for_storage_simple(src, Some(&chapter.href), &base_path);
+                        debug!("Resolved image path: '{}' -> '{}' (chapter: '{}', base: '{}')", 
+                            src, image_path, chapter.href, base_path);
+                        
+                        // Try multiple path variations
+                        let paths_to_try = vec![
+                            image_path.clone(),
+                            format!("{}{}", base_path, src),
+                            src.to_string(),
+                            if src.starts_with("/") { src[1..].to_string() } else { src.to_string() },
+                        ];
+                        
+                        let mut found = false;
+                        for path_to_try in &paths_to_try {
+                            if let Ok(mut file) = archive.by_name(path_to_try) {
+                                let mut image_data = Vec::new();
+                                if file.read_to_end(&mut image_data).is_ok() && !image_data.is_empty() {
+                                    let image_len = image_data.len();
+                                    // Detect MIME type
+                                    let mime_type = detect_image_mime_type_storage(path_to_try, src, &image_data);
+                                    images_to_store.push((src.to_string(), mime_type, image_data));
+                                    debug!("Extracted image: {} -> {} ({} bytes)", src, path_to_try, image_len);
+                                    total_images_extracted += 1;
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if !found {
+                            debug!("Could not find image in archive: '{}' (tried: {:?})", src, paths_to_try);
+                        }
+                    }
+                }
+            } else {
+                debug!("Chapter '{}' has no content_html", chapter.href);
+            }
+        }
+        
+        debug!("Image extraction summary: found {} images, extracted {}", total_images_found, total_images_extracted);
+        
+        Ok::<Vec<(String, String, Vec<u8>)>, String>(images_to_store)
+    })
+    .await
+    .map_err(|e| AppError::EpubParse(format!("Failed to extract images: {}", e)))?
+    .map_err(|e| AppError::EpubParse(e))?;
+    
+    // Extract audio track data
+    let epub_data_for_audio = epub_data.clone();
+    let audio_tracks_for_extraction = audio_tracks.clone();
+    let opf_path_for_audio = opf_path.clone();
+    let audio_extracted = tokio::task::spawn_blocking(move || {
+        use std::io::{Cursor, Read};
+        use zip::ZipArchive;
+        use crate::epub::parser::derive_base_path_from_opf;
+        use log::{debug, warn};
+        
+        let epub_slice: &[u8] = &epub_data_for_audio;
+        let mut archive = ZipArchive::new(Cursor::new(epub_slice))
+            .map_err(|e| format!("Failed to open EPUB: {}", e))?;
+        
+        let base_path = derive_base_path_from_opf(&opf_path_for_audio);
+        let mut audio_to_store = Vec::new();
+        let mut total_audio_found = 0;
+        let mut total_audio_extracted = 0;
+        
+        debug!("Extracting audio tracks (base_path: '{}', tracks: {})", base_path, audio_tracks_for_extraction.len());
+        
+        for track in &audio_tracks_for_extraction {
+            total_audio_found += 1;
+            
+            // Resolve audio path - try multiple variations like we do for images
+            let audio_path_primary = if track.href.starts_with("/") {
+                track.href[1..].to_string()
+            } else {
+                format!("{}{}", base_path, track.href)
+            };
+            
+            // Try multiple path variations
+            let paths_to_try = vec![
+                audio_path_primary.clone(),
+                track.href.clone(),
+                if track.href.starts_with("/") { track.href[1..].to_string() } else { track.href.clone() },
+                format!("{}{}", base_path, if track.href.starts_with("/") { &track.href[1..] } else { &track.href }),
+            ];
+            
+            debug!("Trying to extract audio track: '{}' (trying {} path variations)", track.href, paths_to_try.len());
+            
+            let mut found = false;
+            for path_to_try in &paths_to_try {
+                if let Ok(mut file) = archive.by_name(path_to_try) {
+                    let mut audio_data = Vec::new();
+                    if file.read_to_end(&mut audio_data).is_ok() && !audio_data.is_empty() {
+                        let audio_len = audio_data.len();
+                        audio_to_store.push((track.href.clone(), audio_data));
+                        debug!("✓ Extracted audio track: {} -> {} ({} bytes)", track.href, path_to_try, audio_len);
+                        total_audio_extracted += 1;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            
+            if !found {
+                warn!("✗ Could not find audio track in archive: '{}' (tried: {:?}, base_path: '{}')", 
+                    track.href, paths_to_try, base_path);
+            }
+        }
+        
+        debug!("Audio extraction summary: found {} tracks, extracted {}", total_audio_found, total_audio_extracted);
+        
+        Ok::<Vec<(String, Vec<u8>)>, String>(audio_to_store)
+    })
+    .await
+    .map_err(|e| AppError::EpubParse(format!("Failed to extract audio: {}", e)))?
+    .map_err(|e| AppError::EpubParse(e))?;
+    
+    // Create Book object with chapters that have content
     let book = Book {
-        id: book_id,
+        id: book_id.clone(),
         title,
         author: metadata.creator.unwrap_or_else(|| "Unknown author".to_string()),
-        chapters,
+        chapters: chapters_with_content,
         cover_url,
         source_path: source_path.clone(),
         publisher: metadata.publisher,
@@ -872,8 +1204,60 @@ pub async fn ingest_epub(
         words_processed: None,
     };
     
-    // Store book and EPUB data
-    let result_book = add_book(book, Some(epub_data), app).await?;
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
+    
+    // Store book (this will store chapters with content_html)
+    // Note: This will delete existing images/audio if updating, so we save them after
+    BookRepository::save(&db, &book).await
+        .map_err(|e| AppError::Store(e))?;
+    
+    // Store all images AFTER book save (since book save deletes them first)
+    log::info!("Storing {} images...", images_extracted.len());
+    if images_extracted.is_empty() {
+        log::warn!("No images were extracted during ingestion! This might indicate an issue with image extraction.");
+    }
+    for (image_href, mime_type, image_data) in images_extracted {
+        match ImageRepository::save(&db, &book_id, &image_href, &mime_type, &image_data).await {
+            Ok(()) => {
+                log::info!("Successfully stored image: {} ({} bytes, {})", image_href, image_data.len(), mime_type);
+            }
+            Err(e) => {
+                log::error!("Failed to store image {}: {}", image_href, e);
+            }
+        }
+    }
+    
+    // Store all audio track data AFTER book save (since book save deletes them first)
+    log::info!("Storing {} audio tracks...", audio_extracted.len());
+    if audio_extracted.is_empty() {
+        log::warn!("No audio tracks were extracted during ingestion! This might indicate an issue with audio extraction.");
+    }
+    for (audio_href, audio_data) in audio_extracted {
+        log::info!("Storing audio track: {} ({} bytes)", audio_href, audio_data.len());
+        match AudioRepository::save_data(&db, &book_id, &audio_href, &audio_data).await {
+            Ok(()) => {
+                log::info!("✓ Successfully stored audio track data: {} ({} bytes)", audio_href, audio_data.len());
+            }
+            Err(e) => {
+                log::error!("✗ Failed to store audio track {} ({} bytes): {}", audio_href, audio_data.len(), e);
+                // Check if audio track metadata exists
+                if let Ok(tracks) = AudioRepository::find_by_book_id(&db, &book_id).await {
+                    if tracks.iter().any(|t| t.href == audio_href) {
+                        log::warn!("Audio track metadata exists but data save failed. Track href: {}", audio_href);
+                    } else {
+                        log::warn!("Audio track not found in database. Track href: {}, Available tracks: {:?}", 
+                            audio_href, tracks.iter().map(|t| &t.href).collect::<Vec<_>>());
+                    }
+                }
+            }
+        }
+    }
+    
+    // Reload book to get the complete data
+    let result_book = BookRepository::find_by_id(&db, &book_id).await
+        .map_err(|e| AppError::Store(e))?
+        .ok_or_else(|| AppError::Store("Book not found after ingestion".to_string()))?;
     
     Ok(result_book)
 }

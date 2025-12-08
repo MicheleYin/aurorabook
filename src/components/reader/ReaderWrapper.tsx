@@ -188,30 +188,17 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       clearBookCache(bookId);
     }
 
-    // Check if already has content (skip if forcing reload)
-    if (!forceReload && chapter.contentHtml) {
-      chapterLoader.setLoadedChapter(chapter);
+    // Always use ensureChapterLoaded from lazy-chapter-loader which handles image processing
+    // even when chapter already has contentHtml. This ensures images are always processed.
+    const { ensureChapterLoaded: ensureChapterLoadedFromLoader } = await import("../../lib/lazy-chapter-loader");
+    const processed = await ensureChapterLoadedFromLoader(bookId, chapter);
+    
+    if (processed.contentHtml) {
+      chapterLoader.setLoadedChapter(processed);
       chapterLoader.setIsLoading(false);
-      return chapter;
+      return processed;
     }
-
-    // Check cache (skip if forcing reload)
-    if (!forceReload) {
-      const cached = chapterLoader.getCachedChapter(bookId, chapter.id);
-      if (cached && cached.contentHtml) {
-        chapterLoader.setLoadedChapter(cached);
-        chapterLoader.setIsLoading(false);
-        return cached;
-      }
-    }
-
-    // Load from backend (this will set isLoading to true, then false when done)
-    const loaded = await chapterLoader.loadChapter(bookId, chapter);
-    if (loaded) {
-      chapterLoader.setLoadedChapter(loaded);
-      chapterLoader.setIsLoading(false);
-      return loaded;
-    }
+    
     chapterLoader.setIsLoading(false);
     return null;
   }, [chapterLoader]);

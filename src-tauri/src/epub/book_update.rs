@@ -5,7 +5,8 @@
 
 use tauri::AppHandle;
 use crate::book_service::models::{Book, ConversionStatus};
-use crate::book_service::storage::{get_book_by_source_path, add_book};
+use crate::book_service::database::get_db_connection;
+use crate::book_service::repositories::BookRepository;
 use crate::epub::parser::{find_opf_path, parse_opf_content, extract_audio_tracks_from_manifest, extract_chapters_from_epub};
 use crate::epub::converter::smil::build_audio_sync_map;
 use std::io::Cursor;
@@ -261,7 +262,8 @@ async fn update_book_in_library(
     audio_sync_map: Option<crate::book_service::models::AudioSyncMap>,
     epub_size: usize,
 ) -> Result<Option<Book>, String> {
-    if let Ok(Some(mut book)) = get_book_by_source_path(app, source_path).await {
+    let db = get_db_connection(app).await?;
+    if let Ok(Some(mut book)) = BookRepository::find_by_source_path(&db, source_path).await {
         // Preserve existing track IDs by matching tracks by href
         let preserved_tracks = preserve_existing_track_ids(&book.audio_tracks, audio_tracks);
         
@@ -288,7 +290,7 @@ async fn update_book_in_library(
         // Clone the updated book before saving
         let updated_book = book.clone();
         
-        add_book(app, &book).await
+        BookRepository::save(&db, &book).await
             .map_err(|e| format!("Failed to save book: {}", e))?;
         
         Ok(Some(updated_book))

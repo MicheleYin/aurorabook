@@ -60,6 +60,18 @@ pub fn run() {
         .setup(|app| {
             // Create and configure the main window
             window::create_main_window(app)?;
+            
+            // Initialize database connection (single connection for entire app)
+            // Use blocking wait since setup is synchronous
+            let app_handle = app.handle().clone();
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            rt.block_on(async {
+                book_service::database::init_db_connection(&app_handle).await
+            }).map_err(|e| {
+                log::error!("Failed to initialize database connection: {}", e);
+                e
+            })?;
+            
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())

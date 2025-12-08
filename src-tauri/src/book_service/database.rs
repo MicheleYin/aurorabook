@@ -1,0 +1,205 @@
+use sea_orm::{Database, DatabaseConnection};
+use tauri::AppHandle;
+use std::sync::Arc;
+use tokio::sync::OnceCell;
+
+/// Global database connection (initialized once)
+static DB_CONNECTION: OnceCell<Arc<DatabaseConnection>> = OnceCell::const_new();
+
+/// Initialize database connection and store it globally
+/// This should be called once during app setup
+pub async fn init_db_connection(app: &AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    
+    // Get the app data directory (Application Support on macOS)
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
+    
+    // Ensure the directory exists
+    std::fs::create_dir_all(&app_data_dir)
+        .map_err(|e| format!("Failed to create app data directory: {}", e))?;
+    
+    // Construct the database path
+    let db_path = app_data_dir.join("library.db");
+    
+    // Convert path to string
+    let db_path_str = db_path
+        .to_str()
+        .ok_or_else(|| "Database path contains invalid UTF-8".to_string())?;
+    
+    log::info!("Initializing database connection at: {:?}", db_path);
+    
+    // Verify the directory is writable before attempting connection
+    if let Some(parent) = db_path.parent() {
+        // Try to create a test file to verify write permissions
+        let test_file = parent.join(".db_test_write");
+        if let Err(e) = std::fs::File::create(&test_file) {
+            log::warn!("Warning: Cannot write to database directory {:?}: {}", parent, e);
+        } else {
+            let _ = std::fs::remove_file(&test_file);
+        }
+    }
+    
+    // Create SQLite connection string
+    let db_url = format!("sqlite://{}?mode=rwc", db_path_str);
+    
+    // Connect to database (this creates a connection pool)
+    let db = Database::connect(&db_url)
+        .await
+        .map_err(|e| format!("Failed to connect to database at {:?}: {}", db_path, e))?;
+    
+    // Initialize schema
+    init_database_schema(&db).await?;
+    
+    // Store connection globally
+    DB_CONNECTION
+        .set(Arc::new(db))
+        .map_err(|_| "Database connection already initialized".to_string())?;
+    
+    log::info!("Database connection initialized successfully");
+    
+    Ok(())
+}
+
+/// Get database connection from global state
+/// Returns a reference to the shared connection pool
+/// The connection is initialized once and reused across all calls
+pub async fn get_db_connection(_app: &AppHandle) -> Result<DatabaseConnection, String> {
+    // Get the connection from the global state
+    let db_arc = DB_CONNECTION
+        .get()
+        .ok_or_else(|| "Database connection not initialized. Call init_db_connection first.".to_string())?;
+    
+    // Clone the DatabaseConnection (the underlying connection pool is shared)
+    // Note: DatabaseConnection in SeaORM is actually a connection pool, so cloning is cheap
+    // and all clones share the same underlying pool
+    Ok(db_arc.as_ref().clone())
+}
+
+/// Initialize database schema - creates tables if they don't exist
+async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
+    use sea_orm::{Statement, ConnectionTrait};
+    
+    // Create books table
+    let stmt = Statement::from_string(
+        sea_orm::DatabaseBackend::Sqlite,
+        r#"
+        CREATE TABLE IF NOT EXISTS books (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            author TEXT NOT NULL,
+            source_path TEXT NOT NULL UNIQUE,
+            cover_url TEXT,
+            publisher TEXT,
+            published_year TEXT,
+            subjects TEXT,
+            file_size_bytes INTEGER,
+            progress_current_chapter_id TEXT,
+            progress_current_chapter_href TEXT,
+            progress_current_chapter_index INTEGER,
+            progress_current_chapter_element_id TEXT,
+            progress_current_chapter_element_index INTEGER,
+            progress_current_chapter_scroll_top REAL,
+            progress_current_chapter_scroll_height REAL,
+            progress_current_chapter_client_height REAL,
+            progress_chapter_progress_percent REAL,
+            progress_book_progress_percent REAL,
+            progress_updated_at TEXT,
+            audio_state_current_track_id TEXT,
+            audio_state_current_track_href TEXT,
+            audio_state_current_track_index INTEGER,
+            audio_state_current_time_seconds REAL,
+            audio_state_updated_at TEXT,
+            audio_sync_map TEXT,
+            page_count INTEGER,
+            conversion_status TEXT NOT NULL DEFAULT 'NotStarted',
+            completed_chapters TEXT,
+            voice_id TEXT,
+            total_words INTEGER,
+            words_processed INTEGER
+        )
+        "#.to_string(),
+    );
+    db.execute_unprepared(&stmt.to_string()).await
+        .map_err(|e| format!("Failed to create books table: {}", e))?;
+    
+    // Create chapters table
+    let stmt = Statement::from_string(
+        sea_orm::DatabaseBackend::Sqlite,
+        r#"
+        CREATE TABLE IF NOT EXISTS chapters (
+            id TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            href TEXT NOT NULL,
+            content_html TEXT,
+            plain_text TEXT,
+            chapter_order INTEGER NOT NULL,
+            word_count INTEGER,
+            estimated_page_count INTEGER,
+            FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
+            UNIQUE(book_id, href)
+        )
+        "#.to_string(),
+    );
+    db.execute_unprepared(&stmt.to_string()).await
+        .map_err(|e| format!("Failed to create chapters table: {}", e))?;
+    
+    // Create images table
+    let stmt = Statement::from_string(
+        sea_orm::DatabaseBackend::Sqlite,
+        r#"
+        CREATE TABLE IF NOT EXISTS images (
+            id TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL,
+            href TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            data BLOB NOT NULL,
+            FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
+            UNIQUE(book_id, href)
+        )
+        "#.to_string(),
+    );
+    db.execute_unprepared(&stmt.to_string()).await
+        .map_err(|e| format!("Failed to create images table: {}", e))?;
+    
+    // Create audio_tracks table
+    let stmt = Statement::from_string(
+        sea_orm::DatabaseBackend::Sqlite,
+        r#"
+        CREATE TABLE IF NOT EXISTS audio_tracks (
+            id TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            href TEXT NOT NULL,
+            url TEXT,
+            duration REAL,
+            data BLOB,
+            FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
+            UNIQUE(book_id, href)
+        )
+        "#.to_string(),
+    );
+    db.execute_unprepared(&stmt.to_string()).await
+        .map_err(|e| format!("Failed to create audio_tracks table: {}", e))?;
+    
+    // Create indexes
+    let indexes = vec![
+        "CREATE INDEX IF NOT EXISTS idx_chapters_book_id ON chapters(book_id)",
+        "CREATE INDEX IF NOT EXISTS idx_images_book_id ON images(book_id)",
+        "CREATE INDEX IF NOT EXISTS idx_audio_tracks_book_id ON audio_tracks(book_id)",
+        "CREATE INDEX IF NOT EXISTS idx_books_source_path ON books(source_path)",
+    ];
+    
+    for index_sql in indexes {
+        let stmt = Statement::from_string(sea_orm::DatabaseBackend::Sqlite, index_sql.to_string());
+        if let Err(e) = db.execute_unprepared(&stmt.to_string()).await {
+            log::warn!("Failed to create index: {}", e);
+        }
+    }
+    
+    Ok(())
+}
+

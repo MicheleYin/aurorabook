@@ -60,6 +60,7 @@ anyhow = "1.0"
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
+sea-orm = { version = "2.0.0-rc", features = ["sqlx-sqlite", "runtime-tokio-native-tls", "macros"] }
 
 # TTS engine (uses CoreML EP on Apple platforms)
 # espeak is enabled by default on macOS, but not on iOS
@@ -75,7 +76,6 @@ kokoros = { path = "../Kokoros/kokoros", default-features = false, features = ["
 
 [dev-dependencies]
 tempfile = "3.8"
-rusqlite = { version = "0.31", features = ["bundled"] }
 
 [patch.crates-io]
 audiopus_sys = { path = "../patches/audiopus_sys" }

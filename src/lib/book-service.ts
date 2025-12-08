@@ -98,15 +98,32 @@ export async function loadEpubImage(
   imageHref: string,
   chapterHref?: string
 ): Promise<string | null> {
+  console.log("[BookService] loadEpubImage called", {
+    bookId,
+    imageHref,
+    chapterHref,
+  });
   try {
     const dataUrl = await invoke<string | null>("load_epub_image", {
       bookId,
       imageHref,
       chapterHref,
     });
+    console.log("[BookService] loadEpubImage result", {
+      bookId,
+      imageHref,
+      chapterHref,
+      found: !!dataUrl,
+      dataUrlLength: dataUrl?.length || 0,
+    });
     return dataUrl;
   } catch (error) {
-    console.error("Failed to load EPUB image:", error);
+    console.error("[BookService] Failed to load EPUB image:", {
+      bookId,
+      imageHref,
+      chapterHref,
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw error;
   }
 }
@@ -119,14 +136,28 @@ export async function loadEpubAudio(
   bookId: string,
   audioHref: string
 ): Promise<string | null> {
+  console.log("[BookService] loadEpubAudio called", {
+    bookId,
+    audioHref,
+  });
   try {
     const dataUrl = await invoke<string | null>("load_epub_audio", {
       bookId,
       audioHref,
     });
+    console.log("[BookService] loadEpubAudio result", {
+      bookId,
+      audioHref,
+      found: !!dataUrl,
+      dataUrlLength: dataUrl?.length || 0,
+    });
     return dataUrl;
   } catch (error) {
-    console.error("Failed to load EPUB audio:", error);
+    console.error("[BookService] Failed to load EPUB audio:", {
+      bookId,
+      audioHref,
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw error;
   }
 }

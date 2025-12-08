@@ -39,6 +39,12 @@ export function useAudioTrackLoader() {
     }
 
     // Load from backend
+    console.log("[useAudioTrackLoader] Loading audio track", {
+      bookId,
+      trackId: track.id,
+      trackHref: track.href,
+      trackTitle: track.title,
+    });
     try {
       const dataUrl = await loadEpubAudio(bookId, track.href);
       if (dataUrl) {
@@ -49,13 +55,26 @@ export function useAudioTrackLoader() {
           loadedAt: Date.now(),
         });
         setLoadedTracks(prev => new Map(prev).set(track.id, loaded));
+        console.log("[useAudioTrackLoader] ✓ Successfully loaded audio track", {
+          bookId,
+          trackId: track.id,
+          trackHref: track.href,
+          dataUrlLength: dataUrl.length,
+        });
         return loaded;
+      } else {
+        console.warn("[useAudioTrackLoader] ✗ Audio track returned null", {
+          bookId,
+          trackId: track.id,
+          trackHref: track.href,
+        });
       }
     } catch (error) {
-      console.error("[useAudioTrackLoader] Failed to load audio track:", error, {
+      console.error("[useAudioTrackLoader] ✗ Error loading audio track:", {
         bookId,
         trackId: track.id,
         trackHref: track.href,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
     return null;

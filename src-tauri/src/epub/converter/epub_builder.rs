@@ -185,9 +185,9 @@ pub(crate) async fn rebuild_and_save_epub(
     
     // Save to Tauri store if app and source_path are provided
     if let (Some(app_ref), Some(source_path_ref)) = (app, source_path) {
-        use crate::book_service::storage::save_epub_buffer_to_store;
-        save_epub_buffer_to_store(app_ref, source_path_ref, &epub_output).await
-            .map_err(|e| anyhow::anyhow!("Failed to save EPUB to store: {}", e))?;
+        // EPUB buffer is no longer stored separately - all content is in structured tables
+        // The converted EPUB is not stored, only the structured data
+        log::debug!("EPUB conversion complete - structured data stored in database");
         log::debug!("Saved EPUB to store after chapter {}", chapter_index + 1);
         
         // Update book audio tracks so user can listen as soon as one chapter is ready
@@ -199,9 +199,11 @@ pub(crate) async fn rebuild_and_save_epub(
             log::debug!("Updated book audio tracks after chapter {}", chapter_index + 1);
             
             // Mark chapter as completed in the book
-            use crate::book_service::storage::{get_book_by_source_path, add_book};
+            use crate::book_service::database::get_db_connection;
+            use crate::book_service::repositories::BookRepository;
             use crate::book_service::models::ConversionStatus;
-            if let Ok(Some(mut book)) = get_book_by_source_path(app_ref, source_path_ref).await {
+            if let Ok(db) = get_db_connection(app_ref).await {
+                if let Ok(Some(mut book)) = BookRepository::find_by_source_path(&db, source_path_ref).await {
                 // Get the chapter href for this chapter
                 if chapter_index < chapter_hrefs.len() {
                     let chapter_href = &chapter_hrefs[chapter_index];
@@ -222,8 +224,9 @@ pub(crate) async fn rebuild_and_save_epub(
                         }
                         
                         // Save the updated book
-                        if let Err(e) = add_book(app_ref, &book).await {
+                        if let Err(e) = BookRepository::save(&db, &book).await {
                             log::warn!("Failed to save completed chapter: {}", e);
+                        }
                         }
                     }
                 }

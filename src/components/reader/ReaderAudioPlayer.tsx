@@ -538,6 +538,8 @@ export function ReaderAudioPlayer({
     console.log("[Audio Player] Loading track URL", {
       trackId: currentTrack.id,
       trackTitle: currentTrack.title,
+      trackHref: currentTrack.href,
+      hasUrl: !!currentTrack.url,
     });
     
     ensureAudioTrackLoaded(bookId, currentTrack)
@@ -549,6 +551,12 @@ export function ReaderAudioPlayer({
           // Trigger re-render to update currentTrack memo (only when needed)
           loadedCountRef.current += 1;
           setLoadedCount(loadedCountRef.current);
+          
+          console.log("[Audio Player] ✓ Track URL loaded successfully", {
+            trackId: loadedTrack.id,
+            trackTitle: loadedTrack.title,
+            urlLength: loadedTrack.url.length,
+          });
           
           // Preload next audio track if it exists
           const nextIndex = currentIndex + 1;
@@ -593,9 +601,11 @@ export function ReaderAudioPlayer({
         if (!cancelled) {
           loadingTracksRef.current.delete(trackId);
           setIsTrackLoading(false);
-          console.error("[Audio Player] Failed to load audio track", {
+          console.error("[Audio Player] ✗ Failed to load audio track", {
             trackId,
-            error,
+            trackHref: currentTrack.href,
+            trackTitle: currentTrack.title,
+            error: error instanceof Error ? error.message : String(error),
           });
         }
       });
