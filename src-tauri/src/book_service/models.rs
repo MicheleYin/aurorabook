@@ -29,6 +29,7 @@ pub struct AudioTrack {
     pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
+    pub order: usize,
 }
 
 /// Audio synchronization segment for highlighting text during playback

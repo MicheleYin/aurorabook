@@ -1,4 +1,4 @@
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, ConnectionTrait};
+use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, ConnectionTrait, QueryOrder};
 use crate::book_service::entities::audio_track;
 use crate::book_service::models::AudioTrack;
 
@@ -13,6 +13,7 @@ impl AudioRepository {
             href: entity.href,
             url: entity.url,
             duration: entity.duration,
+            order: entity.track_order as usize,
         }
     }
     
@@ -25,14 +26,17 @@ impl AudioRepository {
             href: Set(model.href.clone()),
             url: Set(model.url.clone()),
             duration: Set(model.duration),
+            track_order: Set(model.order as i64),
             data: Set(None), // Data is stored separately
         }
     }
     
-    /// Find all audio tracks for a book
+    /// Find all audio tracks for a book (ordered by track_order)
     pub async fn find_by_book_id(db: &DatabaseConnection, book_id: &str) -> Result<Vec<AudioTrack>, String> {
+        use sea_orm::QueryOrder;
         let entities = audio_track::Entity::find()
             .filter(audio_track::Column::BookId.eq(book_id))
+            .order_by_asc(audio_track::Column::TrackOrder)
             .all(db)
             .await
             .map_err(|e| format!("Failed to query audio tracks: {}", e))?;
@@ -51,6 +55,7 @@ impl AudioRepository {
                         audio_track::Column::Href,
                         audio_track::Column::Url,
                         audio_track::Column::Duration,
+                        audio_track::Column::TrackOrder,
                     ])
                     .to_owned()
             )
@@ -80,6 +85,16 @@ impl AudioRepository {
                 .map_err(|e| format!("Failed to update audio track data: {}", e))?;
         } else {
             // Create new track with data (metadata will be minimal)
+            // Try to find the highest order to assign a new order
+            let max_order = audio_track::Entity::find()
+                .filter(audio_track::Column::BookId.eq(book_id))
+                .order_by_desc(audio_track::Column::TrackOrder)
+                .one(db)
+                .await
+                .map_err(|e| format!("Failed to query max order: {}", e))?
+                .map(|e| e.track_order)
+                .unwrap_or(-1);
+            
             let id = format!("{}-{}", book_id, href);
             let active_model = audio_track::ActiveModel {
                 id: Set(id),
@@ -88,6 +103,7 @@ impl AudioRepository {
                 href: Set(href.to_string()),
                 url: Set(None),
                 duration: Set(None),
+                track_order: Set(max_order + 1), // Assign next order
                 data: Set(Some(data.to_vec())),
             };
             

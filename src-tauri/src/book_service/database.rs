@@ -176,6 +176,7 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
             href TEXT NOT NULL,
             url TEXT,
             duration REAL,
+            track_order INTEGER NOT NULL,
             data BLOB,
             FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
             UNIQUE(book_id, href)

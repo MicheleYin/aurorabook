@@ -890,14 +890,14 @@ pub async fn ingest_epub(
     use std::fs;
 
     // Read EPUB from file system
-    // Handle file:// URL prefix
-    let actual_path = if epub_path.starts_with("file://") {
-        epub_path.replacen("file://", "", 1)
-    } else {
-        epub_path.clone()
-    };
-    
-    log::info!("Reading EPUB from file system: {}", actual_path);
+        // Handle file:// URL prefix
+        let actual_path = if epub_path.starts_with("file://") {
+            epub_path.replacen("file://", "", 1)
+        } else {
+            epub_path.clone()
+        };
+        
+        log::info!("Reading EPUB from file system: {}", actual_path);
     let epub_data = fs::read(&actual_path)
         .map_err(|e| AppError::Io(e).with_context(format!("Failed to read EPUB file from path '{}'", actual_path)))?;
     
@@ -963,8 +963,9 @@ pub async fn ingest_epub(
     let mut audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
     
     // Order audio tracks to match chapter order (chapters are already in spine order)
+    // This function also sets each track's order to match its corresponding chapter's order
     use crate::epub::order_audio_tracks_by_chapters;
-    audio_tracks = order_audio_tracks_by_chapters(&audio_tracks, &chapters);
+    audio_tracks = order_audio_tracks_by_chapters(&audio_tracks, &chapters, &manifest_items);
     
     // Compute durations for audio tracks
     if !audio_tracks.is_empty() {

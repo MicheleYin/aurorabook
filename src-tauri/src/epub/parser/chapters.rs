@@ -80,6 +80,7 @@ pub fn extract_chapters_from_epub(
             href,
             media_type: Some(media_type),
             properties: properties_str,
+            media_overlay: None, // epub crate doesn't expose media-overlay
         });
     }
     

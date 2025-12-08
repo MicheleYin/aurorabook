@@ -105,6 +105,7 @@ pub fn extract_audio_tracks_from_manifest(
                     href: item.href.clone(),
                     url: None, // Will be loaded lazily when needed
                     duration: None, // Will be determined when audio is loaded
+                    order: 0, // Will be set after ordering by chapters
                 });
             }
         }

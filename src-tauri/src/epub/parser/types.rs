@@ -32,11 +32,13 @@ pub struct EpubMetadata {
 /// * `href` - Relative path to the file
 /// * `media_type` - MIME type of the file (e.g., "application/xhtml+xml")
 /// * `properties` - Optional properties (e.g., "nav", "cover-image")
+/// * `media_overlay` - Optional media-overlay ID (for EPUB 3 synchronized narration)
 #[derive(Debug, Clone)]
 pub struct ManifestItem {
     pub id: String,
     pub href: String,
     pub media_type: Option<String>,
     pub properties: Option<String>,
+    pub media_overlay: Option<String>,
 }
 

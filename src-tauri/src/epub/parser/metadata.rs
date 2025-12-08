@@ -79,6 +79,7 @@ pub fn extract_metadata_with_epub_crate(
             href,
             media_type: Some(media_type),
             properties: properties_str,
+            media_overlay: None, // epub crate doesn't expose media-overlay, will be set by parse_opf_content if needed
         });
     }
     
@@ -322,6 +323,7 @@ pub fn parse_opf_content(opf_content: &str) -> Result<(EpubMetadata, HashMap<Str
                         href: String::new(),
                         media_type: None,
                         properties: None,
+                        media_overlay: None,
                     };
                     
                     for attr in e.attributes() {
@@ -343,6 +345,10 @@ pub fn parse_opf_content(opf_content: &str) -> Result<(EpubMetadata, HashMap<Str
                                 b"properties" => {
                                     item.properties = Some(attr_value.to_string());
                                     debug!("  item properties: {}", attr_value);
+                                }
+                                b"media-overlay" => {
+                                    item.media_overlay = Some(attr_value.to_string());
+                                    debug!("  item media-overlay: {}", attr_value);
                                 }
                                 _ => {}
                             }
@@ -446,6 +452,7 @@ pub fn parse_opf_content(opf_content: &str) -> Result<(EpubMetadata, HashMap<Str
                         href: String::new(),
                         media_type: None,
                         properties: None,
+                        media_overlay: None,
                     };
                     
                     for attr in e.attributes() {
@@ -467,6 +474,10 @@ pub fn parse_opf_content(opf_content: &str) -> Result<(EpubMetadata, HashMap<Str
                                 b"properties" => {
                                     item.properties = Some(attr_value.to_string());
                                     debug!("  item properties: {}", attr_value);
+                                }
+                                b"media-overlay" => {
+                                    item.media_overlay = Some(attr_value.to_string());
+                                    debug!("  item media-overlay: {}", attr_value);
                                 }
                                 _ => {}
                             }

@@ -9,6 +9,7 @@ export type AudioTrack = {
   href: string;
   url?: string; // Optional - loaded lazily
   duration?: number;
+  order: number; // Order matches corresponding chapter order
   _loading?: boolean; // Internal flag to track loading state
 };
 

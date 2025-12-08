@@ -11,6 +11,7 @@ pub struct Model {
     pub href: String,
     pub url: Option<String>,
     pub duration: Option<f64>,
+    pub track_order: i64,
     // Vec<u8> is automatically mapped to BLOB in SQLite
     pub data: Option<Vec<u8>>,
 }

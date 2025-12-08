@@ -137,9 +137,8 @@ fn extract_audio_data_from_epub(
         log::debug!("Chapter href: {}", chapter.href);
     }
     
-    // Order audio tracks to match chapter order
-    // Audio tracks are named like "Audio/prologue.mp3" and should match chapters like "prologue.xhtml"
-    let ordered_audio_tracks = order_audio_tracks_by_chapters(&audio_tracks, &chapters);
+    // Order audio tracks to match chapter order using manifest relationships
+    let ordered_audio_tracks = order_audio_tracks_by_chapters(&audio_tracks, &chapters, &manifest_items);
     log::info!("Ordered {} audio tracks to match {} chapters", ordered_audio_tracks.len(), chapters.len());
     
     Ok((ordered_audio_tracks, chapters))
@@ -147,59 +146,146 @@ fn extract_audio_data_from_epub(
 
 /// Order audio tracks to match the chapter order.
 /// 
-/// This function matches audio tracks to chapters by comparing their base filenames
-/// (e.g., "Audio/prologue.mp3" matches "prologue.xhtml") and orders the audio tracks
-/// in the same sequence as the chapters appear in the spine.
+/// This function matches audio tracks to chapters using the EPUB manifest relationships:
+/// - Chapters have `media-overlay` attributes pointing to SMIL files
+/// - SMIL files reference audio tracks
+/// - We match by following this chain: chapter → media-overlay → SMIL → audio
+/// 
+/// Falls back to ID pattern matching (e.g., p001 → s001 → m001) if media-overlay chain is incomplete.
+/// Each audio track's order is set to match the order of its corresponding chapter.
 pub fn order_audio_tracks_by_chapters(
     audio_tracks: &[crate::book_service::models::AudioTrack],
     chapters: &[crate::book_service::models::Chapter],
+    manifest_items: &std::collections::HashMap<String, crate::epub::parser::ManifestItem>,
 ) -> Vec<crate::book_service::models::AudioTrack> {
     use std::collections::HashMap;
     
-    // Helper to extract base filename (without extension and path)
-    let get_base_name = |href: &str| -> String {
-        href.split('/')
-            .last()
-            .unwrap_or(href)
-            .split('.')
-            .next()
-            .unwrap_or(href)
-            .to_lowercase()
-    };
+    // Build maps for efficient lookup
+    // Map: chapter href -> chapter manifest item ID
+    let mut chapter_href_to_id: HashMap<String, String> = HashMap::new();
+    // Map: audio track manifest ID -> audio track
+    let mut audio_track_by_id: HashMap<String, crate::book_service::models::AudioTrack> = HashMap::new();
     
-    // Create a map of base name -> audio track for quick lookup
-    let mut audio_track_map: HashMap<String, Vec<crate::book_service::models::AudioTrack>> = HashMap::new();
-    for track in audio_tracks {
-        let base_name = get_base_name(&track.href);
-        audio_track_map.entry(base_name).or_insert_with(Vec::new).push(track.clone());
-    }
-    
-    // Build ordered list by matching chapters to audio tracks
-    let mut ordered_tracks = Vec::new();
-    let mut used_tracks: HashMap<String, usize> = HashMap::new(); // Track which index we're at for each base name
-    
-    for chapter in chapters {
-        let chapter_base = get_base_name(&chapter.href);
-        
-        // Try to find matching audio track
-        if let Some(tracks) = audio_track_map.get(&chapter_base) {
-            let index = used_tracks.get(&chapter_base).copied().unwrap_or(0);
-            if index < tracks.len() {
-                ordered_tracks.push(tracks[index].clone());
-                used_tracks.insert(chapter_base.clone(), index + 1);
-                log::debug!("Matched audio track '{}' to chapter '{}'", tracks[index].href, chapter.href);
+    // Find chapter manifest items by href
+    for (id, item) in manifest_items {
+        if let Some(ref mt) = item.media_type {
+            if mt == "application/xhtml+xml" || mt == "text/html" || mt == "application/html+xml" {
+                chapter_href_to_id.insert(item.href.clone(), id.clone());
+            } else if mt.starts_with("audio/") {
+                // Find matching audio track by href
+                if let Some(track) = audio_tracks.iter().find(|t| t.href == item.href) {
+                    audio_track_by_id.insert(id.clone(), track.clone());
+                }
             }
         }
     }
     
-    // Add any remaining audio tracks that didn't match chapters (shouldn't happen, but be safe)
-    for (base_name, tracks) in &audio_track_map {
-        let used_count = used_tracks.get(base_name).copied().unwrap_or(0);
-        for track in tracks.iter().skip(used_count) {
-            log::warn!("Audio track '{}' didn't match any chapter, appending to end", track.href);
-            ordered_tracks.push(track.clone());
+    // Helper to extract numeric suffix from ID (e.g., "p001" -> "001", "m001" -> "001")
+    let extract_id_suffix = |id: &str| -> Option<String> {
+        // Try to find trailing digits
+        let mut suffix = String::new();
+        for ch in id.chars().rev() {
+            if ch.is_ascii_digit() {
+                suffix.insert(0, ch);
+            } else {
+                break;
+            }
+        }
+        if suffix.is_empty() { None } else { Some(suffix) }
+    };
+    
+    // Build ordered list by matching chapters to audio tracks
+    let mut ordered_tracks = Vec::new();
+    let mut matched_audio_ids = std::collections::HashSet::new();
+    let mut max_order = 0;
+    
+    for chapter in chapters {
+        max_order = max_order.max(chapter.order);
+        
+        // Strategy 1: Use media-overlay chain (chapter → SMIL → audio)
+        let mut matched_track: Option<crate::book_service::models::AudioTrack> = None;
+        
+        if let Some(chapter_manifest_id) = chapter_href_to_id.get(&chapter.href) {
+            if let Some(chapter_item) = manifest_items.get(chapter_manifest_id) {
+                // Check if chapter has media-overlay
+                if let Some(ref smil_id) = chapter_item.media_overlay {
+                    // Find SMIL file
+                    if let Some(_smil_item) = manifest_items.get(smil_id) {
+                        // Try to find audio track by matching ID pattern (s001 -> m001)
+                        if let Some(suffix) = extract_id_suffix(smil_id) {
+                            // Try common audio ID patterns: m{suffix}, audio{suffix}, a{suffix}
+                            for prefix in &["m", "audio", "a"] {
+                                let audio_id = format!("{}{}", prefix, suffix);
+                                if let Some(track) = audio_track_by_id.get(&audio_id) {
+                                    if !matched_audio_ids.contains(&audio_id) {
+                                        matched_track = Some(track.clone());
+                                        matched_audio_ids.insert(audio_id.clone());
+                                        log::debug!("Matched audio track '{}' (id: {}) to chapter '{}' via media-overlay '{}' (order: {})", 
+                                            track.href, audio_id, chapter.href, smil_id, chapter.order);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Strategy 2: Fallback to ID pattern matching (p001 -> m001)
+        if matched_track.is_none() {
+            if let Some(chapter_manifest_id) = chapter_href_to_id.get(&chapter.href) {
+                if let Some(suffix) = extract_id_suffix(chapter_manifest_id) {
+                    for prefix in &["m", "audio", "a"] {
+                        let audio_id = format!("{}{}", prefix, suffix);
+                        if let Some(track) = audio_track_by_id.get(&audio_id) {
+                            if !matched_audio_ids.contains(&audio_id) {
+                                matched_track = Some(track.clone());
+                                matched_audio_ids.insert(audio_id.clone());
+                                log::debug!("Matched audio track '{}' (id: {}) to chapter '{}' via ID pattern (order: {})", 
+                                    track.href, audio_id, chapter.href, chapter.order);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Set order and add to ordered list
+        if let Some(mut track) = matched_track {
+            track.order = chapter.order;
+            ordered_tracks.push(track);
+        } else {
+            log::warn!("Could not match audio track to chapter '{}' (href: '{}')", chapter.title, chapter.href);
         }
     }
+    
+    // Add any remaining audio tracks that didn't match chapters
+    for track in audio_tracks {
+        // Check if this track was matched by checking if its ID is in audio_track_by_id and matched
+        let track_id = manifest_items.iter()
+            .find(|(_, item)| item.href == track.href && item.media_type.as_ref().map(|mt| mt.starts_with("audio/")).unwrap_or(false))
+            .map(|(id, _)| id);
+        
+        if let Some(id) = track_id {
+            if !matched_audio_ids.contains(id) {
+                let mut track = track.clone();
+                track.order = max_order + 1 + ordered_tracks.len();
+                log::warn!("Audio track '{}' (id: {}) didn't match any chapter, assigning order {}", track.href, id, track.order);
+                ordered_tracks.push(track);
+            }
+        } else {
+            // Track not in manifest, add it anyway
+            let mut track = track.clone();
+            track.order = max_order + 1 + ordered_tracks.len();
+            log::warn!("Audio track '{}' not found in manifest, assigning order {}", track.href, track.order);
+            ordered_tracks.push(track);
+        }
+    }
+    
+    // Sort by order to ensure correct sequence
+    ordered_tracks.sort_by_key(|t| t.order);
     
     ordered_tracks
 }
