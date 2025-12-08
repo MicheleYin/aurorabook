@@ -69,7 +69,7 @@ export function BookDetailDialog({
   isCancelling = false,
 }: BookDetailDialogProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
+
   const [showConvertDialog, setShowConvertDialog] = useState(false);
   const [durationMap, setDurationMap] = useState<Record<string, number>>({});
   const durationMapRef = useRef<Record<string, number>>({});
@@ -536,21 +536,10 @@ export function BookDetailDialog({
         disabled={isDisabled}
 
         className="gap-2"
-        aria-label={isExporting ? "Exporting EPUB..." : "Export EPUB file"}
+        aria-label="Export EPUB file"
       >
-        {
-          isExporting ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              Exporting...
-            </>
-          ) : (
-            <>
-              <Share2 className="h-4 w-4" aria-hidden="true" />
-              Export EPUB
-            </>
-          )
-        }
+        <Share2 className="h-4 w-4" aria-hidden="true" />
+        Export EPUB
       </Button>
       <Button onClick={onOpenBook} disabled={isDeleting} aria-label={`Open ${book.title}`}>
         Open book

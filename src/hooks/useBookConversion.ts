@@ -15,14 +15,8 @@ export type PendingBookForConversion = {
 
 export function useBookConversion(
   setLibrary: React.Dispatch<React.SetStateAction<Book[]>>,
-  ingestEpub: (params: {
-    filePath: string;
-    sourcePath: string;
-    fallbackTitle?: string;
-    progress?: Book["progress"];
-    pageCountHint?: number;
-  }) => Promise<Book | null>,
-  refreshLibrary?: () => Promise<void>,
+
+  
 ) {
   const [showConvertDialog, setShowConvertDialog] = useState(false);
   const [pendingBookForConversion, setPendingBookForConversion] = useState<PendingBookForConversion | null>(null);
