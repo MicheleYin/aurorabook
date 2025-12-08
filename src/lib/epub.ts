@@ -1,6 +1,6 @@
 import DOMPurify from "dompurify";
 
-import type { AudioSyncMap, AudioSyncSegment } from "../types/reader";
+import type { AudioSyncMap, AudioSyncSegment, AudioTrack } from "../types/reader";
 
 const sharedTextDecoder =
   typeof TextDecoder !== "undefined" ? new TextDecoder("utf-8") : null;
@@ -343,5 +343,42 @@ export const findChaptersForAudioTrack = (
   });
 
   return Array.from(chapterHrefs);
+};
+
+/**
+ * Find the audio track for a specific chapter
+ * Returns the audio track if the chapter has associated audio segments
+ */
+export const findAudioTrackForChapter = (
+  syncMap: AudioSyncMap | undefined,
+  audioTracks: AudioTrack[],
+  chapterHref: string,
+): AudioTrack | undefined => {
+  if (!syncMap || audioTracks.length === 0) {
+    return undefined;
+  }
+
+  const normalizedChapterHref = normalizeChapterHref(chapterHref);
+  const audioTrackHrefs = new Set<string>();
+
+  // Find all audio track hrefs that have segments for this chapter
+  syncMap.segments.forEach((seg) => {
+    if (chapterHrefsMatch(seg.chapterHref, normalizedChapterHref)) {
+      audioTrackHrefs.add(seg.audioTrackHref);
+    }
+  });
+
+  // Return the first matching audio track
+  if (audioTrackHrefs.size > 0) {
+    const trackHref = Array.from(audioTrackHrefs)[0];
+    const normalizedTrackHref = normalizeAudioHref(trackHref);
+    
+    return audioTracks.find((track) => {
+      const normalizedTrack = normalizeAudioHref(track.href);
+      return normalizedTrack === normalizedTrackHref;
+    });
+  }
+
+  return undefined;
 };
 

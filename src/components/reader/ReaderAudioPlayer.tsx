@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { List, Loader2, MoveVertical, Pause, Play, SkipBack, SkipForward, StepBack, StepForward, X } from "lucide-react";
 
-import type { AudioTrack, BookAudioState } from "../../types/reader";
+import type { AudioTrack, BookAudioState, AudioSyncMap, Chapter } from "../../types/reader";
 import type { AudioProgressSnapshot } from "./types";
 import { Button } from "../ui/button";
 import {
@@ -51,6 +51,8 @@ type ReaderAudioPlayerProps = {
   autoScrollEnabled?: boolean;
   onAutoScrollToggle?: (enabled: boolean) => void;
   onTrackChange?: (trackHref: string) => void;
+  audioSyncMap?: AudioSyncMap;
+  chapters?: Chapter[];
 };
 
 export function ReaderAudioPlayer({
@@ -66,6 +68,8 @@ export function ReaderAudioPlayer({
   autoScrollEnabled = true,
   onAutoScrollToggle,
   onTrackChange,
+  audioSyncMap,
+  chapters,
 }: ReaderAudioPlayerProps) {
   // sourcePath is part of the interface but not currently used
   void sourcePath;
@@ -1526,6 +1530,8 @@ export function ReaderAudioPlayer({
         bookTitle={bookTitle}
         loadedTrackUrls={loadedTrackUrlsRef.current}
         onTrackSelect={handleTrackSelect}
+        audioSyncMap={audioSyncMap}
+        chapters={chapters}
       />
     </div>
   );

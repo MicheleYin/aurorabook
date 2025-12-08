@@ -1,7 +1,8 @@
 import { useCallback } from "react";
 import { X } from "lucide-react";
-import type { AudioTrack } from "../../types/reader";
+import type { AudioTrack, AudioSyncMap, Chapter } from "../../types/reader";
 import { Button } from "../ui/button";
+import { findChaptersForAudioTrack, chapterHrefsMatch } from "../../lib/epub";
 import {
   Dialog,
   DialogContent,
@@ -24,9 +25,42 @@ const formatTime = (value: number) => {
     value = 0;
   }
   const totalSeconds = Math.floor(value);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  
+  // Calculate months (assuming 30 days per month for simplicity)
+  const secondsPerMonth = 30 * 24 * 3600;
+  const months = Math.floor(totalSeconds / secondsPerMonth);
+  const remainingAfterMonths = totalSeconds % secondsPerMonth;
+  
+  // Calculate days
+  const secondsPerDay = 24 * 3600;
+  const days = Math.floor(remainingAfterMonths / secondsPerDay);
+  const remainingAfterDays = remainingAfterMonths % secondsPerDay;
+  
+  // Calculate hours, minutes, seconds
+  const hours = Math.floor(remainingAfterDays / 3600);
+  const minutes = Math.floor((remainingAfterDays % 3600) / 60);
+  const seconds = remainingAfterDays % 60;
+  
+  // Build the formatted string
+  const parts: string[] = [];
+  
+  if (months > 0) {
+    parts.push(`${months}mo`);
+  }
+  if (days > 0) {
+    parts.push(`${days}d`);
+  }
+  
+  // Format time portion
+  if (hours > 0 || months > 0 || days > 0) {
+    // Show full H:MM:SS format when we have days/months or hours
+    parts.push(`${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`);
+  } else {
+    // Show M:SS format for durations under an hour
+    parts.push(`${minutes}:${seconds.toString().padStart(2, "0")}`);
+  }
+  
+  return parts.join(" ");
 };
 
 type AudioTracksDialogProps = {
@@ -37,6 +71,8 @@ type AudioTracksDialogProps = {
   bookTitle?: string;
   loadedTrackUrls: Map<string, string>;
   onTrackSelect: (trackIndex: number) => void;
+  audioSyncMap?: AudioSyncMap;
+  chapters?: Chapter[];
 };
 
 export function AudioTracksDialog({
@@ -47,6 +83,8 @@ export function AudioTracksDialog({
   bookTitle,
   loadedTrackUrls,
   onTrackSelect,
+  audioSyncMap,
+  chapters,
 }: AudioTracksDialogProps) {
   const isDesktop = useMediaQuery("(min-width: 640px)");
 
@@ -68,6 +106,18 @@ export function AudioTracksDialog({
         const isCurrentTrack = index === currentIndex;
         const trackUrl = loadedTrackUrls.get(track.id) || track.url;
         const hasUrl = !!trackUrl;
+        
+        // Find chapters associated with this audio track
+        const chapterHrefs = audioSyncMap
+          ? findChaptersForAudioTrack(audioSyncMap, track.href)
+          : [];
+        const relatedChapters = chapters
+          ? chapters.filter((chapter) => {
+              return chapterHrefs.some((chapterHref) =>
+                chapterHrefsMatch(chapter.href, chapterHref)
+              );
+            })
+          : [];
 
         return (
           <Button
@@ -102,11 +152,18 @@ export function AudioTracksDialog({
                 >
                   {index + 1}. {track.title}
                 </p>
-                {track.duration && (
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {formatTime(track.duration)}
-                  </p>
-                )}
+                <div className="flex flex-col gap-0.5 mt-0.5">
+                  {track.duration && (
+                    <p className="text-xs text-muted-foreground">
+                      {formatTime(track.duration)}
+                    </p>
+                  )}
+                  {relatedChapters.length > 0 && (
+                    <p className="text-xs text-muted-foreground truncate ml-4">
+                      Chapter: {relatedChapters.map(ch => ch.title).join(", ")}
+                    </p>
+                  )}
+                </div>
               </div>
               {isCurrentTrack && (
                 <span

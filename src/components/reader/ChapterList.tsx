@@ -2,7 +2,7 @@ import type { Book } from "../../types/reader";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import type { ChapterSelectionOptions } from "./types";
-import { findChaptersForAudioTrack } from "../../lib/epub";
+import { findChaptersForAudioTrack, findAudioTrackForChapter } from "../../lib/epub";
 import { anim } from "../../lib/animations";
 type ChapterListProps = {
   book: Book;
@@ -40,12 +40,17 @@ export function ChapterList({
       {book.chapters.map((chapter) => {
         const isActive = chapter.id === activeChapterId;
         const isCurrentlyPlaying = isChapterCurrentlyPlaying(chapter);
+        const audioTrack = findAudioTrackForChapter(
+          book.audioSyncMap,
+          book.audioTracks,
+          chapter.href
+        );
         
         return (
           <Button
             key={chapter.id}
             variant={isActive ? "secondary" : "ghost"}
-            size="sm"
+            size="default"
             className={cn(
               "justify-start relative min-w-0 w-full max-w-full overflow-hidden",
               anim("normal", "all"),
@@ -71,7 +76,14 @@ export function ChapterList({
             aria-label={`Go to chapter: ${chapter.title}`}
             aria-current={isActive ? "true" : undefined}
           >
-            <span className="truncate flex-1 text-left min-w-0 pr-2 overflow-hidden">{chapter.title}</span>
+            <div className="flex flex-col flex-1 min-w-0 pr-2 overflow-hidden">
+              <span className="truncate text-left min-w-0">{chapter.title}</span>
+              {audioTrack && (
+                <span className="text-xs text-muted-foreground truncate text-left min-w-0 mt-0.5 ml-4">
+                Audio track: {audioTrack.title}
+                </span>
+              )}
+            </div>
             {isCurrentlyPlaying && (
               <span
                 className={cn(

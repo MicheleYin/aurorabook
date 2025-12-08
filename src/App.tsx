@@ -527,6 +527,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
           autoScrollEnabled={autoScrollEnabled}
           onAutoScrollToggle={handleAutoScrollToggle}
           onTrackChange={handleTrackChange}
+          audioSyncMap={activeBook.audioSyncMap}
+          chapters={activeBook.chapters}
         />
       ) : null}
       <div
