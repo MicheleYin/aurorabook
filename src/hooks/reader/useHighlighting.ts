@@ -1,5 +1,6 @@
 /**
  * Hook for managing audio highlighting animations
+ * Uses an animation queue to ensure animations play in correct order
  * No useEffects - highlighting applied explicitly via callback
  */
 
@@ -8,134 +9,211 @@ import { useCallback, useRef } from "react";
 // Match CSS animation duration (--anim-duration-slow = 400ms)
 const ANIMATION_DURATION_MS = 400;
 
+type QueuedAction = 
+  | { type: 'clear' }
+  | { type: 'highlight'; elementId: string };
+
 export function useHighlighting(
   contentRef: React.RefObject<HTMLDivElement | null>
 ) {
   const highlightRef = useRef({
+    queue: [] as QueuedAction[],
+    processing: false,
+    currentElement: null as HTMLElement | null,
+    currentElementId: null as string | null,
     enterTimeout: null as number | null,
     exitTimeouts: new Map<HTMLElement, number>(),
-    lastHighlightedId: null as string | null,
   });
 
-  const applyHighlight = useCallback((elementId: string | null) => {
+  const processQueue = useCallback(() => {
+    const ref = highlightRef.current;
     const root = contentRef.current;
-    if (!root) return;
-
-    if (!elementId) {
-      // Clear all highlights
-      const allHighlighted = root.querySelectorAll(".audio-highlight, .audio-highlight-enter, .audio-highlight-active");
-      allHighlighted.forEach((el) => {
-        const element = el as HTMLElement;
-        // Cancel any pending exit timeouts for this element
-        const exitTimeout = highlightRef.current.exitTimeouts.get(element);
-        if (exitTimeout !== undefined) {
-          clearTimeout(exitTimeout);
-          highlightRef.current.exitTimeouts.delete(element);
-        }
-        element.classList.remove("audio-highlight", "audio-highlight-enter", "audio-highlight-active", "audio-highlight-exit");
-      });
-      highlightRef.current.lastHighlightedId = null;
+    
+    if (ref.processing || ref.queue.length === 0 || !root) {
       return;
     }
 
-    const previousHighlightedId = highlightRef.current.lastHighlightedId;
-    const isNewHighlight = elementId !== previousHighlightedId;
+    ref.processing = true;
+    const action = ref.queue.shift()!;
 
-    // Clear previous enter timeout
-    if (highlightRef.current.enterTimeout !== null) {
-      clearTimeout(highlightRef.current.enterTimeout);
-      highlightRef.current.enterTimeout = null;
-    }
+    if (action.type === 'clear') {
+      // Cancel any pending enter timeout
+      if (ref.enterTimeout !== null) {
+        clearTimeout(ref.enterTimeout);
+        ref.enterTimeout = null;
+      }
 
-    // Remove existing highlights
-    const allHighlighted = root.querySelectorAll(".audio-highlight, .audio-highlight-enter, .audio-highlight-active");
-    allHighlighted.forEach((el) => {
-      const element = el as HTMLElement;
-      if (element.id === elementId) {
-        // This is the element being highlighted - cancel any exit animation
-        const exitTimeout = highlightRef.current.exitTimeouts.get(element);
-        if (exitTimeout !== undefined) {
-          clearTimeout(exitTimeout);
-          highlightRef.current.exitTimeouts.delete(element);
-        }
-        element.classList.remove("audio-highlight-exit");
+      // Clear all highlights with fade-out
+      const allHighlighted = root.querySelectorAll(".audio-highlight, .audio-highlight-enter, .audio-highlight-active");
+      
+      if (allHighlighted.length === 0) {
+        ref.processing = false;
+        ref.currentElement = null;
+        ref.currentElementId = null;
+        processQueue();
         return;
       }
+
+      allHighlighted.forEach((el) => {
+        const element = el as HTMLElement;
+        // Cancel any pending exit timeouts
+        const exitTimeout = ref.exitTimeouts.get(element);
+        if (exitTimeout !== undefined) {
+          clearTimeout(exitTimeout);
+          ref.exitTimeouts.delete(element);
+        }
+        
+        // Trigger exit animation
+        element.classList.remove("audio-highlight-enter", "audio-highlight-active");
+        if (!element.classList.contains("audio-highlight")) {
+          element.classList.add("audio-highlight");
+        }
+        element.classList.add("audio-highlight-exit");
+        
+        // Clean up after exit animation
+        const timeoutId = window.setTimeout(() => {
+          element.classList.remove("audio-highlight", "audio-highlight-exit");
+          ref.exitTimeouts.delete(element);
+        }, ANIMATION_DURATION_MS);
+        
+        ref.exitTimeouts.set(element, timeoutId);
+      });
+
+      // Clear current element reference
+      ref.currentElement = null;
+      ref.currentElementId = null;
       
-      // Cancel any pending exit timeout for this element
-      const exitTimeout = highlightRef.current.exitTimeouts.get(element);
+      // Wait for exit animations to complete before processing next item
+      window.setTimeout(() => {
+        ref.processing = false;
+        processQueue();
+      }, ANIMATION_DURATION_MS);
+      return;
+    }
+
+    // Handle highlight action
+    const { elementId } = action;
+    const previousElementId = ref.currentElementId;
+    const isNewHighlight = elementId !== previousElementId;
+
+    // Clear previous enter timeout
+    if (ref.enterTimeout !== null) {
+      clearTimeout(ref.enterTimeout);
+      ref.enterTimeout = null;
+    }
+
+    // If there's a current element and it's different, fade it out first
+    if (ref.currentElement && isNewHighlight) {
+      const previousElement = ref.currentElement;
+      
+      // Cancel any pending exit timeout
+      const exitTimeout = ref.exitTimeouts.get(previousElement);
       if (exitTimeout !== undefined) {
         clearTimeout(exitTimeout);
-        highlightRef.current.exitTimeouts.delete(element);
+        ref.exitTimeouts.delete(previousElement);
       }
       
-      // Remove enter/active states and trigger exit animation
-      element.classList.remove("audio-highlight-enter", "audio-highlight-active");
-      if (!element.classList.contains("audio-highlight")) {
-        element.classList.add("audio-highlight");
+      // Trigger exit animation
+      previousElement.classList.remove("audio-highlight-enter", "audio-highlight-active");
+      if (!previousElement.classList.contains("audio-highlight")) {
+        previousElement.classList.add("audio-highlight");
       }
-      element.classList.add("audio-highlight-exit");
+      previousElement.classList.add("audio-highlight-exit");
       
-      // Set timeout to clean up after exit animation completes
-      // Match the CSS animation duration
+      // Clean up after exit animation
       const timeoutId = window.setTimeout(() => {
-        element.classList.remove("audio-highlight", "audio-highlight-exit");
-        highlightRef.current.exitTimeouts.delete(element);
+        previousElement.classList.remove("audio-highlight", "audio-highlight-exit");
+        ref.exitTimeouts.delete(previousElement);
       }, ANIMATION_DURATION_MS);
       
-      highlightRef.current.exitTimeouts.set(element, timeoutId);
-    });
+      ref.exitTimeouts.set(previousElement, timeoutId);
+    }
 
-    // Apply new highlighting
+    // Find and apply new highlight
     const selector =
       typeof CSS !== "undefined" && CSS.escape
         ? `#${CSS.escape(elementId)}`
         : `#${elementId}`;
     const element = root.querySelector<HTMLElement>(selector);
-    
+
     if (element) {
-      // Ensure exit animation is removed
+      // Cancel any exit animation on this element
+      const exitTimeout = ref.exitTimeouts.get(element);
+      if (exitTimeout !== undefined) {
+        clearTimeout(exitTimeout);
+        ref.exitTimeouts.delete(element);
+      }
       element.classList.remove("audio-highlight-exit");
-      
-      // If this element was previously highlighted and is being re-highlighted,
-      // we might need to reset the animation state
-      const wasHighlighted = element.classList.contains("audio-highlight") || 
-                             element.classList.contains("audio-highlight-enter") ||
-                             element.classList.contains("audio-highlight-active");
-      
-      if (wasHighlighted && !isNewHighlight) {
-        // Same element, just ensure it's in active state
+
+      // If this is the same element, just ensure it's active
+      if (!isNewHighlight && ref.currentElement === element) {
         element.classList.remove("audio-highlight-enter");
         element.classList.add("audio-highlight", "audio-highlight-active");
-      } else {
-        // New highlight or element
-        element.classList.remove("audio-highlight-enter", "audio-highlight-active");
-        element.classList.add("audio-highlight");
-        
-        if (isNewHighlight) {
-          // Use requestAnimationFrame to ensure DOM is ready
+        ref.processing = false;
+        processQueue();
+        return;
+      }
+
+      // Apply new highlight
+      element.classList.remove("audio-highlight-enter", "audio-highlight-active");
+      element.classList.add("audio-highlight");
+
+      // Wait for previous exit animation if needed
+      const waitTime = isNewHighlight && ref.currentElement ? ANIMATION_DURATION_MS : 0;
+
+      window.setTimeout(() => {
+        // Double-check element still exists and is still the target
+        if (element.id === elementId && element.classList.contains("audio-highlight")) {
+          // Start fade-in animation
           requestAnimationFrame(() => {
-            // Double-check element still exists and is still the target
             if (element.id === elementId && element.classList.contains("audio-highlight")) {
               element.classList.add("audio-highlight-enter");
-              highlightRef.current.enterTimeout = window.setTimeout(() => {
-                // Double-check again before transitioning
+              
+              // Transition to active state after fade-in completes
+              ref.enterTimeout = window.setTimeout(() => {
                 if (element.id === elementId && element.classList.contains("audio-highlight-enter")) {
                   element.classList.remove("audio-highlight-enter");
                   element.classList.add("audio-highlight-active");
                 }
-                highlightRef.current.enterTimeout = null;
+                ref.enterTimeout = null;
+                ref.processing = false;
+                ref.currentElement = element;
+                ref.currentElementId = elementId;
+                processQueue();
               }, ANIMATION_DURATION_MS);
+            } else {
+              ref.processing = false;
+              processQueue();
             }
           });
         } else {
-          element.classList.add("audio-highlight-active");
+          ref.processing = false;
+          processQueue();
         }
-      }
+      }, waitTime);
+    } else {
+      // Element not found, continue processing
+      ref.processing = false;
+      ref.currentElement = null;
+      ref.currentElementId = null;
+      processQueue();
+    }
+  }, [contentRef]);
+
+  const applyHighlight = useCallback((elementId: string | null) => {
+    const root = contentRef.current;
+    if (!root) return;
+
+    // Add action to queue
+    if (!elementId) {
+      highlightRef.current.queue.push({ type: 'clear' });
+    } else {
+      highlightRef.current.queue.push({ type: 'highlight', elementId });
     }
 
-    highlightRef.current.lastHighlightedId = elementId;
-  }, [contentRef]);
+    // Process queue
+    processQueue();
+  }, [processQueue]);
 
   return {
     applyHighlight,

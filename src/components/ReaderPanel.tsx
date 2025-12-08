@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Headphones } from "lucide-react";
 
 import type { ChapterSelectionOptions, ReaderPanelBaseProps, AudioProgressSnapshot } from "./reader/types";
+import type { UITheme } from "../types/ui";
 import { ReaderSettingsControl } from "./reader/ReaderSettingsControl";
 import { ReaderTocDrawer } from "./reader/ReaderTocDrawer";
 import { ReaderWrapper } from "./reader/ReaderWrapper";
@@ -10,6 +11,8 @@ import { animPatterns, enterExit, anim } from "../lib/animations";
 import { Button } from "./ui/button";
 type ReaderPanelProps = ReaderPanelBaseProps & {
   resolvedUiTheme: "light" | "dark";
+  uiTheme: UITheme;
+  onThemeChange: (theme: UITheme) => void;
   onChromeVisibilityChange?: (visible: boolean) => void;
   audioPlayerVisible?: boolean;
   onOpenAudioPlayer?: () => void;
@@ -27,6 +30,8 @@ export function ReaderPanel({
   onSelectChapter,
   onNavigateLibrary,
   resolvedUiTheme,
+  uiTheme,
+  onThemeChange,
   onChapterProgress,
   onChromeVisibilityChange,
   audioPlayerVisible,
@@ -97,8 +102,7 @@ export function ReaderPanel({
     onNavigateLibrary?.();
   };
 
-  const appliedTheme: "light" | "dark" =
-     preferences.theme === "system" ? resolvedUiTheme : preferences.theme;
+  const appliedTheme: "light" | "dark" = resolvedUiTheme;
   const audioTracks = activeBook?.audioTracks ?? [];
   const hasAudioTracks = audioTracks.length > 0;
   const showAudioPlayer = audioPlayerVisible ?? hasAudioTracks;
@@ -195,6 +199,8 @@ export function ReaderPanel({
                 }
                 setIsSettingsOpen(open);
               }}
+              uiTheme={uiTheme}
+              onThemeChange={onThemeChange}
             />
           </div>
         </div>

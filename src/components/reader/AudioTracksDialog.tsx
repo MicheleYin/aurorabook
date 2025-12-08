@@ -128,13 +128,13 @@ export function AudioTracksDialog({
   if (isDesktop) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-md max-h-[80vh]">
+        <DialogContent className="max-w-md ">
           <DialogHeader>
             <DialogTitle>
               {bookTitle ? `${bookTitle} - Tracks` : "All Tracks"}
             </DialogTitle>
           </DialogHeader>
-          <div className="mt-4 max-h-[60vh] overflow-y-auto px-1 py-1">
+          <div className="my-4 px-1 py-1 max-h-[80vh] overflow-y-auto">
             {tracksListContent}
           </div>
         </DialogContent>

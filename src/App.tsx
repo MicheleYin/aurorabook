@@ -464,6 +464,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
         setActiveView("library");
       }}
       resolvedUiTheme={resolvedUiTheme}
+      uiTheme={uiTheme}
+      onThemeChange={(theme) => updateSettings({ theme })}
       onChapterProgress={handleChapterProgress}
       onChromeVisibilityChange={setIsReaderChromeVisible}
       audioPlayerVisible={Boolean(activeBook?.audioTracks?.length) && isAudioPlayerOpen}

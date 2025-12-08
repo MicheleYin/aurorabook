@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { Settings2, X } from "lucide-react";
 
 import type { ReaderPreferences } from "../../types/reader";
+import type { UITheme } from "../../types/ui";
 import { cn } from "../../lib/utils";
 import { anim } from "../../lib/animations";
 import {
@@ -32,6 +33,8 @@ type ReaderSettingsControlProps = {
   onPreferencesChange: ReaderPanelBaseProps["onPreferencesChange"];
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
+  uiTheme: UITheme;
+  onThemeChange: (theme: UITheme) => void;
 };
 
 export function ReaderSettingsControl({
@@ -39,6 +42,8 @@ export function ReaderSettingsControl({
   onPreferencesChange,
   isOpen,
   onOpenChange,
+  uiTheme,
+  onThemeChange,
 }: ReaderSettingsControlProps) {
   const fontOptionRefs = useRef<
     Record<ReaderPreferences["fontFamily"], HTMLButtonElement | null>
@@ -50,7 +55,7 @@ export function ReaderSettingsControl({
     atkinson: null,
   });
   const themeOptionRefs = useRef<
-    Record<ReaderPreferences["theme"], HTMLButtonElement | null>
+    Record<UITheme, HTMLButtonElement | null>
   >({
     system: null,
     light: null,
@@ -75,7 +80,7 @@ export function ReaderSettingsControl({
   const scrollActiveOptions = useCallback(
     (behavior: ScrollBehavior = "smooth") => {
       const nodes = [
-        themeOptionRefs.current[preferences.theme],
+        themeOptionRefs.current[uiTheme],
         fontOptionRefs.current[preferences.fontFamily],
         fontSizeOptionRefs.current[preferences.fontSize],
         contentPaddingOptionRefs.current[preferences.contentPadding],
@@ -86,7 +91,7 @@ export function ReaderSettingsControl({
       );
     },
     [
-      preferences.theme,
+      uiTheme,
       preferences.fontFamily,
       preferences.fontSize,
       preferences.contentPadding,
@@ -111,11 +116,11 @@ export function ReaderSettingsControl({
               <Button
                 key={option.id}
                 ref={(node) => {
-                  themeOptionRefs.current[option.id] = node;
+                  themeOptionRefs.current[option.id as UITheme] = node;
                 }}
                 size="sm"
-                variant={preferences.theme === option.id ? "secondary" : "ghost"}
-                onClick={() => onPreferencesChange({ theme: option.id })}
+                variant={uiTheme === option.id ? "secondary" : "ghost"}
+                onClick={() => onThemeChange(option.id as UITheme)}
                 className="min-w-[140px] flex-shrink-0 snap-start flex-col items-start gap-2 px-4 py-3 text-left h-auto"
               >
                 <span className="flex items-center gap-2">
@@ -160,7 +165,7 @@ export function ReaderSettingsControl({
                 size="sm"
                 variant={preferences.fontFamily === option.id ? "secondary" : "ghost"}
                 onClick={() => onPreferencesChange({ fontFamily: option.id })}
-                className="min-w-[140px] flex-shrink-0 snap-start flex-col items-start gap-1 h-auto"
+                className="min-w-[140px] flex-shrink-0 snap-start flex-col items-start gap-1 h-auto py-2"
               >
                 <span className={cn("text-lg leading-none", fontClassMap[option.id])}>
                   {fontPreviewText[option.id]}
