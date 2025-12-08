@@ -32,7 +32,7 @@ pub use opf::{find_opf_path, derive_base_path_from_opf};
 pub use metadata::{extract_metadata_with_epub_crate, parse_opf_content};
 
 // Re-export navigation functions
-pub use navigation::parse_ncx_titles;
+pub use navigation::{parse_ncx_titles, parse_ncx_ordered_hrefs};
 
 // Re-export cover functions
 pub use cover::{find_cover_image, extract_cover_image_as_data_url};

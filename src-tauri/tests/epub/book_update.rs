@@ -5,7 +5,9 @@
 //! - order_audio_tracks_by_chapters
 
 use aurorabook_lib::epub::book_update::order_audio_tracks_by_chapters;
+use aurorabook_lib::epub::parser::ManifestItem;
 use aurorabook_lib::book_service::models::{AudioTrack, Chapter};
+use std::collections::HashMap;
 
 #[test]
 fn test_order_audio_tracks_by_chapters() {
@@ -17,6 +19,7 @@ fn test_order_audio_tracks_by_chapters() {
             href: "Audio/chapter1.mp3".to_string(),
             url: None,
             duration: None,
+            order: 0,
         },
         AudioTrack {
             id: "track2".to_string(),
@@ -24,9 +27,11 @@ fn test_order_audio_tracks_by_chapters() {
             href: "Audio/chapter2.mp3".to_string(),
             url: None,
             duration: None,
+            order: 0,
         },
     ];
     
+    // Create chapters in order: chapter1, chapter2
     let chapters = vec![
         Chapter {
             id: "ch1".to_string(),
@@ -50,10 +55,43 @@ fn test_order_audio_tracks_by_chapters() {
         },
     ];
     
-    let ordered = order_audio_tracks_by_chapters(&audio_tracks, &chapters);
+    // Create manifest items with media-overlay pointing to SMIL files
+    let mut manifest_items = HashMap::new();
+    manifest_items.insert("chapter1".to_string(), ManifestItem {
+        id: "chapter1".to_string(),
+        href: "chapter1.xhtml".to_string(),
+        media_type: Some("application/xhtml+xml".to_string()),
+        properties: None,
+        media_overlay: Some("s001".to_string()),
+    });
+    manifest_items.insert("chapter2".to_string(), ManifestItem {
+        id: "chapter2".to_string(),
+        href: "chapter2.xhtml".to_string(),
+        media_type: Some("application/xhtml+xml".to_string()),
+        properties: None,
+        media_overlay: Some("s002".to_string()),
+    });
+    manifest_items.insert("m001".to_string(), ManifestItem {
+        id: "m001".to_string(),
+        href: "Audio/chapter1.mp3".to_string(),
+        media_type: Some("audio/mpeg".to_string()),
+        properties: None,
+        media_overlay: None,
+    });
+    manifest_items.insert("m002".to_string(), ManifestItem {
+        id: "m002".to_string(),
+        href: "Audio/chapter2.mp3".to_string(),
+        media_type: Some("audio/mpeg".to_string()),
+        properties: None,
+        media_overlay: None,
+    });
+    
+    let ordered = order_audio_tracks_by_chapters(&audio_tracks, &chapters, &manifest_items);
     assert_eq!(ordered.len(), 2);
     assert_eq!(ordered[0].href, "Audio/chapter1.mp3");
+    assert_eq!(ordered[0].order, 0);
     assert_eq!(ordered[1].href, "Audio/chapter2.mp3");
+    assert_eq!(ordered[1].order, 1);
 }
 
 #[test]
@@ -66,6 +104,7 @@ fn test_order_audio_tracks_mismatch() {
             href: "Audio/other.mp3".to_string(),
             url: None,
             duration: None,
+            order: 0,
         },
     ];
     
@@ -82,7 +121,23 @@ fn test_order_audio_tracks_mismatch() {
         },
     ];
     
-    let ordered = order_audio_tracks_by_chapters(&audio_tracks, &chapters);
+    let mut manifest_items = HashMap::new();
+    manifest_items.insert("chapter1".to_string(), ManifestItem {
+        id: "chapter1".to_string(),
+        href: "chapter1.xhtml".to_string(),
+        media_type: Some("application/xhtml+xml".to_string()),
+        properties: None,
+        media_overlay: None,
+    });
+    manifest_items.insert("m001".to_string(), ManifestItem {
+        id: "m001".to_string(),
+        href: "Audio/other.mp3".to_string(),
+        media_type: Some("audio/mpeg".to_string()),
+        properties: None,
+        media_overlay: None,
+    });
+    
+    let ordered = order_audio_tracks_by_chapters(&audio_tracks, &chapters, &manifest_items);
     // Should still include unmatched tracks at the end
     assert_eq!(ordered.len(), 1);
 }

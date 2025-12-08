@@ -924,7 +924,7 @@ pub async fn ingest_epub(
     
     // Extract metadata using epub crate in a separate blocking task
     let epub_data_for_metadata = epub_data.clone();
-    let (metadata, manifest_items, _spine_items, opf_path) = tokio::task::spawn_blocking(move || {
+    let (metadata, manifest_items, spine_items, opf_path) = tokio::task::spawn_blocking(move || {
         use crate::epub::parser::extract_metadata_with_epub_crate;
         extract_metadata_with_epub_crate(&epub_data_for_metadata)
             .map_err(|e| format!("Failed to extract metadata: {}", e))
@@ -962,7 +962,7 @@ pub async fn ingest_epub(
     // Extract audio tracks from manifest
     let mut audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
     
-    // Order audio tracks to match chapter order (chapters are already in spine order)
+    // Order audio tracks to match chapter order (chapters are already in correct spine order)
     // This function also sets each track's order to match its corresponding chapter's order
     use crate::epub::order_audio_tracks_by_chapters;
     audio_tracks = order_audio_tracks_by_chapters(&audio_tracks, &chapters, &manifest_items);

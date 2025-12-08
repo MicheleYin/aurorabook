@@ -299,3 +299,163 @@ pub fn parse_ncx_titles(ncx_content: &str) -> Result<HashMap<String, String>, St
     Ok(title_map)
 }
 
+/// Parse NCX file and extract ordered list of hrefs by playOrder.
+///
+/// The NCX (Navigation Control file for XML) contains the table of contents
+/// with proper reading order via playOrder attributes. This function extracts
+/// the ordered list of hrefs sorted by playOrder.
+///
+/// # Arguments
+/// * `ncx_content` - The content of the NCX file as a string
+///
+/// # Returns
+/// A vector of href paths in playOrder
+///
+/// # Example
+/// ```rust
+/// let ncx_content = std::fs::read_to_string("toc.ncx")?;
+/// let ordered_hrefs = parse_ncx_ordered_hrefs(&ncx_content)?;
+/// println!("Found {} ordered hrefs", ordered_hrefs.len());
+/// ```
+pub fn parse_ncx_ordered_hrefs(ncx_content: &str) -> Result<Vec<String>, String> {
+    use log::debug;
+    
+    let mut ordered_items: Vec<(u32, String)> = Vec::new();
+    let mut reader = Reader::from_str(ncx_content);
+    reader.trim_text(true);
+    reader.check_end_names(false);
+    
+    let mut in_nav_point = false;
+    let mut current_href = String::new();
+    let mut current_play_order: Option<u32> = None;
+    
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let name_bytes_vec = e.name().as_ref().to_vec();
+                let local_name = if let Some(colon_pos) = name_bytes_vec.iter().position(|&b| b == b':') {
+                    &name_bytes_vec[colon_pos + 1..]
+                } else {
+                    &name_bytes_vec
+                };
+                
+                if local_name == b"navPoint" {
+                    in_nav_point = true;
+                    current_href.clear();
+                    current_play_order = None;
+                    
+                    // Extract playOrder attribute
+                    for attr in e.attributes() {
+                        if let Ok(attr) = attr {
+                            let attr_key = attr.key.as_ref();
+                            let attr_local = if let Some(colon_pos) = attr_key.iter().position(|&b| b == b':') {
+                                &attr_key[colon_pos + 1..]
+                            } else {
+                                attr_key
+                            };
+                            
+                            if attr_local == b"playOrder" {
+                                if let Ok(order) = String::from_utf8_lossy(&attr.value).parse::<u32>() {
+                                    current_play_order = Some(order);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                } else if in_nav_point && local_name == b"content" {
+                    // Extract src attribute
+                    for attr in e.attributes() {
+                        if let Ok(attr) = attr {
+                            let attr_key = attr.key.as_ref();
+                            let attr_local = if let Some(colon_pos) = attr_key.iter().position(|&b| b == b':') {
+                                &attr_key[colon_pos + 1..]
+                            } else {
+                                attr_key
+                            };
+                            
+                            if attr_local == b"src" {
+                                current_href = String::from_utf8_lossy(&attr.value).to_string();
+                                // Remove fragment identifier if present
+                                if let Some(fragment_pos) = current_href.find('#') {
+                                    current_href = current_href[..fragment_pos].to_string();
+                                }
+                                // Normalize href path (remove leading slash if present)
+                                if current_href.starts_with("/") {
+                                    current_href = current_href[1..].to_string();
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let name_bytes_vec = e.name().as_ref().to_vec();
+                let local_name = if let Some(colon_pos) = name_bytes_vec.iter().position(|&b| b == b':') {
+                    &name_bytes_vec[colon_pos + 1..]
+                } else {
+                    &name_bytes_vec
+                };
+                
+                // Handle self-closing <content src="..."/> elements
+                if in_nav_point && local_name == b"content" {
+                    for attr in e.attributes() {
+                        if let Ok(attr) = attr {
+                            let attr_key = attr.key.as_ref();
+                            let attr_local = if let Some(colon_pos) = attr_key.iter().position(|&b| b == b':') {
+                                &attr_key[colon_pos + 1..]
+                            } else {
+                                attr_key
+                            };
+                            
+                            if attr_local == b"src" {
+                                current_href = String::from_utf8_lossy(&attr.value).to_string();
+                                if let Some(fragment_pos) = current_href.find('#') {
+                                    current_href = current_href[..fragment_pos].to_string();
+                                }
+                                if current_href.starts_with("/") {
+                                    current_href = current_href[1..].to_string();
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(e)) => {
+                let name_bytes_vec = e.name().as_ref().to_vec();
+                let local_name = if let Some(colon_pos) = name_bytes_vec.iter().position(|&b| b == b':') {
+                    &name_bytes_vec[colon_pos + 1..]
+                } else {
+                    &name_bytes_vec
+                };
+                
+                if local_name == b"navPoint" {
+                    if !current_href.is_empty() {
+                        let play_order = current_play_order.unwrap_or(0);
+                        ordered_items.push((play_order, current_href.clone()));
+                        debug!("NCX: Ordered href: playOrder={}, href='{}'", play_order, current_href);
+                    }
+                    in_nav_point = false;
+                    current_href.clear();
+                    current_play_order = None;
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(format!("XML parse error: {}", e)),
+            _ => {}
+        }
+    }
+    
+    // Sort by playOrder and extract just the hrefs
+    ordered_items.sort_by_key(|(order, _)| *order);
+    
+    debug!("NCX: Extracted {} ordered hrefs", ordered_items.len());
+    for (idx, (order, href)) in ordered_items.iter().enumerate() {
+        log::info!("🔍 DEBUG: NCX parsing: sorted item #{}: playOrder={}, href='{}'", idx, order, href);
+    }
+    
+    let ordered_hrefs: Vec<String> = ordered_items.into_iter().map(|(_, href)| href).collect();
+    Ok(ordered_hrefs)
+}
+
