@@ -9,7 +9,6 @@ import { isIOS } from "../../lib/is-tauri";
 import {
   readAllBooks,
   addBook,
-  type LibraryFilter,
 } from "../../lib/book-service";
 import type { Book } from "../../types/reader";
 import type { IngestParams } from "./types";
@@ -22,53 +21,47 @@ export function useLibraryOperations(
   const [isImporting, setIsImporting] = useState(false);
 
   const refreshLibrary = useCallback(
-    async (filter?: LibraryFilter) => {
+    async () => {
       try {
-        const books = await readAllBooks(filter);
+        // Always load all books without filtering - filtering is now done on the frontend
+        const books = await readAllBooks();
         
-        // If a filter is applied, replace the library entirely with filtered results
-        // Otherwise, merge with existing library to preserve any in-memory updates
-        if (filter?.filter || filter?.search) {
-          // Filter is active - replace library with filtered results
-          setLibrary(books);
-        } else {
-          // No filter - merge to preserve any in-memory updates (like loaded chapter content)
-          setLibrary((prevLibrary) => {
-            const backendBooksMap = new Map<string, Book>();
-            books.forEach((book) => {
-              backendBooksMap.set(book.id, book);
-              backendBooksMap.set(book.sourcePath, book);
-            });
+        // Merge with existing library to preserve any in-memory updates (like loaded chapter content)
+        setLibrary((prevLibrary) => {
+          const backendBooksMap = new Map<string, Book>();
+          books.forEach((book) => {
+            backendBooksMap.set(book.id, book);
+            backendBooksMap.set(book.sourcePath, book);
+          });
 
-            const mergedBooks: Book[] = [];
-            const processedIds = new Set<string>();
-            const processedPaths = new Set<string>();
+          const mergedBooks: Book[] = [];
+          const processedIds = new Set<string>();
+          const processedPaths = new Set<string>();
 
-            // Start with backend books (source of truth) - these are the most up-to-date
-            books.forEach((book) => {
+          // Start with backend books (source of truth) - these are the most up-to-date
+          books.forEach((book) => {
+            mergedBooks.push(book);
+            processedIds.add(book.id);
+            processedPaths.add(book.sourcePath);
+          });
+
+          // Add any books from prevLibrary that have in-memory updates (like loaded chapters)
+          // but aren't in the backend results (shouldn't happen, but safe to check)
+          prevLibrary.forEach((book) => {
+            if (
+              !processedIds.has(book.id) &&
+              !processedPaths.has(book.sourcePath)
+            ) {
               mergedBooks.push(book);
               processedIds.add(book.id);
               processedPaths.add(book.sourcePath);
-            });
-
-            // Add any books from prevLibrary that have in-memory updates (like loaded chapters)
-            // but aren't in the backend results (shouldn't happen, but safe to check)
-            prevLibrary.forEach((book) => {
-              if (
-                !processedIds.has(book.id) &&
-                !processedPaths.has(book.sourcePath)
-              ) {
-                mergedBooks.push(book);
-                processedIds.add(book.id);
-                processedPaths.add(book.sourcePath);
-              }
-            });
-
-            // Always return a new array to ensure React detects the change
-            // This is important when books are updated (e.g., after conversion)
-            return mergedBooks;
+            }
           });
-        }
+
+          // Always return a new array to ensure React detects the change
+          // This is important when books are updated (e.g., after conversion)
+          return mergedBooks;
+        });
       } catch (error) {
         console.warn("Failed to load books from Rust backend.", error);
       }

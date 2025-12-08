@@ -17,6 +17,7 @@ import { useBookConversion } from "./hooks/useBookConversion";
 import { useAppNavigation } from "./hooks/useAppNavigation";
 import { AppContextProvider, useAppContext } from "./contexts/AppContext";
 import { useResolvedTheme } from "./hooks/useResolvedTheme";
+import { filterLibrary } from "./hooks/library/libraryHelpers";
 import type { ChapterSelectionOptions, AudioProgressSnapshot } from "./components/reader/types";
 import { cn } from "./lib/utils";
 import { animPatterns, viewTransition } from "./lib/animations";
@@ -29,6 +30,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     isHydrated,
     isImporting,
     importFromDialog,
+    ingestEpub,
     refreshLibrary,
     updateBookProgress,
     updateBookAudioState,
@@ -74,7 +76,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     handleConvertToAudiobook,
     handleConvertBookFromDetail,
     cancelConversionForBook,
-  } = useBookConversion(setLibrary,);
+  } = useBookConversion(setLibrary, ingestEpub, refreshLibrary);
 
   const {
     activeView,
@@ -416,8 +418,11 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
 
   // Auto-scroll toast is now shown in handleAutoScrollToggle (in useAudioPlayer)
 
-  // Use library directly since filtering is done by backend
-  const filteredLibrary = library;
+  // Filter library on the frontend - this is just a view, doesn't change the library state
+  const filteredLibrary = useMemo(
+    () => filterLibrary(library, libraryFilter, librarySearchTerm),
+    [library, libraryFilter, librarySearchTerm],
+  );
 
   const audioPlayerChromeVisible = activeView === "reader" ? isReaderChromeVisible : true;
 

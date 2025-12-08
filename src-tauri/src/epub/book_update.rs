@@ -270,10 +270,16 @@ async fn update_book_in_library(
         // Update file size with the converted EPUB size
         book.file_size_bytes = Some(epub_size);
         
-        // Check if all chapters are completed
-        if book.completed_chapters.len() >= book.chapters.len() {
+        // Check if all chapters with text content are completed
+        // Only count chapters that have text content (word_count > 0)
+        let chapters_with_text: usize = book.chapters.iter()
+            .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
+            .count();
+        
+        if book.completed_chapters.len() >= chapters_with_text {
             book.conversion_status = ConversionStatus::Done;
-            log::info!("All chapters completed, marking conversion as done");
+            log::info!("All chapters with text content completed ({} of {} total chapters), marking conversion as done", 
+                book.completed_chapters.len(), book.chapters.len());
         }
         
         log::info!("Updated audio tracks for book '{}' ({} tracks), audio sync map, and file size ({} bytes)", 

@@ -3,11 +3,16 @@
  */
 
 import type { Book, BookProgress } from "../../types/reader";
+import type { LibraryFilterOption } from "../../components/library/types";
 import {
   estimatePagesFromWords,
   getChapterPageCount,
   getChapterWordCount,
 } from "../../lib/utils";
+
+// Progress thresholds matching backend constants
+const MIN_PROGRESS_THRESHOLD = 0.01;
+const MAX_PROGRESS_THRESHOLD = 0.99;
 
 export function getNumberValue(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value)
@@ -239,4 +244,73 @@ export const normalizeBookProgressShape = (book: Book): Book => {
     },
   };
 };
+
+/**
+ * Filter books on the frontend based on filter type and search term
+ * This replicates the backend filtering logic but runs entirely in the frontend
+ */
+export function filterLibrary(
+  books: Book[],
+  filter: LibraryFilterOption,
+  searchTerm: string,
+): Book[] {
+  let filtered = [...books];
+
+  // Apply search filter
+  if (searchTerm.trim()) {
+    const searchLower = searchTerm.toLowerCase();
+    filtered = filtered.filter(
+      (book) =>
+        book.title.toLowerCase().includes(searchLower) ||
+        book.author.toLowerCase().includes(searchLower),
+    );
+  }
+
+  // Apply quick filter
+  if (filter !== "all") {
+    switch (filter) {
+      case "new": {
+        filtered = filtered.filter((book) => {
+          return book.progress
+            ? book.progress.bookProgressPercent < MIN_PROGRESS_THRESHOLD
+            : true; // No progress means "new"
+        });
+        break;
+      }
+      case "resume": {
+        filtered = filtered.filter((book) => {
+          if (!book.progress) return false;
+          const progress = book.progress.bookProgressPercent;
+          return (
+            progress >= MIN_PROGRESS_THRESHOLD &&
+            progress < MAX_PROGRESS_THRESHOLD
+          );
+        });
+        break;
+      }
+      case "finished": {
+        filtered = filtered.filter((book) => {
+          return book.progress
+            ? book.progress.bookProgressPercent >= MAX_PROGRESS_THRESHOLD
+            : false;
+        });
+        break;
+      }
+      case "recent": {
+        // Reverse the array to show most recently added first
+        filtered = filtered.reverse();
+        break;
+      }
+      case "author": {
+        // Sort by author name
+        filtered = filtered.sort((a, b) => a.author.localeCompare(b.author));
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return filtered;
+}
 

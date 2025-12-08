@@ -17,6 +17,7 @@ import type { LibraryContextValue, UseChapterProgressParams, UseAudioStateSyncPa
 const LibraryContext = createContext<LibraryContextValue | null>(null);
 
 export function LibraryProvider({ children }: { children: React.ReactNode }) {
+
   const [library, setLibrary] = useState<Book[]>([]);
   const [isHydrated, setIsHydrated] = useState(false);
 

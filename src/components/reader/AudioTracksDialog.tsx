@@ -19,6 +19,7 @@ import {
 } from "../ui/drawer";
 import { cn } from "../../lib/utils";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { anim } from "../../lib/animations";
 
 const formatTime = (value: number) => {
   if (!Number.isFinite(value) || value < 0) {
@@ -101,7 +102,7 @@ export function AudioTracksDialog({
   );
 
   const tracksListContent = (
-    <div className="space-y-1">
+    <div className="flex flex-col gap-1 w-full min-w-0">
       {tracks.map((track, index) => {
         const isCurrentTrack = index === currentIndex;
         const trackUrl = loadedTrackUrls.get(track.id) || track.url;
@@ -123,11 +124,22 @@ export function AudioTracksDialog({
           <Button
             key={track.id}
             variant={isCurrentTrack ? "secondary" : "ghost"}
+            size="default"
             className={cn(
-              "w-full justify-start text-left h-auto px-4 py-3 rounded-lg",
-              isCurrentTrack && "ring-1 ring-primary/20"
+              "h-auto",
+              "justify-start relative min-w-0 w-full max-w-full",
+              anim("normal", "all"),
+              "hover:translate-x-1 hover:bg-accent/80",
+              "active:translate-x-0.5",
+              "transition-all duration-200 ease-out"
             )}
-            // disabled={!hasUrl}
+            style={{ 
+              display: "flex",
+              whiteSpace: "normal",
+              width: "100%",
+              maxWidth: "100%",
+              boxSizing: "border-box",
+            }}
             onClick={() => {
               console.log("[AudioTracksDialog] Button clicked", {
                 index,
@@ -141,43 +153,41 @@ export function AudioTracksDialog({
             aria-label={`Play track ${index + 1}: ${track.title}`}
             aria-current={isCurrentTrack ? "true" : undefined}
           >
-            <div className="flex items-center justify-between gap-2 w-full min-w-0">
-              <div className="min-w-0 flex-1">
-                <p
-                  className={cn(
-                    "text-sm font-medium truncate",
-                    isCurrentTrack && "text-primary",
-                    !hasUrl && "text-muted-foreground"
-                  )}
-                >
-                  {index + 1}. {track.title}
-                </p>
-                <div className="flex flex-col gap-0.5 mt-0.5">
-                  {track.duration && (
-                    <p className="text-xs text-muted-foreground">
-                      {formatTime(track.duration)}
-                    </p>
-                  )}
-                  {relatedChapters.length > 0 && (
-                    <p className="text-xs text-muted-foreground truncate ml-4">
-                      Chapter: {relatedChapters.map(ch => ch.title).join(", ")}
-                    </p>
-                  )}
-                </div>
+            <div className="flex flex-col flex-1 min-w-0 pr-2">
+              <p
+                className={cn(
+                  "text-sm font-medium truncate text-left min-w-0",
+                  isCurrentTrack && "text-primary",
+                  !hasUrl && "text-muted-foreground"
+                )}
+              >
+                {index + 1}. {track.title}
+              </p>
+              <div className="flex flex-col gap-0.5 mt-0.5">
+                {track.duration && (
+                  <p className="text-xs text-muted-foreground text-left">
+                    {formatTime(track.duration)}
+                  </p>
+                )}
+                {relatedChapters.length > 0 && (
+                  <p className="text-xs text-muted-foreground truncate text-left min-w-0 ml-4">
+                    Chapter: {relatedChapters.map(ch => ch.title).join(", ")}
+                  </p>
+                )}
               </div>
-              {isCurrentTrack && (
-                <span
-                  className={cn(
-                    "px-1.5 py-0.5 text-xs font-medium rounded shrink-0",
-                    "bg-primary text-primary-foreground",
-                    "animate-pulse"
-                  )}
-                  title="Currently playing"
-                >
-                  Playing
-                </span>
-              )}
             </div>
+            {isCurrentTrack && (
+              <span
+                className={cn(
+                  "px-1.5 py-0.5 text-xs font-medium rounded shrink-0",
+                  "bg-primary text-primary-foreground",
+                  "animate-pulse"
+                )}
+                title="Currently playing"
+              >
+                Playing
+              </span>
+            )}
           </Button>
         );
       })}
@@ -193,7 +203,7 @@ export function AudioTracksDialog({
               {bookTitle ? `${bookTitle} - Tracks` : "All Tracks"}
             </DialogTitle>
           </DialogHeader>
-          <div className="my-4 px-1 py-1 max-h-[80vh] overflow-y-auto">
+          <div className="mt-4 flex-1 pr-2 min-w-0 w-full max-h-[80vh] overflow-y-auto">
             {tracksListContent}
           </div>
         </DialogContent>
@@ -224,7 +234,7 @@ export function AudioTracksDialog({
               </DrawerClose>
             </div>
           </DrawerHeader>
-          <div className="max-h-[60vh] overflow-y-auto px-1 py-1">
+          <div className="mt-4 flex-1 pr-2 min-w-0 w-full max-h-[60vh] overflow-y-auto">
             {tracksListContent}
           </div>
         </div>

@@ -207,10 +207,15 @@ async fn load_and_prepare_book(
     // Calculate total words across ALL chapters
     let total_words_all_chapters: usize = all_conversion_chapters.iter().map(|c| c.word_count).sum();
     
-    // Filter out completed chapters
+    // Filter out completed chapters and chapters without text content
+    // Chapters without text content (word_count == 0) are skipped during conversion
+    // so we exclude them from the conversion_chapters list
     let conversion_chapters: Vec<_> = all_conversion_chapters
         .iter()
-        .filter(|chapter| !completed_chapters_set.contains(&chapter.href))
+        .filter(|chapter| {
+            // Only include chapters that haven't been completed AND have text content
+            !completed_chapters_set.contains(&chapter.href) && chapter.word_count > 0
+        })
         .cloned()
         .collect();
     
@@ -261,13 +266,26 @@ async fn handle_all_chapters_completed(
     total_words_all_chapters: usize,
     existing_book: Option<Book>,
 ) -> AppResult<Option<Book>> {
-    log::info!("All chapters already converted for book at {}", source_path);
+    log::info!("All chapters with text content already converted for book at {}", source_path);
     // Mark conversion as done and save word counts if book exists
     if existing_book.is_some() {
         let mut books = load_all_books(app).await
             .map_err(|e| AppError::Store(format!("Failed to load books: {}", e)))?;
         if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
-            book.conversion_status = ConversionStatus::Done;
+            // Verify that all chapters with text content are completed
+            let chapters_with_text: usize = book.chapters.iter()
+                .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
+                .count();
+            
+            if book.completed_chapters.len() >= chapters_with_text {
+                book.conversion_status = ConversionStatus::Done;
+                log::info!("All chapters with text content completed ({} of {} total chapters), marking conversion as done", 
+                    book.completed_chapters.len(), book.chapters.len());
+            } else {
+                log::warn!("Expected all chapters to be completed, but only {}/{} chapters with text are completed", 
+                    book.completed_chapters.len(), chapters_with_text);
+            }
+            
             book.total_words = Some(total_words_all_chapters);
             book.words_processed = Some(total_words_all_chapters);
             save_all_books(app, &books).await

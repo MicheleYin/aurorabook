@@ -14,7 +14,6 @@ import type {
   ChapterProgressSnapshot,
   AudioProgressSnapshot,
 } from "../../components/reader/types";
-import type { LibraryFilter } from "../../lib/book-service";
 
 export type IngestParams = {
   filePath: string;
@@ -50,7 +49,7 @@ export type LibraryContextValue = {
   // Library operations
   importFromDialog: () => Promise<boolean | { book: Book; buffer: ArrayBuffer }>;
   ingestEpub: (params: IngestParams) => Promise<Book | null>;
-  refreshLibrary: (filter?: LibraryFilter) => Promise<void>;
+  refreshLibrary: () => Promise<void>;
 
   // Progress operations
   updateBookProgress: (

@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { LibraryFilterOption, LibraryViewMode } from "../components/library/types";
 import type { Book } from "../types/reader";
-import type { LibraryFilter } from "../lib/book-service";
 
 export type AppView = "library" | "reader" | "settings";
 
 export function useAppNavigation(
   library: Book[],
-  refreshLibrary: (filter?: LibraryFilter) => Promise<void>,
+  refreshLibrary: () => Promise<void>,
   isHydrated: boolean,
 ) {
   const [activeView, setActiveView] = useState<AppView>("library");
@@ -16,19 +15,13 @@ export function useAppNavigation(
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("grid");
   const previousViewRef = useRef<AppView>(activeView);
 
-  // Use backend filtering/search - refresh library when filter or search changes
+  // Refresh library on mount when hydrated (no longer triggered by filter/search changes)
   useEffect(() => {
     if (!isHydrated) return;
-    
-    const filter: LibraryFilter = {
-      filter: libraryFilter !== "all" ? libraryFilter : undefined,
-      search: librarySearchTerm.trim() || undefined,
-    };
-    
-    refreshLibrary(filter).catch((error) => {
-      console.error("Failed to refresh library with filter:", error);
+    refreshLibrary().catch((error) => {
+      console.error("Failed to refresh library:", error);
     });
-  }, [libraryFilter, librarySearchTerm, isHydrated, refreshLibrary]);
+  }, [isHydrated, refreshLibrary]);
 
   useEffect(() => {
     if (!library.length) {
