@@ -462,10 +462,11 @@ async fn save_converted_epub_and_update_book(
     converted_epub: &[u8],
     total_words_all_chapters: usize,
 ) -> AppResult<Option<Book>> {
-    // Store converted EPUB in database
+    // Get database connection once and reuse it
     let db = get_db_connection(app).await
         .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
     
+    // Store converted EPUB in database
     if let Ok(Some(book)) = BookRepository::find_by_source_path(&db, source_path).await {
         EpubRepository::save(&db, source_path, &book.id, converted_epub).await
         .map_err(|e| AppError::Store(format!("Failed to save converted EPUB: {}", e)))?;
@@ -474,10 +475,7 @@ async fn save_converted_epub_and_update_book(
         log::warn!("Book not found for source_path '{}', cannot save converted EPUB", source_path);
     }
     
-    // Save final words_processed now that conversion is complete
-    use crate::book_service::database::get_db_connection;
-    let db = get_db_connection(app).await
-        .map_err(|e| AppError::Store(e))?;
+    // Save final words_processed now that conversion is complete (reusing same connection)
     if let Ok(Some(mut book)) = BookRepository::find_by_source_path(&db, source_path).await {
         if book.total_words.is_none() {
             book.total_words = Some(total_words_all_chapters);

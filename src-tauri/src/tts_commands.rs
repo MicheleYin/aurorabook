@@ -217,7 +217,7 @@ pub async fn generate_tts_batch(
     app: tauri::AppHandle,
 ) -> AppResult<Vec<Vec<u8>>> {
     use crate::tts::engine::TtsEnginePool;
-    use num_cpus;
+    use crate::epub::converter::get_parallelism;
     
     let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(Some(&app))?;
 
@@ -237,7 +237,7 @@ pub async fn generate_tts_batch(
         .unwrap_or(TtsEngineType::Onnx);
 
     // Create engine pool once (reused for all batch items)
-    let parallelism = num_cpus::get().max(1);
+    let parallelism = get_parallelism();
     let engine_pool = TtsEnginePool::new(
         &onnx_path_str,
         &voices_path_str,

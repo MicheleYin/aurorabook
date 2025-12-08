@@ -12,6 +12,31 @@ use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use anyhow::Result as AnyhowResult;
 use tauri::AppHandle;
 
+/// Save conversion progress to database when cancellation occurs
+async fn save_progress_on_cancellation(
+    app: &AppHandle,
+    source_path: &str,
+    words_processed: usize,
+    total_words: usize,
+) {
+    use crate::book_service::database::get_db_connection;
+    use crate::book_service::repositories::BookRepository;
+    
+    if let Ok(db) = get_db_connection(app).await {
+        if let Ok(Some(mut book)) = BookRepository::find_by_source_path(&db, source_path).await {
+            if book.total_words.is_none() {
+                book.total_words = Some(total_words);
+            }
+            book.words_processed = Some(words_processed);
+            if let Err(e) = BookRepository::save(&db, &book).await {
+                log::warn!("Failed to save words_processed on cancellation: {}", e);
+            } else {
+                log::debug!("Saved words_processed on cancellation: {} / {}", words_processed, total_words);
+            }
+        }
+    }
+}
+
 /// Core EPUB to audiobook conversion logic using TTS engine pool with round-robin distribution
 /// This function processes each chapter as a whole, using word alignments from
 /// the TTS engine to generate accurate SMIL timing information.
@@ -23,7 +48,6 @@ pub(crate) async fn convert_epub_core_with_durations(
     options: ConversionOptions,
     progress_callback: ProgressCallback,
     engine: Arc<kokoros::tts::koko::TTSKokoParallel>,
-    _instance_counter: Arc<AtomicUsize>,
     num_instances: usize,
     voice_id: String,
     app: Option<AppHandle>,
@@ -98,7 +122,8 @@ pub(crate) async fn convert_epub_core_with_durations(
             continue;
         }
         
-        // Get worker_id using round-robin distribution (can use 0 since chapters are sequential)
+        // Get worker_id using round-robin distribution (not used directly in process_chapter,
+        // but kept for potential future use or API consistency)
         let worker_id = chapter_index % num_instances;
         
         log::debug!("Processing chapter {}: '{}' with engine instance {}", 
@@ -166,21 +191,7 @@ pub(crate) async fn convert_epub_core_with_durations(
                 // Save current progress before returning
                 let words_processed = words_processed_atomic.load(Ordering::Relaxed);
                 if let (Some(app_ref), Some(source_path_ref)) = (app.as_ref(), source_path.as_ref()) {
-                    use crate::book_service::database::get_db_connection;
-                    use crate::book_service::repositories::BookRepository;
-                    if let Ok(db) = get_db_connection(app_ref).await {
-                        if let Ok(Some(mut book)) = BookRepository::find_by_source_path(&db, source_path_ref).await {
-                        if book.total_words.is_none() {
-                            book.total_words = Some(total_words_all);
-                        }
-                        book.words_processed = Some(words_processed);
-                            if let Err(e) = BookRepository::save(&db, &book).await {
-                            log::warn!("Failed to save words_processed on cancellation: {}", e);
-                        } else {
-                            log::debug!("Saved words_processed on cancellation: {} / {}", words_processed, total_words_all);
-                            }
-                        }
-                    }
+                    save_progress_on_cancellation(app_ref, source_path_ref, words_processed, total_words_all).await;
                 }
                 return Err(anyhow::anyhow!("Conversion cancelled by user"));
             }
@@ -210,21 +221,7 @@ pub(crate) async fn convert_epub_core_with_durations(
                 // Save current progress before returning
                 let words_processed = words_processed_atomic.load(Ordering::Relaxed);
                 if let (Some(app_ref), Some(source_path_ref)) = (app.as_ref(), source_path.as_ref()) {
-                    use crate::book_service::database::get_db_connection;
-                    use crate::book_service::repositories::BookRepository;
-                    if let Ok(db) = get_db_connection(app_ref).await {
-                        if let Ok(Some(mut book)) = BookRepository::find_by_source_path(&db, source_path_ref).await {
-                        if book.total_words.is_none() {
-                            book.total_words = Some(total_words_all);
-                        }
-                        book.words_processed = Some(words_processed);
-                            if let Err(e) = BookRepository::save(&db, &book).await {
-                            log::warn!("Failed to save words_processed on cancellation: {}", e);
-                        } else {
-                            log::debug!("Saved words_processed on cancellation: {} / {}", words_processed, total_words_all);
-                            }
-                        }
-                    }
+                    save_progress_on_cancellation(app_ref, source_path_ref, words_processed, total_words_all).await;
                 }
                 return Err(anyhow::anyhow!("Conversion cancelled by user"));
             }

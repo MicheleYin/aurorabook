@@ -140,7 +140,9 @@ impl TtsEnginePool {
                 })
             }
             TtsEngineType::Candle => {
-                // Candle engine support is not yet implemented in kokoros crate
+                // NOTE: Candle engine support is not yet implemented in kokoros crate.
+                // This variant exists for future compatibility but currently always returns an error.
+                // Use TtsEngineType::Onnx for production code.
                 Err(AppError::TtsGeneration(
                     "Candle engine is not yet implemented. Please use TtsEngineType::Onnx instead.".to_string()
                 ))
@@ -208,7 +210,9 @@ impl TtsEnginePool {
                     .map_err(|e| AppError::TtsGeneration(format!("TTS generation failed: {}", e)))
             }
             TtsEngineType::Candle => {
-                // Candle engine support is not yet implemented in kokoros crate
+                // NOTE: Candle engine support is not yet implemented in kokoros crate.
+                // This variant exists for future compatibility but currently always returns an error.
+                // Use TtsEngineType::Onnx for production code.
                 Err(AppError::TtsGeneration(
                     "Candle engine is not yet implemented. Please use TtsEngineType::Onnx instead.".to_string()
                 ))

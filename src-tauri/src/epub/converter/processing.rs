@@ -11,6 +11,29 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use anyhow::Result as AnyhowResult;
 
+/// Macro to check cancellation token and return early if cancelled
+macro_rules! check_cancellation {
+    ($token:expr) => {
+        if let Some(ref token) = $token {
+            if token.load(Ordering::Relaxed) {
+                return Err(anyhow::anyhow!("Conversion cancelled by user"));
+            }
+        }
+    };
+}
+
+/// Calculate total words processed from atomic counter and chapter word count
+fn calculate_total_words_processed(
+    words_processed_atomic: Option<&Arc<AtomicUsize>>,
+    chapter_word_count: usize,
+) -> (usize, usize) {
+    let current_words_processed = words_processed_atomic
+        .map(|atomic| atomic.load(Ordering::Relaxed))
+        .unwrap_or(0);
+    let total_words_processed = current_words_processed + chapter_word_count;
+    (current_words_processed, total_words_processed)
+}
+
 /// Map word alignments to HTML span segments for SMIL synchronization
 pub(crate) fn map_alignments_to_segments(
     span_mappings: Vec<(String, usize, usize)>,
@@ -136,11 +159,7 @@ pub(crate) async fn process_sentence(
     cancel_token: Option<Arc<AtomicBool>>,
 ) -> AnyhowResult<(Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String)> {
     // Check for cancellation before starting TTS generation
-    if let Some(ref token) = cancel_token {
-        if token.load(Ordering::Relaxed) {
-            return Err(anyhow::anyhow!("Conversion cancelled by user"));
-        }
-    }
+    check_cancellation!(cancel_token);
     
     let text = sentence.trim();
     if text.is_empty() {
@@ -161,11 +180,7 @@ pub(crate) async fn process_sentence(
         .map_err(|e| anyhow::anyhow!("TTS generation failed for sentence {}: {}", sentence_index, e))?;
     
     // Check for cancellation after TTS generation completes
-    if let Some(ref token) = cancel_token {
-        if token.load(Ordering::Relaxed) {
-            return Err(anyhow::anyhow!("Conversion cancelled by user"));
-        }
-    }
+    check_cancellation!(cancel_token);
     
     if audio_samples.is_empty() {
         return Ok((Vec::new(), Vec::new(), String::new()));
@@ -205,7 +220,7 @@ pub(crate) async fn process_chapter(
     chapter_index: usize,
     base_path: &str,
     engine: &Arc<kokoros::tts::koko::TTSKokoParallel>,
-    _worker_id: usize,
+    _worker_id: usize, // Not used directly - each sentence gets its own worker_id via round-robin
     voice_id: &str,
     progress_callback: &ProgressCallback,
     total_words: usize,
@@ -281,12 +296,7 @@ pub(crate) async fn process_chapter(
     let mut handles = Vec::new();
     for (idx, sentence) in sentences.iter().enumerate() {
         // Check for cancellation before spawning each sentence task
-        if let Some(ref token) = cancel_token {
-            if token.load(Ordering::Relaxed) {
-                log::info!("Conversion cancelled before spawning sentence {} in chapter {}", idx + 1, chapter_index + 1);
-                return Err(anyhow::anyhow!("Conversion cancelled by user"));
-            }
-        }
+        check_cancellation!(cancel_token);
         
         let semaphore = Arc::clone(&semaphore);
         let engine = Arc::clone(engine);
@@ -299,11 +309,7 @@ pub(crate) async fn process_chapter(
                 .map_err(|e| anyhow::anyhow!("Failed to acquire semaphore: {}", e))?;
             
             // Check for cancellation after acquiring semaphore permit
-            if let Some(ref token) = cancel_token_clone {
-                if token.load(Ordering::Relaxed) {
-                    return Err(anyhow::anyhow!("Conversion cancelled by user"));
-                }
-            }
+            check_cancellation!(cancel_token_clone);
             
             // Round-robin distribution: sentence index % num_instances
             let worker_id = idx % num_instances;
@@ -324,12 +330,7 @@ pub(crate) async fn process_chapter(
     // Process handles with periodic cancellation checks
     for handle in handles {
         // Check for cancellation before waiting for next result
-        if let Some(ref token) = cancel_token {
-            if token.load(Ordering::Relaxed) {
-                log::info!("Conversion cancelled while processing sentences in chapter {}", chapter_index + 1);
-                return Err(anyhow::anyhow!("Conversion cancelled by user"));
-            }
-        }
+        check_cancellation!(cancel_token);
         
         // Use tokio::select to allow cancellation to interrupt waiting
         let result = if let Some(ref token) = cancel_token {
@@ -361,12 +362,7 @@ pub(crate) async fn process_chapter(
             .map_err(|e| anyhow::anyhow!("Task join error: {}", e))??;
         
         // Check for cancellation after each sentence finishes processing
-        if let Some(ref token) = cancel_token {
-            if token.load(Ordering::Relaxed) {
-                log::info!("Conversion cancelled after processing sentence in chapter {}", chapter_index + 1);
-                return Err(anyhow::anyhow!("Conversion cancelled by user"));
-            }
-        }
+        check_cancellation!(cancel_token);
         
         // Update progress after each sentence completes
         let (idx, audio, alignments, text) = result;
@@ -403,12 +399,7 @@ pub(crate) async fn process_chapter(
     }
     
     // Check for cancellation before merging audio segments
-    if let Some(ref token) = cancel_token {
-        if token.load(Ordering::Relaxed) {
-            log::info!("Conversion cancelled before merging audio in chapter {}", chapter_index + 1);
-            return Err(anyhow::anyhow!("Conversion cancelled by user"));
-        }
-    }
+    check_cancellation!(cancel_token);
     
     // Sort by sentence index to maintain document order
     sentence_results.sort_by_key(|(idx, _, _, _)| *idx);
@@ -448,12 +439,7 @@ pub(crate) async fn process_chapter(
         }
         
         // Check for cancellation after merging each sentence's audio
-        if let Some(ref token) = cancel_token {
-            if token.load(Ordering::Relaxed) {
-                log::info!("Conversion cancelled while merging audio in chapter {}", chapter_index + 1);
-                return Err(anyhow::anyhow!("Conversion cancelled by user"));
-            }
-        }
+        check_cancellation!(cancel_token);
     }
     
     // Use extract_text_with_spans to get updated HTML with spans
@@ -541,14 +527,12 @@ pub(crate) async fn process_chapter(
         );
     }
     
-    // Update progress with current total words processed (including current chapter)
-    // Use chapter.word_count from ingestion to avoid double-counting nested elements
-    let current_words_processed = words_processed_atomic
-        .as_ref()
-        .map(|atomic| atomic.load(Ordering::Relaxed))
-        .unwrap_or(0);
+    // Calculate total words processed (use chapter.word_count from ingestion to avoid double-counting)
     let chapter_words = chapter.word_count;
-    let total_words_processed = current_words_processed + chapter_words;
+    let (_, total_words_processed) = calculate_total_words_processed(
+        words_processed_atomic.as_ref(),
+        chapter_words,
+    );
     
     progress_callback(ConversionProgress {
         current_chapter: chapter_index + 1,
@@ -576,15 +560,7 @@ pub(crate) async fn process_chapter(
     let chapter_path_zip_clone = chapter_path_zip.clone();
     files.insert(chapter_path_zip, updated_html.into_bytes());
     
-    // Update progress with current total words processed (including current chapter)
-    // Use chapter.word_count from ingestion to avoid double-counting nested elements
-    let current_words_processed = words_processed_atomic
-        .as_ref()
-        .map(|atomic| atomic.load(Ordering::Relaxed))
-        .unwrap_or(0);
-    let chapter_words = chapter.word_count;
-    let total_words_processed = current_words_processed + chapter_words;
-    
+    // Update progress for SMIL creation (reuse same calculation)
     progress_callback(ConversionProgress {
         current_chapter: chapter_index + 1,
         total_chapters,

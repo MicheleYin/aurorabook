@@ -23,7 +23,7 @@ pub use extraction::extract_chapters;
 use crate::utils::errors::{AppError, AppResult};
 use crate::epub::converter::conversion::convert_epub_core_with_durations;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, AtomicBool};
+use std::sync::atomic::AtomicBool;
 use tauri::AppHandle;
 
 /// Converts an EPUB file to an audiobook format with synchronized audio.
@@ -159,7 +159,6 @@ pub async fn convert_epub_to_audiobook(
     });
     
     let engine_arc = std::sync::Arc::new(engine);
-    let instance_counter = Arc::new(AtomicUsize::new(0));
     let voice_id = options.voice_id.clone();
     
     convert_epub_core_with_durations(
@@ -167,7 +166,6 @@ pub async fn convert_epub_to_audiobook(
         options, 
         progress_callback, 
         engine_arc,
-        instance_counter,
         num_instances,
         voice_id,
         Some(app),
@@ -279,7 +277,6 @@ pub async fn convert_epub_to_audiobook_standalone(
     });
     
     let engine_arc = std::sync::Arc::new(engine);
-    let instance_counter = Arc::new(AtomicUsize::new(0));
     let voice_id = options.voice_id.clone();
     
     convert_epub_core_with_durations(
@@ -287,7 +284,6 @@ pub async fn convert_epub_to_audiobook_standalone(
         options, 
         progress_callback, 
         engine_arc,
-        instance_counter,
         num_instances,
         voice_id,
         None, // No AppHandle for standalone version
