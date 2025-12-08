@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, MoveVertical, Pause, Play, SkipBack, SkipForward, StepBack, StepForward, X } from "lucide-react";
+import { List, Loader2, MoveVertical, Pause, Play, SkipBack, SkipForward, StepBack, StepForward, X } from "lucide-react";
 
 import type { AudioTrack, BookAudioState } from "../../types/reader";
 import type { AudioProgressSnapshot } from "./types";
@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Slider } from "../ui/slider";
+import { AudioTracksDialog } from "./AudioTracksDialog";
 import { cn } from "../../lib/utils";
 // useAudioStateSync is now accessed via useLibrary hook
 import { useLibrary } from "../../hooks/useLibrary";
@@ -111,6 +112,7 @@ export function ReaderAudioPlayer({
   const [scrubTime, setScrubTime] = useState<number | null>(null);
   const [isDismissing, setIsDismissing] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [showTracksDialog, setShowTracksDialog] = useState(false);
   // Simplified: Use ref to track loaded URLs instead of state to avoid re-render loops
   const loadedTrackUrlsRef = useRef<Map<string, string>>(new Map());
 
@@ -1114,6 +1116,16 @@ export function ReaderAudioPlayer({
     setPlaybackRate(nextRate);
   }, []);
 
+  const handleTrackSelect = useCallback((trackIndex: number) => {
+    console.log("[Audio Player] handleTrackSelect called", {
+      trackIndex,
+      tracksLength: tracks.length,
+    });
+    if (trackIndex >= 0 && trackIndex < tracks.length) {
+      playTrackAt(trackIndex);
+    }
+  }, [tracks, playTrackAt]);
+
   const handleDismiss = useCallback(() => {
     // Prevent multiple dismiss calls
     if (hasBeenDismissedRef.current || isDismissing) {
@@ -1187,7 +1199,7 @@ export function ReaderAudioPlayer({
     >
       <div
         className={cn(
-          "pointer-events-auto flex w-full max-w-xl flex-col gap-3 rounded-2xl border border-border bg-background/90 p-4 shadow-lg ring-1 ring-black/5 backdrop-blur",
+          "pointer-events-auto flex w-full max-w-2xl flex-col gap-3 rounded-2xl border border-border bg-background/90 p-4 shadow-lg ring-1 ring-black/5 backdrop-blur",
           // Optimize for animations - use will-change when dismissing
           isDismissing && "will-change-transform will-change-opacity will-change-scale",
           animPatterns.audioPlayer,
@@ -1244,6 +1256,18 @@ export function ReaderAudioPlayer({
                   "h-4 w-4 transition-transform duration-200",
                   autoScrollEnabled && "scale-110"
                 )} />
+              </Button>
+            ) : null}
+            {tracks.length > 1 ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="rounded-full"
+                onClick={() => setShowTracksDialog(true)}
+                aria-label="Show all tracks"
+                title="Show all tracks"
+              >
+                <List className="h-4 w-4" />
               </Button>
             ) : null}
             {onClose ? (
@@ -1430,6 +1454,18 @@ export function ReaderAudioPlayer({
                   )} />
                 </Button>
               ) : null}
+              {tracks.length > 1 ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-full"
+                  onClick={() => setShowTracksDialog(true)}
+                  aria-label="Show all tracks"
+                  title="Show all tracks"
+                >
+                  <List className="h-4 w-4" />
+                </Button>
+              ) : null}
             </div>
           </div>
           {onClose ? (
@@ -1480,6 +1516,17 @@ export function ReaderAudioPlayer({
           </span>
         </div>
       </div>
+
+      {/* Tracks Dialog */}
+      <AudioTracksDialog
+        open={showTracksDialog}
+        onOpenChange={setShowTracksDialog}
+        tracks={tracks}
+        currentIndex={currentIndex}
+        bookTitle={bookTitle}
+        loadedTrackUrls={loadedTrackUrlsRef.current}
+        onTrackSelect={handleTrackSelect}
+      />
     </div>
   );
 }

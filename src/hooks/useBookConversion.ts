@@ -1,65 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
-import type { Book, AudioTrack } from "../types/reader";
+import type { Book } from "../types/reader";
 import type { VoiceId } from "../types/reader";
 import type { ConversionProgress } from "../lib/audiobook-converter";
 import { convertEpubToAudiobook } from "../lib/audiobook-converter";
 import { getEpubBuffer, readAllBooks, readOneBook } from "../lib/book-service";
 import { clearBookCache } from "../lib/lazy-chapter-loader";
-
-/**
- * Intelligently merge audio tracks arrays to preserve reference stability.
- * Only appends new tracks that don't exist in the current array.
- * This prevents unnecessary re-renders and audio playback interruptions.
- */
-function mergeAudioTracks(
-  currentTracks: AudioTrack[],
-  updatedTracks: AudioTrack[]
-): AudioTrack[] {
-  // If arrays are the same length and all track IDs match, return current array
-  if (currentTracks.length === updatedTracks.length) {
-    const allMatch = currentTracks.every(
-      (track, index) => track.id === updatedTracks[index]?.id
-    );
-    if (allMatch) {
-      return currentTracks; // Preserve reference if nothing changed
-    }
-  }
-
-  // If updated tracks is shorter or empty, something was removed - use updated
-  if (updatedTracks.length < currentTracks.length) {
-    return updatedTracks;
-  }
-
-  // Build a map of existing track IDs for quick lookup
-  const existingTrackIds = new Set(currentTracks.map((t) => t.id));
-  
-  // Find new tracks that don't exist in current array
-  const newTracks = updatedTracks.filter((t) => !existingTrackIds.has(t.id));
-  
-  // If no new tracks, preserve current array reference
-  if (newTracks.length === 0) {
-    // Still check if any existing tracks were updated (e.g., duration added)
-    const hasUpdates = currentTracks.some((currentTrack, index) => {
-      const updatedTrack = updatedTracks[index];
-      if (!updatedTrack || currentTrack.id !== updatedTrack.id) return false;
-      // Check if track properties changed (e.g., duration was added)
-      return (
-        currentTrack.duration !== updatedTrack.duration ||
-        currentTrack.url !== updatedTrack.url ||
-        currentTrack.title !== updatedTrack.title
-      );
-    });
-    
-    // If tracks were updated but no new ones added, use updated array
-    // Otherwise preserve reference
-    return hasUpdates ? updatedTracks : currentTracks;
-  }
-
-  // Append new tracks to existing array, preserving reference for existing tracks
-  return [...currentTracks, ...newTracks];
-}
 
 export type PendingBookForConversion = {
   book: Book;
@@ -68,6 +15,14 @@ export type PendingBookForConversion = {
 
 export function useBookConversion(
   setLibrary: React.Dispatch<React.SetStateAction<Book[]>>,
+  ingestEpub: (params: {
+    filePath: string;
+    sourcePath: string;
+    fallbackTitle?: string;
+    progress?: Book["progress"];
+    pageCountHint?: number;
+  }) => Promise<Book | null>,
+  refreshLibrary?: () => Promise<void>,
 ) {
   const [showConvertDialog, setShowConvertDialog] = useState(false);
   const [pendingBookForConversion, setPendingBookForConversion] = useState<PendingBookForConversion | null>(null);
@@ -126,8 +81,8 @@ export function useBookConversion(
               return;
             }
             
-            // IMPROVEMENT #1 & #3: Capture audio state checkpoint before merge
-            // This ensures we preserve the current playback state
+            // Merge only audio-related fields into the existing book
+            // This preserves all other state including loaded chapters, audio playback state, etc.
             setLibrary((currentLibrary) => {
               const bookIndex = currentLibrary.findIndex(
                 (book) => book.id === existingBook.id || book.sourcePath === source_path
@@ -140,28 +95,14 @@ export function useBookConversion(
               
               const currentBook = currentLibrary[bookIndex];
               
-              // IMPROVEMENT #1: Capture current audio state before merge
-              // This preserves playback position and track information
-              const preservedAudioState = currentBook.audioState;
-              
-              // IMPROVEMENT #2: Stabilize tracks array reference
-              // Only update if tracks actually changed (append new tracks instead of replacing)
-              const mergedAudioTracks = mergeAudioTracks(
-                currentBook.audioTracks,
-                updatedBook.audioTracks
-              );
-              
               // Create merged book with only audio fields updated
               const mergedBook: Book = {
                 ...currentBook,
                 chapters: updatedBook.chapters,
                 fileSizeBytes: updatedBook.fileSizeBytes,
-                // IMPROVEMENT #2: Use merged tracks array (preserves reference if unchanged)
-                audioTracks: mergedAudioTracks,
+                // Only update audio-related fields
+                audioTracks: updatedBook.audioTracks,
                 audioSyncMap: updatedBook.audioSyncMap,
-                // IMPROVEMENT #1 & #3: Explicitly preserve audio state
-                // This ensures playback position and current track are maintained
-                audioState: preservedAudioState,
                 // Also update conversion status and completed chapters
                 conversionStatus: updatedBook.conversionStatus,
                 completedChapters: updatedBook.completedChapters,
@@ -215,8 +156,7 @@ export function useBookConversion(
               return;
             }
             
-            // IMPROVEMENT #1 & #3: Capture audio state checkpoint before merge
-            // This ensures we preserve the current playback state during cancellation
+            // Merge the updated book data into the existing book
             setLibrary((currentLibrary) => {
               const bookIndex = currentLibrary.findIndex(
                 (book) => book.id === existingBook.id || book.sourcePath === source_path
@@ -229,25 +169,13 @@ export function useBookConversion(
               
               const currentBook = currentLibrary[bookIndex];
               
-              // IMPROVEMENT #1: Capture current audio state before merge
-              const preservedAudioState = currentBook.audioState;
-              
-              // IMPROVEMENT #2: Stabilize tracks array reference
-              const mergedAudioTracks = mergeAudioTracks(
-                currentBook.audioTracks,
-                updatedBook.audioTracks
-              );
-              
               // Create merged book with updated fields
               const mergedBook: Book = {
                 ...currentBook,
                 chapters: updatedBook.chapters,
                 fileSizeBytes: updatedBook.fileSizeBytes,
-                // IMPROVEMENT #2: Use merged tracks array
-                audioTracks: mergedAudioTracks,
+                audioTracks: updatedBook.audioTracks,
                 audioSyncMap: updatedBook.audioSyncMap,
-                // IMPROVEMENT #1 & #3: Explicitly preserve audio state
-                audioState: preservedAudioState,
                 conversionStatus: updatedBook.conversionStatus,
                 completedChapters: updatedBook.completedChapters,
                 wordsProcessed: updatedBook.wordsProcessed,
