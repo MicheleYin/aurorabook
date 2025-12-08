@@ -34,6 +34,14 @@ export function ReaderTocDrawer({
   onOpenChange,
   onSelectChapter,
 }: ReaderTocDrawerProps) {
+  console.log("ReaderTocDrawer", {
+    book,
+    activeChapterId,
+    currentAudioTrackHref,
+    isOpen,
+    onOpenChange,
+    onSelectChapter,
+  });
   return (
     <Drawer open={isOpen} onOpenChange={onOpenChange} direction="left">
       <DrawerTrigger asChild>

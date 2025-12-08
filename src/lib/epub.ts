@@ -156,6 +156,8 @@ export const ensureStringArray = (value: unknown): string[] => {
  * - "./OEBPS/Audio/02.mp3"
  * - "../OEBPS/Audio/02.mp3"
  * - "/OEBPS/Audio/02.mp3"
+ * 
+ * Removes OEBPS prefix for consistent matching
  */
 const normalizeAudioHref = (href: string): string => {
   if (!href) return "";
@@ -169,6 +171,9 @@ const normalizeAudioHref = (href: string): string => {
   
   // Remove any remaining leading dots or slashes
   normalized = normalized.replace(/^[./]+/, "");
+  
+  // Remove OEBPS prefix for consistent matching (handles both "OEBPS/Audio/..." and "Audio/...")
+  normalized = normalized.replace(/^oebps\//, "");
   
   return normalized;
 };
@@ -322,6 +327,28 @@ export const chapterHrefsMatch = (href1: string, href2: string): boolean => {
 };
 
 /**
+ * Check if two audio track hrefs match, handling various path format differences
+ * This handles cases like:
+ * - "OEBPS/Audio/01.mp3" vs "Audio/01.mp3"
+ * - "Audio/01.mp3" vs "OEBPS/Audio/01.mp3"
+ * - Different path separators or leading slashes
+ */
+const audioTrackHrefsMatch = (href1: string, href2: string): boolean => {
+  const norm1 = normalizeAudioHref(href1);
+  const norm2 = normalizeAudioHref(href2);
+  
+  // Exact match after normalization
+  if (norm1 === norm2) return true;
+  
+  // Filename-only matching (last resort)
+  const filename1 = norm1.split("/").pop() || norm1;
+  const filename2 = norm2.split("/").pop() || norm2;
+  if (filename1 === filename2) return true;
+  
+  return false;
+};
+
+/**
  * Find chapters that use a specific audio track
  */
 export const findChaptersForAudioTrack = (
@@ -332,12 +359,10 @@ export const findChaptersForAudioTrack = (
     return [];
   }
 
-  const normalizedTrackHref = normalizeAudioHref(audioTrackHref);
   const chapterHrefs = new Set<string>();
 
   syncMap.segments.forEach((seg) => {
-    const normalizedSegHref = normalizeAudioHref(seg.audioTrackHref);
-    if (normalizedSegHref === normalizedTrackHref) {
+    if (audioTrackHrefsMatch(seg.audioTrackHref, audioTrackHref)) {
       chapterHrefs.add(seg.chapterHref);
     }
   });
