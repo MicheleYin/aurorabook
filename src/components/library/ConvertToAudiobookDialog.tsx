@@ -82,10 +82,10 @@ export function ConvertToAudiobookDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} aria-label="Cancel conversion">
             Cancel
           </Button>
-          <Button onClick={handleConfirm}>Convert to Audiobook</Button>
+          <Button onClick={handleConfirm} aria-label="Convert to audiobook">Convert to Audiobook</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

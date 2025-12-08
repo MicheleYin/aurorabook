@@ -116,6 +116,7 @@ export function LibraryList({
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                 isActive && "bg-primary/5",
               )}
+              aria-label={`Open ${book.title} by ${book.author}`}
             >
             <div className="relative h-16 w-12 overflow-hidden rounded-md bg-muted">
               {book.coverUrl ? (
@@ -158,6 +159,7 @@ export function LibraryList({
                 event.stopPropagation();
                 onViewDetails(book.id);
               }}
+              aria-label={`View details for ${book.title}`}
             >
               Details
             </Button>

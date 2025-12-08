@@ -490,8 +490,9 @@ export function BookDetailDialog({
             onClick={handleResumeConversion}
             disabled={isDisabled}
             className="gap-2"
+            aria-label="Resume conversion to audiobook"
           >
-            <Play className="h-4 w-4" />
+            <Play className="h-4 w-4" aria-hidden="true" />
             Resume Conversion
           </Button>
         )}
@@ -501,8 +502,9 @@ export function BookDetailDialog({
             onClick={handleConvertClick}
             disabled={isDisabled}
             className="gap-2"
+            aria-label="Convert to audiobook"
           >
-            <Headphones className="h-4 w-4" />
+            <Headphones className="h-4 w-4" aria-hidden="true" />
             Convert to Audiobook
           </Button>
         )}
@@ -512,15 +514,16 @@ export function BookDetailDialog({
             onClick={() => onCancelConversion(book.id)}
             disabled={isCancelling}
             className="gap-2"
+            aria-label={isCancelling ? "Pausing conversion" : "Pause conversion"}
           >
             {isCancelling ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                 Pausing…
               </>
             ) : (
               <>
-                <Square className="h-4 w-4" />
+                <Square className="h-4 w-4" aria-hidden="true" />
                 Pause
               </>
             )}
@@ -531,17 +534,19 @@ export function BookDetailDialog({
         onClick={handleExportEpub}
         disabled={isDisabled}
         className="gap-2"
+        aria-label={isConverting ? "Export EPUB" : "Export EPUB file"}
       >
-        <Share2 className="h-4 w-4" />
+        <Share2 className="h-4 w-4" aria-hidden="true" />
         {isConverting ? "Export" : "Export EPUB"}
       </Button>
-      <Button onClick={onOpenBook} disabled={isDeleting}>
+      <Button onClick={onOpenBook} disabled={isDeleting} aria-label={`Open ${book.title}`}>
         Open book
       </Button>
       <Button
         variant="destructive"
         onClick={() => setConfirmOpen(true)}
         disabled={isDeleting}
+        aria-label={`Delete ${book.title}`}
       >
         {isDeleting ? (
           <>
@@ -571,6 +576,7 @@ export function BookDetailDialog({
             variant="outline"
             onClick={() => setConfirmOpen(false)}
             disabled={isDeleting}
+            aria-label="Cancel delete book"
           >
             Cancel
           </Button>
@@ -581,6 +587,7 @@ export function BookDetailDialog({
               onDeleteBook();
             }}
             disabled={isDeleting}
+            aria-label={`Confirm delete ${book.title}`}
           >
             {isDeleting ? (
               <>

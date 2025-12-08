@@ -58,6 +58,7 @@ export function LibraryHeader({
                 : "border-border hover:bg-muted",
               )}
               {...pressedProps}
+              aria-label={`Filter by ${label}`}
               >
                 {label}
               </button>
@@ -84,6 +85,7 @@ export function LibraryHeader({
                       : "border-border hover:bg-muted",
                   )}
                   {...pressedProps}
+                  aria-label={mode === "grid" ? "Switch to grid view" : "Switch to list view"}
                 >
                   {mode === "grid" ? (
                     <LayoutGrid className="h-4 w-4" aria-hidden="true" />

@@ -88,6 +88,8 @@ export function AudioTracksDialog({
               
               handleTrackSelect(index);
             }}
+            aria-label={`Play track ${index + 1}: ${track.title}`}
+            aria-current={isCurrentTrack ? "true" : undefined}
           >
             <div className="flex items-center justify-between gap-2 w-full min-w-0">
               <div className="min-w-0 flex-1">

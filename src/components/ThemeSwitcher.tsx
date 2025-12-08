@@ -13,9 +13,9 @@ interface ThemeSwitcherProps {
 }
 
 const options: Array<{ id: UITheme; icon: ReactNode; label: string }> = [
-  { id: "light", icon: <Sun className="h-4 w-4" />, label: "Light" },
-  { id: "dark", icon: <Moon className="h-4 w-4" />, label: "Dark" },
-  { id: "system", icon: <Monitor className="h-4 w-4" />, label: "System" },
+  { id: "light", icon: <Sun className="h-4 w-4" aria-hidden="true" />, label: "Light" },
+  { id: "dark", icon: <Moon className="h-4 w-4" aria-hidden="true" />, label: "Dark" },
+  { id: "system", icon: <Monitor className="h-4 w-4" aria-hidden="true" />, label: "System" },
 ];
 
 export function ThemeSwitcher({ value, onChange }: ThemeSwitcherProps) {
@@ -51,6 +51,7 @@ export function ThemeSwitcher({ value, onChange }: ThemeSwitcherProps) {
               isActive && "bg-primary/10 text-primary",
               isTransitioning && isActive && "animate-pulse",
             )}
+            aria-label={`Switch to ${option.label} theme`}
           >
             <span
               className={cn(

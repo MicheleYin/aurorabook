@@ -269,16 +269,16 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
                       "shrink-0 gap-2 min-w-[140px] justify-center"
                     )}
                     onClick={() => handlePlaySample(selectedVoice.id, selectedVoice.sampleUrl)}
-                    aria-label={`Play sample for ${selectedVoice.name}`}
+                    aria-label={playingVoiceId === selectedVoice.id ? `Pause sample for ${selectedVoice.name}` : `Play sample for ${selectedVoice.name}`}
                   >
                     {playingVoiceId === selectedVoice.id ? (
                       <>
-                        <Pause className="h-4 w-4" />
+                        <Pause className="h-4 w-4" aria-hidden="true" />
                         <span>Pause</span>
                       </>
                     ) : (
                       <>
-                        <Play className="h-4 w-4" />
+                        <Play className="h-4 w-4" aria-hidden="true" />
                         <span>Play</span>
                       </>
                     )}
@@ -312,6 +312,7 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
                   onClick={() => toggleFAQ(index)}
                   className="w-full flex items-center justify-between p-4 text-left gap-4 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded-lg"
                   {...(isExpanded ? { "aria-expanded": "true" } : { "aria-expanded": "false" })}
+                  aria-label={isExpanded ? `Collapse ${faq.question}` : `Expand ${faq.question}`}
                 >
                   <span className="font-semibold text-sm sm:text-base pr-4">{faq.question}</span>
                   <div className="shrink-0">

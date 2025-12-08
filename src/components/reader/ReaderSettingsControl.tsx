@@ -122,6 +122,8 @@ export function ReaderSettingsControl({
                 variant={uiTheme === option.id ? "secondary" : "ghost"}
                 onClick={() => onThemeChange(option.id as UITheme)}
                 className="min-w-[140px] flex-shrink-0 snap-start flex-col items-start gap-2 px-4 py-3 text-left h-auto"
+                aria-label={`Set theme to ${option.label}`}
+                aria-pressed={uiTheme === option.id}
               >
                 <span className="flex items-center gap-2">
                   <span
@@ -166,6 +168,8 @@ export function ReaderSettingsControl({
                 variant={preferences.fontFamily === option.id ? "secondary" : "ghost"}
                 onClick={() => onPreferencesChange({ fontFamily: option.id })}
                 className="min-w-[140px] flex-shrink-0 snap-start flex-col items-start gap-1 h-auto py-2"
+                aria-label={`Set font to ${option.label}`}
+                aria-pressed={preferences.fontFamily === option.id}
               >
                 <span className={cn("text-lg leading-none", fontClassMap[option.id])}>
                   {fontPreviewText[option.id]}
@@ -193,6 +197,8 @@ export function ReaderSettingsControl({
                 variant={preferences.fontSize === option.id ? "secondary" : "ghost"}
                 className="min-w-[140px] flex-shrink-0 snap-start flex-col items-start gap-1 px-4 py-3 text-left h-auto"
                 onClick={() => onPreferencesChange({ fontSize: option.id })}
+                aria-label={`Set text size to ${option.label}`}
+                aria-pressed={preferences.fontSize === option.id}
               >
                 <span className={cn("font-semibold leading-none", fontSizeClassMap[option.id])}>
                   Aa
@@ -223,6 +229,8 @@ export function ReaderSettingsControl({
                 }
                 className="min-w-[140px] flex-shrink-0 snap-start flex-col items-start gap-2 px-4 py-3 text-left h-auto"
                 onClick={() => onPreferencesChange({ contentPadding: option.id })}
+                aria-label={`Set page padding to ${option.label}`}
+                aria-pressed={preferences.contentPadding === option.id}
               >
                 <span className="flex h-8 w-full items-center justify-center">
                   <span className="relative flex h-6 w-full items-center justify-center rounded border border-border/60 bg-muted/30">
@@ -258,12 +266,13 @@ export function ReaderSettingsControl({
             anim("medium", "all"),
             "ease-in-out"
           )}
+          aria-label="Open reader settings"
         >
           <Settings2 className={cn(
             "h-4 w-4 shrink-0",
             anim("medium", "all"),
             "sm:mr-2 transition-[margin] duration-300 ease-in-out"
-          )} />
+          )} aria-hidden="true" />
           <span 
             className={cn(
               "hidden sm:inline-block whitespace-nowrap",

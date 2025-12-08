@@ -59,15 +59,15 @@ export function LibraryPanel({
         viewMode={viewMode}
         onViewModeChange={onViewModeChange}
         actionSlot={
-          <Button onClick={onAddEbook} disabled={isImporting} className="w-full sm:w-auto">
+          <Button onClick={onAddEbook} disabled={isImporting} className="w-full sm:w-auto" aria-label="Add ebook to library">
             {isImporting ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
                 Adding…
               </>
             ) : (
               <>
-                <Plus className="mr-2 h-4 w-4" />
+                <Plus className="mr-2 h-4 w-4" aria-hidden="true" />
                 Add ebook
               </>
             )}

@@ -175,6 +175,7 @@ function BookCoverCard({
               isActive && "border-primary shadow-md ring-1 ring-primary/40",
               isActive && animPatterns.cardActive,
             )}
+            aria-label={`Open ${book.title} by ${book.author}`}
           >
       <div className="relative aspect-[3/4] w-full overflow-hidden bg-muted">
         <LibraryStatusBadge status={status} className="absolute left-2 top-2 z-10" />
@@ -253,6 +254,7 @@ function BookCoverCard({
               event.stopPropagation();
               onViewDetails(book.id);
             }}
+            aria-label={`View details for ${book.title}`}
           >
             Details
           </Button>

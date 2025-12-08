@@ -68,6 +68,8 @@ export function ChapterList({
               });
               onAfterSelect?.();
             }}
+            aria-label={`Go to chapter: ${chapter.title}`}
+            aria-current={isActive ? "true" : undefined}
           >
             <span className="truncate flex-1 text-left min-w-0 pr-2 overflow-hidden">{chapter.title}</span>
             {isCurrentlyPlaying && (

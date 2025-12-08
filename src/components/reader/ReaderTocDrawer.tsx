@@ -44,12 +44,13 @@ export function ReaderTocDrawer({
             anim("medium", "all"),
             "ease-in-out"
           )}
+          aria-label="Open table of contents"
         >
           <BookOpen className={cn(
             "h-4 w-4 shrink-0",
             anim("medium", "all"),
             "sm:mr-2 transition-[margin] duration-300 ease-in-out"
-          )} />
+          )} aria-hidden="true" />
           <span 
             className={cn(
               "hidden sm:inline-block whitespace-nowrap",

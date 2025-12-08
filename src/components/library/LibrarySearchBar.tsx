@@ -26,13 +26,14 @@ export function LibrarySearchBar({
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
       <div className="relative w-full sm:max-w-md">
-        <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
         <Input
           type="search"
           value={value}
           onChange={handleInputChange}
           disabled={disabled}
           placeholder={placeholder}
+          aria-label="Search library by title or author"
           className={cn(
             anim("normal", "all"),
             "pl-10 pr-10 rounded-lg bg-card focus:border-primary focus:ring-primary/40",
@@ -50,7 +51,7 @@ export function LibrarySearchBar({
             )}
             aria-label="Clear search"
           >
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         ) : null}
       </div>

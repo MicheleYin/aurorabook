@@ -157,8 +157,9 @@ export function ReaderPanel({
             size="sm"
             className="px-2"
             onClick={handleBack}
+            aria-label="Go back to library"
           >
-            <ArrowLeft className="mr-2 h-4 w-4" />
+            <ArrowLeft className="mr-2 h-4 w-4" aria-hidden="true" />
             Library
           </Button>
           <div className="flex items-center gap-2">
@@ -171,7 +172,7 @@ export function ReaderPanel({
                 onClick={onOpenAudioPlayer}
                 aria-label="Open audio player"
               >
-                <Headphones className="h-4 w-4" />
+                <Headphones className="h-4 w-4" aria-hidden="true" />
               </Button>
   
             {activeBook && (

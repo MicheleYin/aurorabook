@@ -577,6 +577,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
                   isDisabled && "cursor-not-allowed opacity-50 hover:bg-transparent",
                 )}
                 title={item.id === "reader" && isDisabled ? "Open a book to enter the reader" : undefined}
+                aria-label={item.id === "reader" && isDisabled ? "Open a book to enter the reader" : `Navigate to ${item.label}`}
+                aria-current={isActive ? "page" : undefined}
               >
                 {item.label}
               </button>
