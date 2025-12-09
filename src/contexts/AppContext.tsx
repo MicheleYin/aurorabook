@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect, useRef } from "react";
+import { logger } from "../lib/logger";
 import type { Book } from "../types/reader";
 import type { ReaderPreferences } from "../types/reader";
 import { usePersistentReaderPreferences } from "../hooks/usePersistentReaderPreferences";
@@ -129,7 +130,7 @@ export function AppContextProvider({
 
   const handleSelectBook = useCallback(
     async (bookId: string) => {
-      console.debug("[AppContext] handleSelectBook called", { 
+      logger.debug("[AppContext] handleSelectBook called", { 
         bookId, 
         librarySize: library.length,
         libraryBookIds: library.map(b => b.id),
@@ -140,7 +141,7 @@ export function AppContextProvider({
       // If book is not in library array, try fetching it from backend
       // This can happen if the book was just added and the library state hasn't updated yet
       if (!selectedBook) {
-        console.debug("[AppContext] Book not found in library, fetching from backend", { bookId });
+        logger.debug("[AppContext] Book not found in library, fetching from backend", { bookId });
         try {
           const { readOneBook } = await import("../lib/book-service");
           const fetchedBook = await readOneBook(bookId);
@@ -169,17 +170,17 @@ export function AppContextProvider({
               }, 0);
               return [...prevLibrary, fetchedBook];
             });
-            console.debug("[AppContext] Successfully fetched book from backend and added to library", { bookId });
+            logger.debug("[AppContext] Successfully fetched book from backend and added to library", { bookId });
           } else {
-            console.warn(`[AppContext] Book ${bookId} not found in library or backend`);
+            logger.warn(`[AppContext] Book ${bookId} not found in library or backend`);
             return;
           }
         } catch (error) {
-          console.error(`[AppContext] Failed to fetch book ${bookId} from backend:`, error);
+          logger.error(`[AppContext] Failed to fetch book ${bookId} from backend:`, error);
           return;
         }
       } else {
-        console.debug("[AppContext] Book found in library", { bookId, title: selectedBook.title });
+        logger.debug("[AppContext] Book found in library", { bookId, title: selectedBook.title });
       }
       
       // Mark this as a manual selection to prevent auto-selection from overriding it
@@ -190,7 +191,7 @@ export function AppContextProvider({
       const wasAlreadyActive = activeBookId === bookId;
       
       setActiveBookId(bookId);
-      console.debug("[ReaderProgress] select book", { bookId });
+      logger.debug("[ReaderProgress] select book", { bookId });
       
       // If this book is already active, preserve the current chapter if it's still valid
       // Otherwise, use the saved progress or fallback to first chapter
@@ -203,7 +204,7 @@ export function AppContextProvider({
         );
         if (currentChapterValid) {
           nextChapterId = activeChapterId;
-          console.debug("[AppContext] Preserving current chapter for already-active book", {
+          logger.debug("[AppContext] Preserving current chapter for already-active book", {
             bookId,
             chapterId: nextChapterId,
           });
@@ -230,7 +231,7 @@ export function AppContextProvider({
           await updateBookProgress(bookId, { chapterId: nextChapterId });
         } else {
           // Same chapter - don't update progress to preserve scroll position
-          console.debug("[AppContext] Same chapter, preserving existing progress", {
+          logger.debug("[AppContext] Same chapter, preserving existing progress", {
             bookId,
             chapterId: nextChapterId,
           });

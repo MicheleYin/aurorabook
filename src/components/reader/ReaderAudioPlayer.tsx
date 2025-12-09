@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { List, Loader2, MoveVertical, Pause, Play, SkipBack, SkipForward, StepBack, StepForward, X } from "lucide-react";
 
+import { logger } from "../../lib/logger";
 import type { AudioTrack, BookAudioState, AudioSyncMap, Chapter } from "../../types/reader";
 import type { AudioProgressSnapshot } from "./types";
 import { Button } from "../ui/button";
@@ -182,7 +183,7 @@ export function ReaderAudioPlayer({
         // Emit progress immediately to save the new position
         emitProgressRef.current(appliedTime);
       } catch (error) {
-        console.warn("[Audio Player] Failed to seek:", error);
+        logger.warn("[Audio Player] Failed to seek:", error);
       }
     },
     [],
@@ -247,7 +248,7 @@ export function ReaderAudioPlayer({
       // BUT: Don't sync if we're auto-advancing (track ended and moving to next)
       const audioIsPlaying = !audio.paused;
       if (audioIsPlaying !== isPlayingRef.current && !isAutoAdvancingRef.current) {
-        console.log("[Audio Player] Play state mismatch detected in timeupdate", {
+        logger.log("[Audio Player] Play state mismatch detected in timeupdate", {
           audioIsPlaying,
           isPlayingRef: isPlayingRef.current,
           isPlayingState: isPlaying,
@@ -284,7 +285,7 @@ export function ReaderAudioPlayer({
 
     // IMPROVEMENT 4: Consolidated event handlers
     const handleLoadedMetadata = () => {
-      console.log("[Audio Player] loadedmetadata event fired", {
+      logger.log("[Audio Player] loadedmetadata event fired", {
         duration: audio.duration,
         currentTime: audio.currentTime,
         isPlayingRef: isPlayingRef.current,
@@ -315,7 +316,7 @@ export function ReaderAudioPlayer({
     };
     
     const handleAudioReady = () => {
-      console.log("[Audio Player] Audio ready event", {
+      logger.log("[Audio Player] Audio ready event", {
         readyState: audio.readyState,
         isRestoring: trackLoadedForRestorationRef.current,
         currentTime: audio.currentTime,
@@ -335,7 +336,7 @@ export function ReaderAudioPlayer({
     };
 
     const handleEnded = () => {
-      console.log("[Audio Player] Track ended", {
+      logger.log("[Audio Player] Track ended", {
         currentIndex,
         currentTrackId: currentTrack?.id,
         totalTracks: tracks.length,
@@ -349,7 +350,7 @@ export function ReaderAudioPlayer({
       const nextIndex = currentIndex + 1;
       if (nextIndex < tracks.length) {
         const nextTrack = tracks[nextIndex];
-        console.log("[Audio Player] Auto-advancing to next track", {
+        logger.log("[Audio Player] Auto-advancing to next track", {
           nextIndex,
           nextTrackId: nextTrack?.id,
           nextTrackTitle: nextTrack?.title,
@@ -367,7 +368,7 @@ export function ReaderAudioPlayer({
         // Change track - setupAudioSource will detect isAutoAdvancingRef and autoplay
         setCurrentIndex(nextIndex);
       } else {
-        console.log("[Audio Player] Last track ended, stopping playback");
+        logger.log("[Audio Player] Last track ended, stopping playback");
         // Last track - stop playback
         audio.pause();
         audio.currentTime = 0;
@@ -490,7 +491,7 @@ export function ReaderAudioPlayer({
         const nextTrack = tracks[nextIndex];
         // Only preload if next track doesn't already have a URL and isn't already loading
         if (nextTrack && !nextTrack.url && !loadedTrackUrlsRef.current.has(nextTrack.id) && !loadingTracksRef.current.has(nextTrack.id)) {
-          console.log("[Audio Player] Preloading next audio track", {
+          logger.log("[Audio Player] Preloading next audio track", {
             nextTrackId: nextTrack.id,
             nextTrackTitle: nextTrack.title,
             nextIndex,
@@ -507,14 +508,14 @@ export function ReaderAudioPlayer({
                 // Trigger re-render to update track memos (only when needed)
                 loadedCountRef.current += 1;
                 setLoadedCount(loadedCountRef.current);
-                console.log("[Audio Player] Next audio track preloaded", {
+                logger.log("[Audio Player] Next audio track preloaded", {
                   nextTrackId: preloadedTrack.id,
                 });
               }
             })
             .catch((error) => {
               loadingTracksRef.current.delete(nextTrack.id);
-              console.warn("[Audio Player] Failed to preload next audio track", {
+              logger.warn("[Audio Player] Failed to preload next audio track", {
                 nextTrackId: nextTrack.id,
                 error,
               });
@@ -535,7 +536,7 @@ export function ReaderAudioPlayer({
     setIsTrackLoading(true);
     let cancelled = false;
     
-    console.log("[Audio Player] Loading track URL", {
+    logger.log("[Audio Player] Loading track URL", {
       trackId: currentTrack.id,
       trackTitle: currentTrack.title,
       trackHref: currentTrack.href,
@@ -552,7 +553,7 @@ export function ReaderAudioPlayer({
           loadedCountRef.current += 1;
           setLoadedCount(loadedCountRef.current);
           
-          console.log("[Audio Player] ✓ Track URL loaded successfully", {
+          logger.log("[Audio Player] ✓ Track URL loaded successfully", {
             trackId: loadedTrack.id,
             trackTitle: loadedTrack.title,
             urlLength: loadedTrack.url.length,
@@ -564,7 +565,7 @@ export function ReaderAudioPlayer({
             const nextTrack = tracks[nextIndex];
             // Only preload if next track doesn't already have a URL and isn't already loading
             if (nextTrack && !nextTrack.url && !loadedTrackUrlsRef.current.has(nextTrack.id) && !loadingTracksRef.current.has(nextTrack.id)) {
-              console.log("[Audio Player] Preloading next audio track", {
+              logger.log("[Audio Player] Preloading next audio track", {
                 nextTrackId: nextTrack.id,
                 nextTrackTitle: nextTrack.title,
                 nextIndex,
@@ -581,14 +582,14 @@ export function ReaderAudioPlayer({
                 // Trigger re-render to update track memos (only when needed)
                 loadedCountRef.current += 1;
                 setLoadedCount(loadedCountRef.current);
-                    console.log("[Audio Player] Next audio track preloaded", {
+                    logger.log("[Audio Player] Next audio track preloaded", {
                       nextTrackId: preloadedTrack.id,
                     });
                   }
                 })
                 .catch((error) => {
                   loadingTracksRef.current.delete(nextTrack.id);
-                  console.warn("[Audio Player] Failed to preload next audio track", {
+                  logger.warn("[Audio Player] Failed to preload next audio track", {
                     nextTrackId: nextTrack.id,
                     error,
                   });
@@ -601,7 +602,7 @@ export function ReaderAudioPlayer({
         if (!cancelled) {
           loadingTracksRef.current.delete(trackId);
           setIsTrackLoading(false);
-          console.error("[Audio Player] ✗ Failed to load audio track", {
+          logger.error("[Audio Player] ✗ Failed to load audio track", {
             trackId,
             trackHref: currentTrack.href,
             trackTitle: currentTrack.title,
@@ -630,10 +631,10 @@ export function ReaderAudioPlayer({
       await audio.play();
       setIsPlaying(true);
       isPlayingRef.current = true;
-      console.log("[Audio Player] Autoplay succeeded");
+      logger.log("[Audio Player] Autoplay succeeded");
       return true;
     } catch (error) {
-      console.warn("[Audio Player] Autoplay failed:", error);
+      logger.warn("[Audio Player] Autoplay failed:", error);
       setIsPlaying(false);
       isPlayingRef.current = false;
       return false;
@@ -661,7 +662,7 @@ export function ReaderAudioPlayer({
   ) => {
     // Prevent duplicate setup for the same track
     if (lastSetupTrackIdRef.current === track.id && audio.src === track.url) {
-      console.log("[Audio Player] Skipping duplicate setup for track", {
+      logger.log("[Audio Player] Skipping duplicate setup for track", {
         trackId: track.id,
       });
       return;
@@ -678,7 +679,7 @@ export function ReaderAudioPlayer({
     // This prevents the timeupdate handler from resetting the playing state
     // The flag will be cleared when playback actually starts (in the event handlers)
     
-    console.log("[Audio Player] Setting up audio source", {
+    logger.log("[Audio Player] Setting up audio source", {
       trackId: track.id,
       trackTitle: track.title,
       isPlayingRef: isPlayingRef.current,
@@ -742,7 +743,7 @@ export function ReaderAudioPlayer({
     const handleCanPlay = () => {
       if (cleanupCalled) return;
       if (shouldAutoplay && audio.paused) {
-        console.log("[Audio Player] canplay event - attempting autoplay", {
+        logger.log("[Audio Player] canplay event - attempting autoplay", {
           trackId: track.id,
           shouldAutoplay,
           audioPaused: audio.paused,
@@ -759,7 +760,7 @@ export function ReaderAudioPlayer({
     const handleCanPlayThrough = () => {
       if (cleanupCalled) return;
       if (shouldAutoplay && audio.paused) {
-        console.log("[Audio Player] canplaythrough event - attempting autoplay", {
+        logger.log("[Audio Player] canplaythrough event - attempting autoplay", {
           trackId: track.id,
           shouldAutoplay,
           audioPaused: audio.paused,
@@ -778,7 +779,7 @@ export function ReaderAudioPlayer({
       // Only try autoplay on loadeddata if canplay hasn't fired yet
       // This is a fallback for very fast loads
       if (shouldAutoplay && audio.paused && audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
-        console.log("[Audio Player] loadeddata event - attempting autoplay", {
+        logger.log("[Audio Player] loadeddata event - attempting autoplay", {
           trackId: track.id,
           shouldAutoplay,
           audioPaused: audio.paused,
@@ -796,7 +797,7 @@ export function ReaderAudioPlayer({
     // Listen for when playback actually starts to clear the auto-advancing flag
     const handlePlaying = () => {
       if (isAutoAdvancingRef.current) {
-        console.log("[Audio Player] Playback started - clearing auto-advancing flag", {
+        logger.log("[Audio Player] Playback started - clearing auto-advancing flag", {
           trackId: track.id,
         });
         isAutoAdvancingRef.current = false;
@@ -812,7 +813,7 @@ export function ReaderAudioPlayer({
     // This handles cases where events don't fire reliably
     const fallbackTimeout = setTimeout(() => {
       if (!cleanupCalled && shouldAutoplay && audio.paused && audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
-        console.log("[Audio Player] Fallback timeout - attempting autoplay", {
+        logger.log("[Audio Player] Fallback timeout - attempting autoplay", {
           trackId: track.id,
           shouldAutoplay,
           audioPaused: audio.paused,
@@ -860,7 +861,7 @@ export function ReaderAudioPlayer({
     if (lastSetupTrackIdRef.current === trackWithUrl.id && audio.src === trackUrl) {
       // Already set up, but check if we need to autoplay (e.g., track just loaded)
       if (isPlayingRef.current && audio.paused) {
-        console.log("[Audio Player] Track already set up but paused, attempting autoplay");
+        logger.log("[Audio Player] Track already set up but paused, attempting autoplay");
         attemptAutoplay(audio, true);
       }
       return;
@@ -896,7 +897,7 @@ export function ReaderAudioPlayer({
       return;
     }
 
-    console.log("[Audio Player] togglePlayback called", {
+    logger.log("[Audio Player] togglePlayback called", {
       isPlayingRef: isPlayingRef.current,
       isPlayingState: isPlaying,
       audioPaused: audio.paused,
@@ -904,7 +905,7 @@ export function ReaderAudioPlayer({
     });
 
     if (isPlayingRef.current) {
-      console.log("[Audio Player] Pausing playback");
+      logger.log("[Audio Player] Pausing playback");
       audio.pause();
       // Single source of truth: read from audio element
       emitProgressRef.current(audio.currentTime || 0);
@@ -918,14 +919,14 @@ export function ReaderAudioPlayer({
     
     // If not loaded, load it first (or wait if already loading)
     if (!trackUrl) {
-      console.log("[Audio Player] Track URL not loaded, loading first", {
+      logger.log("[Audio Player] Track URL not loaded, loading first", {
         trackId: currentTrack.id,
       });
       
       // Check if already loading
       if (loadingTracksRef.current.has(currentTrack.id)) {
         // Wait for it to finish loading
-        console.log("[Audio Player] Track already loading, waiting...");
+        logger.log("[Audio Player] Track already loading, waiting...");
         let attempts = 0;
         while (!trackUrl && attempts < 50) { // Max 5 seconds
           await new Promise(resolve => setTimeout(resolve, 100));
@@ -933,7 +934,7 @@ export function ReaderAudioPlayer({
           attempts++;
         }
         if (!trackUrl) {
-          console.warn("[Audio Player] Track URL loading timeout");
+          logger.warn("[Audio Player] Track URL loading timeout");
           return;
         }
       } else {
@@ -949,12 +950,12 @@ export function ReaderAudioPlayer({
             loadedCountRef.current += 1;
             setLoadedCount(loadedCountRef.current);
           } else {
-            console.warn("[Audio Player] Failed to load track URL");
+            logger.warn("[Audio Player] Failed to load track URL");
             return;
           }
         } catch (error) {
           loadingTracksRef.current.delete(currentTrack.id);
-          console.error("[Audio Player] Failed to load track URL:", error);
+          logger.error("[Audio Player] Failed to load track URL:", error);
           return;
         }
       }
@@ -979,14 +980,14 @@ export function ReaderAudioPlayer({
       });
     }
 
-    console.log("[Audio Player] Starting playback");
+    logger.log("[Audio Player] Starting playback");
     try {
       await audio.play();
-      console.log("[Audio Player] Playback started successfully");
+      logger.log("[Audio Player] Playback started successfully");
       setIsPlaying(true);
       isPlayingRef.current = true;
     } catch (error) {
-      console.warn("[Audio Player] Failed to start playback:", error);
+      logger.warn("[Audio Player] Failed to start playback:", error);
       setIsPlaying(false);
       isPlayingRef.current = false;
     }
@@ -1009,7 +1010,7 @@ export function ReaderAudioPlayer({
         // Preserve playing state so autoplay happens when new track loads
         isPlayingRef.current = true;
         setIsPlaying(true);
-        console.log("[Audio Player] Preserving playing state for manual track change", {
+        logger.log("[Audio Player] Preserving playing state for manual track change", {
           nextIndex,
           wasPlaying,
         });
@@ -1131,7 +1132,7 @@ export function ReaderAudioPlayer({
   }, []);
 
   const handleTrackSelect = useCallback((trackIndex: number) => {
-    console.log("[Audio Player] handleTrackSelect called", {
+    logger.log("[Audio Player] handleTrackSelect called", {
       trackIndex,
       tracksLength: tracks.length,
     });

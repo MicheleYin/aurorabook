@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import { Check, Play, Pause, Volume2, ChevronDown, ChevronUp, HelpCircle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { logger } from "../lib/logger";
 import { KOKORO_VOICE_GROUPS } from "../constants/kokoro";
 import type { AppSettings } from "../types/settings";
 import type { UITheme } from "../types/ui";
@@ -135,7 +136,7 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
           setPlayingVoiceId(null);
         });
         audioRef.current.addEventListener("error", () => {
-          console.error("Failed to play voice sample:", sampleUrl);
+          logger.error("Failed to play voice sample:", sampleUrl);
           setPlayingVoiceId(null);
         });
       }
@@ -143,12 +144,12 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
       // Play the new sample
       audioRef.current.src = blobUrl;
       audioRef.current.play().catch((error) => {
-        console.error("Error playing audio:", error);
+        logger.error("Error playing audio:", error);
         setPlayingVoiceId(null);
       });
       setPlayingVoiceId(voiceId);
     } catch (error) {
-      console.error("Failed to load voice sample:", error);
+      logger.error("Failed to load voice sample:", error);
       setPlayingVoiceId(null);
     }
   };

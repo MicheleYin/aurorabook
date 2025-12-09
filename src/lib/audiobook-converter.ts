@@ -48,7 +48,7 @@ export async function convertEpubToAudiobook(
   });
   
   // Set up event listener for progress updates
-  const unlisten = await listen<any>("conversion-progress", (event) => {
+  const unlisten = await listen<ConversionProgress>("conversion-progress", (event) => {
     // Check for cancellation on each progress update
     if (signal?.aborted) {
       return;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ImageOff, X, Loader2, Headphones, Share2, Play ,  Square} from "lucide-react";
 import { toast } from "sonner";
+import { logger } from "../../lib/logger";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { Progress } from "../ui/progress";
@@ -84,14 +85,14 @@ export function BookDetailDialog({
   
   const handleResumeConversion = useCallback(async () => {
     if (!onConvertToAudiobook) {
-      console.error("onConvertToAudiobook is not available");
+      logger.error("onConvertToAudiobook is not available");
       return;
     }
     
     // Use the voice ID stored in the book
     const voiceId = book.voiceId;
     
-    console.log("Resuming conversion", {
+    logger.log("Resuming conversion", {
       sourcePath: book.sourcePath,
       hasVoiceId: !!voiceId,
       voiceId,
@@ -104,12 +105,12 @@ export function BookDetailDialog({
       try {
         await onConvertToAudiobook(book, voiceId);
       } catch (error) {
-        console.error("Failed to resume conversion:", error);
+        logger.error("Failed to resume conversion:", error);
         throw error;
       }
     } else {
       // No stored voice ID, show dialog to select one
-      console.log("No stored voice ID, showing dialog");
+      logger.log("No stored voice ID, showing dialog");
       setShowConvertDialog(true);
     }
   }, [book, onConvertToAudiobook]);
@@ -137,7 +138,7 @@ export function BookDetailDialog({
         const arrayBuffer = await getEpubBufferService(book.sourcePath);
         
         if (!arrayBuffer) {
-          console.error("EPUB not found in store", {
+          logger.error("EPUB not found in store", {
             sourcePath: book.sourcePath,
           });
           toast.error("Cannot export EPUB", {
@@ -146,7 +147,7 @@ export function BookDetailDialog({
           return;
         }
         
-        console.debug("Retrieved EPUB from store for export", {
+        logger.debug("Retrieved EPUB from store for export", {
           sizeBytes: arrayBuffer.byteLength,
         });
         
@@ -170,7 +171,7 @@ export function BookDetailDialog({
         });
       }
     } catch (error) {
-      console.error("Export error:", error);
+      logger.error("Export error:", error);
       toast.error("Export failed", {
         description: error instanceof Error ? error.message : "Could not export the EPUB file.",
       });
@@ -201,7 +202,7 @@ export function BookDetailDialog({
     const cleanupFns: Array<() => void> = [];
     pendingTracks.forEach((track) => {
       if (!track.url) {
-        console.warn("[BookDetailDialog] Track missing URL", { trackId: track.id, href: track.href });
+        logger.warn("[BookDetailDialog] Track missing URL", { trackId: track.id, href: track.href });
         return;
       }
       const audio = new Audio();
@@ -223,7 +224,7 @@ export function BookDetailDialog({
         }
       };
       const handleError = () => {
-        console.error("[BookDetailDialog] Failed to load audio track for duration", {
+        logger.error("[BookDetailDialog] Failed to load audio track for duration", {
           trackId: track.id,
           href: track.href,
           url: track.url,

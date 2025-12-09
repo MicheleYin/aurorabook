@@ -5,6 +5,7 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { open } from "@tauri-apps/plugin-dialog";
+import { logger } from "../../lib/logger";
 import { isIOS } from "../../lib/is-tauri";
 import {
   readAllBooks,
@@ -63,7 +64,7 @@ export function useLibraryOperations(
           return mergedBooks;
         });
       } catch (error) {
-        console.warn("Failed to load books from Rust backend.", error);
+        logger.warn("Failed to load books from Rust backend.", error);
       }
     },
     [setLibrary],
@@ -225,7 +226,7 @@ export function useLibraryOperations(
         try {
           await addBook(normalizedBook, undefined);
         } catch (error) {
-          console.warn("Failed to update book with restored state", error);
+          logger.warn("Failed to update book with restored state", error);
         }
       }
 
@@ -290,7 +291,7 @@ export function useLibraryOperations(
 
       requestAnimationFrame(() => {
         refreshLibrary().catch((error) => {
-          console.warn("Failed to refresh library after adding book:", error);
+          logger.warn("Failed to refresh library after adding book:", error);
         });
       });
 
@@ -316,7 +317,7 @@ export function useLibraryOperations(
         }
       }
       
-      console.error("Import error:", { error, errorMessage, errorString: String(error) });
+      logger.error("Import error:", { error, errorMessage, errorString: String(error) });
       
       // Check if this is a duplicate book error
       // The error message from Rust will be: "Duplicate book: This EPUB is already in your library: \"{title}\""

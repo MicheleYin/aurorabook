@@ -1,5 +1,6 @@
 import DOMPurify from "dompurify";
 
+import { logger } from "./logger";
 import type { AudioSyncMap, AudioSyncSegment, AudioTrack } from "../types/reader";
 
 const sharedTextDecoder =
@@ -83,7 +84,7 @@ export const normalizeChapterContent = async (content: unknown): Promise<string>
     return (content as { textContent: string }).textContent;
   }
 
-  console.warn("Unexpected chapter content type received from EPUB spine:", content);
+  logger.warn("Unexpected chapter content type received from EPUB spine:", content);
   return "";
 };
 
@@ -109,7 +110,7 @@ export const sanitizeChapterHtml = (html: string) => {
       ALLOW_DATA_ATTR: true,
     });
   } catch (error) {
-    console.warn("DOMPurify failed to sanitize chapter, falling back.", error);
+    logger.warn("DOMPurify failed to sanitize chapter, falling back.", error);
     return stripped.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
   }
 };
@@ -120,7 +121,7 @@ export const extractPlainText = (html: string) => {
     const doc = parser.parseFromString(html, "text/html");
     return doc.body?.textContent?.replace(/\s+/g, " ").trim() ?? "";
   } catch (error) {
-    console.warn("DOMParser could not extract plain text, using fallback.", error);
+    logger.warn("DOMParser could not extract plain text, using fallback.", error);
     return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   }
 };
@@ -187,12 +188,12 @@ export const findCurrentAudioSegment = (
   currentTimeSeconds: number,
 ): AudioSyncSegment | undefined => {
   if (!syncMap) {
-    console.debug("[Audio Sync] No sync map available");
+    logger.debug("[Audio Sync] No sync map available");
     return undefined;
   }
 
   const normalizedTrackHref = normalizeAudioHref(audioTrackHref);
-  console.debug("[Audio Sync] Finding segment", {
+  logger.debug("[Audio Sync] Finding segment", {
     audioTrackHref,
     normalizedTrackHref,
     currentTimeSeconds,
@@ -243,7 +244,7 @@ export const findCurrentAudioSegment = (
   }
   
   if (segment) {
-    console.debug("[Audio Sync] Found matching segment", {
+    logger.debug("[Audio Sync] Found matching segment", {
       textElementId: segment.textElementId,
       chapterHref: segment.chapterHref,
       audioTrackHref: segment.audioTrackHref,
@@ -266,7 +267,7 @@ export const findCurrentAudioSegment = (
       seg => normalizeAudioHref(seg.audioTrackHref) === normalizedTrackHref
     );
     
-    console.debug("[Audio Sync] No segment found for", {
+    logger.debug("[Audio Sync] No segment found for", {
       audioTrackHref,
       normalizedTrackHref,
       currentTimeSeconds,

@@ -5,6 +5,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
+import { logger } from "../../lib/logger";
 import type { UseAudioStateSyncParams } from "./types";
 
 const PROGRESS_ECHO_TOLERANCE_SECONDS = 0.5;
@@ -226,7 +227,7 @@ export function useAudioStateSync(params: UseAudioStateSyncParams) {
         setIsRestoring(false);
         setRestoreTime(null);
       } catch (error) {
-        console.warn("Failed to apply restore time:", error);
+        logger.warn("Failed to apply restore time:", error);
         setIsRestoring(false);
         setRestoreTime(null);
       }

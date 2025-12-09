@@ -3,6 +3,7 @@
  * This prevents keeping all chapter content in memory at once
  */
 
+import { logger } from "./logger";
 import { loadChapterContent as loadChapterContentFromBackend, loadEpubAudio } from "./book-service";
 import type { Chapter, AudioTrack } from "../types/reader";
 import {
@@ -50,7 +51,7 @@ export function clearBookCache(sourcePath: string): void {
   }
   audioKeysToDelete.forEach((key) => audioTrackCache.delete(key));
   
-  console.debug(`${LOADER_LOG_PREFIX} cleared cache for book`, {
+  logger.debug(`${LOADER_LOG_PREFIX} cleared cache for book`, {
     sourcePath,
     clearedChapters: keysToDelete.length,
     clearedAudioTracks: audioKeysToDelete.length,
@@ -84,7 +85,7 @@ export function clearAllCachesExcept(sourcePath: string): void {
   }
   audioKeysToDelete.forEach((key) => audioTrackCache.delete(key));
   
-  console.debug(`${LOADER_LOG_PREFIX} cleared all caches except book`, {
+  logger.debug(`${LOADER_LOG_PREFIX} cleared all caches except book`, {
     keepSourcePath: sourcePath,
     clearedChapters,
     clearedAudioTracks: audioKeysToDelete.length,
@@ -104,7 +105,7 @@ export async function loadChapterContent(
   // Check cache first
   if (chapterCache.has(cacheKey)) {
     const cached = chapterCache.get(cacheKey)!;
-    console.debug(`${LOADER_LOG_PREFIX} using cached chapter`, { 
+    logger.debug(`${LOADER_LOG_PREFIX} using cached chapter`, { 
       bookId, 
       href: chapter.href,
     });
@@ -127,13 +128,13 @@ export async function loadChapterContent(
         loadedChapter = await loadChapterContentFromBackend(bookId, altHref);
         if (loadedChapter && loadedChapter.contentHtml) {
           if (altHref !== chapter.href) {
-            console.debug(`${LOADER_LOG_PREFIX} loaded chapter using alternative href: ${altHref} (original: ${chapter.href})`);
+            logger.debug(`${LOADER_LOG_PREFIX} loaded chapter using alternative href: ${altHref} (original: ${chapter.href})`);
           }
           break;
         }
       } catch (error) {
         // Continue to next alternative
-        console.debug(`${LOADER_LOG_PREFIX} failed to load with href ${altHref}, trying next`, { error });
+        logger.debug(`${LOADER_LOG_PREFIX} failed to load with href ${altHref}, trying next`, { error });
       }
     }
     
@@ -161,7 +162,7 @@ export async function loadChapterContent(
     const result = { contentHtml: sanitized, plainText, wordCount };
     chapterCache.set(cacheKey, result);
     
-    console.debug(`${LOADER_LOG_PREFIX} loaded chapter`, {
+    logger.debug(`${LOADER_LOG_PREFIX} loaded chapter`, {
       bookId,
       href: chapter.href,
       wordCount,
@@ -374,7 +375,7 @@ export async function preloadBookContent(
   chapters: Chapter[],
   audioTracks: AudioTrack[],
 ): Promise<{ chapters: Chapter[]; audioTracks: AudioTrack[] }> {
-  console.debug(`${LOADER_LOG_PREFIX} preloading all content for book`, {
+  logger.debug(`${LOADER_LOG_PREFIX} preloading all content for book`, {
     bookId,
     chapterCount: chapters.length,
     audioTrackCount: audioTracks.length,
@@ -420,7 +421,7 @@ export async function preloadBookContent(
     }),
   );
 
-  console.debug(`${LOADER_LOG_PREFIX} finished preloading book content`, {
+  logger.debug(`${LOADER_LOG_PREFIX} finished preloading book content`, {
     bookId,
     loadedChapters: loadedChapters.filter(c => c.contentHtml && c.plainText).length,
     loadedAudioTracks: loadedAudioTracks.filter(t => t.url).length,

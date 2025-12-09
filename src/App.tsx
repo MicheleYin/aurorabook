@@ -2,6 +2,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { logger } from "./lib/logger";
+import { useProgressSaving } from "./hooks/useProgressSaving";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LibraryPanel } from "./components/LibraryPanel";
 import { ReaderPanel } from "./components/ReaderPanel";
 import { ReaderAudioPlayer } from "./components/reader/ReaderAudioPlayer";
@@ -75,7 +78,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     handleConvertToAudiobook,
     handleConvertBookFromDetail,
     cancelConversionForBook,
-  } = useBookConversion(setLibrary);
+  } = useBookConversion(library, setLibrary);
 
   const {
     activeView,
@@ -126,22 +129,25 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   // Ref to save progress from ReaderViewport
   const saveProgressRef = useRef<(() => void) | null>(null);
 
+  // Hook for saving progress before navigation/chapter changes
+  const saveProgress = useProgressSaving(
+    saveProgressRef,
+    activeChapterId,
+    activeBookId,
+    flushProgressUpdate
+  );
+
   const handleSelectChapter = useCallback(async (chapterId: string, options?: ChapterSelectionOptions) => {
     if (!activeBookId) return;
 
     // Save progress before changing chapters
-    if (saveProgressRef.current && activeChapterId) {
-      console.log("[App] Saving progress before chapter change", {
-        bookId: activeBookId,
-        fromChapterId: activeChapterId,
-        toChapterId: chapterId,
-        source: options?.isManualSelection ? "manual" : "navigation",
-      });
-      saveProgressRef.current();
-      // Flush the debounced save immediately
-      await flushProgressUpdate();
-    } else if (!saveProgressRef.current) {
-      console.debug("[App] No saveProgress function available", {
+    await saveProgress({
+      toChapterId: chapterId,
+      source: options?.isManualSelection ? "manual" : "navigation",
+    });
+    
+    if (!saveProgressRef.current) {
+      logger.debug("[App] No saveProgress function available", {
         bookId: activeBookId,
         chapterId,
       });
@@ -149,7 +155,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
 
     // Disable auto-scroll on manual selection
     if (options?.isManualSelection && autoScrollEnabled) {
-      console.log("[App] Disabling auto-scroll due to manual chapter selection");
+      logger.log("[App] Disabling auto-scroll due to manual chapter selection");
       setAutoScrollEnabled(false);
       updateSettings({ autoScrollEnabled: false });
       toast.info("Auto-scroll disabled", {
@@ -197,7 +203,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       // updateBookProgress will handle it appropriately
     }
 
-    console.log("[App] Updating progress for new chapter", {
+    logger.log("[App] Updating progress for new chapter", {
       bookId: activeBookId,
       chapterId,
       scrollPosition: requestedScrollPosition,
@@ -209,7 +215,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     const fragment = options?.fragment;
     setPendingFragment(fragment && fragment.length > 0 ? fragment.replace(/^#/, "") : null);
     setActiveView("reader");
-  }, [activeBookId, activeChapterId, autoScrollEnabled, setAutoScrollEnabled, updateSettings, setActiveChapterId, updateBookProgress, setPendingFragment, setActiveView, flushProgressUpdate]);
+  }, [activeBookId, activeChapterId, autoScrollEnabled, setAutoScrollEnabled, updateSettings, setActiveChapterId, updateBookProgress, setPendingFragment, setActiveView, saveProgress]);
 
   // Inline useAudioPlayer functionality (UI state management)
   const [isAudioPlayerOpen, setIsAudioPlayerOpen] = useState(false);
@@ -261,7 +267,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
         });
 
         if (matchingChapter && matchingChapter.id !== activeChapterId) {
-          console.log("[App] Syncing chapter to current audio track", {
+          logger.log("[App] Syncing chapter to current audio track", {
             trackHref: currentAudioTrackHref,
             chapterId: matchingChapter.id,
             chapterTitle: matchingChapter.title,
@@ -292,7 +298,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     // When auto-scroll is disabled (e.g., after manual chapter selection),
     // audio should continue playing without changing chapters
     if (!autoScrollEnabled || !activeBook) {
-      console.debug("[App] Track change ignored - auto-scroll disabled or no active book", {
+      logger.debug("[App] Track change ignored - auto-scroll disabled or no active book", {
         trackHref,
         autoScrollEnabled,
         hasActiveBook: !!activeBook,
@@ -303,7 +309,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     // Find chapters that use this audio track
     const chapterHrefs = findChaptersForAudioTrack(activeBook.audioSyncMap, trackHref);
     if (chapterHrefs.length === 0) {
-      console.debug("[App] No chapters found for audio track", { trackHref });
+      logger.debug("[App] No chapters found for audio track", { trackHref });
       return;
     }
 
@@ -315,7 +321,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     });
 
     if (matchingChapter && matchingChapter.id !== activeChapterId) {
-      console.log("[App] Changing chapter to match audio track", {
+      logger.log("[App] Changing chapter to match audio track", {
         trackHref,
         chapterId: matchingChapter.id,
         chapterTitle: matchingChapter.title,
@@ -394,7 +400,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
           const { clearBookCache } = await import("./lib/lazy-chapter-loader");
           clearBookCache(bookToDelete.sourcePath);
         } catch (error) {
-          console.warn("Failed to clear book cache:", error);
+          logger.warn("Failed to clear book cache:", error);
         }
       }
 
@@ -405,7 +411,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
         setActiveView("library");
       }
     } catch (error) {
-      console.error("Failed to delete book from Rust backend:", error);
+      logger.error("Failed to delete book from Rust backend:", error);
       toast.error("Failed to delete book", {
         description: error instanceof Error ? error.message : "An error occurred",
       });
@@ -425,62 +431,117 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
 
   const audioPlayerChromeVisible = activeView === "reader" ? isReaderChromeVisible : true;
 
-  const libraryView = (
-    <LibraryPanel
-      library={filteredLibrary}
-      totalBooks={library.length}
-      searchTerm={librarySearchTerm}
-      onSearchChange={setLibrarySearchTerm}
-      activeFilter={libraryFilter}
-      onFilterChange={setLibraryFilter}
-      viewMode={libraryViewMode}
-      onViewModeChange={setLibraryViewMode}
-      activeBookId={activeBookId}
-      isImporting={isImporting}
-      onAddEbook={handleAddEbook}
-      onOpenBook={handleSelectBook}
-      onViewDetails={(bookId) => setDetailBookId(bookId)}
-      bookConversionProgress={bookConversionProgress}
-      conversionStartTimeRef={conversionStartTimeRef}
-    />
+  // Memoize callbacks for reader view
+  const handleNavigateLibrary = useCallback(async () => {
+    // Save progress before navigating away
+    await saveProgress({
+      source: "navigation",
+    });
+    setActiveView("library");
+  }, [saveProgress, setActiveView]);
+
+  const handleOpenAudioPlayer = useCallback(() => {
+    setIsAudioPlayerOpen(true);
+  }, []);
+
+  const handleSaveProgress = useCallback((saveFn: () => void) => {
+    saveProgressRef.current = saveFn;
+  }, []);
+
+  const handleThemeChange = useCallback((theme: "light" | "dark" | "system") => {
+    updateSettings({ theme });
+  }, [updateSettings]);
+
+  const handleViewDetails = useCallback((bookId: string) => {
+    setDetailBookId(bookId);
+  }, []);
+
+  const libraryView = useMemo(
+    () => (
+      <ErrorBoundary>
+        <LibraryPanel
+          library={filteredLibrary}
+          totalBooks={library.length}
+          searchTerm={librarySearchTerm}
+          onSearchChange={setLibrarySearchTerm}
+          activeFilter={libraryFilter}
+          onFilterChange={setLibraryFilter}
+          viewMode={libraryViewMode}
+          onViewModeChange={setLibraryViewMode}
+          activeBookId={activeBookId}
+          isImporting={isImporting}
+          onAddEbook={handleAddEbook}
+          onOpenBook={handleSelectBook}
+          onViewDetails={handleViewDetails}
+          bookConversionProgress={bookConversionProgress}
+          conversionStartTimeRef={conversionStartTimeRef}
+        />
+      </ErrorBoundary>
+    ),
+    [
+      filteredLibrary,
+      library.length,
+      librarySearchTerm,
+      setLibrarySearchTerm,
+      libraryFilter,
+      setLibraryFilter,
+      libraryViewMode,
+      setLibraryViewMode,
+      activeBookId,
+      isImporting,
+      handleAddEbook,
+      handleSelectBook,
+      handleViewDetails,
+      bookConversionProgress,
+      conversionStartTimeRef,
+    ]
   );
 
-  const readerView = (
-    <ReaderPanel
-      activeBook={activeBook}
-      activeChapter={activeChapter}
-      preferences={readerPreferences}
-      onPreferencesChange={updateReaderPreferences}
-      onSelectChapter={handleSelectChapter}
-      onNavigateLibrary={async () => {
-        // Save progress before navigating away
-        if (saveProgressRef.current && activeChapterId) {
-          console.log("[App] Saving progress before navigating to library", {
-            bookId: activeBookId,
-            fromChapterId: activeChapterId,
-            toChapterId: undefined,
-            source: "navigation",
-          });
-          saveProgressRef.current();
-          // Flush the debounced save immediately
-          await flushProgressUpdate();
-        }
-        setActiveView("library");
-      }}
-      resolvedUiTheme={resolvedUiTheme}
-      uiTheme={uiTheme}
-      onThemeChange={(theme) => updateSettings({ theme })}
-      onChapterProgress={handleChapterProgress}
-      onChromeVisibilityChange={setIsReaderChromeVisible}
-      audioPlayerVisible={Boolean(activeBook?.audioTracks?.length) && isAudioPlayerOpen}
-      onOpenAudioPlayer={() => setIsAudioPlayerOpen(true)}
-      currentAudioTrackHref={currentAudioTrackHref}
-      onSaveProgress={(saveFn) => {
-        saveProgressRef.current = saveFn;
-      }}
-      autoScrollEnabled={autoScrollEnabled}
-      currentAudioProgress={currentAudioProgress}
-    />
+  const readerView = useMemo(
+    () => (
+      <ErrorBoundary>
+        <ReaderPanel
+          activeBook={activeBook}
+          activeChapter={activeChapter}
+          preferences={readerPreferences}
+          onPreferencesChange={updateReaderPreferences}
+          onSelectChapter={handleSelectChapter}
+          onNavigateLibrary={handleNavigateLibrary}
+          resolvedUiTheme={resolvedUiTheme}
+          uiTheme={uiTheme}
+          onThemeChange={handleThemeChange}
+          onChapterProgress={handleChapterProgress}
+          onChromeVisibilityChange={setIsReaderChromeVisible}
+          audioPlayerVisible={Boolean(activeBook?.audioTracks?.length) && isAudioPlayerOpen}
+          onOpenAudioPlayer={handleOpenAudioPlayer}
+          currentAudioTrackHref={currentAudioTrackHref}
+          onSaveProgress={handleSaveProgress}
+          autoScrollEnabled={autoScrollEnabled}
+          currentAudioProgress={currentAudioProgress}
+        />
+      </ErrorBoundary>
+    ),
+    [
+      activeBook,
+      activeChapter,
+      readerPreferences,
+      updateReaderPreferences,
+      handleSelectChapter,
+      handleNavigateLibrary,
+      saveProgress,
+      resolvedUiTheme,
+      uiTheme,
+      handleThemeChange,
+      handleChapterProgress,
+      setIsReaderChromeVisible,
+      activeBook?.audioTracks?.length,
+      isAudioPlayerOpen,
+      handleOpenAudioPlayer,
+      currentAudioTrackHref,
+      handleSaveProgress,
+      autoScrollEnabled,
+      currentAudioProgress,
+    ]
   );
 
   const detailBook = useMemo(() => {
@@ -488,7 +549,10 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     return library.find((book) => book.id === detailBookId);
   }, [detailBookId, library]);
 
-  const settingsView = <SettingsPanel settings={settings} onSettingsChange={updateSettings} />;
+  const settingsView = useMemo(
+    () => <SettingsPanel settings={settings} onSettingsChange={updateSettings} />,
+    [settings, updateSettings]
+  );
   const currentView =
     activeView === "settings"
       ? settingsView
@@ -566,11 +630,10 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
                 onClick={async () => {
                   if (isDisabled) return;
                   // Save progress before navigating away from reader
-                  if (activeView === "reader" && item.id !== "reader" && saveProgressRef.current && activeChapterId) {
-                    console.log("[App] Saving progress before navigating to", item.id, "from", saveProgressRef.current,activeChapterId);
-                    saveProgressRef.current();
-                    // Flush the debounced save immediately
-                    await flushProgressUpdate();
+                  if (activeView === "reader" && item.id !== "reader") {
+                    await saveProgress({
+                      source: `navigation-to-${item.id}`,
+                    });
                   }
                   setActiveView(item.id);
                 }}

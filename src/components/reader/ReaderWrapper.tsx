@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useRef, useState, useEffect } from "react";
+import { logger } from "../../lib/logger";
 import type { Book, Chapter, ReaderPreferences } from "../../types/reader";
 import type { ChapterProgressSnapshot, ChapterSelectionOptions, AudioProgressSnapshot } from "./types";
 import { ReaderViewport } from "./ReaderViewport";
@@ -140,7 +141,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     // (it's loadedChapter || activeChapter from the state passed to ReaderViewport)
     const chapterToRestore = activeChapter;
     if (!activeBook || !chapterToRestore) {
-      console.warn("[ReaderWrapper] restoreProgress: missing activeBook or chapter", {
+      logger.warn("[ReaderWrapper] restoreProgress: missing activeBook or chapter", {
         hasActiveBook: !!activeBook,
         hasChapter: !!chapterToRestore,
         loadedChapterId: chapterLoader.loadedChapter?.id,
@@ -151,7 +152,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       return;
     }
     
-    console.log("[ReaderWrapper] restoreProgress: calling progressRestoration.restoreProgress", {
+    logger.log("[ReaderWrapper] restoreProgress: calling progressRestoration.restoreProgress", {
       chapterId: chapterToRestore.id,
       bookId: activeBook.id,
     });
@@ -207,7 +208,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       return;
     }
 
-    console.log("[ReaderWrapper] Reloading chapter due to missing spans", {
+    logger.log("[ReaderWrapper] Reloading chapter due to missing spans", {
       chapterId,
       bookId: activeBook.id,
     });
@@ -230,7 +231,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
   // This ALWAYS handles restoration after chapter content is in the DOM, regardless of cache status
   // Note: We use activeChapter because that's what's being rendered and what triggered the callback
   const onChapterLoaded = useCallback(() => {
-    console.log("[ReaderWrapper] onChapterLoaded callback called", {
+    logger.log("[ReaderWrapper] onChapterLoaded callback called", {
       activeChapterId: activeChapter?.id,
       activeBookId: activeBook?.id,
       loadedChapterId: chapterLoader.loadedChapter?.id,
@@ -239,7 +240,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     // Use activeChapter since that's what's being rendered (it's loadedChapter || activeChapter from state)
     const chapterToRestore = activeChapter;
     if (!chapterToRestore || !activeBook) {
-      console.warn("[ReaderWrapper] onChapterLoaded: missing chapter or activeBook", {
+      logger.warn("[ReaderWrapper] onChapterLoaded: missing chapter or activeBook", {
         hasChapter: !!chapterToRestore,
         hasActiveBook: !!activeBook,
       });
@@ -250,7 +251,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     const restoreState = progressRestoration.getState();
     const shouldRestore = chapterToRestore.id === activeChapter?.id && restoreState.shouldRestore;
     
-    console.log("[ReaderWrapper] onChapterLoaded: checking restoration", {
+    logger.log("[ReaderWrapper] onChapterLoaded: checking restoration", {
       chapterId: chapterToRestore.id,
       activeChapterId: activeChapter?.id,
       shouldRestore,
@@ -262,7 +263,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     });
     
     if (shouldRestore) {
-      console.log("[ReaderWrapper] ✓ Chapter loaded in DOM, restoring progress", {
+      logger.log("[ReaderWrapper] ✓ Chapter loaded in DOM, restoring progress", {
         chapterId: chapterToRestore.id,
         shouldRestore: restoreState.shouldRestore,
         hasProgress: !!activeBook.progress,
@@ -274,7 +275,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       // Pass the chapter that's actually being rendered
       restoreProgress();
     } else {
-      console.debug("[ReaderWrapper] Chapter loaded but not restoring", {
+      logger.debug("[ReaderWrapper] Chapter loaded but not restoring", {
         chapterId: chapterToRestore.id,
         activeChapterId: activeChapter?.id,
         shouldRestore: restoreState.shouldRestore,
@@ -296,7 +297,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
 
     const chapter = activeBook.chapters.find(ch => ch.id === chapterId);
     if (!chapter) {
-      console.warn("[ReaderWrapper] Chapter not found", { chapterId, bookId: activeBook.id });
+      logger.warn("[ReaderWrapper] Chapter not found", { chapterId, bookId: activeBook.id });
       return;
     }
     
@@ -323,7 +324,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     // it should preserve existing progress values for the chapter
     onSelectChapter(chapterId, optionsForParent);
     
-    console.log("[ReaderWrapper] Chapter change", {
+    logger.log("[ReaderWrapper] Chapter change", {
       chapterId,
       shouldRestore,
       hasProgress,
@@ -367,7 +368,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       // which fires after the DOM is updated with chapter content
       // This ensures restoration happens at the right time regardless of cache status
       
-      console.log("[ReaderWrapper] Chapter loaded successfully, waiting for DOM update", {
+      logger.log("[ReaderWrapper] Chapter loaded successfully, waiting for DOM update", {
         chapterId,
         hasContent: !!loaded.contentHtml,
         contentLength: loaded.contentHtml?.length,
@@ -375,7 +376,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
         wasAlreadyLoaded,
       });
     } else {
-      console.error("[ReaderWrapper] Failed to load chapter", { chapterId, loaded });
+      logger.error("[ReaderWrapper] Failed to load chapter", { chapterId, loaded });
     }
   }, [activeBook, activeChapter, ensureChapterLoaded, saveProgress, scrollOps, progressRestoration, shouldRestoreProgress, isChapterAlreadyLoaded, onSelectChapter]);
 
@@ -394,7 +395,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       const shouldRestore = shouldRestoreProgress(chapterId);
       const hasProgress = activeBook.progress?.currentChapterId === chapterId;
       
-      console.log("[ReaderWrapper] Active chapter changed, loading", {
+      logger.log("[ReaderWrapper] Active chapter changed, loading", {
         chapterId,
         shouldRestore,
         hasProgress,
@@ -421,7 +422,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
           // Note: Restoration is handled by onChapterLoaded callback
           // which fires after the DOM is updated with chapter content
           
-          console.log("[ReaderWrapper] Chapter loaded in render-time check, waiting for DOM update", {
+          logger.log("[ReaderWrapper] Chapter loaded in render-time check, waiting for DOM update", {
             chapterId,
             hasContent: !!loaded.contentHtml,
             contentLength: loaded.contentHtml?.length,
@@ -429,10 +430,10 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
             wasAlreadyLoaded,
           });
         } else {
-          console.error("[ReaderWrapper] Failed to load chapter in render-time check", { chapterId, loaded });
+          logger.error("[ReaderWrapper] Failed to load chapter in render-time check", { chapterId, loaded });
         }
       }).catch(error => {
-        console.error("[ReaderWrapper] Error loading chapter in render-time check", { chapterId, error });
+        logger.error("[ReaderWrapper] Error loading chapter in render-time check", { chapterId, error });
         chapterLoader.setIsLoading(false);
       });
     }
@@ -473,7 +474,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
   // Wrapper for chapter change from audio sync
   // Converts the audio sync format (chapterId, elementId) to the chapter change format
   const handleAudioSyncChapterChange = useCallback(async (chapterId: string, elementId?: string) => {
-    console.log("[ReaderWrapper] handleAudioSyncChapterChange called", {
+    logger.log("[ReaderWrapper] handleAudioSyncChapterChange called", {
       chapterId,
       elementId,
       currentChapterId: activeChapter?.id,
@@ -491,7 +492,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     // Note: handleChapterChange will update previousChapterIdRef AFTER loading
     await handleChapterChange(chapterId, { scrollPosition: "top", isManualSelection: false });
     
-    console.log("[ReaderWrapper] handleAudioSyncChapterChange completed", {
+    logger.log("[ReaderWrapper] handleAudioSyncChapterChange completed", {
       chapterId,
       activeChapterIdAfter: activeChapter?.id,
       previousChapterIdRefAfter: previousChapterIdRef.current,

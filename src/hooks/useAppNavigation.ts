@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { logger } from "../lib/logger";
 import type { LibraryFilterOption, LibraryViewMode } from "../components/library/types";
 import type { Book } from "../types/reader";
 
@@ -19,7 +20,7 @@ export function useAppNavigation(
   useEffect(() => {
     if (!isHydrated) return;
     refreshLibrary().catch((error) => {
-      console.error("Failed to refresh library:", error);
+      logger.error("Failed to refresh library:", error);
     });
   }, [isHydrated, refreshLibrary]);
 

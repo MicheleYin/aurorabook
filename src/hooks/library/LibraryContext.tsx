@@ -6,6 +6,7 @@
  */
 
 import { createContext, useContext, useCallback, useEffect, useState, useMemo } from "react";
+import { logger } from "../../lib/logger";
 import type { Book } from "../../types/reader";
 import { useLibraryOperations } from "./useLibraryOperations";
 import { useProgressManagement } from "./useProgressManagement";
@@ -63,7 +64,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         await refreshLibrary();
         if (cancelled) return;
       } catch (error) {
-        console.warn("Failed to load books from Rust backend.", error);
+        logger.warn("Failed to load books from Rust backend.", error);
       } finally {
         if (!cancelled) {
           setIsHydrated(true);

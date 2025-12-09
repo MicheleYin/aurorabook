@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
+import { logger } from "../lib/logger";
+import { mergeBookAudioFields } from "../lib/book-utils";
 import type { Book } from "../types/reader";
 import type { VoiceId } from "../types/reader";
 import type { ConversionProgress } from "../lib/audiobook-converter";
@@ -14,9 +16,8 @@ export type PendingBookForConversion = {
 };
 
 export function useBookConversion(
+  library: Book[],
   setLibrary: React.Dispatch<React.SetStateAction<Book[]>>,
-
-  
 ) {
   const [showConvertDialog, setShowConvertDialog] = useState(false);
   const [pendingBookForConversion, setPendingBookForConversion] = useState<PendingBookForConversion | null>(null);
@@ -30,6 +31,12 @@ export function useBookConversion(
   const convertingSourcePathRef = useRef<string | null>(null);
   const conversionStartTimeRef = useRef<number | null>(null);
   const listenerSetupRef = useRef<boolean>(false);
+  const libraryRef = useRef<Book[]>(library);
+  
+  // Keep library ref in sync with current library state
+  useEffect(() => {
+    libraryRef.current = library;
+  }, [library]);
 
   // Listen for chapter completion events and conversion cancellation events to refresh the book
   useEffect(() => {
@@ -56,14 +63,25 @@ export function useBookConversion(
           // Fetch the updated book and merge only audio-related fields
           // This preserves the existing book state so audio playback doesn't stop
           try {
-            // First, get all books to find the one with matching sourcePath
-            const allBooks = await readAllBooks();
-            const existingBook = allBooks.find(
+            // First, try to find the book in the current library state
+            // This avoids an unnecessary readAllBooks() call
+            // Use the library ref to get the latest state
+            let existingBook = libraryRef.current.find(
               (book) => book.sourcePath === source_path
             );
             
+            // If not found in library state, fetch from backend
+            // This can happen if the library hasn't been refreshed yet
             if (!existingBook) {
-              console.warn("Book not found in library for source_path:", source_path);
+              logger.debug("Book not in library state, fetching from backend", { source_path });
+              const allBooks = await readAllBooks();
+              existingBook = allBooks.find(
+                (book) => book.sourcePath === source_path
+              );
+            }
+            
+            if (!existingBook) {
+              logger.warn("Book not found in library for source_path:", source_path);
               return;
             }
             
@@ -71,7 +89,7 @@ export function useBookConversion(
             const updatedBook = await readOneBook(existingBook.id);
             
             if (!updatedBook) {
-              console.warn("Failed to fetch updated book:", existingBook.id);
+              logger.warn("Failed to fetch updated book:", existingBook.id);
               return;
             }
             
@@ -88,22 +106,7 @@ export function useBookConversion(
               }
               
               const currentBook = currentLibrary[bookIndex];
-              
-              // Create merged book with only audio fields updated
-              const mergedBook: Book = {
-                ...currentBook,
-                chapters: updatedBook.chapters,
-                fileSizeBytes: updatedBook.fileSizeBytes,
-                // Only update audio-related fields
-                audioTracks: updatedBook.audioTracks,
-                audioSyncMap: updatedBook.audioSyncMap,
-                // Also update conversion status and completed chapters
-                conversionStatus: updatedBook.conversionStatus,
-                completedChapters: updatedBook.completedChapters,
-                // Preserve voiceId from backend (important for resuming conversion)
-                voiceId: updatedBook.voiceId,
-              };
-
+              const mergedBook = mergeBookAudioFields(currentBook, updatedBook);
               
               const updated = [...currentLibrary];
               updated[bookIndex] = mergedBook;
@@ -119,7 +122,7 @@ export function useBookConversion(
               });
             }
           } catch (error) {
-            console.warn("Failed to refresh book after chapter completion:", error);
+            logger.warn("Failed to refresh book after chapter completion:", error);
           }
         });
         
@@ -131,14 +134,25 @@ export function useBookConversion(
           
           // Fetch the updated book and merge the new info, just like when a chapter is done
           try {
-            // First, get all books to find the one with matching sourcePath
-            const allBooks = await readAllBooks();
-            const existingBook = allBooks.find(
+            // First, try to find the book in the current library state
+            // This avoids an unnecessary readAllBooks() call
+            // Use the library ref to get the latest state
+            let existingBook = libraryRef.current.find(
               (book) => book.sourcePath === source_path
             );
             
+            // If not found in library state, fetch from backend
+            // This can happen if the library hasn't been refreshed yet
             if (!existingBook) {
-              console.warn("Book not found in library for source_path:", source_path);
+              logger.debug("Book not in library state, fetching from backend", { source_path });
+              const allBooks = await readAllBooks();
+              existingBook = allBooks.find(
+                (book) => book.sourcePath === source_path
+              );
+            }
+            
+            if (!existingBook) {
+              logger.warn("Book not found in library for source_path:", source_path);
               return;
             }
             
@@ -146,7 +160,7 @@ export function useBookConversion(
             const updatedBook = await readOneBook(existingBook.id);
             
             if (!updatedBook) {
-              console.warn("Failed to fetch updated book:", existingBook.id);
+              logger.warn("Failed to fetch updated book:", existingBook.id);
               return;
             }
             
@@ -162,21 +176,7 @@ export function useBookConversion(
               }
               
               const currentBook = currentLibrary[bookIndex];
-              
-              // Create merged book with updated fields
-              const mergedBook: Book = {
-                ...currentBook,
-                chapters: updatedBook.chapters,
-                fileSizeBytes: updatedBook.fileSizeBytes,
-                audioTracks: updatedBook.audioTracks,
-                audioSyncMap: updatedBook.audioSyncMap,
-                conversionStatus: updatedBook.conversionStatus,
-                completedChapters: updatedBook.completedChapters,
-                wordsProcessed: updatedBook.wordsProcessed,
-                totalWords: updatedBook.totalWords,
-                // Preserve voiceId from backend (important for resuming conversion)
-                voiceId: updatedBook.voiceId,
-              };
+              const mergedBook = mergeBookAudioFields(currentBook, updatedBook);
               
               const updated = [...currentLibrary];
               updated[bookIndex] = mergedBook;
@@ -201,7 +201,7 @@ export function useBookConversion(
               description: "The conversion has been cancelled.",
             });
           } catch (error) {
-            console.warn("Failed to refresh book after conversion cancellation:", error);
+            logger.warn("Failed to refresh book after conversion cancellation:", error);
             // Still clear the cancelling state even if refresh failed
             setIsCancelling(false);
             setCancellingBookId(null);
@@ -210,7 +210,7 @@ export function useBookConversion(
         
         listenerSetupRef.current = true;
       } catch (error) {
-        console.warn("Failed to set up event listeners:", error);
+        logger.warn("Failed to set up event listeners:", error);
       }
     };
 
@@ -275,7 +275,7 @@ export function useBookConversion(
     
     try {
       // Convert EPUB to audiobook - backend loads EPUB from database and handles everything
-      console.debug("Starting EPUB conversion", {
+      logger.debug("Starting EPUB conversion", {
         bookId: book.id,
         sourcePath: book.sourcePath,
         voiceId,
@@ -294,7 +294,7 @@ export function useBookConversion(
         },
       });
       
-      console.debug("Conversion completed, updating library with returned book data", {
+      logger.debug("Conversion completed, updating library with returned book data", {
         sourcePath: book.sourcePath,
         hasUpdatedBook: updatedBook !== null,
       });
@@ -335,7 +335,7 @@ export function useBookConversion(
         wasCancelled = true;
         // Don't clear cancelling state here - wait for the event from backend
       } else {
-        console.error("Conversion error:", error);
+        logger.error("Conversion error:", error);
         toast.error("Conversion failed", {
           description: error instanceof Error ? error.message : "An error occurred during conversion",
         });
@@ -414,7 +414,7 @@ export function useBookConversion(
           const { invoke } = await import("@tauri-apps/api/core");
           await invoke("cancel_conversion_command", { sourcePath });
         } catch (error) {
-          console.error("Failed to cancel conversion on backend:", error);
+          logger.error("Failed to cancel conversion on backend:", error);
           // If backend call fails, still clear the cancelling state
           setIsCancelling(false);
           setCancellingBookId(null);

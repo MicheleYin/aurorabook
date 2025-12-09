@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useRef } from "react";
+import { logger } from "../../lib/logger";
 import type { Book, Chapter } from "../../types/reader";
 import { computeScrollMetrics, computeWindowScrollMetrics } from "../../lib/scroll-utils";
 
@@ -28,7 +29,7 @@ export function useProgressRestoration() {
     contentRef: React.RefObject<HTMLDivElement | null>,
     onComplete?: () => void
   ) => {
-    console.log("[useProgressRestoration] restoreProgress called", {
+    logger.log("[useProgressRestoration] restoreProgress called", {
       hasProgress: !!book.progress,
       chapterId: chapter.id,
       hasRestored: stateRef.current.hasRestored,
@@ -38,34 +39,34 @@ export function useProgressRestoration() {
     });
     
     if (!book.progress || !chapter) {
-      console.warn("[useProgressRestoration] Early return: no progress or chapter", {
+      logger.warn("[useProgressRestoration] Early return: no progress or chapter", {
         hasProgress: !!book.progress,
         hasChapter: !!chapter,
       });
       return;
     }
     if (stateRef.current.hasRestored) {
-      console.warn("[useProgressRestoration] Early return: already restored", {
+      logger.warn("[useProgressRestoration] Early return: already restored", {
         restoredChapterId: stateRef.current.restoredChapterId,
         currentChapterId: chapter.id,
       });
       return;
     }
     if (!stateRef.current.shouldRestore) {
-      console.warn("[useProgressRestoration] Early return: shouldRestore is false");
+      logger.warn("[useProgressRestoration] Early return: shouldRestore is false");
       return;
     }
 
     const progress = book.progress;
     if (progress.currentChapterId !== chapter.id) {
-      console.warn("[useProgressRestoration] Early return: chapter ID mismatch", {
+      logger.warn("[useProgressRestoration] Early return: chapter ID mismatch", {
         progressChapterId: progress.currentChapterId,
         chapterId: chapter.id,
       });
       return;
     }
 
-    console.log("[useProgressRestoration] Starting restoration", {
+    logger.log("[useProgressRestoration] Starting restoration", {
       chapterId: chapter.id,
       scrollTop: progress.currentChapterScrollTop,
       scrollPercent: progress.chapterProgressPercent,
@@ -82,7 +83,7 @@ export function useProgressRestoration() {
       if (!node) {
         if (attempts < maxAttempts) {
           if (attempts === 1 || attempts % 10 === 0) {
-            console.log("[useProgressRestoration] Waiting for contentRef", { attempts });
+            logger.log("[useProgressRestoration] Waiting for contentRef", { attempts });
           }
           setTimeout(attemptRestore, 50);
         } else {
@@ -101,7 +102,7 @@ export function useProgressRestoration() {
       if (!metrics || metrics.maxScroll === 0) {
         if (attempts < maxAttempts) {
           if (attempts === 1 || attempts % 10 === 0) {
-            console.log("[useProgressRestoration] Waiting for scroll metrics", {
+            logger.log("[useProgressRestoration] Waiting for scroll metrics", {
               attempts,
               containerMaxScroll: containerMetrics?.maxScroll,
               windowMaxScroll: windowMetrics?.maxScroll,
@@ -123,7 +124,7 @@ export function useProgressRestoration() {
           ? Math.round(progress.chapterProgressPercent * metrics.maxScroll)
           : 0);
 
-      console.log("[useProgressRestoration] ✓ Restoring scroll position", {
+      logger.log("[useProgressRestoration] ✓ Restoring scroll position", {
         chapterId: chapter.id,
         targetScrollTop,
         maxScroll: metrics.maxScroll,
@@ -136,17 +137,17 @@ export function useProgressRestoration() {
 
       if (useContainer && targetScrollTop > 0) {
         node.scrollTop = targetScrollTop;
-        console.log("[useProgressRestoration] Set container scrollTop", {
+        logger.log("[useProgressRestoration] Set container scrollTop", {
           scrollTop: node.scrollTop,
           targetScrollTop,
         });
       } else if (useWindow && targetScrollTop > 0) {
         window.scrollTo({ top: targetScrollTop, behavior: "auto" });
-        console.log("[useProgressRestoration] Set window scroll", {
+        logger.log("[useProgressRestoration] Set window scroll", {
           targetScrollTop,
         });
       } else {
-        console.warn("[useProgressRestoration] No scroll action taken", {
+        logger.warn("[useProgressRestoration] No scroll action taken", {
           useContainer,
           useWindow,
           targetScrollTop,

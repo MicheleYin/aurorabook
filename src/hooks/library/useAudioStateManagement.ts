@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useRef } from "react";
+import { logger } from "../../lib/logger";
 import { updateBookAudioState as updateBookAudioStateBackend } from "../../lib/book-service";
 import { createDebounce } from "../../lib/debounce-utils";
 import type { Book } from "../../types/reader";
@@ -34,7 +35,7 @@ export function useAudioStateManagement(
           prev.map((b) => (b.id === pending.bookId ? updatedBook : b)),
         );
       } catch (error) {
-        console.error("Failed to sync audio state to backend", error);
+        logger.error("Failed to sync audio state to backend", error);
         setLibrary((prev) =>
           prev.map((b) => (b.id === pending.bookId ? pending.book : b)),
         );

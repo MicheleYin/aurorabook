@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
+import { logger } from "../../lib/logger";
 import type { Book, Chapter } from "../../types/reader";
 import { findCurrentAudioSegment, chapterHrefsMatch, normalizeChapterHref } from "../../lib/epub";
 import { scrollToElement } from "../../lib/scroll-utils";
@@ -83,7 +84,7 @@ export function useAudioTextSync(
     trackHref: string,
     currentTime: number
   ) => {
-    console.log("[Audio Sync] updateHighlight called", {
+    logger.log("[Audio Sync] updateHighlight called", {
       hasSyncMap: !!book.audioSyncMap,
       trackHref,
       currentTime,
@@ -94,7 +95,7 @@ export function useAudioTextSync(
     });
 
     if (!book.audioSyncMap || !trackHref || !chapter) {
-      console.log("[Audio Sync] Missing required data, clearing highlight");
+      logger.log("[Audio Sync] Missing required data, clearing highlight");
       setHighlightedElementId(null);
       return;
     }
@@ -106,7 +107,7 @@ export function useAudioTextSync(
     );
 
     if (!segment) {
-      console.log("[Audio Sync] No segment found");
+      logger.log("[Audio Sync] No segment found");
       setHighlightedElementId(null);
       return;
     }
@@ -125,7 +126,7 @@ export function useAudioTextSync(
     // Check if chapter ID changed (to detect stale chapter references)
     const chapterIdChanged = lastChapterIdRef.current !== undefined && lastChapterIdRef.current !== chapter.id;
     if (chapterIdChanged) {
-      console.log("[Audio Sync] Chapter ID changed - updating reference", {
+      logger.log("[Audio Sync] Chapter ID changed - updating reference", {
         oldChapterId: lastChapterIdRef.current,
         newChapterId: chapter.id,
       });
@@ -134,7 +135,7 @@ export function useAudioTextSync(
       lastChapterIdRef.current = chapter.id;
     }
     
-    console.log("[Audio Sync] Chapter href comparison", {
+    logger.log("[Audio Sync] Chapter href comparison", {
       segmentChapterHref: segment.chapterHref,
       segmentChapterHrefNormalized: segmentChapterHref,
       currentChapterHref: chapter.href,
@@ -155,7 +156,7 @@ export function useAudioTextSync(
     const shouldChangeChapter = !hrefsMatch || chapterIdMismatch;
     
     if (shouldChangeChapter) {
-      console.log("[Audio Sync] Segment chapter mismatch detected", {
+      logger.log("[Audio Sync] Segment chapter mismatch detected", {
         segmentChapterHref: segment.chapterHref,
         segmentChapterHrefNormalized: segmentChapterHref,
         currentChapterHref: chapter.href,
@@ -182,7 +183,7 @@ export function useAudioTextSync(
 
           if (matchingChapter) {
             if (matchingChapter.id !== chapter.id) {
-              console.log("[Audio Sync] Navigating to correct chapter", {
+              logger.log("[Audio Sync] Navigating to correct chapter", {
                 fromChapterId: chapter.id,
                 fromChapterHref: chapter.href,
                 toChapterId: matchingChapter.id,
@@ -200,7 +201,7 @@ export function useAudioTextSync(
               // Also update the chapter ID ref to track what we're changing to
               lastChapterIdRef.current = matchingChapter.id;
               
-              console.log("[Audio Sync] Calling onChapterChange", {
+              logger.log("[Audio Sync] Calling onChapterChange", {
                 chapterId: matchingChapter.id,
                 chapterHref: matchingChapter.href,
                 elementId: segment.textElementId,
@@ -215,7 +216,7 @@ export function useAudioTextSync(
             } else {
               // This can happen if the chapter object reference is stale but the ID matches
               // Log it but don't treat it as an error - the chapter is already correct
-              console.log("[Audio Sync] Matching chapter found with same ID - chapter already correct", {
+              logger.log("[Audio Sync] Matching chapter found with same ID - chapter already correct", {
                 chapterId: chapter.id,
                 chapterHref: chapter.href,
                 segmentChapterHref: segment.chapterHref,
@@ -223,7 +224,7 @@ export function useAudioTextSync(
               });
             }
           } else {
-            console.log("[Audio Sync] No matching chapter found for segment", {
+            logger.log("[Audio Sync] No matching chapter found for segment", {
               segmentChapterHref: segment.chapterHref,
               segmentChapterHrefNormalized: segmentChapterHref,
               availableChapters: book.chapters.map(ch => ({
@@ -234,14 +235,14 @@ export function useAudioTextSync(
             });
           }
         } else {
-          console.log("[Audio Sync] Chapter change throttled", {
+          logger.log("[Audio Sync] Chapter change throttled", {
             timeSinceLastChange,
             throttleMs: chapterChangeThrottleMs,
             remainingMs: chapterChangeThrottleMs - timeSinceLastChange,
           });
         }
       } else {
-        console.log("[Audio Sync] Chapter change blocked", {
+        logger.log("[Audio Sync] Chapter change blocked", {
           autoScrollEnabled,
           hasOnChapterChange: !!onChapterChange,
         });
@@ -251,7 +252,7 @@ export function useAudioTextSync(
       return;
     }
 
-    console.log("[Audio Sync] Segment found - chapter matches", {
+    logger.log("[Audio Sync] Segment found - chapter matches", {
       textElementId: segment.textElementId,
       segmentChapterHref: segment.chapterHref,
       segmentChapterHrefNormalized: segmentChapterHref,
@@ -315,7 +316,7 @@ export function useAudioTextSync(
       const elementChanged = lastScrolledElementRef.current !== segment.textElementId;
       const shouldScroll = elementChanged || timeSinceLastScroll >= scrollThrottleMs;
       
-      console.log("[Audio Sync] Scroll check", {
+      logger.log("[Audio Sync] Scroll check", {
         elementChanged,
         timeSinceLastScroll,
         shouldScroll,
@@ -326,7 +327,7 @@ export function useAudioTextSync(
       if (shouldScroll) {
         const headerOffset = getHeaderOffset();
         const playerOffset = getPlayerOffset();
-        console.log("[Audio Sync] Attempting scroll", {
+        logger.log("[Audio Sync] Attempting scroll", {
           elementId: segment.textElementId,
           headerOffset,
           playerOffset,
@@ -335,7 +336,7 @@ export function useAudioTextSync(
         
         const scrolled = scrollToElement(contentRef.current, segment.textElementId, "smooth", headerOffset, playerOffset);
         
-        console.log("[Audio Sync] Scroll result", {
+        logger.log("[Audio Sync] Scroll result", {
           scrolled,
           elementId: segment.textElementId,
         });
@@ -345,12 +346,12 @@ export function useAudioTextSync(
           lastScrollTimeRef.current = now;
         } else if (elementChanged) {
           // Element not found yet, but update ref so we don't keep trying
-          console.log("[Audio Sync] Element not found, updating ref");
+          logger.log("[Audio Sync] Element not found, updating ref");
           lastScrolledElementRef.current = segment.textElementId;
         }
       }
     } else {
-      console.log("[Audio Sync] Scroll conditions not met", {
+      logger.log("[Audio Sync] Scroll conditions not met", {
         autoScrollEnabled,
         isRestoringScroll,
         hasElementId: !!segment.textElementId,
