@@ -834,6 +834,8 @@ pub async fn get_epub_buffer(
 
 
 /// Update book progress
+/// Uses lightweight update_progress_only instead of full save to avoid expensive
+/// chapter deletion/re-insertion and audio track re-saving
 #[tauri::command]
 pub async fn update_book_progress(
     book_id: String,
@@ -843,19 +845,21 @@ pub async fn update_book_progress(
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
     
-    let mut book = BookRepository::find_by_id(&db, &book_id).await
+    // Use lightweight progress-only update (doesn't touch chapters/audio tracks)
+    BookRepository::update_progress_only(&db, &book_id, &progress).await
+        .map_err(|e| AppError::Store(e))?;
+    
+    // Return updated book (re-fetch to get latest state)
+    let book = BookRepository::find_by_id(&db, &book_id).await
         .map_err(|e| AppError::Store(e))?
         .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
-    
-    book.progress = Some(progress);
-    
-    BookRepository::save(&db, &book).await
-        .map_err(|e| AppError::Store(e))?;
     
     Ok(book)
 }
 
 /// Update book audio state
+/// Uses lightweight update_audio_state_only instead of full save to avoid expensive
+/// chapter deletion/re-insertion and audio track re-saving
 #[tauri::command]
 pub async fn update_book_audio_state(
     book_id: String,
@@ -865,14 +869,14 @@ pub async fn update_book_audio_state(
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
     
-    let mut book = BookRepository::find_by_id(&db, &book_id).await
+    // Use lightweight audio-state-only update (doesn't touch chapters/audio tracks)
+    BookRepository::update_audio_state_only(&db, &book_id, &audio_state).await
+        .map_err(|e| AppError::Store(e))?;
+    
+    // Return updated book (re-fetch to get latest state)
+    let book = BookRepository::find_by_id(&db, &book_id).await
         .map_err(|e| AppError::Store(e))?
         .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
-    
-    book.audio_state = Some(audio_state);
-    
-    BookRepository::save(&db, &book).await
-        .map_err(|e| AppError::Store(e))?;
     
     Ok(book)
 }

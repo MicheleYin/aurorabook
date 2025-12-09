@@ -1,4 +1,4 @@
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set};
+use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, Set, ActiveModelTrait};
 use crate::book_service::entities::book;
 use crate::book_service::models::{Book, BookProgress, BookAudioState, AudioSyncMap, ConversionStatus};
 use crate::book_service::repositories::{ChapterRepository, AudioRepository};
@@ -278,6 +278,68 @@ impl BookRepository {
         
         txn.commit().await
             .map_err(|e| format!("Failed to commit transaction: {}", e))?;
+        
+        Ok(())
+    }
+    
+    /// Update only progress fields (lightweight, doesn't touch chapters/audio tracks)
+    /// This is much faster than save() which deletes/re-inserts all chapters
+    pub async fn update_progress_only(
+        db: &DatabaseConnection,
+        book_id: &str,
+        progress: &BookProgress,
+    ) -> Result<(), String> {
+        let mut active_model: book::ActiveModel = book::Entity::find_by_id(book_id)
+            .one(db)
+            .await
+            .map_err(|e| format!("Failed to find book: {}", e))?
+            .ok_or_else(|| format!("Book not found: {}", book_id))?
+            .into();
+        
+        // Update only progress fields
+        active_model.progress_current_chapter_id = Set(Some(progress.current_chapter_id.clone()));
+        active_model.progress_current_chapter_href = Set(Some(progress.current_chapter_href.clone()));
+        active_model.progress_current_chapter_index = Set(Some(progress.current_chapter_index as i64));
+        active_model.progress_current_chapter_element_id = Set(progress.current_chapter_element_id.clone());
+        active_model.progress_current_chapter_element_index = Set(progress.current_chapter_element_index.map(|v| v as i64));
+        active_model.progress_current_chapter_scroll_top = Set(Some(progress.current_chapter_scroll_top));
+        active_model.progress_current_chapter_scroll_height = Set(Some(progress.current_chapter_scroll_height));
+        active_model.progress_current_chapter_client_height = Set(Some(progress.current_chapter_client_height));
+        active_model.progress_chapter_progress_percent = Set(Some(progress.chapter_progress_percent));
+        active_model.progress_book_progress_percent = Set(Some(progress.book_progress_percent));
+        active_model.progress_updated_at = Set(Some(progress.updated_at.clone()));
+        
+        active_model.update(db)
+            .await
+            .map_err(|e| format!("Failed to update book progress: {}", e))?;
+        
+        Ok(())
+    }
+    
+    /// Update only audio state fields (lightweight, doesn't touch chapters/audio tracks)
+    /// This is much faster than save() which deletes/re-inserts all chapters
+    pub async fn update_audio_state_only(
+        db: &DatabaseConnection,
+        book_id: &str,
+        audio_state: &BookAudioState,
+    ) -> Result<(), String> {
+        let mut active_model: book::ActiveModel = book::Entity::find_by_id(book_id)
+            .one(db)
+            .await
+            .map_err(|e| format!("Failed to find book: {}", e))?
+            .ok_or_else(|| format!("Book not found: {}", book_id))?
+            .into();
+        
+        // Update only audio state fields
+        active_model.audio_state_current_track_id = Set(Some(audio_state.current_track_id.clone()));
+        active_model.audio_state_current_track_href = Set(Some(audio_state.current_track_href.clone()));
+        active_model.audio_state_current_track_index = Set(Some(audio_state.current_track_index as i64));
+        active_model.audio_state_current_time_seconds = Set(Some(audio_state.current_time_seconds));
+        active_model.audio_state_updated_at = Set(Some(audio_state.updated_at.clone()));
+        
+        active_model.update(db)
+            .await
+            .map_err(|e| format!("Failed to update book audio state: {}", e))?;
         
         Ok(())
     }
