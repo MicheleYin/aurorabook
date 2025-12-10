@@ -8,8 +8,25 @@ export type ConversionProgress = {
   wordsProcessed: number;
   totalWords: number;
   wordsInCurrentChapter: number;
-  currentStep: "initializing" | "generating-audio" | "merging-audio" | "creating-smil" | "updating-epub" | "complete";
+  currentStep: "initializing" | "generating-audio" | "converting-audio" | "creating-smil" | "saving-epub" | "skipping" | "completed" | "complete";
   message: string;
+};
+
+// Raw payload type that can come from Rust in either camelCase or snake_case
+type ConversionProgressPayload = {
+  currentChapter?: number;
+  current_chapter?: number;
+  totalChapters?: number;
+  total_chapters?: number;
+  wordsProcessed?: number;
+  words_processed?: number;
+  totalWords?: number;
+  total_words?: number;
+  wordsInCurrentChapter?: number;
+  words_in_current_chapter?: number;
+  currentStep?: string;
+  current_step?: string;
+  message?: string;
 };
 
 type ConversionOptions = {
@@ -48,7 +65,7 @@ export async function convertEpubToAudiobook(
   });
   
   // Set up event listener for progress updates
-  const unlisten = await listen<ConversionProgress>("conversion-progress", (event) => {
+  const unlisten = await listen<ConversionProgressPayload>("conversion-progress", (event) => {
     // Check for cancellation on each progress update
     if (signal?.aborted) {
       return;
@@ -62,7 +79,7 @@ export async function convertEpubToAudiobook(
       wordsProcessed: payload.wordsProcessed ?? payload.words_processed ?? 0,
       totalWords: payload.totalWords ?? payload.total_words ?? 0,
       wordsInCurrentChapter: payload.wordsInCurrentChapter ?? payload.words_in_current_chapter ?? 0,
-      currentStep: payload.currentStep ?? payload.current_step ?? "initializing",
+      currentStep: (payload.currentStep ?? payload.current_step ?? "initializing") as ConversionProgress["currentStep"],
       message: payload.message ?? "",
     };
     onProgress?.(progress);
