@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import type { AudioTrack, AudioSyncMap, Chapter } from "../../types/reader";
 import { Button } from "../ui/button";
@@ -88,6 +88,35 @@ export function AudioTracksDialog({
   chapters,
 }: AudioTracksDialogProps) {
   const isDesktop = useMediaQuery("(min-width: 640px)");
+  const dialogScrollRef = useRef<HTMLDivElement>(null);
+  const drawerScrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to current track when dialog/drawer opens
+  useEffect(() => {
+    if (open && currentIndex >= 0) {
+      // Wait for dialog/drawer animation to complete before scrolling
+      const timeoutId = setTimeout(() => {
+        const scrollContainer = isDesktop 
+          ? dialogScrollRef.current 
+          : drawerScrollRef.current;
+        
+        if (scrollContainer) {
+          const currentTrackButton = scrollContainer.querySelector(
+            `[data-track-index="${currentIndex}"]`
+          ) as HTMLElement;
+          
+          if (currentTrackButton) {
+            currentTrackButton.scrollIntoView({
+              behavior: 'smooth',
+              block: 'center',
+            });
+          }
+        }
+      }, 300); // Wait for dialog/drawer animation (medium duration)
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [open, currentIndex, isDesktop]);
 
   const handleTrackSelect = useCallback(
     (trackIndex: number) => {
@@ -123,6 +152,7 @@ export function AudioTracksDialog({
         return (
           <Button
             key={track.id}
+            data-track-index={index}
             variant={isCurrentTrack ? "secondary" : "ghost"}
             size="default"
             className={cn(
@@ -203,7 +233,7 @@ export function AudioTracksDialog({
               {bookTitle ? `${bookTitle} - Tracks` : "All Tracks"}
             </DialogTitle>
           </DialogHeader>
-          <div className="mt-4 flex-1 pr-2 min-w-0 w-full max-h-[80vh] overflow-y-auto">
+          <div ref={dialogScrollRef} className="mt-4 flex-1 pr-2 min-w-0 w-full max-h-[80vh] overflow-y-auto">
             {tracksListContent}
           </div>
         </DialogContent>
@@ -234,7 +264,7 @@ export function AudioTracksDialog({
               </DrawerClose>
             </div>
           </DrawerHeader>
-          <div className="mt-4 flex-1 pr-2 min-w-0 w-full max-h-[60vh] overflow-y-auto">
+          <div ref={drawerScrollRef} className="mt-4 flex-1 pr-2 min-w-0 w-full max-h-[60vh] overflow-y-auto">
             {tracksListContent}
           </div>
         </div>

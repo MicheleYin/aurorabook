@@ -131,6 +131,7 @@ export async function loadEpubImage(
 /**
  * Load an audio track from EPUB file and return as base64 data URL
  * This resolves relative audio paths relative to the OPF location
+ * @deprecated Use loadEpubAudioBlob instead for better performance with large files
  */
 export async function loadEpubAudio(
   bookId: string,
@@ -154,6 +155,60 @@ export async function loadEpubAudio(
     return dataUrl;
   } catch (error) {
     console.error("[BookService] Failed to load EPUB audio:", {
+      bookId,
+      audioHref,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
+/**
+ * Load an audio track from EPUB file and return as a Blob URL
+ * This is more efficient for large files as it avoids base64 encoding overhead
+ * Returns a Blob URL that should be revoked with URL.revokeObjectURL when done
+ */
+export async function loadEpubAudioBlob(
+  bookId: string,
+  audioHref: string
+): Promise<string | null> {
+  console.log("[BookService] loadEpubAudioBlob called", {
+    bookId,
+    audioHref,
+  });
+  try {
+    const result = await invoke<[number[], string] | null>("load_epub_audio_bytes", {
+      bookId,
+      audioHref,
+    });
+    
+    if (!result) {
+      console.log("[BookService] loadEpubAudioBlob result: not found", {
+        bookId,
+        audioHref,
+      });
+      return null;
+    }
+    
+    const [bytes, mimeType] = result;
+    
+    // Convert number array to Uint8Array
+    const uint8Array = new Uint8Array(bytes);
+    
+    // Create Blob URL
+    const blob = new Blob([uint8Array], { type: mimeType });
+    const blobUrl = URL.createObjectURL(blob);
+    
+    console.log("[BookService] loadEpubAudioBlob result: success", {
+      bookId,
+      audioHref,
+      bytesLength: bytes.length,
+      mimeType,
+    });
+    
+    return blobUrl;
+  } catch (error) {
+    console.error("[BookService] Failed to load EPUB audio bytes:", {
       bookId,
       audioHref,
       error: error instanceof Error ? error.message : String(error),

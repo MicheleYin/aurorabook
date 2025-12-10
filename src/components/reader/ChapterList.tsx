@@ -49,6 +49,7 @@ export function ChapterList({
         return (
           <Button
             key={chapter.id}
+            data-chapter-id={chapter.id}
             variant={isActive ? "secondary" : "ghost"}
             size="default"
             className={cn(

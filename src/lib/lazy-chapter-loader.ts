@@ -4,7 +4,7 @@
  */
 
 import { logger } from "./logger";
-import { loadChapterContent as loadChapterContentFromBackend, loadEpubAudio } from "./book-service";
+import { loadChapterContent as loadChapterContentFromBackend, loadEpubAudioBlob } from "./book-service";
 import type { Chapter, AudioTrack } from "../types/reader";
 import {
   normalizeChapterContent,
@@ -42,10 +42,14 @@ export function clearBookCache(sourcePath: string): void {
   });
   keysToDelete.forEach((key) => chapterCache.delete(key));
   
-  // Clear all audio tracks for this book
+  // Clear all audio tracks for this book and revoke Blob URLs
   const audioKeysToDelete: string[] = [];
   for (const key of audioTrackCache.keys()) {
     if (key.startsWith(`${bookId}:`)) {
+      const blobUrl = audioTrackCache.get(key);
+      if (blobUrl && blobUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(blobUrl);
+      }
       audioKeysToDelete.push(key);
     }
   }
@@ -257,12 +261,12 @@ export async function loadAudioTrackUrl(
       alternatives,
     });
     
-    let dataUrl: string | null = null;
+    let blobUrl: string | null = null;
     for (const altHref of alternatives) {
       try {
         console.log(`${LOADER_LOG_PREFIX} Trying to load audio with href: ${altHref}`);
-        dataUrl = await loadEpubAudio(bookId, altHref);
-        if (dataUrl) {
+        blobUrl = await loadEpubAudioBlob(bookId, altHref);
+        if (blobUrl) {
           if (altHref !== track.href) {
             console.log(`${LOADER_LOG_PREFIX} ✓ Loaded audio track using alternative href: ${altHref} (original: ${track.href})`);
           } else {
@@ -280,21 +284,21 @@ export async function loadAudioTrackUrl(
       }
     }
     
-    if (!dataUrl) {
+    if (!blobUrl) {
       throw new Error(`Failed to load audio track: ${track.href} (tried ${alternatives.length} alternatives)`);
     }
     
     // Cache the result
-    audioTrackCache.set(cacheKey, dataUrl);
+    audioTrackCache.set(cacheKey, blobUrl);
     
     console.log(`${LOADER_LOG_PREFIX} ✓ Successfully loaded and cached audio track URL`, {
       bookId,
       trackId: track.id,
       href: track.href,
-      urlLength: dataUrl.length,
+      isBlobUrl: blobUrl.startsWith("blob:"),
     });
     
-    return dataUrl;
+    return blobUrl;
   } catch (error) {
     console.error(`${LOADER_LOG_PREFIX} ✗ Failed to load audio track URL`, {
       bookId,

@@ -1,4 +1,5 @@
 import { BookOpen, X } from "lucide-react";
+import { useEffect, useRef } from "react";
 
 import type { Book } from "../../types/reader";
 import type { ReaderPanelBaseProps } from "./types";
@@ -34,14 +35,35 @@ export function ReaderTocDrawer({
   onOpenChange,
   onSelectChapter,
 }: ReaderTocDrawerProps) {
-  console.log("ReaderTocDrawer", {
-    book,
-    activeChapterId,
-    currentAudioTrackHref,
-    isOpen,
-    onOpenChange,
-    onSelectChapter,
-  });
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to active chapter when drawer opens
+  useEffect(() => {
+    if (isOpen && activeChapterId ) {
+     
+      
+      // Wait for drawer animation to complete before scrolling
+      const timeoutId = setTimeout(() => {
+        // Find the active chapter button within the ScrollArea
+        const activeChapterButton = scrollAreaRef.current?.querySelector(
+          `[data-chapter-id="${activeChapterId}"]`
+        ) as HTMLElement;
+        
+        if (activeChapterButton) {
+          // scrollIntoView will work with the nearest scrollable ancestor (the ScrollArea viewport)
+          activeChapterButton.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center',
+          });
+        }
+      }, 300); // Wait for drawer animation (medium duration)
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [isOpen, activeChapterId]);
+
+
+  
   return (
     <Drawer open={isOpen} onOpenChange={onOpenChange} direction="left">
       <DrawerTrigger asChild>
@@ -85,7 +107,7 @@ export function ReaderTocDrawer({
               </Button>
             </DrawerClose>
           </DrawerModalHeader>
-          <ScrollArea className="mt-4 flex-1 pr-2 min-w-0 w-full">
+          <ScrollArea ref={scrollAreaRef} className="mt-4 flex-1 pr-2 min-w-0 w-full">
             <div className="w-full min-w-0">
               <ChapterList
                 book={book}

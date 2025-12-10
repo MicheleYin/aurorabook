@@ -4,12 +4,25 @@
  * No useEffects - all loading is explicit via callbacks
  */
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { AudioTrack } from "../../types/reader";
-import { loadEpubAudio } from "../../lib/book-service";
+import { loadEpubAudioBlob } from "../../lib/book-service";
 import { useResourceLoader } from "./useResourceLoader";
 
 export function useAudioTrackLoader() {
+  // Track Blob URLs for cleanup
+  const blobUrlsRef = useRef<Set<string>>(new Set());
+
+  // Cleanup Blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      blobUrlsRef.current.forEach((url) => {
+        URL.revokeObjectURL(url);
+      });
+      blobUrlsRef.current.clear();
+    };
+  }, []);
+
   const loader = useResourceLoader<AudioTrack>({
     isLoaded: (track) => !!track.url,
     loadResource: async (bookId, track) => {
@@ -20,14 +33,17 @@ export function useAudioTrackLoader() {
         trackTitle: track.title,
       });
       try {
-        const dataUrl = await loadEpubAudio(bookId, track.href);
-        if (dataUrl) {
-          const loaded: AudioTrack = { ...track, url: dataUrl };
+        const blobUrl = await loadEpubAudioBlob(bookId, track.href);
+        if (blobUrl) {
+          // Track Blob URL for cleanup
+          blobUrlsRef.current.add(blobUrl);
+          
+          const loaded: AudioTrack = { ...track, url: blobUrl };
           console.log("[useAudioTrackLoader] ✓ Successfully loaded audio track", {
             bookId,
             trackId: track.id,
             trackHref: track.href,
-            dataUrlLength: dataUrl.length,
+            isBlobUrl: blobUrl.startsWith("blob:"),
           });
           return loaded;
         } else {
@@ -67,6 +83,14 @@ export function useAudioTrackLoader() {
   }, [loader]);
 
   const clearCache = useCallback((bookId?: string) => {
+    // Revoke Blob URLs before clearing cache
+    // Iterate over all loaded resources (Map<string, AudioTrack>)
+    for (const track of loader.loadedResources.values()) {
+      if (track.url && track.url.startsWith("blob:")) {
+        URL.revokeObjectURL(track.url);
+        blobUrlsRef.current.delete(track.url);
+      }
+    }
     loader.clearCache(bookId);
   }, [loader]);
 
