@@ -117,7 +117,37 @@ export function useAudioStatePersistence(
     [library, setLibrary],
   );
 
+  // Flush pending audio state updates immediately (for pause/close)
+  const flushAudioStateUpdate = useCallback(async () => {
+    const pending = pendingAudioUpdateRef.current;
+    if (!pending) return;
+
+    const debouncer = audioUpdateDebouncerRef.current;
+    debouncer.cancel();
+
+    try {
+      const updatedBook = await updateBookAudioStateBackend(
+        pending.bookId,
+        pending.audioState!,
+      );
+      setLibrary((prev) =>
+        prev.map((b) => (b.id === pending.bookId ? updatedBook : b)),
+      );
+    } catch (error) {
+      logger.error("Failed to flush audio state to backend", {
+        bookId: pending.bookId,
+        error,
+      });
+      setLibrary((prev) =>
+        prev.map((b) => (b.id === pending.bookId ? pending.book : b)),
+      );
+    } finally {
+      pendingAudioUpdateRef.current = null;
+    }
+  }, [setLibrary]);
+
   return {
     updateBookAudioState,
+    flushAudioStateUpdate,
   };
 }

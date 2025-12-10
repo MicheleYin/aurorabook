@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { List, Loader2, MoveVertical, Pause, Play, SkipBack, SkipForward, StepBack, StepForward, X } from "lucide-react";
 
 import { logger } from "../../lib/logger";
-import type { AudioTrack, BookAudioState, AudioSyncMap, Chapter } from "../../types/reader";
+import type { AudioTrack, AudioSyncMap, Chapter } from "../../types/reader";
 import type { AudioProgressSnapshot } from "./types";
 import { Button } from "../ui/button";
 import {
@@ -44,7 +44,6 @@ type ReaderAudioPlayerProps = {
   tracks: AudioTrack[];
   bookTitle?: string;
   sourcePath?: string;
-  initialAudioState?: BookAudioState;
   onProgress?: (snapshot: AudioProgressSnapshot) => void;
   onRestorationStateChange?: (isRestoring: boolean) => void;
   chromeVisible?: boolean;
@@ -61,7 +60,6 @@ export function ReaderAudioPlayer({
   tracks,
   bookTitle,
   sourcePath,
-  initialAudioState,
   onProgress,
   onRestorationStateChange,
   chromeVisible = true,
@@ -87,9 +85,11 @@ export function ReaderAudioPlayer({
   } = libraryHook.useAudioPlayerState({
     bookId,
     tracks,
-    initialAudioState,
+    library: libraryHook.library,
     onProgress,
   });
+  
+  const flushAudioStateUpdate = libraryHook.flushAudioStateUpdate;
 
   // Notify parent of restoration state changes
   useEffect(() => {
@@ -453,6 +453,10 @@ export function ReaderAudioPlayer({
         if (!audioIsPlaying) {
           const audioTime = audio.currentTime || 0;
           emitProgressRef.current(audioTime);
+          // Flush audio state update immediately on pause
+          flushAudioStateUpdate().catch((error) => {
+            logger.warn("Failed to flush audio state on pause", error);
+          });
         }
       }
     };
@@ -1156,7 +1160,7 @@ export function ReaderAudioPlayer({
     
     // Save progress asynchronously (don't block animation)
     // Use a microtask to save progress without delaying the animation start
-    Promise.resolve().then(() => {
+    Promise.resolve().then(async () => {
       const audio = audioRef.current;
       // Single source of truth: always read from audio element
       if (audio && Number.isFinite(audio.currentTime)) {
@@ -1165,6 +1169,8 @@ export function ReaderAudioPlayer({
         // Fallback to 0 if audio isn't ready
         emitProgressRef.current(0);
       }
+      // Flush audio state update immediately on close
+      await flushAudioStateUpdate();
     });
     
     // Wait for exit animation to complete before notifying parent
@@ -1173,7 +1179,7 @@ export function ReaderAudioPlayer({
       // Parent component will handle unmounting after animation
       onClose?.();
     }, 350); // Slightly longer than animation duration to ensure smooth completion
-  }, [onClose, isDismissing]);
+  }, [onClose, isDismissing, flushAudioStateUpdate]);
 
   // Save progress when component becomes hidden (not just on unmount)
   const previousVisibleRef = useRef(isVisible);
@@ -1190,9 +1196,13 @@ export function ReaderAudioPlayer({
         // Fallback to 0 if audio isn't ready
         emitProgressRef.current(0);
       }
+      // Flush audio state update when component becomes hidden
+      flushAudioStateUpdate().catch((error) => {
+        logger.warn("Failed to flush audio state on visibility change", error);
+      });
     }
     previousVisibleRef.current = isVisible;
-  }, [isVisible, isDismissing]);
+  }, [isVisible, isDismissing, flushAudioStateUpdate]);
 
 
   if (!currentTrack) {

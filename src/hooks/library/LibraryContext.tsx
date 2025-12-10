@@ -38,6 +38,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
 
   const {
     updateBookAudioState,
+    flushAudioStateUpdate,
   } = useAudioStatePersistence(library, setLibrary);
 
   // Wrap the nested hooks in useCallback to maintain stable references
@@ -50,9 +51,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
 
   const useAudioPlayerStateWrapper = useCallback(
     (params: UseAudioPlayerStateParams) => {
-      return useAudioPlayerState(params);
+      return useAudioPlayerState({ ...params, library });
     },
-    [],
+    [library],
   );
 
   // Hydrate library on mount
@@ -93,6 +94,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       updateBookAudioState,
       handleChapterProgress,
       flushProgressUpdate,
+      flushAudioStateUpdate,
       useChapterProgress: useChapterProgressWrapper,
       useAudioPlayerState: useAudioPlayerStateWrapper,
     }),

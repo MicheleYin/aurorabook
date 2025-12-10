@@ -36,7 +36,7 @@ export type UseChapterProgressParams = {
 export type UseAudioPlayerStateParams = {
   bookId?: string;
   tracks: AudioTrack[];
-  initialAudioState?: BookAudioState;
+  library: Book[];
   onProgress?: (snapshot: AudioProgressSnapshot) => void;
 };
 
@@ -77,6 +77,7 @@ export type LibraryContextValue = {
   ) => Promise<void>;
   handleChapterProgress: (bookId: string, snapshot: ChapterProgressSnapshot) => void;
   flushProgressUpdate: () => Promise<void>;
+  flushAudioStateUpdate: () => Promise<void>;
 
   // Chapter progress tracking hook
   useChapterProgress: (params: UseChapterProgressParams) => {

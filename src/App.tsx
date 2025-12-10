@@ -611,7 +611,6 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
           tracks={activeBook.audioTracks}
           bookTitle={activeBook.title}
           sourcePath={activeBook.sourcePath}
-          initialAudioState={activeBook.audioState}
           onProgress={(snapshot) => {
             updateBookAudioState(activeBook.id, snapshot);
             handleProgress(snapshot);

@@ -1,6 +1,6 @@
 /**
  * Audio player state hook - simplified version
- * Manages track index and restoration time based on initial audio state
+ * Manages track index and restoration time based on audio state from library
  * No useEffects - initialization is explicit
  */
 
@@ -11,7 +11,11 @@ import type { UseAudioPlayerStateParams } from "./types";
 const PROGRESS_ECHO_TOLERANCE_SECONDS = 0.5;
 
 export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
-  const { bookId, tracks, initialAudioState, onProgress } = params;
+  const { bookId, tracks, library, onProgress } = params;
+  
+  // Get audio state from library (single source of truth)
+  const book = bookId ? library.find((b) => b.id === bookId) : undefined;
+  const initialAudioState = book?.audioState;
 
   const [currentIndex, setCurrentIndexState] = useState(0);
   const [restoreTime, setRestoreTime] = useState<number | null>(null);
