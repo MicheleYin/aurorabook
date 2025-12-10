@@ -453,10 +453,10 @@ pub(crate) async fn process_chapter(
         use crate::book_service::database::get_db_connection;
         use crate::book_service::repositories::{BookRepository, ChapterRepository};
         if let Ok(db) = get_db_connection(app_ref).await {
-            if let Ok(Some(book)) = BookRepository::find_by_source_path(&db, source_path_ref).await {
+            if let Ok(Some(book)) = BookRepository::find_by_source_path(db.as_ref(), source_path_ref).await {
                 // Find chapter by href
-                if let Ok(Some(chapter_entity)) = ChapterRepository::find_by_href(&db, &book.id, &chapter.href).await {
-                    if let Err(e) = ChapterRepository::update_content(&db, &book.id, &chapter_entity.id, &updated_html, None).await {
+                if let Ok(Some(chapter_entity)) = ChapterRepository::find_by_href(db.as_ref(), &book.id, &chapter.href).await {
+                    if let Err(e) = ChapterRepository::update_content(db.as_ref(), &book.id, &chapter_entity.id, &updated_html, None).await {
                         log::warn!("Failed to update chapter HTML in database for '{}': {}", chapter.href, e);
                     } else {
                         log::debug!("Updated chapter HTML in database for '{}' ({} bytes)", chapter.href, updated_html.len());

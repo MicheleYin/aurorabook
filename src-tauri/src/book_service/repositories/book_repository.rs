@@ -2,6 +2,7 @@ use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, Set, Ac
 use crate::book_service::entities::book;
 use crate::book_service::models::{Book, BookProgress, BookAudioState, AudioSyncMap, ConversionStatus};
 use crate::book_service::repositories::{ChapterRepository, AudioRepository};
+use std::sync::Arc;
 
 pub struct BookRepository;
 
@@ -163,8 +164,17 @@ impl BookRepository {
         Ok(books)
     }
     
-    /// Find book by ID
+    /// Find book by ID (with caching)
     pub async fn find_by_id(db: &DatabaseConnection, book_id: &str) -> Result<Option<Book>, String> {
+        // Try cache first
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            if let Some(cached_book) = cache.books.get(book_id).await {
+                log::debug!("Cache hit for book: {}", book_id);
+                return Ok(Some((*cached_book).clone()));
+            }
+        }
+        
+        // Cache miss - query database
         let entity = book::Entity::find_by_id(book_id)
             .one(db)
             .await
@@ -173,7 +183,14 @@ impl BookRepository {
         if let Some(entity) = entity {
             let chapters = ChapterRepository::find_by_book_id(db, &entity.id).await?;
             let audio_tracks = AudioRepository::find_by_book_id(db, &entity.id).await?;
-            Ok(Some(Self::entity_to_model(entity, chapters, audio_tracks)))
+            let book = Self::entity_to_model(entity, chapters, audio_tracks);
+            
+            // Store in cache
+            if let Ok(cache) = crate::book_service::database::get_db_cache() {
+                cache.books.insert(book_id.to_string(), Arc::new(book.clone())).await;
+            }
+            
+            Ok(Some(book))
         } else {
             Ok(None)
         }
@@ -279,16 +296,23 @@ impl BookRepository {
         txn.commit().await
             .map_err(|e| format!("Failed to commit transaction: {}", e))?;
         
+        // Invalidate cache for this book
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            cache.invalidate_book(&model.id).await;
+        }
+        
         Ok(())
     }
     
     /// Update only progress fields (lightweight, doesn't touch chapters/audio tracks)
     /// This is much faster than save() which deletes/re-inserts all chapters
+    /// Optimized: Updates cache in-place after database update
     pub async fn update_progress_only(
         db: &DatabaseConnection,
         book_id: &str,
         progress: &BookProgress,
     ) -> Result<(), String> {
+        // Fetch entity from DB (this is lightweight - just the book row, not chapters/audio)
         let mut active_model: book::ActiveModel = book::Entity::find_by_id(book_id)
             .one(db)
             .await
@@ -313,16 +337,32 @@ impl BookRepository {
             .await
             .map_err(|e| format!("Failed to update book progress: {}", e))?;
         
+        // Update cached book in-place if it exists (much faster than invalidating and re-fetching)
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            if let Some(cached_book) = cache.books.get(book_id).await {
+                use std::sync::Arc;
+                // Clone the book, update progress, and re-insert
+                let mut updated_book = (*cached_book).clone();
+                updated_book.progress = Some(progress.clone());
+                cache.books.insert(book_id.to_string(), Arc::new(updated_book)).await;
+            } else {
+                // Not in cache, just invalidate to be safe
+                cache.invalidate_book(book_id).await;
+            }
+        }
+        
         Ok(())
     }
     
     /// Update only audio state fields (lightweight, doesn't touch chapters/audio tracks)
     /// This is much faster than save() which deletes/re-inserts all chapters
+    /// Optimized: Updates cache in-place after database update
     pub async fn update_audio_state_only(
         db: &DatabaseConnection,
         book_id: &str,
         audio_state: &BookAudioState,
     ) -> Result<(), String> {
+        // Fetch entity from DB (this is lightweight - just the book row, not chapters/audio)
         let mut active_model: book::ActiveModel = book::Entity::find_by_id(book_id)
             .one(db)
             .await
@@ -341,6 +381,20 @@ impl BookRepository {
             .await
             .map_err(|e| format!("Failed to update book audio state: {}", e))?;
         
+        // Update cached book in-place if it exists (much faster than invalidating and re-fetching)
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            if let Some(cached_book) = cache.books.get(book_id).await {
+                use std::sync::Arc;
+                // Clone the book, update audio_state, and re-insert
+                let mut updated_book = (*cached_book).clone();
+                updated_book.audio_state = Some(audio_state.clone());
+                cache.books.insert(book_id.to_string(), Arc::new(updated_book)).await;
+            } else {
+                // Not in cache, just invalidate to be safe
+                cache.invalidate_book(book_id).await;
+            }
+        }
+        
         Ok(())
     }
     
@@ -350,6 +404,11 @@ impl BookRepository {
             .exec(db)
             .await
             .map_err(|e| format!("Failed to delete book: {}", e))?;
+        
+        // Invalidate cache for this book
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            cache.invalidate_book(book_id).await;
+        }
         
         Ok(())
     }

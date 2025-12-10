@@ -1,6 +1,7 @@
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, ConnectionTrait, QueryOrder};
 use crate::book_service::entities::chapter;
 use crate::book_service::models::Chapter;
+use std::sync::Arc;
 
 pub struct ChapterRepository;
 
@@ -34,8 +35,17 @@ impl ChapterRepository {
         }
     }
     
-    /// Find all chapters for a book
+    /// Find all chapters for a book (with caching)
     pub async fn find_by_book_id(db: &DatabaseConnection, book_id: &str) -> Result<Vec<Chapter>, String> {
+        // Try cache first
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            if let Some(cached_chapters) = cache.chapters_list.get(book_id).await {
+                log::debug!("Cache hit for chapters list: {}", book_id);
+                return Ok((*cached_chapters).clone());
+            }
+        }
+        
+        // Cache miss - query database
         let entities = chapter::Entity::find()
             .filter(chapter::Column::BookId.eq(book_id))
             .order_by_asc(chapter::Column::ChapterOrder)
@@ -43,11 +53,31 @@ impl ChapterRepository {
             .await
             .map_err(|e| format!("Failed to query chapters: {}", e))?;
         
-        Ok(entities.into_iter().map(Self::entity_to_model).collect())
+        let chapters: Vec<Chapter> = entities.into_iter().map(Self::entity_to_model).collect();
+        
+        // Store in cache
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            cache.chapters_list.insert(book_id.to_string(), Arc::new(chapters.clone())).await;
+        }
+        
+        Ok(chapters)
     }
     
-    /// Find chapter by book ID and href
+    /// Find chapter by book ID and href (with caching)
     pub async fn find_by_href(db: &DatabaseConnection, book_id: &str, href: &str) -> Result<Option<Chapter>, String> {
+        // Try to find chapter ID from href first (we need ID for cache key)
+        // For now, we'll use (book_id, href) as cache key
+        let cache_key = (book_id.to_string(), href.to_string());
+        
+        // Try cache first
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            if let Some(cached_chapter) = cache.chapters.get(&cache_key).await {
+                log::debug!("Cache hit for chapter: {} / {}", book_id, href);
+                return Ok(Some((*cached_chapter).clone()));
+            }
+        }
+        
+        // Cache miss - query database
         let entity = chapter::Entity::find()
             .filter(chapter::Column::BookId.eq(book_id))
             .filter(chapter::Column::Href.eq(href))
@@ -55,7 +85,18 @@ impl ChapterRepository {
             .await
             .map_err(|e| format!("Failed to query chapter: {}", e))?;
         
-        Ok(entity.map(Self::entity_to_model))
+        if let Some(entity) = entity {
+            let chapter = Self::entity_to_model(entity);
+            
+            // Store in cache
+            if let Ok(cache) = crate::book_service::database::get_db_cache() {
+                cache.chapters.insert(cache_key, Arc::new(chapter.clone())).await;
+            }
+            
+            Ok(Some(chapter))
+        } else {
+            Ok(None)
+        }
     }
     
     /// Save chapter
@@ -78,6 +119,11 @@ impl ChapterRepository {
             .exec(db)
             .await
             .map_err(|e| format!("Failed to save chapter: {}", e))?;
+        
+        // Invalidate cache
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            cache.invalidate_chapter(book_id, &model.id).await;
+        }
         
         Ok(())
     }
@@ -109,6 +155,11 @@ impl ChapterRepository {
             .exec(db)
             .await
             .map_err(|e| format!("Failed to delete chapters: {}", e))?;
+        
+        // Invalidate cache
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            cache.chapters_list.invalidate(book_id).await;
+        }
         
         Ok(())
     }

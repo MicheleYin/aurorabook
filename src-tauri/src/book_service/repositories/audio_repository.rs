@@ -1,6 +1,7 @@
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, ConnectionTrait, QueryOrder};
 use crate::book_service::entities::audio_track;
 use crate::book_service::models::AudioTrack;
+use std::sync::Arc;
 
 pub struct AudioRepository;
 
@@ -31,8 +32,17 @@ impl AudioRepository {
         }
     }
     
-    /// Find all audio tracks for a book (ordered by track_order)
+    /// Find all audio tracks for a book (ordered by track_order, with caching)
     pub async fn find_by_book_id(db: &DatabaseConnection, book_id: &str) -> Result<Vec<AudioTrack>, String> {
+        // Try cache first
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            if let Some(cached_tracks) = cache.audio_tracks_list.get(book_id).await {
+                log::debug!("Cache hit for audio tracks list: {}", book_id);
+                return Ok((*cached_tracks).clone());
+            }
+        }
+        
+        // Cache miss - query database
         use sea_orm::QueryOrder;
         let entities = audio_track::Entity::find()
             .filter(audio_track::Column::BookId.eq(book_id))
@@ -41,7 +51,14 @@ impl AudioRepository {
             .await
             .map_err(|e| format!("Failed to query audio tracks: {}", e))?;
         
-        Ok(entities.into_iter().map(Self::entity_to_model).collect())
+        let tracks: Vec<AudioTrack> = entities.into_iter().map(Self::entity_to_model).collect();
+        
+        // Store in cache
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            cache.audio_tracks_list.insert(book_id.to_string(), Arc::new(tracks.clone())).await;
+        }
+        
+        Ok(tracks)
     }
     
     /// Save audio track metadata
@@ -113,11 +130,27 @@ impl AudioRepository {
                 .map_err(|e| format!("Failed to insert audio track with data: {}", e))?;
         }
         
+        // Invalidate cache
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            cache.invalidate_audio_data(book_id, href).await;
+        }
+        
         Ok(())
     }
     
-    /// Get audio track data
+    /// Get audio track data (with caching)
     pub async fn find_data_by_href(db: &DatabaseConnection, book_id: &str, href: &str) -> Result<Option<Vec<u8>>, String> {
+        let cache_key = (book_id.to_string(), href.to_string());
+        
+        // Try cache first
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            if let Some(cached_data) = cache.audio_data.get(&cache_key).await {
+                log::debug!("Cache hit for audio data: {} / {}", book_id, href);
+                return Ok(Some((*cached_data).clone()));
+            }
+        }
+        
+        // Cache miss - query database
         let entity = audio_track::Entity::find()
             .filter(audio_track::Column::BookId.eq(book_id))
             .filter(audio_track::Column::Href.eq(href))
@@ -125,7 +158,15 @@ impl AudioRepository {
             .await
             .map_err(|e| format!("Failed to query audio track: {}", e))?;
         
-        Ok(entity.and_then(|e| e.data))
+        if let Some(data) = entity.and_then(|e| e.data) {
+            // Store in cache
+            if let Ok(cache) = crate::book_service::database::get_db_cache() {
+                cache.audio_data.insert(cache_key, Arc::new(data.clone())).await;
+            }
+            Ok(Some(data))
+        } else {
+            Ok(None)
+        }
     }
     
     /// Delete all audio tracks for a book

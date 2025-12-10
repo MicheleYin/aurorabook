@@ -63,7 +63,7 @@ pub async fn convert_epub_to_audiobook_command(
     // Load book from database to get source_path
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
-    let book = BookRepository::find_by_id(&db, &book_id).await
+    let book = BookRepository::find_by_id(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(format!("Failed to load book: {}", e)))?
         .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
     
@@ -93,7 +93,7 @@ pub async fn convert_epub_to_audiobook_command(
     let epub_data_for_conversion = if !book_data.completed_chapters_set.is_empty() {
         log::info!("Resuming conversion - attempting to load converted EPUB from database");
         
-        if let Ok(Some(loaded_epub)) = EpubRepository::find_by_source_path(&db, &source_path).await {
+        if let Ok(Some(loaded_epub)) = EpubRepository::find_by_source_path(db.as_ref(), &source_path).await {
             log::info!("Successfully loaded partial EPUB from database ({} bytes, {} chapters completed)", 
                 loaded_epub.len(), book_data.completed_chapters_set.len());
             loaded_epub
@@ -226,7 +226,7 @@ async fn load_and_prepare_book(
 ) -> AppResult<BookData> {
     let db = get_db_connection(app).await
         .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
-    let mut books = BookRepository::find_all(&db).await
+    let mut books = BookRepository::find_all(db.as_ref()).await
         .map_err(|e| AppError::Store(format!("Failed to load books: {}", e)))?;
     
     let (completed_chapters_set, existing_book_clone) = if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
@@ -278,7 +278,7 @@ async fn load_and_prepare_book(
         }
         
         // Save only this specific book to persist voice_id and conversion_status changes
-        BookRepository::save(&db, book).await
+        BookRepository::save(db.as_ref(), book).await
             .map_err(|e| AppError::Store(format!("Failed to save book with voice_id: {}", e)))?;
     }
     
@@ -309,7 +309,7 @@ async fn handle_all_chapters_completed(
         use crate::book_service::repositories::BookRepository;
         let db = get_db_connection(app).await
             .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
-        if let Ok(Some(mut book)) = BookRepository::find_by_source_path(&db, source_path).await {
+        if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await {
             // Verify that all chapters with text content are completed
             let chapters_with_text: usize = book.chapters.iter()
                 .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
@@ -326,7 +326,7 @@ async fn handle_all_chapters_completed(
             
             book.total_words = Some(total_words_all_chapters);
             book.words_processed = Some(total_words_all_chapters);
-            BookRepository::save(&db, &book).await
+            BookRepository::save(db.as_ref(), &book).await
                 .map_err(|e| AppError::Store(format!("Failed to save books: {}", e)))?;
         }
     }
@@ -429,10 +429,10 @@ async fn handle_conversion_cancellation(
     
     // Set conversion status to "started" when cancelling
     if let Ok(db) = get_db_connection(app).await {
-        if let Ok(mut books) = BookRepository::find_all(&db).await {
+        if let Ok(mut books) = BookRepository::find_all(db.as_ref()).await {
         if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
             book.conversion_status = ConversionStatus::Started;
-                if let Err(e) = BookRepository::save(&db, book).await {
+                if let Err(e) = BookRepository::save(db.as_ref(), book).await {
                 log::warn!("Failed to set conversion status to started on cancellation: {}", e);
             } else {
                 log::debug!("Set conversion status to started for cancelled conversion");
@@ -467,8 +467,8 @@ async fn save_converted_epub_and_update_book(
         .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
     
     // Store converted EPUB in database
-    if let Ok(Some(book)) = BookRepository::find_by_source_path(&db, source_path).await {
-        EpubRepository::save(&db, source_path, &book.id, converted_epub).await
+    if let Ok(Some(book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await {
+        EpubRepository::save(db.as_ref(), source_path, &book.id, converted_epub).await
         .map_err(|e| AppError::Store(format!("Failed to save converted EPUB: {}", e)))?;
         log::debug!("Saved converted EPUB to database ({} bytes)", converted_epub.len());
     } else {
@@ -476,12 +476,12 @@ async fn save_converted_epub_and_update_book(
     }
     
     // Save final words_processed now that conversion is complete (reusing same connection)
-    if let Ok(Some(mut book)) = BookRepository::find_by_source_path(&db, source_path).await {
+    if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await {
         if book.total_words.is_none() {
             book.total_words = Some(total_words_all_chapters);
         }
         book.words_processed = Some(total_words_all_chapters);
-        if let Err(e) = BookRepository::save(&db, &book).await {
+        if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
             log::warn!("Failed to save final words_processed: {}", e);
         } else {
             log::debug!("Saved final words_processed: {} / {}", total_words_all_chapters, total_words_all_chapters);

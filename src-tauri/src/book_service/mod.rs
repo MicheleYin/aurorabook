@@ -3,6 +3,7 @@ pub mod filters;
 pub mod database;
 pub mod entities;
 pub mod repositories;
+pub mod cache;
 
 pub use models::*;
 use filters::*;
@@ -28,7 +29,7 @@ pub async fn read_all_books(
 ) -> AppResult<Vec<Book>> {
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
-    let books = BookRepository::find_all(&db).await
+    let books = BookRepository::find_all(db.as_ref()).await
         .map_err(|e| AppError::Store(e))?;
     Ok(filter_books(books, filter))
 }
@@ -41,7 +42,7 @@ pub async fn read_one_book(
 ) -> AppResult<Option<Book>> {
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
-    BookRepository::find_by_id(&db, &book_id).await
+    BookRepository::find_by_id(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))
 }
 
@@ -55,7 +56,7 @@ pub async fn read_single_chapter(
 ) -> AppResult<Option<Chapter>> {
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
-    let book = BookRepository::find_by_id(&db, &book_id).await
+    let book = BookRepository::find_by_id(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))?;
     if let Some(book) = book {
         Ok(book.chapters.into_iter().find(|c| c.id == chapter_id))
@@ -150,7 +151,7 @@ pub async fn load_chapter_content(
         .map_err(|e| AppError::Store(e))?;
     
     // Try to get chapter from database first
-    let mut chapter = if let Some(ch) = ChapterRepository::find_by_href(&db, &book_id, &chapter_href).await
+    let mut chapter = if let Some(ch) = ChapterRepository::find_by_href(db.as_ref(), &book_id, &chapter_href).await
         .map_err(|e| AppError::Store(e))?
     {
         ch
@@ -166,7 +167,7 @@ pub async fn load_chapter_content(
     };
     
     // Process images in the HTML: resolve relative paths to data URLs
-    let processed_html = process_images_in_html(&db, &book_id, content_html, &chapter_href).await?;
+    let processed_html = process_images_in_html(db.as_ref(), &book_id, content_html, &chapter_href).await?;
     
     // Update chapter with processed HTML
     chapter.content_html = Some(processed_html);
@@ -622,7 +623,7 @@ pub async fn load_epub_image(
     
     // Try to get image from database with each variation
     for (idx, href) in unique_variations.iter().enumerate() {
-        match ImageRepository::find_by_href(&db, &book_id, href).await {
+        match ImageRepository::find_by_href(db.as_ref(), &book_id, href).await {
             Ok(Some((mime_type, image_data))) => {
                 // Create data URL from stored image
                 let data_url = create_data_url(&mime_type, &image_data);
@@ -697,7 +698,7 @@ pub async fn load_epub_audio(
     
     // Try to get audio from database with each variation
     for (idx, href) in unique_variations.iter().enumerate() {
-        match AudioRepository::find_data_by_href(&db, &book_id, href).await {
+        match AudioRepository::find_data_by_href(db.as_ref(), &book_id, href).await {
             Ok(Some(audio_data)) => {
                 // Detect MIME type from extension
                 let mime_type = detect_audio_mime_type(href, &audio_href);
@@ -732,7 +733,7 @@ pub async fn read_single_audio_track(
 ) -> AppResult<Option<AudioTrack>> {
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
-    let book = BookRepository::find_by_id(&db, &book_id).await
+    let book = BookRepository::find_by_id(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))?;
     if let Some(book) = book {
         Ok(book.audio_tracks.into_iter().find(|t| t.id == track_id))
@@ -752,7 +753,7 @@ pub async fn delete_book(
     
     // Delete the book from storage (CASCADE will delete related records)
     // All related data (chapters, images, audio tracks) will be automatically deleted
-    BookRepository::delete(&db, &book_id).await
+    BookRepository::delete(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))?;
     
     Ok(())
@@ -808,7 +809,7 @@ pub async fn add_book(
     
     // Add the book directly without checking for duplicates
     log::debug!("Adding new book: ID={}, title='{}'", book.id, book.title);
-    BookRepository::save(&db, &book).await
+    BookRepository::save(db.as_ref(), &book).await
         .map_err(|e| AppError::Store(e))?;
     
     // EPUB data is no longer stored separately - all content is in structured tables
@@ -828,7 +829,7 @@ pub async fn get_epub_buffer(
     use repositories::EpubRepository;
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
-    EpubRepository::find_by_source_path(&db, &source_path).await
+    EpubRepository::find_by_source_path(db.as_ref(), &source_path).await
         .map_err(|e| AppError::Store(e))
 }
 
@@ -836,6 +837,7 @@ pub async fn get_epub_buffer(
 /// Update book progress
 /// Uses lightweight update_progress_only instead of full save to avoid expensive
 /// chapter deletion/re-insertion and audio track re-saving
+/// Optimized: Returns from cache if available, avoiding expensive re-fetch
 #[tauri::command]
 pub async fn update_book_progress(
     book_id: String,
@@ -846,11 +848,19 @@ pub async fn update_book_progress(
         .map_err(|e| AppError::Store(e))?;
     
     // Use lightweight progress-only update (doesn't touch chapters/audio tracks)
-    BookRepository::update_progress_only(&db, &book_id, &progress).await
+    BookRepository::update_progress_only(db.as_ref(), &book_id, &progress).await
         .map_err(|e| AppError::Store(e))?;
     
-    // Return updated book (re-fetch to get latest state)
-    let book = BookRepository::find_by_id(&db, &book_id).await
+    // Try to get updated book from cache first (cache was updated in-place)
+    if let Ok(cache) = crate::book_service::database::get_db_cache() {
+        if let Some(cached_book) = cache.books.get(&book_id).await {
+            log::debug!("Returning updated book from cache after progress update");
+            return Ok((*cached_book).clone());
+        }
+    }
+    
+    // Fallback: re-fetch if not in cache (should rarely happen)
+    let book = BookRepository::find_by_id(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))?
         .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
     
@@ -860,6 +870,7 @@ pub async fn update_book_progress(
 /// Update book audio state
 /// Uses lightweight update_audio_state_only instead of full save to avoid expensive
 /// chapter deletion/re-insertion and audio track re-saving
+/// Optimized: Returns from cache if available, avoiding expensive re-fetch
 #[tauri::command]
 pub async fn update_book_audio_state(
     book_id: String,
@@ -870,11 +881,19 @@ pub async fn update_book_audio_state(
         .map_err(|e| AppError::Store(e))?;
     
     // Use lightweight audio-state-only update (doesn't touch chapters/audio tracks)
-    BookRepository::update_audio_state_only(&db, &book_id, &audio_state).await
+    BookRepository::update_audio_state_only(db.as_ref(), &book_id, &audio_state).await
         .map_err(|e| AppError::Store(e))?;
     
-    // Return updated book (re-fetch to get latest state)
-    let book = BookRepository::find_by_id(&db, &book_id).await
+    // Try to get updated book from cache first (cache was updated in-place)
+    if let Ok(cache) = crate::book_service::database::get_db_cache() {
+        if let Some(cached_book) = cache.books.get(&book_id).await {
+            log::debug!("Returning updated book from cache after audio state update");
+            return Ok((*cached_book).clone());
+        }
+    }
+    
+    // Fallback: re-fetch if not in cache (should rarely happen)
+    let book = BookRepository::find_by_id(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))?
         .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
     
@@ -1304,7 +1323,7 @@ pub async fn ingest_epub(
     
     // Store book (this will store chapters with content_html)
     // Note: This will delete existing images/audio if updating, so we save them after
-    BookRepository::save(&db, &book).await
+    BookRepository::save(db.as_ref(), &book).await
         .map_err(|e| AppError::Store(e))?;
     
     // Store all images AFTER book save (since book save deletes them first)
@@ -1313,7 +1332,7 @@ pub async fn ingest_epub(
         log::warn!("No images were extracted during ingestion! This might indicate an issue with image extraction.");
     }
     for (image_href, mime_type, image_data) in images_extracted {
-        match ImageRepository::save(&db, &book_id, &image_href, &mime_type, &image_data).await {
+        match ImageRepository::save(db.as_ref(), &book_id, &image_href, &mime_type, &image_data).await {
             Ok(()) => {
                 log::info!("Successfully stored image: {} ({} bytes, {})", image_href, image_data.len(), mime_type);
             }
@@ -1330,14 +1349,14 @@ pub async fn ingest_epub(
     }
     for (audio_href, audio_data) in audio_extracted {
         log::info!("Storing audio track: {} ({} bytes)", audio_href, audio_data.len());
-        match AudioRepository::save_data(&db, &book_id, &audio_href, &audio_data).await {
+        match AudioRepository::save_data(db.as_ref(), &book_id, &audio_href, &audio_data).await {
             Ok(()) => {
                 log::info!("✓ Successfully stored audio track data: {} ({} bytes)", audio_href, audio_data.len());
             }
             Err(e) => {
                 log::error!("✗ Failed to store audio track {} ({} bytes): {}", audio_href, audio_data.len(), e);
                 // Check if audio track metadata exists
-                if let Ok(tracks) = AudioRepository::find_by_book_id(&db, &book_id).await {
+                if let Ok(tracks) = AudioRepository::find_by_book_id(db.as_ref(), &book_id).await {
                     if tracks.iter().any(|t| t.href == audio_href) {
                         log::warn!("Audio track metadata exists but data save failed. Track href: {}", audio_href);
                     } else {
@@ -1350,7 +1369,7 @@ pub async fn ingest_epub(
     }
     
     // Reload book to get the complete data
-    let result_book = BookRepository::find_by_id(&db, &book_id).await
+    let result_book = BookRepository::find_by_id(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))?
         .ok_or_else(|| AppError::Store("Book not found after ingestion".to_string()))?;
     

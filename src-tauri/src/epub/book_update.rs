@@ -563,6 +563,19 @@ fn log_manifest_items(manifest_items: &std::collections::HashMap<String, crate::
     }
 }
 
+/// Log EPUB archive file names for debugging
+fn log_epub_files(archive: &mut ZipArchive<Cursor<&[u8]>>) {
+    log::debug!("EPUB archive contains {} files", archive.len());
+    for i in 0..archive.len() {
+        if let Ok(file) = archive.by_index(i) {
+            let name = file.name();
+            if name.ends_with(".smil") || name.ends_with(".mp3") || name.ends_with(".m4a") || name.ends_with(".opus") {
+                log::debug!("EPUB file #{}: {}", i, name);
+            }
+        }
+    }
+}
+
 /// Build audio sync map from SMIL files in EPUB
 fn build_audio_sync_map_from_epub(
     converted_epub: &[u8],
@@ -585,18 +598,6 @@ fn build_audio_sync_map_from_epub(
     Ok(audio_sync_map)
 }
 
-/// Log EPUB files for debugging
-fn log_epub_files(archive: &mut ZipArchive<Cursor<&[u8]>>) {
-    log::debug!("EPUB contains {} files", archive.len());
-    for i in 0..archive.len() {
-        if let Ok(file) = archive.by_index(i) {
-            let name = file.name();
-            if name.ends_with(".smil") || name.ends_with(".mp3") {
-                log::debug!("Found file in EPUB: {}", name);
-            }
-        }
-    }
-}
 
 /// Update book in library with new audio tracks and sync map
 async fn update_book_in_library(
@@ -608,7 +609,7 @@ async fn update_book_in_library(
     audio_bytes_map: std::collections::HashMap<String, Vec<u8>>,
 ) -> Result<Option<Book>, String> {
     let db = get_db_connection(app).await?;
-    if let Ok(Some(mut book)) = BookRepository::find_by_source_path(&db, source_path).await {
+    if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await {
         // Preserve existing track IDs by matching tracks by href
         let preserved_tracks = preserve_existing_track_ids(&book.audio_tracks, audio_tracks);
         
@@ -645,7 +646,7 @@ async fn update_book_in_library(
             } else { 
                 "None".to_string() 
             });
-        BookRepository::save(&db, &book).await
+        BookRepository::save(db.as_ref(), &book).await
             .map_err(|e| format!("Failed to save book: {}", e))?;
         log::debug!("Book saved successfully, audio sync map should be persisted");
         
@@ -653,7 +654,7 @@ async fn update_book_in_library(
         use crate::book_service::repositories::AudioRepository;
         log::info!("Saving {} audio track data files to database", audio_bytes_map.len());
         for (href, audio_data) in audio_bytes_map {
-            if let Err(e) = AudioRepository::save_data(&db, &book.id, &href, &audio_data).await {
+            if let Err(e) = AudioRepository::save_data(db.as_ref(), &book.id, &href, &audio_data).await {
                 log::warn!("Failed to save audio track data for '{}': {}", href, e);
             } else {
                 log::debug!("Saved audio track data for '{}' ({} bytes)", href, audio_data.len());

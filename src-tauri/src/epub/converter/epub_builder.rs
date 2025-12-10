@@ -190,8 +190,8 @@ pub(crate) async fn rebuild_and_save_epub(
         use crate::book_service::repositories::{BookRepository, EpubRepository};
         if let Ok(db) = get_db_connection(app_ref).await {
             // Get book_id from source_path
-            if let Ok(Some(book)) = BookRepository::find_by_source_path(&db, source_path_ref).await {
-                if let Err(e) = EpubRepository::save(&db, source_path_ref, &book.id, &epub_output).await {
+            if let Ok(Some(book)) = BookRepository::find_by_source_path(db.as_ref(), source_path_ref).await {
+                if let Err(e) = EpubRepository::save(db.as_ref(), source_path_ref, &book.id, &epub_output).await {
                     log::warn!("Failed to save partial EPUB to database after chapter {}: {}", chapter_index + 1, e);
                 } else {
                     log::debug!("Saved partial EPUB to database after chapter {} ({} bytes)", chapter_index + 1, epub_output.len());
@@ -217,7 +217,7 @@ pub(crate) async fn rebuild_and_save_epub(
             use crate::book_service::repositories::BookRepository;
             use crate::book_service::models::ConversionStatus;
             if let Ok(db) = get_db_connection(app_ref).await {
-                if let Ok(Some(mut book)) = BookRepository::find_by_source_path(&db, source_path_ref).await {
+                if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path_ref).await {
                 // Get the chapter href for this chapter
                 if chapter_index < chapter_hrefs.len() {
                     let chapter_href = &chapter_hrefs[chapter_index];
@@ -238,7 +238,7 @@ pub(crate) async fn rebuild_and_save_epub(
                         }
                         
                         // Save the updated book
-                        if let Err(e) = BookRepository::save(&db, &book).await {
+                        if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
                             log::warn!("Failed to save completed chapter: {}", e);
                         }
                         }

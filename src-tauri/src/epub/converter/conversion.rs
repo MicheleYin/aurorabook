@@ -23,12 +23,12 @@ async fn save_progress_on_cancellation(
     use crate::book_service::repositories::BookRepository;
     
     if let Ok(db) = get_db_connection(app).await {
-        if let Ok(Some(mut book)) = BookRepository::find_by_source_path(&db, source_path).await {
+        if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await {
             if book.total_words.is_none() {
                 book.total_words = Some(total_words);
             }
             book.words_processed = Some(words_processed);
-            if let Err(e) = BookRepository::save(&db, &book).await {
+            if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
                 log::warn!("Failed to save words_processed on cancellation: {}", e);
             } else {
                 log::debug!("Saved words_processed on cancellation: {} / {}", words_processed, total_words);

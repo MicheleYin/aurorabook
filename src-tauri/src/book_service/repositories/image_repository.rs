@@ -1,6 +1,7 @@
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, Set, ConnectionTrait};
 use crate::book_service::entities::image;
 use sha2::{Sha256, Digest};
+use std::sync::Arc;
 
 pub struct ImageRepository;
 
@@ -37,11 +38,27 @@ impl ImageRepository {
             .await
             .map_err(|e| format!("Failed to save image: {}", e))?;
         
+        // Invalidate cache
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            cache.invalidate_image(book_id, href).await;
+        }
+        
         Ok(())
     }
     
-    /// Get image
+    /// Get image (with caching)
     pub async fn find_by_href(db: &DatabaseConnection, book_id: &str, href: &str) -> Result<Option<(String, Vec<u8>)>, String> {
+        let cache_key = (book_id.to_string(), href.to_string());
+        
+        // Try cache first
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            if let Some(cached_image) = cache.images.get(&cache_key).await {
+                log::debug!("Cache hit for image: {} / {}", book_id, href);
+                return Ok(Some((*cached_image).clone()));
+            }
+        }
+        
+        // Cache miss - query database
         let entity = image::Entity::find()
             .filter(image::Column::BookId.eq(book_id))
             .filter(image::Column::Href.eq(href))
@@ -50,7 +67,14 @@ impl ImageRepository {
             .map_err(|e| format!("Failed to query image: {}", e))?;
         
         if let Some(entity) = entity {
-            Ok(Some((entity.mime_type, entity.data)))
+            let result = (entity.mime_type, entity.data);
+            
+            // Store in cache
+            if let Ok(cache) = crate::book_service::database::get_db_cache() {
+                cache.images.insert(cache_key, Arc::new(result.clone())).await;
+            }
+            
+            Ok(Some(result))
         } else {
             Ok(None)
         }

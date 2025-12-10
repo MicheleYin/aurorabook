@@ -2,9 +2,13 @@ use sea_orm::{Database, DatabaseConnection};
 use tauri::AppHandle;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
+use crate::book_service::cache::DbCache;
 
 /// Global database connection (initialized once)
 static DB_CONNECTION: OnceCell<Arc<DatabaseConnection>> = OnceCell::const_new();
+
+/// Global database cache (initialized once)
+static DB_CACHE: OnceCell<Arc<DbCache>> = OnceCell::const_new();
 
 /// Initialize database connection and store it globally
 /// This should be called once during app setup
@@ -58,7 +62,12 @@ pub async fn init_db_connection(app: &AppHandle) -> Result<(), String> {
         .set(Arc::new(db))
         .map_err(|_| "Database connection already initialized".to_string())?;
     
-    log::info!("Database connection initialized successfully");
+    // Initialize cache
+    DB_CACHE
+        .set(Arc::new(DbCache::new()))
+        .map_err(|_| "Database cache already initialized".to_string())?;
+    
+    log::info!("Database connection and cache initialized successfully");
     
     Ok(())
 }
@@ -66,16 +75,25 @@ pub async fn init_db_connection(app: &AppHandle) -> Result<(), String> {
 /// Get database connection from global state
 /// Returns a reference to the shared connection pool
 /// The connection is initialized once and reused across all calls
-pub async fn get_db_connection(_app: &AppHandle) -> Result<DatabaseConnection, String> {
+/// This ensures all database operations use the same shared session
+pub async fn get_db_connection(_app: &AppHandle) -> Result<Arc<DatabaseConnection>, String> {
     // Get the connection from the global state
+    // Return Arc directly to ensure explicit sharing of the same connection pool
     let db_arc = DB_CONNECTION
         .get()
         .ok_or_else(|| "Database connection not initialized. Call init_db_connection first.".to_string())?;
     
-    // Clone the DatabaseConnection (the underlying connection pool is shared)
-    // Note: DatabaseConnection in SeaORM is actually a connection pool, so cloning is cheap
-    // and all clones share the same underlying pool
-    Ok(db_arc.as_ref().clone())
+    // Return the Arc directly to ensure all code uses the same shared connection pool
+    Ok(db_arc.clone())
+}
+
+/// Get database cache from global state
+/// Returns a reference to the shared cache
+pub fn get_db_cache() -> Result<Arc<DbCache>, String> {
+    DB_CACHE
+        .get()
+        .ok_or_else(|| "Database cache not initialized. Call init_db_connection first.".to_string())
+        .map(|cache| cache.clone())
 }
 
 /// Initialize database schema - creates tables if they don't exist
