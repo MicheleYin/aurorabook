@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { logger } from "./lib/logger";
-import { useProgressSaving } from "./hooks/useProgressSaving";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LibraryPanel } from "./components/LibraryPanel";
 import { ReaderPanel } from "./components/ReaderPanel";
@@ -129,12 +128,27 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   // Ref to save progress from ReaderViewport
   const saveProgressRef = useRef<(() => void) | null>(null);
 
-  // Hook for saving progress before navigation/chapter changes
-  const saveProgress = useProgressSaving(
-    saveProgressRef,
-    activeChapterId,
-    activeBookId,
-    flushProgressUpdate
+  // Inline progress saving logic (previously useProgressSaving hook)
+  const saveProgress = useCallback(
+    async (context: {
+      toChapterId?: string;
+      source: string;
+      additionalData?: Record<string, unknown>;
+    }) => {
+      if (saveProgressRef.current && activeChapterId) {
+        logger.log("[App] Saving progress", {
+          bookId: activeBookId,
+          fromChapterId: activeChapterId,
+          toChapterId: context.toChapterId,
+          source: context.source,
+          ...context.additionalData,
+        });
+        saveProgressRef.current();
+        // Flush the debounced save immediately
+        await flushProgressUpdate();
+      }
+    },
+    [activeChapterId, activeBookId, flushProgressUpdate]
   );
 
   const handleSelectChapter = useCallback(async (chapterId: string, options?: ChapterSelectionOptions) => {

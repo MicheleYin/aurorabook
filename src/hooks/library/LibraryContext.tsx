@@ -10,10 +10,10 @@ import { logger } from "../../lib/logger";
 import type { Book } from "../../types/reader";
 import { useLibraryOperations } from "./useLibraryOperations";
 import { useProgressManagement } from "./useProgressManagement";
-import { useAudioStateManagement } from "./useAudioStateManagement";
+import { useAudioStatePersistence } from "./useAudioStatePersistence";
 import { useChapterProgress } from "./useChapterProgress";
-import { useAudioStateSync } from "./useAudioStateSync";
-import type { LibraryContextValue, UseChapterProgressParams, UseAudioStateSyncParams } from "./types";
+import { useAudioPlayerState } from "./useAudioPlayerState";
+import type { LibraryContextValue, UseChapterProgressParams, UseAudioPlayerStateParams } from "./types";
 
 const LibraryContext = createContext<LibraryContextValue | null>(null);
 
@@ -38,7 +38,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
 
   const {
     updateBookAudioState,
-  } = useAudioStateManagement(library, setLibrary);
+  } = useAudioStatePersistence(library, setLibrary);
 
   // Wrap the nested hooks in useCallback to maintain stable references
   const useChapterProgressWrapper = useCallback(
@@ -48,9 +48,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  const useAudioStateSyncWrapper = useCallback(
-    (params: UseAudioStateSyncParams) => {
-      return useAudioStateSync(params);
+  const useAudioPlayerStateWrapper = useCallback(
+    (params: UseAudioPlayerStateParams) => {
+      return useAudioPlayerState(params);
     },
     [],
   );
@@ -94,7 +94,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       handleChapterProgress,
       flushProgressUpdate,
       useChapterProgress: useChapterProgressWrapper,
-      useAudioStateSync: useAudioStateSyncWrapper,
+      useAudioPlayerState: useAudioPlayerStateWrapper,
     }),
     [
       library,
@@ -108,7 +108,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       handleChapterProgress,
       flushProgressUpdate,
       useChapterProgressWrapper,
-      useAudioStateSyncWrapper,
+      useAudioPlayerStateWrapper,
     ],
   );
 

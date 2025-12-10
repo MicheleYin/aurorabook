@@ -15,7 +15,7 @@ import {
 import { Slider } from "../ui/slider";
 import { AudioTracksDialog } from "./AudioTracksDialog";
 import { cn } from "../../lib/utils";
-// useAudioStateSync is now accessed via useLibrary hook
+// useAudioPlayerState is now accessed via useLibrary hook
 import { useLibrary } from "../../hooks/useLibrary";
 import { animPatterns, enterExit } from "../../lib/animations";
 import { ensureAudioTrackLoaded } from "../../lib/lazy-chapter-loader";
@@ -84,7 +84,7 @@ export function ReaderAudioPlayer({
     onTrackLoaded,
     onTrackChanged,
     emitProgress,
-  } = libraryHook.useAudioStateSync({
+  } = libraryHook.useAudioPlayerState({
     bookId,
     tracks,
     initialAudioState,

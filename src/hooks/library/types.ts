@@ -32,7 +32,7 @@ export type UseChapterProgressParams = {
   isRestoringScroll?: boolean;
 };
 
-export type UseAudioStateSyncParams = {
+export type UseAudioPlayerStateParams = {
   bookId?: string;
   tracks: AudioTrack[];
   initialAudioState?: BookAudioState;
@@ -84,8 +84,8 @@ export type LibraryContextValue = {
     updateMetricsOnScroll: () => void;
   };
 
-  // Audio state sync hook
-  useAudioStateSync: (params: UseAudioStateSyncParams) => {
+  // Audio player state hook
+  useAudioPlayerState: (params: UseAudioPlayerStateParams) => {
     currentIndex: number;
     setCurrentIndex: (index: number) => void;
     restoreTime: number | null;
