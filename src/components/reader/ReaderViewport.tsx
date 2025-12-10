@@ -24,7 +24,6 @@ import type {
 } from "./types";
 import type { Book, Chapter, ReaderPreferences, ReaderTheme } from "../../types/reader";
 import { Button } from "../ui/button";
-import { useScrollTracking } from "../../hooks/reader/useScrollTracking";
 import { useFragmentNavigation } from "../../hooks/reader/useFragmentNavigation";
 import { useChapterTransitions } from "../../hooks/reader/useChapterTransitions";
 import { useHighlighting } from "../../hooks/reader/useHighlighting";
@@ -60,6 +59,7 @@ type ReaderViewportCallbacks = {
   onPreferencesChange?: (update: Partial<ReaderPreferences>) => void;
   onScroll?: () => void;
   onScrollEnd?: () => void;
+  isScrolling?: boolean; // Scroll state from scroll management
 };
 
 type ReaderViewportProps = {
@@ -119,7 +119,6 @@ export function ReaderViewport({
   const contentRef = externalContentRef || internalContentRef;
 
   // Custom hooks (no useEffects)
-  const scrollTracking = useScrollTracking();
   const fragmentNav = useFragmentNavigation(contentRef, onFragmentConsumed);
   const transitions = useChapterTransitions();
   const highlighting = useHighlighting(contentRef);
@@ -151,9 +150,8 @@ export function ReaderViewport({
 
   // Setup scroll handler when contentRef is available (explicit check)
   const scrollHandler = useCallback(() => {
-    scrollTracking.scrollHandler();
     onScroll?.();
-  }, [scrollTracking, onScroll]);
+  }, [onScroll]);
   
   const lastScrollHandlerRef = useRef<typeof scrollHandler | undefined>(undefined);
     if (scrollHandler !== lastScrollHandlerRef.current && contentRef.current) {
@@ -316,7 +314,6 @@ export function ReaderViewport({
       linkHandling.setupLinkHandler();
       // Setup scroll handler
       const scrollHandler = () => {
-        scrollTracking.scrollHandler();
         onScroll?.();
       };
       node.addEventListener("scroll", scrollHandler, { passive: true });
@@ -337,7 +334,7 @@ export function ReaderViewport({
       // Cleanup
       linkHandling.cleanup();
     }
-  }, [contentRef, linkHandling, scrollTracking, onScroll, onScrollEnd]);
+  }, [contentRef, linkHandling, onScroll, onScrollEnd]);
 
   return (
     <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
@@ -354,7 +351,7 @@ export function ReaderViewport({
           autoScrollEnabled && "auto-scroll-active",
           "transition-all duration-300 ease-in-out",
         )}
-        data-reader-scrolling={scrollTracking.isScrolling ? "true" : "false"}
+        data-reader-scrolling={callbacks.isScrolling ? "true" : "false"}
         data-auto-scroll-enabled={autoScrollEnabled ? "true" : "false"}
         onClick={(event: ReactMouseEvent<HTMLDivElement>) => {
           if ((event.target as HTMLElement)?.closest("a,button")) {

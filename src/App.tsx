@@ -136,11 +136,23 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       additionalData?: Record<string, unknown>;
     }) => {
       if (saveProgressRef.current && activeChapterId) {
+        // Get current saved scroll position from library (single source of truth)
+        const currentProgress = activeBook?.progress;
+        const savedScrollPosition = currentProgress?.currentChapterId === activeChapterId
+          ? {
+              scrollTop: currentProgress.currentChapterScrollTop,
+              scrollHeight: currentProgress.currentChapterScrollHeight,
+              clientHeight: currentProgress.currentChapterClientHeight,
+              percent: currentProgress.chapterProgressPercent,
+            }
+          : null;
+
         logger.log("[App] Saving progress", {
           bookId: activeBookId,
           fromChapterId: activeChapterId,
           toChapterId: context.toChapterId,
           source: context.source,
+          savedScrollPosition,
           ...context.additionalData,
         });
         saveProgressRef.current();
@@ -148,7 +160,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
         await flushProgressUpdate();
       }
     },
-    [activeChapterId, activeBookId, flushProgressUpdate]
+    [activeChapterId, activeBookId, activeBook, flushProgressUpdate]
   );
 
   const handleSelectChapter = useCallback(async (chapterId: string, options?: ChapterSelectionOptions) => {

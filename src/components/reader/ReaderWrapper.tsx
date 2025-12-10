@@ -5,7 +5,7 @@
 
 import { useCallback, useRef, useState, useEffect } from "react";
 import { logger } from "../../lib/logger";
-import type { Book, Chapter, ReaderPreferences } from "../../types/reader";
+import type { ReaderPreferences, Chapter } from "../../types/reader";
 import type { ChapterProgressSnapshot, ChapterSelectionOptions, AudioProgressSnapshot } from "./types";
 import { ReaderViewport } from "./ReaderViewport";
 import { createProgressSnapshot } from "../../lib/progress-utils";
@@ -14,10 +14,11 @@ import { useChapterLoader } from "../../hooks/reader/useChapterLoader";
 import { useScrollManagement } from "../../hooks/reader/useScrollManagement";
 import { useChapterProgress } from "../../hooks/library/useChapterProgress";
 import { useAudioPlayerProgress } from "../../hooks/reader/useAudioPlayerProgress";
+import { useLibraryContext } from "../../hooks/library/LibraryContext";
 
 type ReaderWrapperProps = {
-  activeBook?: Book;
-  activeChapter?: Chapter;
+  activeBookId?: string;
+  activeChapterId?: string;
   preferences: ReaderPreferences;
   onPreferencesChange: (update: Partial<ReaderPreferences>) => void;
   onSelectChapter: (chapterId: string, options?: ChapterSelectionOptions) => void;
@@ -34,8 +35,8 @@ type ReaderWrapperProps = {
 
 export function ReaderWrapper(props: ReaderWrapperProps) {
   const {
-    activeBook,
-    activeChapter,
+    activeBookId,
+    activeChapterId,
     preferences,
     onPreferencesChange,
     onSelectChapter,
@@ -50,6 +51,13 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     currentAudioProgress,
   } = props;
 
+  // Get book and chapter from library context (single source of truth)
+  const { library } = useLibraryContext();
+  const activeBook = activeBookId ? library.find(b => b.id === activeBookId) : undefined;
+  const activeChapter = activeBook && activeChapterId 
+    ? activeBook.chapters.find(ch => ch.id === activeChapterId)
+    : undefined;
+
   // Content ref for scroll operations
   const contentRef = useRef<HTMLDivElement | null>(null);
   const previousChapterIdRef = useRef<string | undefined>(undefined);
@@ -58,10 +66,10 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
 
   // Custom hooks
   const chapterLoader = useChapterLoader();
-  const scrollManagement = useScrollManagement(contentRef);
   
-  // Progress tracking
-  const restoreState = scrollManagement.getRestoreState();
+  // Progress tracking - create first so we can pass updateScrollState to scrollManagement
+  // We'll use a function for isRestoringScroll that will be updated after scrollManagement is created
+  const isRestoringRef = useRef(false);
   const progressTracking = useChapterProgress({
     activeChapter: activeChapter || null,
     contentRef: contentRef as React.RefObject<HTMLElement>,
@@ -71,8 +79,18 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       }
     } : undefined,
     onSaveProgress,
-    isRestoringScroll: restoreState.isRestoring,
+    isRestoringScroll: () => isRestoringRef.current, // Use function to get current value
   });
+  
+  // Create scrollManagement with updateScrollState callback to sync scroll state
+  const scrollManagement = useScrollManagement(
+    contentRef,
+    progressTracking.updateScrollState
+  );
+  
+  // Update isRestoringRef with current restore state
+  const restoreState = scrollManagement.getRestoreState();
+  isRestoringRef.current = restoreState.isRestoring;
 
   // Save progress (uses progressTracking.saveProgress which handles all the logic)
   const saveProgress = useCallback(async (chapterId: string) => {
@@ -134,6 +152,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
 
   // Restore progress (called after chapter loads via callback)
   // Uses activeChapter since that's what's being rendered
+  // Passes bookId and chapterId - useScrollManagement gets book/chapter from library context
   const restoreProgress = useCallback((onComplete?: () => void) => {
     // Use activeChapter since that's what's actually being rendered
     // (it's loadedChapter || activeChapter from the state passed to ReaderViewport)
@@ -155,9 +174,10 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
       bookId: activeBook.id,
     });
     
+    // Pass bookId and chapterId - useScrollManagement will get book/chapter from library context
     scrollManagement.restoreProgress(
-      activeBook,
-      chapterToRestore,
+      activeBook.id,
+      chapterToRestore.id,
       () => {
         onComplete?.();
         // Always check for pending scroll target after restoration completes
@@ -562,8 +582,12 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
           } : undefined,
           onFragmentConsumed: () => {},
           onPreferencesChange,
-          onScroll: progressTracking.updateMetricsOnScroll,
+          onScroll: () => {
+            scrollManagement.scrollHandler();
+            progressTracking.updateMetricsOnScroll();
+          },
           onScrollEnd: progressTracking.emitChapterProgress,
+          isScrolling: scrollManagement.isScrolling,
         }}
         contentRef={contentRef}
       />

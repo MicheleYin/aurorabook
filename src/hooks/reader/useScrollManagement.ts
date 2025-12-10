@@ -2,12 +2,14 @@
  * Unified hook for scroll management
  * Combines scroll operations, scroll tracking, and progress restoration
  * No useEffects - all operations are explicit via callbacks
+ * 
+ * Uses library context as single source of truth for book/chapter data
  */
 
 import { useCallback, useRef, useState } from "react";
 import { logger } from "../../lib/logger";
-import type { Book, Chapter } from "../../types/reader";
-import { computeScrollMetrics, computeWindowScrollMetrics, scrollToElement } from "../../lib/scroll-utils";
+import { useLibraryContext } from "../library/LibraryContext";
+import { computeScrollMetrics, computeWindowScrollMetrics, scrollToElement, type ScrollMetrics } from "../../lib/scroll-utils";
 
 type RestoreState = {
   hasRestored: boolean;
@@ -16,10 +18,18 @@ type RestoreState = {
   shouldRestore: boolean;
 };
 
-export function useScrollManagement(contentRef: React.RefObject<HTMLDivElement | null>) {
+export function useScrollManagement(
+  contentRef: React.RefObject<HTMLDivElement | null>,
+  updateScrollState?: (chapterId: string, metrics: ScrollMetrics) => void
+) {
+  const { library } = useLibraryContext();
   // Scroll tracking state
   const [isScrolling, setIsScrolling] = useState(false);
   const scrollTimeoutRef = useRef<number | null>(null);
+
+  // Store updateScrollState in a ref so it can be updated after hook creation
+  const updateScrollStateRef = useRef(updateScrollState);
+  updateScrollStateRef.current = updateScrollState;
 
   // Progress restoration state
   const restoreStateRef = useRef<RestoreState>({
@@ -84,12 +94,25 @@ export function useScrollManagement(contentRef: React.RefObject<HTMLDivElement |
     }, 200);
   }, []);
 
-  // Progress restoration
+  // Progress restoration - gets book/chapter from library context (single source of truth)
   const restoreProgress = useCallback((
-    book: Book,
-    chapter: Chapter,
+    bookId: string,
+    chapterId: string,
     onComplete?: () => void
   ) => {
+    // Get book from library context (single source of truth)
+    const book = library.find(b => b.id === bookId);
+    if (!book) {
+      logger.warn("[useScrollManagement] Early return: book not found in library", { bookId });
+      return;
+    }
+
+    const chapter = book.chapters.find(ch => ch.id === chapterId);
+    if (!chapter) {
+      logger.warn("[useScrollManagement] Early return: chapter not found", { bookId, chapterId });
+      return;
+    }
+
     logger.log("[useScrollManagement] restoreProgress called", {
       hasProgress: !!book.progress,
       chapterId: chapter.id,
@@ -99,10 +122,9 @@ export function useScrollManagement(contentRef: React.RefObject<HTMLDivElement |
       currentChapterId: book.progress?.currentChapterId,
     });
     
-    if (!book.progress || !chapter) {
-      logger.warn("[useScrollManagement] Early return: no progress or chapter", {
+    if (!book.progress) {
+      logger.warn("[useScrollManagement] Early return: no progress", {
         hasProgress: !!book.progress,
-        hasChapter: !!chapter,
       });
       return;
     }
@@ -215,6 +237,22 @@ export function useScrollManagement(contentRef: React.RefObject<HTMLDivElement |
         });
       }
 
+      // Update scroll state in useChapterProgress to keep them in sync
+      // Use the metrics we have, but update scrollTop to the restored position
+      if (updateScrollStateRef.current && metrics && targetScrollTop > 0) {
+        const restoredMetrics: ScrollMetrics = {
+          ...metrics,
+          scrollTop: targetScrollTop,
+        };
+        
+        updateScrollStateRef.current(chapter.id, restoredMetrics);
+        logger.log("[useScrollManagement] Updated scroll state in useChapterProgress", {
+          chapterId: chapter.id,
+          scrollTop: restoredMetrics.scrollTop,
+          maxScroll: restoredMetrics.maxScroll,
+        });
+      }
+
       restoreStateRef.current.hasRestored = true;
       restoreStateRef.current.isRestoring = false;
       restoreStateRef.current.restoredChapterId = chapter.id;
@@ -222,7 +260,7 @@ export function useScrollManagement(contentRef: React.RefObject<HTMLDivElement |
     };
 
     setTimeout(attemptRestore, 100);
-  }, [contentRef]);
+  }, [contentRef, library]);
 
   const resetRestoration = useCallback((shouldRestore: boolean = false) => {
     restoreStateRef.current.hasRestored = false;

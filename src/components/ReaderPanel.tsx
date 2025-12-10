@@ -232,8 +232,8 @@ export function ReaderPanel({
 
       <div className="flex flex-1 overflow-hidden min-h-0">
         <ReaderWrapper
-          activeBook={activeBook}
-          activeChapter={activeChapter}
+          activeBookId={activeBook?.id}
+          activeChapterId={activeChapter?.id}
           preferences={preferences}
           onPreferencesChange={onPreferencesChange}
           onSelectChapter={handleChapterChange}

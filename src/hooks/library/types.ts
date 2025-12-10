@@ -14,6 +14,7 @@ import type {
   ChapterProgressSnapshot,
   AudioProgressSnapshot,
 } from "../../components/reader/types";
+import type { ScrollMetrics } from "../../lib/scroll-utils";
 
 export type IngestParams = {
   filePath: string;
@@ -29,7 +30,7 @@ export type UseChapterProgressParams = {
   contentRef?: RefObject<HTMLElement>;
   onProgress?: (snapshot: ChapterProgressSnapshot) => void;
   onSaveProgress?: (saveFn: () => void) => void;
-  isRestoringScroll?: boolean;
+  isRestoringScroll?: boolean | (() => boolean);
 };
 
 export type UseAudioPlayerStateParams = {
@@ -82,6 +83,7 @@ export type LibraryContextValue = {
     emitChapterProgress: () => void;
     saveProgress: () => void;
     updateMetricsOnScroll: () => void;
+    updateScrollState: (chapterId: string, metrics: ScrollMetrics) => void;
   };
 
   // Audio player state hook
