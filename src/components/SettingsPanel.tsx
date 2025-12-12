@@ -173,7 +173,7 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
   };
 
   return (
-    <div className="flex h-full flex-col gap-6">
+    <div className="flex h-full flex-col gap-6 safe-area-top">
       <Card className="flex-1">
         <CardHeader className="relative">
           <CardTitle className="text-xl">Preferences</CardTitle>

@@ -141,7 +141,7 @@ export function ReaderPanel({
       <div
         data-reader-header
         className={cn(
-          "sticky top-0 z-20 flex flex-col gap-3 border-b border-border bg-background/95 px-4 py-4 backdrop-blur",
+          "sticky top-0 z-20 flex flex-col gap-3 border-b border-border bg-background/95 px-4 py-4 backdrop-blur safe-area-top",
           animPatterns.readerChrome,
           "transition-all duration-300 ease-in-out",
           isImmersive

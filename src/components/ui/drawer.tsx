@@ -52,6 +52,10 @@ const DrawerContent = React.forwardRef<
         // Apply spring physics for left drawer direction
         "data-[vaul-drawer-direction=left]:data-[state=open]:drawer-slide-in-left",
         "data-[vaul-drawer-direction=left]:data-[state=closed]:drawer-slide-out-left",
+        // Add safe area top padding when drawer direction is not bottom
+        "data-[vaul-drawer-direction=left]:safe-area-top",
+        "data-[vaul-drawer-direction=right]:safe-area-top",
+        "data-[vaul-drawer-direction=top]:safe-area-top",  
         className,
       )}
       {...props}

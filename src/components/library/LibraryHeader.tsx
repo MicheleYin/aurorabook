@@ -35,7 +35,7 @@ export function LibraryHeader({
   const showCount = isSearching ? filteredCount : totalBooks;
 
   return (
-    <div className="sticky top-0 z-20 flex flex-col gap-4 border-b border-border bg-background/95 -mx-4 -mt-6 px-4 pt-6 pb-4 backdrop-blur">
+    <div className="sticky top-0 z-20 flex flex-col gap-4 border-b border-border bg-background/95 -mx-4 -mt-6 px-4 pt-6 pb-4 backdrop-blur safe-area-top">
       <div className="flex flex-col gap-3">
           {actionSlot ? <div className="sm:ml-auto">{actionSlot}</div> : null}
         <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground">
