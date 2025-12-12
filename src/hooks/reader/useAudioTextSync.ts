@@ -27,53 +27,110 @@ export function useAudioTextSync(
   const lastReloadAttemptRef = useRef<{ chapterId: string; timestamp: number } | null>(null);
   const reloadThrottleMs = 2000; // Throttle reload attempts to avoid infinite loops
   const lastChapterIdRef = useRef<string | undefined>(undefined); // Track last chapter ID to detect stale references
+  const trackChangeInProgressRef = useRef<{ trackHref: string; timestamp: number } | null>(null);
+  const TRACK_CHANGE_GRACE_PERIOD_MS = 2000; // Ignore audio sync chapter changes for 2s after track change
   
-  // Calculate header offset dynamically when scrolling
+  // Cache DOM elements and computed values to avoid repeated queries
+  const headerCacheRef = useRef<{
+    element: HTMLElement | null;
+    offset: number;
+    lastCheck: number;
+  }>({ element: null, offset: 0, lastCheck: 0 });
+  
+  const playerCacheRef = useRef<{
+    element: HTMLElement | null;
+    offset: number;
+    lastCheck: number;
+  }>({ element: null, offset: 0, lastCheck: 0 });
+  
+  const CACHE_TTL_MS = 1000; // Re-check every second instead of every call
+  
+  // Calculate header offset dynamically when scrolling (with caching)
   const getHeaderOffset = useCallback((): number => {
     if (!chromeVisible || typeof document === "undefined") return 0;
-    const header = document.querySelector<HTMLElement>("[data-reader-header]");
-    if (header) {
-      const rect = header.getBoundingClientRect();
-      // Only return height if header is actually visible (not hidden/immersive)
-      // Check computed style to see if it's hidden
-      const style = window.getComputedStyle(header);
+    
+    const now = Date.now();
+    const cache = headerCacheRef.current;
+    
+    // Use cached value if still valid
+    if (cache.lastCheck > 0 && (now - cache.lastCheck) < CACHE_TTL_MS && cache.offset > 0) {
+      return cache.offset;
+    }
+    
+    // Re-query only if cache expired or element not found
+    if (!cache.element || (now - cache.lastCheck) >= CACHE_TTL_MS) {
+      cache.element = document.querySelector<HTMLElement>("[data-reader-header]");
+    }
+    
+    if (cache.element) {
+      const rect = cache.element.getBoundingClientRect();
+      const style = window.getComputedStyle(cache.element);
       if (rect.height > 0 && style.opacity !== "0" && style.display !== "none") {
-        // get the font size of a text in the window and add to the header height
-        const text = document.querySelector<HTMLElement>("p");
-        if (text) {
-          const fontSize = window.getComputedStyle(text).fontSize;
-          return parseInt(fontSize) + rect.height;
+        // Cache text element query - only query once per cache period
+        let textElement: HTMLElement | null = null;
+        if (cache.lastCheck === 0 || (now - cache.lastCheck) >= CACHE_TTL_MS) {
+          textElement = document.querySelector<HTMLElement>("p");
         }
-        return rect.height;
+        
+        if (textElement) {
+          const fontSize = window.getComputedStyle(textElement).fontSize;
+          cache.offset = parseInt(fontSize) + rect.height;
+        } else {
+          cache.offset = rect.height;
+        }
+        cache.lastCheck = now;
+        return cache.offset;
       }
     }
+    
+    cache.offset = 0;
+    cache.lastCheck = now;
     return 0;
   }, [chromeVisible]);
 
-  // Calculate player offset dynamically when scrolling
+  // Calculate player offset dynamically when scrolling (with caching)
   const getPlayerOffset = useCallback((): number => {
     if (!audioPlayerVisible || typeof document === "undefined") return 0;
-    // Find the audio player element - it's typically a fixed element at the bottom
-    // Look for common audio player selectors or data attributes
-    const player = document.querySelector<HTMLElement>("[data-audio-player], [role='region'][aria-label*='audio'], .audio-player");
-    if (player) {
-      const rect = player.getBoundingClientRect();
-      const style = window.getComputedStyle(player);
-      // Only return height if player is actually visible
+    
+    const now = Date.now();
+    const cache = playerCacheRef.current;
+    
+    // Use cached value if still valid
+    if (cache.lastCheck > 0 && (now - cache.lastCheck) < CACHE_TTL_MS && cache.offset > 0) {
+      return cache.offset;
+    }
+    
+    // Re-query only if cache expired or element not found
+    if (!cache.element || (now - cache.lastCheck) >= CACHE_TTL_MS) {
+      cache.element = document.querySelector<HTMLElement>("[data-audio-player], [role='region'][aria-label*='audio'], .audio-player");
+    }
+    
+    if (cache.element) {
+      const rect = cache.element.getBoundingClientRect();
+      const style = window.getComputedStyle(cache.element);
       if (rect.height > 0 && style.opacity !== "0" && style.display !== "none" && style.visibility !== "hidden") {
-        // Calculate offset from bottom of viewport
-        // For fixed elements at bottom, this is the height plus any bottom spacing
         const viewportHeight = window.innerHeight;
         const distanceFromBottom = viewportHeight - rect.top;
-        // add the font size of a text in the window to the distance from bottom
-        const text = document.querySelector<HTMLElement>("p");
-        if (text) {
-          const fontSize = window.getComputedStyle(text).fontSize;
-          return Math.max(0, distanceFromBottom + parseInt(fontSize));
+        
+        // Cache text element query - only query once per cache period
+        let textElement: HTMLElement | null = null;
+        if (cache.lastCheck === 0 || (now - cache.lastCheck) >= CACHE_TTL_MS) {
+          textElement = document.querySelector<HTMLElement>("p");
         }
-        return Math.max(0, distanceFromBottom);
+        
+        if (textElement) {
+          const fontSize = window.getComputedStyle(textElement).fontSize;
+          cache.offset = Math.max(0, distanceFromBottom + parseInt(fontSize));
+        } else {
+          cache.offset = Math.max(0, distanceFromBottom);
+        }
+        cache.lastCheck = now;
+        return cache.offset;
       }
     }
+    
+    cache.offset = 0;
+    cache.lastCheck = now;
     return 0;
   }, [audioPlayerVisible]);
 
@@ -155,6 +212,13 @@ export function useAudioTextSync(
     const chapterIdMismatch = segmentChapter && segmentChapter.id !== chapter.id;
     const shouldChangeChapter = !hrefsMatch || chapterIdMismatch;
     
+    // Check if a track change is in progress - if so, ignore chapter changes from audio sync
+    // This prevents audio sync from interfering with chapter loading during track changes
+    const trackChange = trackChangeInProgressRef.current;
+    const isTrackChanging = trackChange && 
+      trackChange.trackHref === trackHref && 
+      (Date.now() - trackChange.timestamp) < TRACK_CHANGE_GRACE_PERIOD_MS;
+    
     if (shouldChangeChapter) {
       logger.log("[Audio Sync] Segment chapter mismatch detected", {
         segmentChapterHref: segment.chapterHref,
@@ -167,7 +231,20 @@ export function useAudioTextSync(
         segmentChapterId: segmentChapter?.id,
         autoScrollEnabled,
         hasOnChapterChange: !!onChapterChange,
+        isTrackChanging,
+        trackChangeInProgress: !!trackChange,
       });
+      
+      // If a track change is in progress, don't trigger chapter changes from audio sync
+      // The track change handler will handle the chapter change
+      if (isTrackChanging) {
+        logger.log("[Audio Sync] Ignoring chapter change - track change in progress", {
+          trackHref,
+          timeSinceTrackChange: trackChange ? Date.now() - trackChange.timestamp : 0,
+        });
+        setHighlightedElementId(null);
+        return;
+      }
       
       // If auto scroll is enabled, navigate to the correct chapter
       if (autoScrollEnabled && onChapterChange) {
@@ -262,14 +339,13 @@ export function useAudioTextSync(
 
     // Check if the element exists in the DOM
     // If not, and we have audio sync, the chapter might need to be reloaded with spans
+    // Use getElementById for better performance than querySelector
     if (contentRef.current) {
-      const selector = typeof CSS !== "undefined" && CSS.escape
-        ? `#${CSS.escape(segment.textElementId)}`
-        : `#${segment.textElementId}`;
-      const element = contentRef.current.querySelector<HTMLElement>(selector);
+      const element = contentRef.current.querySelector<HTMLElement>(`#${CSS.escape ? CSS.escape(segment.textElementId) : segment.textElementId}`);
       
       if (!element) {
         // Element not found - check if chapter content has any spans at all
+        // Cache chapter content query to avoid repeated queries
         const chapterContent = contentRef.current.querySelector('[data-reader-chapter-content="true"]');
         const hasAnySpans = chapterContent?.querySelector('span[id^="f"]');
         
@@ -293,11 +369,14 @@ export function useAudioTextSync(
             return;
           }
         } else if (!element) {
-          console.warn("[Audio Sync] Element not found in DOM", {
-            textElementId: segment.textElementId,
-            hasChapterContent: !!chapterContent,
-            hasAnySpans: !!hasAnySpans,
-          });
+          // Only log warning if we're not reloading (to avoid spam)
+          if (!onChapterReload || hasAnySpans) {
+            console.warn("[Audio Sync] Element not found in DOM", {
+              textElementId: segment.textElementId,
+              hasChapterContent: !!chapterContent,
+              hasAnySpans: !!hasAnySpans,
+            });
+          }
         }
       }
     }
@@ -366,10 +445,28 @@ export function useAudioTextSync(
     lastScrollTimeRef.current = 0;
   }, []);
 
+  // Mark that a track change is in progress (called from useAudioPlayerProgress)
+  const markTrackChange = useCallback((trackHref: string) => {
+    trackChangeInProgressRef.current = {
+      trackHref,
+      timestamp: Date.now(),
+    };
+    logger.log("[Audio Sync] Track change marked", { trackHref });
+    
+    // Clear the flag after grace period
+    setTimeout(() => {
+      if (trackChangeInProgressRef.current?.trackHref === trackHref) {
+        trackChangeInProgressRef.current = null;
+        logger.log("[Audio Sync] Track change grace period ended", { trackHref });
+      }
+    }, TRACK_CHANGE_GRACE_PERIOD_MS);
+  }, []);
+
   return {
     highlightedElementId,
     updateHighlight,
     clearHighlight,
+    markTrackChange,
   };
 }
 

@@ -529,24 +529,31 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
 
   // Handle audio progress updates from App.tsx
   // This ensures highlighting and scrolling are updated when audio plays
+  // Use refs to avoid recreating the effect callback on every render
   const lastProgressRef = useRef<AudioProgressSnapshot | undefined>(undefined);
   const handleAudioProgressRef = useRef(audioPlayerProgress.handleAudioProgress);
+  
+  // Update ref when handler changes (but don't recreate effect)
   handleAudioProgressRef.current = audioPlayerProgress.handleAudioProgress;
   
+  // Use a more efficient check - only update if values actually changed
   useEffect(() => {
-    if (currentAudioProgress) {
-      // Compare by value, not reference, to avoid unnecessary updates
-      const lastProgress = lastProgressRef.current;
-      const isNewProgress = 
-        !lastProgress ||
-        lastProgress.trackHref !== currentAudioProgress.trackHref ||
-        lastProgress.currentTimeSeconds !== currentAudioProgress.currentTimeSeconds ||
-        lastProgress.updatedAt !== currentAudioProgress.updatedAt;
-      
-      if (isNewProgress) {
-        lastProgressRef.current = currentAudioProgress;
-        handleAudioProgressRef.current(currentAudioProgress);
-      }
+    if (!currentAudioProgress) return;
+    
+    const lastProgress = lastProgressRef.current;
+    // Quick reference check first (most common case - same object)
+    if (lastProgress === currentAudioProgress) return;
+    
+    // Compare by value only if reference changed
+    const isNewProgress = 
+      !lastProgress ||
+      lastProgress.trackHref !== currentAudioProgress.trackHref ||
+      Math.abs(lastProgress.currentTimeSeconds - currentAudioProgress.currentTimeSeconds) > 0.1 || // Only update if time changed significantly (>100ms)
+      lastProgress.updatedAt !== currentAudioProgress.updatedAt;
+    
+    if (isNewProgress) {
+      lastProgressRef.current = currentAudioProgress;
+      handleAudioProgressRef.current(currentAudioProgress);
     }
   }, [currentAudioProgress]);
 

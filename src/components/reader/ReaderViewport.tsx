@@ -148,33 +148,7 @@ export function ReaderViewport({
     linkHandling.setupLinkHandler();
   }
 
-  // Setup scroll handler when contentRef is available (explicit check)
-  const scrollHandler = useCallback(() => {
-    onScroll?.();
-  }, [onScroll]);
-  
-  const lastScrollHandlerRef = useRef<typeof scrollHandler | undefined>(undefined);
-    if (scrollHandler !== lastScrollHandlerRef.current && contentRef.current) {
-      if (lastScrollHandlerRef.current) {
-        contentRef.current.removeEventListener("scroll", lastScrollHandlerRef.current as EventListener);
-      }
-    lastScrollHandlerRef.current = scrollHandler;
-    const node = contentRef.current;
-    node.addEventListener("scroll", scrollHandler, { passive: true });
-    
-    // Also set up scroll end handler for progress emission
-    if (onScrollEnd) {
-      let scrollEndTimeout: number | null = null;
-      const scrollEndHandler = () => {
-        if (scrollEndTimeout) clearTimeout(scrollEndTimeout);
-        scrollEndTimeout = window.setTimeout(() => {
-          onScrollEnd();
-          scrollEndTimeout = null;
-        }, 150);
-      };
-      node.addEventListener("scroll", scrollEndHandler, { passive: true });
-    }
-  }
+  // Scroll handlers are now managed in setContentRef callback to avoid duplicates
 
   // Navigation helpers
   const { previousChapter, nextChapter } = useMemo(() => {
@@ -304,34 +278,66 @@ export function ReaderViewport({
           : animPatterns.chapterCrossFade)
       : null;
 
-  // Set content ref callback
+  // Set content ref callback with proper cleanup
+  const scrollHandlerRef = useRef<(() => void) | null>(null);
+  const scrollEndHandlerRef = useRef<(() => void) | null>(null);
+  const scrollEndTimeoutRef = useRef<number | null>(null);
+  
   const setContentRef = useCallback((node: HTMLDivElement | null) => {
     if (typeof contentRef === "object" && contentRef !== null && "current" in contentRef) {
       (contentRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
     }
+    
+    // Cleanup previous listeners if node is being removed or changed
+    const prevNode = scrollHandlerRef.current ? contentRef.current : null;
+    if (prevNode && prevNode !== node) {
+      if (scrollHandlerRef.current) {
+        prevNode.removeEventListener("scroll", scrollHandlerRef.current);
+      }
+      if (scrollEndHandlerRef.current) {
+        prevNode.removeEventListener("scroll", scrollEndHandlerRef.current);
+      }
+      if (scrollEndTimeoutRef.current) {
+        clearTimeout(scrollEndTimeoutRef.current);
+        scrollEndTimeoutRef.current = null;
+      }
+    }
+    
     if (node) {
       // Setup link handler
       linkHandling.setupLinkHandler();
-      // Setup scroll handler
-      const scrollHandler = () => {
-        onScroll?.();
-      };
-      node.addEventListener("scroll", scrollHandler, { passive: true });
       
-      // Setup scroll end handler for progress emission
-      if (onScrollEnd) {
-        let scrollEndTimeout: number | null = null;
+      // Setup scroll handler (only once)
+      if (!scrollHandlerRef.current) {
+        const scrollHandler = () => {
+          onScroll?.();
+        };
+        scrollHandlerRef.current = scrollHandler;
+        node.addEventListener("scroll", scrollHandler, { passive: true });
+      }
+      
+      // Setup scroll end handler for progress emission (only once)
+      if (onScrollEnd && !scrollEndHandlerRef.current) {
         const scrollEndHandler = () => {
-          if (scrollEndTimeout) clearTimeout(scrollEndTimeout);
-          scrollEndTimeout = window.setTimeout(() => {
+          if (scrollEndTimeoutRef.current) {
+            clearTimeout(scrollEndTimeoutRef.current);
+          }
+          scrollEndTimeoutRef.current = window.setTimeout(() => {
             onScrollEnd();
-            scrollEndTimeout = null;
+            scrollEndTimeoutRef.current = null;
           }, 150);
         };
+        scrollEndHandlerRef.current = scrollEndHandler;
         node.addEventListener("scroll", scrollEndHandler, { passive: true });
       }
     } else {
-      // Cleanup
+      // Cleanup on unmount
+      if (scrollEndTimeoutRef.current) {
+        clearTimeout(scrollEndTimeoutRef.current);
+        scrollEndTimeoutRef.current = null;
+      }
+      scrollHandlerRef.current = null;
+      scrollEndHandlerRef.current = null;
       linkHandling.cleanup();
     }
   }, [contentRef, linkHandling, onScroll, onScrollEnd]);

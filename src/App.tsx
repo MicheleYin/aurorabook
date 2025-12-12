@@ -351,10 +351,22 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
         trackHref,
         chapterId: matchingChapter.id,
         chapterTitle: matchingChapter.title,
+        currentChapterId: activeChapterId,
       });
+      
+      // IMPORTANT: Change chapter with explicit loading
+      // This ensures the chapter is loaded before audio sync tries to update
+      // The scrollPosition: "top" ensures we start at the beginning of the new chapter
+      // Note: The track change is already marked in useAudioPlayerProgress.handleAudioTrackChange
+      // which is called before onTrackChange, so audio sync won't interfere
       handleSelectChapter(matchingChapter.id, {
         scrollPosition: "top",
         isManualSelection: false,
+      });
+    } else if (matchingChapter) {
+      logger.debug("[App] Track change - chapter already matches", {
+        trackHref,
+        chapterId: matchingChapter.id,
       });
     }
   }, [autoScrollEnabled, activeBook, activeChapterId, handleSelectChapter]);

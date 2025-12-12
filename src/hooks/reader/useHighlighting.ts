@@ -4,7 +4,7 @@
  * No useEffects - highlighting applied explicitly via callback
  */
 
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useEffect } from "react";
 
 // Match CSS animation duration (--anim-duration-slow = 400ms)
 const ANIMATION_DURATION_MS = 400;
@@ -44,7 +44,8 @@ export function useHighlighting(
       }
 
       // Clear all highlights with fade-out
-      const allHighlighted = root.querySelectorAll(".audio-highlight, .audio-highlight-enter, .audio-highlight-active");
+      // Use a snapshot to avoid issues if DOM changes during iteration
+      const allHighlighted = Array.from(root.querySelectorAll(".audio-highlight, .audio-highlight-enter, .audio-highlight-active"));
       
       if (allHighlighted.length === 0) {
         ref.processing = false;
@@ -56,6 +57,17 @@ export function useHighlighting(
 
       allHighlighted.forEach((el) => {
         const element = el as HTMLElement;
+        // Skip if element is no longer in the DOM
+        if (!root.contains(element)) {
+          // Clean up any pending timeout for this element
+          const exitTimeout = ref.exitTimeouts.get(element);
+          if (exitTimeout !== undefined) {
+            clearTimeout(exitTimeout);
+            ref.exitTimeouts.delete(element);
+          }
+          return;
+        }
+        
         // Cancel any pending exit timeouts
         const exitTimeout = ref.exitTimeouts.get(element);
         if (exitTimeout !== undefined) {
@@ -72,7 +84,10 @@ export function useHighlighting(
         
         // Clean up after exit animation
         const timeoutId = window.setTimeout(() => {
-          element.classList.remove("audio-highlight", "audio-highlight-exit");
+          // Check if element still exists before manipulating
+          if (element.isConnected && root.contains(element)) {
+            element.classList.remove("audio-highlight", "audio-highlight-exit");
+          }
           ref.exitTimeouts.delete(element);
         }, ANIMATION_DURATION_MS);
         
@@ -122,7 +137,10 @@ export function useHighlighting(
       
       // Clean up after exit animation
       const timeoutId = window.setTimeout(() => {
-        previousElement.classList.remove("audio-highlight", "audio-highlight-exit");
+        // Check if element still exists before manipulating
+        if (previousElement.isConnected && root.contains(previousElement)) {
+          previousElement.classList.remove("audio-highlight", "audio-highlight-exit");
+        }
         ref.exitTimeouts.delete(previousElement);
       }, ANIMATION_DURATION_MS);
       
@@ -214,6 +232,28 @@ export function useHighlighting(
     // Process queue
     processQueue();
   }, [processQueue]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      const ref = highlightRef.current;
+      // Clear all pending timeouts
+      if (ref.enterTimeout !== null) {
+        clearTimeout(ref.enterTimeout);
+        ref.enterTimeout = null;
+      }
+      // Clear all exit timeouts
+      ref.exitTimeouts.forEach((timeoutId) => {
+        clearTimeout(timeoutId);
+      });
+      ref.exitTimeouts.clear();
+      // Clear queue
+      ref.queue.length = 0;
+      ref.processing = false;
+      ref.currentElement = null;
+      ref.currentElementId = null;
+    };
+  }, []);
 
   return {
     applyHighlight,

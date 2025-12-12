@@ -7,7 +7,7 @@
  * This ensures scroll position is always available when saving, even if DOM is reset during navigation.
  */
 
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useEffect } from "react";
 import {
   createProgressSnapshot,
   isProgressUnchanged as isProgressSnapshotUnchanged,
@@ -202,6 +202,16 @@ export function useChapterProgress(params: UseChapterProgressParams) {
     progressStateRef.current.saveFunction = saveProgress;
     onSaveProgress(saveProgress);
   }
+
+  // Cleanup requestAnimationFrame on unmount
+  useEffect(() => {
+    return () => {
+      if (updateMetricsOnScrollFrameRef.current !== null) {
+        cancelAnimationFrame(updateMetricsOnScrollFrameRef.current);
+        updateMetricsOnScrollFrameRef.current = null;
+      }
+    };
+  }, []);
 
   return {
     emitChapterProgress,

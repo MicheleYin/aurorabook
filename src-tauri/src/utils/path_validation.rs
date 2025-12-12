@@ -98,3 +98,80 @@ pub fn validate_chapter_count(count: usize, max_count: usize) -> AppResult<()> {
     Ok(())
 }
 
+/// Decode URL-encoded file path.
+///
+/// On iOS, file paths from the file picker may be URL-encoded (e.g., `%20` for spaces).
+/// This function decodes common URL-encoded characters in file paths.
+///
+/// # Arguments
+/// * `path` - The URL-encoded path string
+///
+/// # Returns
+/// The decoded path string
+///
+/// # Example
+/// ```
+/// let encoded = "file:///path/to/my%20book.epub";
+/// let decoded = decode_url_path(encoded);
+/// // Returns: "file:///path/to/my book.epub"
+/// ```
+pub fn decode_url_path(path: &str) -> String {
+    // Handle URL-encoded characters
+    // This decodes percent-encoded sequences like %20 (space), %2F (/), etc.
+    // Important for iOS file picker which returns URL-encoded paths
+    let mut result = String::with_capacity(path.len());
+    let mut chars = path.chars().peekable();
+    
+    while let Some(ch) = chars.next() {
+        if ch == '%' {
+            // Try to decode %XX hex sequence
+            let mut hex_str = String::new();
+            let mut valid_hex = true;
+            
+            for _ in 0..2 {
+                if let Some(&next_ch) = chars.peek() {
+                    if next_ch.is_ascii_hexdigit() {
+                        hex_str.push(chars.next().unwrap());
+                    } else {
+                        // Not a valid hex sequence, treat % as literal
+                        valid_hex = false;
+                        result.push(ch);
+                        break;
+                    }
+                } else {
+                    // Not enough characters, treat % as literal
+                    valid_hex = false;
+                    result.push(ch);
+                    break;
+                }
+            }
+            
+            if valid_hex && hex_str.len() == 2 {
+                // Try to decode the hex value
+                if let Ok(byte_val) = u8::from_str_radix(&hex_str, 16) {
+                    // Decode the byte value to a character
+                    // All ASCII bytes (0-127) are valid UTF-8, so decode them
+                    // This handles common cases like %20 (space), %2F (/), etc.
+                    if byte_val <= 127 {
+                        result.push(byte_val as char);
+                    } else {
+                        // For non-ASCII bytes (>127), keep them encoded
+                        // as they might be part of a multi-byte UTF-8 sequence
+                        // and we can't decode a single byte in isolation
+                        result.push('%');
+                        result.push_str(&hex_str);
+                    }
+                } else {
+                    // Invalid hex, keep the original
+                    result.push('%');
+                    result.push_str(&hex_str);
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    
+    result
+}
+

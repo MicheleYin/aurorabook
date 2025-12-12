@@ -92,6 +92,9 @@ export function useAudioPlayerProgress({
     const track = activeBook.audioTracks.find(t => t.href === trackHref);
     if (!track) return;
 
+    // Mark track change in audio sync to prevent it from interfering with chapter loading
+    audioSync.markTrackChange(trackHref);
+
     // Save progress before changing tracks
     if (activeChapter) {
       await onSaveProgress(activeChapter.id);
@@ -102,7 +105,7 @@ export function useAudioPlayerProgress({
     if (trackIndex >= 0) {
       await preloadNextAudioTrack(trackIndex);
     }
-  }, [activeBook, activeChapter, onSaveProgress, preloadNextAudioTrack]);
+  }, [activeBook, activeChapter, onSaveProgress, preloadNextAudioTrack, audioSync]);
 
   // Handle audio player close
   const handleAudioPlayerClose = useCallback(async () => {
