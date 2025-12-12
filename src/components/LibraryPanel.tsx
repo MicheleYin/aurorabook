@@ -110,6 +110,8 @@ export function LibraryPanel({
           <LibraryEmpty isSearching={isSearching} activeFilter={activeFilter} />
         )}
       </div>
+
+      <div className="pb-10"></div>
     </div>
   );
 }

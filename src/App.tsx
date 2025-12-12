@@ -604,8 +604,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <div className="mx-auto flex w-full flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 safe-area-top">
+    <div className="flex min-h-screen flex-col bg-background text-foreground safe-area-top">
+      <div className="mx-auto flex w-full flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
         <div 
           className={cn(
             "flex flex-1 min-h-0 flex-col",
@@ -638,13 +638,10 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       ) : null}
       <div
         className={cn(
-          "pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-6 sm:px-6 safe-area-bottom",
+          "pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-6 sm:px-6 nav-bar-safe-area",
           animPatterns.navBar,
           hideNavigation ? "nav-bar-exit" : "nav-bar-enter",
         )}
-        style={{
-          paddingBottom: `calc(1.5rem + env(safe-area-inset-bottom))`,
-        }}
       >
         <div
           className={cn(

@@ -340,6 +340,7 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
           </div>
         </CardContent>
       </Card>
+      <div className="pb-10"></div>
     </div>
   );
 }
