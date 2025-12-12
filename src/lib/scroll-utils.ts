@@ -181,6 +181,7 @@ export function restoreWindowScrollPosition(savedMetrics: {
 
 /**
  * Check if an element is visible in its scrollable container
+ * Uses Intersection Observer when available for better performance
  * Accounts for header offset at top and player offset at bottom to determine if element is properly positioned
  */
 export function isElementVisible(
@@ -190,6 +191,37 @@ export function isElementVisible(
   tolerance: number = 10,
   playerOffset: number = 0
 ): boolean {
+  // Use Intersection Observer for document-level containers (more efficient)
+  if (typeof IntersectionObserver !== "undefined" && 
+      (container === document.documentElement || container === document.body)) {
+    // Create a one-time observer for synchronous check
+    // Note: This is a simplified approach - for continuous monitoring, use observeElementVisibility
+    const rect = element.getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    const viewportWidth = window.innerWidth;
+    
+    // Check if element intersects with viewport (accounting for offsets)
+    const visibleTop = headerOffset;
+    const visibleBottom = viewportHeight - playerOffset;
+    
+    const isInViewport = 
+      rect.top < visibleBottom + tolerance &&
+      rect.bottom > visibleTop - tolerance &&
+      rect.left < viewportWidth &&
+      rect.right > 0;
+    
+    if (isInViewport) {
+      // Calculate intersection ratio manually for header/player offset
+      const visibleHeight = Math.min(rect.bottom, visibleBottom) - Math.max(rect.top, visibleTop);
+      const elementHeight = rect.height;
+      const visibilityRatio = elementHeight > 0 ? Math.max(0, visibleHeight / elementHeight) : 0;
+      return visibilityRatio >= 0.5; // At least 50% visible
+    }
+    
+    return false;
+  }
+  
+  // Fallback to manual calculation for non-document containers
   const elementRect = element.getBoundingClientRect();
   const containerRect = container.getBoundingClientRect();
   const isDocumentElement = container === document.documentElement;

@@ -35,6 +35,8 @@ type ReaderAudioPlayerProps = {
   bookId?: string;
   tracks: AudioTrack[];
   bookTitle?: string;
+  bookAuthor?: string;
+  coverUrl?: string;
   sourcePath?: string;
   onProgress?: (snapshot: AudioProgressSnapshot) => void;
   onRestorationStateChange?: (isRestoring: boolean) => void;
@@ -51,6 +53,8 @@ export function ReaderAudioPlayer({
   bookId,
   tracks,
   bookTitle,
+  bookAuthor,
+  coverUrl,
   sourcePath,
   onProgress,
   onRestorationStateChange,
@@ -1067,6 +1071,109 @@ export function ReaderAudioPlayer({
     const newTime = Math.min(maxTime, currentTime + 10);
     commitSeek(newTime);
   }, [commitSeek, duration]);
+
+  // Update MediaSession metadata for macOS Control Center
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) {
+      return;
+    }
+
+    const mediaSession = navigator.mediaSession;
+    
+    // Only set metadata if we have a current track
+    if (!currentTrack || !bookTitle) {
+      // Clear metadata if no track
+      try {
+        mediaSession.metadata = null;
+      } catch {
+        // Ignore errors when clearing metadata
+      }
+      return;
+    }
+
+    // Prepare artwork array
+    const artwork: MediaImage[] = [];
+    if (coverUrl) {
+      // Handle both blob URLs and file URLs
+      artwork.push({
+        src: coverUrl,
+        sizes: "512x512", // Standard size for Control Center
+        type: "image/jpeg", // Default type, will be detected by browser
+      });
+    }
+
+    // Set metadata
+    try {
+      mediaSession.metadata = new MediaMetadata({
+        title: currentTrack.title || bookTitle,
+        artist: bookAuthor || "Audiobook",
+        album: bookTitle,
+        artwork,
+      });
+
+      logger.log("[Audio Player] MediaSession metadata updated", {
+        title: currentTrack.title || bookTitle,
+        artist: bookAuthor || "Audiobook",
+        album: bookTitle,
+        hasArtwork: artwork.length > 0,
+      });
+    } catch (error) {
+      logger.warn("[Audio Player] Failed to set MediaSession metadata", error);
+    }
+
+    // Set up action handlers for Control Center controls
+    const handlePlay = () => {
+      logger.log("[Audio Player] MediaSession play action triggered");
+      togglePlayback();
+    };
+
+    const handlePause = () => {
+      logger.log("[Audio Player] MediaSession pause action triggered");
+      togglePlayback();
+    };
+
+    const handlePreviousTrack = () => {
+      logger.log("[Audio Player] MediaSession previoustrack action triggered");
+      handlePrevious();
+    };
+
+    const handleNextTrack = () => {
+      logger.log("[Audio Player] MediaSession nexttrack action triggered");
+      handleNext();
+    };
+
+    const handleSeekBackward = () => {
+      logger.log("[Audio Player] MediaSession seekbackward action triggered");
+      handleSkipBack();
+    };
+
+    const handleSeekForward = () => {
+      logger.log("[Audio Player] MediaSession seekforward action triggered");
+      handleSkipForward();
+    };
+
+    // Set action handlers
+    mediaSession.setActionHandler("play", handlePlay);
+    mediaSession.setActionHandler("pause", handlePause);
+    mediaSession.setActionHandler("previoustrack", handlePreviousTrack);
+    mediaSession.setActionHandler("nexttrack", handleNextTrack);
+    mediaSession.setActionHandler("seekbackward", handleSeekBackward);
+    mediaSession.setActionHandler("seekforward", handleSeekForward);
+
+    // Cleanup: remove action handlers when component unmounts or track changes
+    return () => {
+      try {
+        mediaSession.setActionHandler("play", null);
+        mediaSession.setActionHandler("pause", null);
+        mediaSession.setActionHandler("previoustrack", null);
+        mediaSession.setActionHandler("nexttrack", null);
+        mediaSession.setActionHandler("seekbackward", null);
+        mediaSession.setActionHandler("seekforward", null);
+      } catch {
+        // Ignore errors when clearing handlers
+      }
+    };
+  }, [currentTrack, bookTitle, bookAuthor, coverUrl, isPlaying, togglePlayback, handlePrevious, handleNext, handleSkipBack, handleSkipForward]);
 
   const displayedCurrentTime = useMemo(() => {
     if (isScrubbing && typeof scrubTime === "number") {

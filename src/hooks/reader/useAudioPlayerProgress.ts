@@ -44,7 +44,7 @@ export function useAudioPlayerProgress({
   
   // Calculate header offset - will be computed dynamically in useAudioTextSync
   // Pass chromeVisible and audioPlayerVisible so it can calculate the offsets when needed
-  const audioSync = useAudioTextSync(contentRef, autoScrollEnabled, isRestoringScroll, chromeVisible, onChapterChange, onChapterReload, audioPlayerVisible);
+  const audioSync = useAudioTextSync(contentRef, autoScrollEnabled, isRestoringScroll, chromeVisible, onChapterChange, onChapterReload, audioPlayerVisible, activeChapter?.id);
 
   // Get cached audio tracks
   const cachedAudioTracks = useMemo(() => {

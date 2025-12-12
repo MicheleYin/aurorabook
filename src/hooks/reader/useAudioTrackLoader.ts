@@ -4,7 +4,7 @@
  * No useEffects - all loading is explicit via callbacks
  */
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import type { AudioTrack } from "../../types/reader";
 import { loadEpubAudioBlob } from "../../lib/book-service";
 import { useResourceLoader } from "./useResourceLoader";
@@ -12,6 +12,8 @@ import { useResourceLoader } from "./useResourceLoader";
 export function useAudioTrackLoader() {
   // Track Blob URLs for cleanup
   const blobUrlsRef = useRef<Set<string>>(new Set());
+  // Track cache version to trigger updates (minimal state for memory optimization)
+  const [cacheVersion, setCacheVersion] = useState(0);
 
   // Cleanup Blob URLs on unmount
   useEffect(() => {
@@ -71,7 +73,12 @@ export function useAudioTrackLoader() {
     bookId: string,
     track: AudioTrack
   ): Promise<AudioTrack | null> => {
-    return await loader.load(bookId, track);
+    const result = await loader.load(bookId, track);
+    if (result) {
+      // Increment cache version to trigger loadedTracks update
+      setCacheVersion(prev => prev + 1);
+    }
+    return result;
   }, [loader]);
 
   const getCachedTrack = useCallback((bookId: string, trackId: string): AudioTrack | null => {
@@ -84,22 +91,32 @@ export function useAudioTrackLoader() {
 
   const clearCache = useCallback((bookId?: string) => {
     // Revoke Blob URLs before clearing cache
-    // Iterate over all loaded resources (Map<string, AudioTrack>)
-    for (const track of loader.loadedResources.values()) {
+    // Get cached resources from the loader
+    const cachedTracks = loader.getCachedResources(bookId);
+    for (const track of cachedTracks) {
       if (track.url && track.url.startsWith("blob:")) {
         URL.revokeObjectURL(track.url);
         blobUrlsRef.current.delete(track.url);
       }
     }
     loader.clearCache(bookId);
+    // Increment cache version to trigger loadedTracks update
+    setCacheVersion(prev => prev + 1);
   }, [loader]);
+
+  // Get all loaded tracks as a Map (computed from cache)
+  // Use cacheVersion to ensure it updates when cache changes
+  const loadedTracks = useMemo(() => {
+    const tracks = loader.getCachedResources();
+    return new Map(tracks.map(track => [track.id, track]));
+  }, [loader, cacheVersion]);
 
   return {
     loadTrack,
     getCachedTrack,
     isTrackLoaded,
     clearCache,
-    loadedTracks: loader.loadedResources,
+    loadedTracks,
   };
 }
 

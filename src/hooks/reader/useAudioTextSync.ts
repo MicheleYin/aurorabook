@@ -3,7 +3,7 @@
  * No useEffects - all operations are explicit via callbacks
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, useEffect } from "react";
 import { logger } from "../../lib/logger";
 import type { Book, Chapter } from "../../types/reader";
 import { findCurrentAudioSegment, chapterHrefsMatch, normalizeChapterHref } from "../../lib/epub";
@@ -16,7 +16,8 @@ export function useAudioTextSync(
   chromeVisible: boolean = true,
   onChapterChange?: (chapterId: string, elementId?: string) => void,
   onChapterReload?: (chapterId: string) => void,
-  audioPlayerVisible: boolean = false
+  audioPlayerVisible: boolean = false,
+  activeChapterId?: string
 ) {
   const [highlightedElementId, setHighlightedElementId] = useState<string | null>(null);
   const lastScrolledElementRef = useRef<string | null>(null);
@@ -49,7 +50,7 @@ export function useAudioTextSync(
     lastCheck: number;
   }>({ top: 0, lastCheck: 0 });
   
-  const CACHE_TTL_MS = 1000; // Re-check every second instead of every call
+  const CACHE_TTL_MS = 5000; // Re-check every 5 seconds instead of every call (increased for memory optimization)
   
   // Get safe area top inset value (cached)
   const getSafeAreaTop = useCallback((): number => {
@@ -555,6 +556,24 @@ export function useAudioTextSync(
       }
     }, 3000); // 3 seconds should be enough for chapter to load
   }, []);
+
+  // Cleanup when chapter changes
+  useEffect(() => {
+    // Clear all refs and state when chapter changes
+    setHighlightedElementId(null);
+    lastScrolledElementRef.current = null;
+    lastScrollTimeRef.current = 0;
+    lastChapterChangeTimeRef.current = 0;
+    lastReloadAttemptRef.current = null;
+    trackChangeInProgressRef.current = null;
+    chapterChangeInProgressRef.current = null;
+    lastChapterIdRef.current = undefined;
+    
+    // Clear cached DOM queries
+    headerCacheRef.current = { element: null, offset: 0, lastCheck: 0 };
+    playerCacheRef.current = { element: null, offset: 0, lastCheck: 0 };
+    safeAreaCacheRef.current = { top: 0, lastCheck: 0 };
+  }, [activeChapterId]);
 
   return {
     highlightedElementId,

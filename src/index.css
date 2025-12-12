@@ -144,6 +144,20 @@
     --reader-line-height: 1.7;
   }
 
+  /* Optimize chapter content rendering with content-visibility */
+  [data-reader-chapter-content="true"] {
+    /* Use content-visibility to skip rendering off-screen content */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 500px; /* Estimate height for layout stability */
+  }
+  
+  /* Optimize individual paragraphs/spans for better virtualization */
+  [data-reader-chapter-content="true"] p,
+  [data-reader-chapter-content="true"] span[id^="f"] {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 50px;
+  }
+
   .reader-prose {
     font-size: var(--reader-font-size, 18px) !important;
     line-height: var(--reader-line-height, 1.6) !important;

@@ -104,6 +104,16 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     }
   }, [isSettingsHydrated, settings.autoScrollEnabled]);
 
+  // Clear chapter cache when switching books to prevent memory accumulation
+  useEffect(() => {
+    if (activeBookId && activeBook) {
+      // Clear cache for all books except the currently active one
+      import("./lib/lazy-chapter-loader").then(({ clearAllCachesExcept }) => {
+        clearAllCachesExcept(activeBook.sourcePath);
+      });
+    }
+  }, [activeBookId, activeBook?.sourcePath]);
+
 
   // Apply theme to document
   useEffect(() => {
@@ -588,6 +598,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
           bookId={activeBook.id}
           tracks={activeBook.audioTracks}
           bookTitle={activeBook.title}
+          bookAuthor={activeBook.author}
+          coverUrl={activeBook.coverUrl}
           sourcePath={activeBook.sourcePath}
           onProgress={(snapshot) => {
             updateBookAudioState(activeBook.id, snapshot);

@@ -46,7 +46,6 @@ export function useResourceLoader<T>(
   const { isLoaded, loadResource, transformLoaded, getResourceId, logPrefix = "[ResourceLoader]" } = options;
   
   const cacheRef = useRef<Map<string, ResourceCacheEntry<T>>>(new Map());
-  const [loadedResources, setLoadedResources] = useState<Map<string, T>>(new Map());
   const [isLoading, setIsLoading] = useState(false);
 
   const getResourceIdInternal = useCallback((resource: T): string => {
@@ -76,10 +75,6 @@ export function useResourceLoader<T>(
         resource,
         loadedAt: Date.now(),
       });
-      const resourceId = getResourceIdInternal(resource);
-      if (resourceId) {
-        setLoadedResources(prev => new Map(prev).set(resourceId, resource));
-      }
       return resource;
     }
 
@@ -96,10 +91,6 @@ export function useResourceLoader<T>(
           resource: finalResource,
           loadedAt: Date.now(),
         });
-        const resourceId = getResourceIdInternal(finalResource);
-        if (resourceId) {
-          setLoadedResources(prev => new Map(prev).set(resourceId, finalResource));
-        }
         return finalResource;
       }
     } catch (error) {
@@ -121,8 +112,8 @@ export function useResourceLoader<T>(
 
   const isResourceLoaded = useCallback((bookId: string, resourceId: string): boolean => {
     const cacheKey = `${bookId}:${resourceId}`;
-    return cacheRef.current.has(cacheKey) || loadedResources.has(resourceId);
-  }, [loadedResources]);
+    return cacheRef.current.has(cacheKey);
+  }, []);
 
   const clearCache = useCallback((bookId?: string) => {
     if (bookId) {
@@ -134,41 +125,31 @@ export function useResourceLoader<T>(
         }
       });
       keysToDelete.forEach(key => {
-        const entry = cacheRef.current.get(key);
-        if (entry) {
-          const resourceId = getResourceIdInternal(entry.resource);
-          if (resourceId) {
-            loadedResources.delete(resourceId);
-          }
-        }
         cacheRef.current.delete(key);
-      });
-      setLoadedResources(prev => {
-        const next = new Map(prev);
-        keysToDelete.forEach(key => {
-          const entry = cacheRef.current.get(key);
-          if (entry) {
-            const resourceId = getResourceIdInternal(entry.resource);
-            if (resourceId) {
-              next.delete(resourceId);
-            }
-          }
-        });
-        return next;
       });
     } else {
       // Clear all
       cacheRef.current.clear();
-      setLoadedResources(new Map());
     }
-  }, [loadedResources, getResourceIdInternal]);
+  }, []);
+
+  // Get all cached resources for a book (for cleanup purposes)
+  const getCachedResources = useCallback((bookId?: string): T[] => {
+    const resources: T[] = [];
+    cacheRef.current.forEach((entry, key) => {
+      if (!bookId || key.startsWith(`${bookId}:`)) {
+        resources.push(entry.resource);
+      }
+    });
+    return resources;
+  }, []);
 
   return {
     load,
     getCached,
     isResourceLoaded,
     clearCache,
-    loadedResources,
+    getCachedResources,
     isLoading,
   };
 }

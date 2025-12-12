@@ -18,8 +18,8 @@ const LOADER_LOG_PREFIX = "[LazyChapterLoader]";
 
 // Cache for loaded chapters to avoid reloading
 const chapterCache = new LRUCache<string, { contentHtml: string; plainText: string; wordCount: number }>({
-  max: 50, // Keep max 50 chapters in memory
-  ttl: 1000 * 60 * 30, // 30 minutes TTL
+  max: 15, // Keep max 15 chapters in memory (reduced from 50 for memory optimization)
+  ttl: 1000 * 60 * 15, // 15 minutes TTL (reduced from 30 for memory optimization)
 });
 
 // Cache for loaded audio track URLs - using LRU cache like chapters

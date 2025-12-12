@@ -14,7 +14,8 @@ type QueuedAction =
   | { type: 'highlight'; elementId: string };
 
 export function useHighlighting(
-  contentRef: React.RefObject<HTMLDivElement | null>
+  contentRef: React.RefObject<HTMLDivElement | null>,
+  activeChapterId?: string
 ) {
   const highlightRef = useRef({
     queue: [] as QueuedAction[],
@@ -233,27 +234,34 @@ export function useHighlighting(
     processQueue();
   }, [processQueue]);
 
-  // Cleanup on unmount
+  // Cleanup when chapter changes or on unmount
   useEffect(() => {
-    return () => {
-      const ref = highlightRef.current;
-      // Clear all pending timeouts
-      if (ref.enterTimeout !== null) {
-        clearTimeout(ref.enterTimeout);
-        ref.enterTimeout = null;
-      }
-      // Clear all exit timeouts
-      ref.exitTimeouts.forEach((timeoutId) => {
-        clearTimeout(timeoutId);
+    const ref = highlightRef.current;
+    
+    // Clear all pending timeouts
+    if (ref.enterTimeout !== null) {
+      clearTimeout(ref.enterTimeout);
+      ref.enterTimeout = null;
+    }
+    // Clear all exit timeouts
+    ref.exitTimeouts.forEach((timeoutId) => {
+      clearTimeout(timeoutId);
+    });
+    ref.exitTimeouts.clear();
+    // Clear queue
+    ref.queue.length = 0;
+    ref.processing = false;
+    ref.currentElement = null;
+    ref.currentElementId = null;
+    
+    // Clear all highlights in DOM when chapter changes
+    if (contentRef.current) {
+      const allHighlighted = contentRef.current.querySelectorAll(".audio-highlight, .audio-highlight-enter, .audio-highlight-active, .audio-highlight-exit");
+      allHighlighted.forEach((el) => {
+        el.classList.remove("audio-highlight", "audio-highlight-enter", "audio-highlight-active", "audio-highlight-exit");
       });
-      ref.exitTimeouts.clear();
-      // Clear queue
-      ref.queue.length = 0;
-      ref.processing = false;
-      ref.currentElement = null;
-      ref.currentElementId = null;
-    };
-  }, []);
+    }
+  }, [activeChapterId, contentRef]);
 
   return {
     applyHighlight,
