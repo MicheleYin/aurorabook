@@ -829,31 +829,9 @@ padding-top: calc(max(1rem, env(safe-area-inset-top))) !important;
     padding-left: env(safe-area-inset-left) !important;
   }
 
-  /* Navigation bar with safe area insets */
-  .nav-bar-safe-area {
-    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
-    padding-left: calc(1rem + env(safe-area-inset-left));
-    padding-right: calc(1rem + env(safe-area-inset-right));
-  }
 
-  @media (min-width: 640px) {
-    .nav-bar-safe-area {
-      padding-left: calc(1.5rem + env(safe-area-inset-left));
-      padding-right: calc(1.5rem + env(safe-area-inset-right));
-    }
-  }
 
-  /* iOS-specific: Add extra bottom padding for navigation bar */
-  @supports (-webkit-touch-callout: none) {
-    .nav-bar-safe-area {
-      padding-bottom: calc(2rem + env(safe-area-inset-bottom));
-    }
 
-    /* iOS-specific: Remove sticky positioning from library header so it scrolls with content */
-    .library-header {
-      position: static;
-    }
-  }
 
   /* Respect reduced motion preference */
   @media (prefers-reduced-motion: reduce) {

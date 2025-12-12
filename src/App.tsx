@@ -23,7 +23,7 @@ import { filterLibrary } from "./hooks/library/libraryHelpers";
 import type { ChapterSelectionOptions, AudioProgressSnapshot } from "./components/reader/types";
 import { cn } from "./lib/utils";
 import { animPatterns, viewTransition } from "./lib/animations";
-import { findChaptersForAudioTrack, chapterHrefsMatch } from "./lib/epub";
+import { findChaptersForAudioTrack } from "./lib/epub";
 
 function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary> }) {
   const {
@@ -127,6 +127,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
 
   // Ref to save progress from ReaderViewport
   const saveProgressRef = useRef<(() => void) | null>(null);
+  const trackChangeHandlerRef = useRef<((trackHref: string) => Promise<void>) | null>(null);
 
   // Inline progress saving logic (previously useProgressSaving hook)
   const saveProgress = useCallback(
@@ -319,57 +320,21 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     }
   }, [setAutoScrollEnabled, updateSettings, currentAudioTrackHref, activeBook, activeChapterId, handleSelectChapter]);
 
-  const handleTrackChange = useCallback((trackHref: string) => {
-    // Only change chapters if auto-scroll (sync) is enabled
-    // When auto-scroll is disabled (e.g., after manual chapter selection),
-    // audio should continue playing without changing chapters
-    if (!autoScrollEnabled || !activeBook) {
-      logger.debug("[App] Track change ignored - auto-scroll disabled or no active book", {
-        trackHref,
-        autoScrollEnabled,
-        hasActiveBook: !!activeBook,
-      });
-      return;
+  // Consolidated track change handler - now handled by useAudioPlayerProgress.handleAudioTrackChange
+  // This is just a wrapper that calls the handler from ReaderWrapper
+  const handleTrackChange = useCallback(async (trackHref: string) => {
+    if (trackChangeHandlerRef.current) {
+      await trackChangeHandlerRef.current(trackHref);
+    } else {
+      logger.warn("[App] Track change handler not ready yet", { trackHref });
     }
+  }, []);
 
-    // Find chapters that use this audio track
-    const chapterHrefs = findChaptersForAudioTrack(activeBook.audioSyncMap, trackHref);
-    if (chapterHrefs.length === 0) {
-      logger.debug("[App] No chapters found for audio track", { trackHref });
-      return;
-    }
-
-    // Find the first matching chapter by comparing hrefs using flexible matching
-    const matchingChapter = activeBook.chapters.find((chapter) => {
-      return chapterHrefs.some(segmentChapterHref => {
-        return chapterHrefsMatch(segmentChapterHref, chapter.href);
-      });
-    });
-
-    if (matchingChapter && matchingChapter.id !== activeChapterId) {
-      logger.log("[App] Changing chapter to match audio track", {
-        trackHref,
-        chapterId: matchingChapter.id,
-        chapterTitle: matchingChapter.title,
-        currentChapterId: activeChapterId,
-      });
-      
-      // IMPORTANT: Change chapter with explicit loading
-      // This ensures the chapter is loaded before audio sync tries to update
-      // The scrollPosition: "top" ensures we start at the beginning of the new chapter
-      // Note: The track change is already marked in useAudioPlayerProgress.handleAudioTrackChange
-      // which is called before onTrackChange, so audio sync won't interfere
-      handleSelectChapter(matchingChapter.id, {
-        scrollPosition: "top",
-        isManualSelection: false,
-      });
-    } else if (matchingChapter) {
-      logger.debug("[App] Track change - chapter already matches", {
-        trackHref,
-        chapterId: matchingChapter.id,
-      });
-    }
-  }, [autoScrollEnabled, activeBook, activeChapterId, handleSelectChapter]);
+  // Callback to receive the track change handler from ReaderWrapper
+  const handleTrackChangeHandlerReady = useCallback((handler: (trackHref: string) => Promise<void>) => {
+    trackChangeHandlerRef.current = handler;
+    logger.log("[App] Track change handler ready");
+  }, []);
 
   // Auto-open audio player when switching to reader view
   useEffect(() => {
@@ -556,6 +521,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
           onSaveProgress={handleSaveProgress}
           autoScrollEnabled={autoScrollEnabled}
           currentAudioProgress={currentAudioProgress}
+          onTrackChangeHandlerReady={handleTrackChangeHandlerReady}
         />
       </ErrorBoundary>
     ),
@@ -638,7 +604,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       ) : null}
       <div
         className={cn(
-          "pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-6 sm:px-6 nav-bar-safe-area",
+          "pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-6 sm:px-6",
           animPatterns.navBar,
           hideNavigation ? "nav-bar-exit" : "nav-bar-enter",
         )}

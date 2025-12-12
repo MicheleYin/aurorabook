@@ -8,6 +8,8 @@ import type { Book, Chapter } from "../../types/reader";
 import type { AudioProgressSnapshot } from "../../components/reader/types";
 import { useAudioTrackLoader } from "./useAudioTrackLoader";
 import { useAudioTextSync } from "./useAudioTextSync";
+import { findChaptersForAudioTrack, chapterHrefsMatch } from "../../lib/epub";
+import { logger } from "../../lib/logger";
 
 type UseAudioPlayerProgressParams = {
   activeBook?: Book;
@@ -21,6 +23,7 @@ type UseAudioPlayerProgressParams = {
   onChapterChange?: (chapterId: string, elementId?: string) => void;
   onChapterReload?: (chapterId: string) => void;
   audioPlayerVisible?: boolean;
+  onTrackChangeChapterChange?: (chapterId: string, options?: { scrollPosition?: "top" | "bottom" | "maintain"; isManualSelection?: boolean }) => Promise<void>;
 };
 
 export function useAudioPlayerProgress({
@@ -35,6 +38,7 @@ export function useAudioPlayerProgress({
   onChapterChange,
   onChapterReload,
   audioPlayerVisible = false,
+  onTrackChangeChapterChange,
 }: UseAudioPlayerProgressParams) {
   const audioLoader = useAudioTrackLoader();
   
@@ -84,7 +88,7 @@ export function useAudioPlayerProgress({
     }
   }, [activeBook, activeChapter, audioSync]);
 
-  // Handle audio track change
+  // Handle audio track change - SINGLE HANDLER that coordinates everything
   const handleAudioTrackChange = useCallback(async (trackHref: string) => {
     if (!activeBook) return;
 
@@ -92,7 +96,8 @@ export function useAudioPlayerProgress({
     const track = activeBook.audioTracks.find(t => t.href === trackHref);
     if (!track) return;
 
-    // Mark track change in audio sync to prevent it from interfering with chapter loading
+    // IMPORTANT: Mark track change FIRST (synchronously) before any async operations
+    // This prevents updateHighlight from triggering chapter changes during track change
     audioSync.markTrackChange(trackHref);
 
     // Save progress before changing tracks
@@ -100,12 +105,49 @@ export function useAudioPlayerProgress({
       await onSaveProgress(activeChapter.id);
     }
 
+    // Handle chapter change if auto-scroll is enabled and onTrackChangeChapterChange is provided
+    if (autoScrollEnabled && onTrackChangeChapterChange) {
+      // Find chapters that use this audio track
+      const chapterHrefs = findChaptersForAudioTrack(activeBook.audioSyncMap, trackHref);
+      if (chapterHrefs.length > 0) {
+        // Find the first matching chapter by comparing hrefs using flexible matching
+        const matchingChapter = activeBook.chapters.find((chapter) => {
+          return chapterHrefs.some(segmentChapterHref => {
+            return chapterHrefsMatch(segmentChapterHref, chapter.href);
+          });
+        });
+
+        if (matchingChapter && matchingChapter.id !== activeChapter?.id) {
+          logger.log("[Audio Player Progress] Track change - changing chapter", {
+            trackHref,
+            chapterId: matchingChapter.id,
+            chapterTitle: matchingChapter.title,
+            currentChapterId: activeChapter?.id,
+          });
+          
+          // Mark chapter change in progress to prevent duplicate changes
+          audioSync.markChapterChange(matchingChapter.id);
+          
+          // Change chapter with explicit loading
+          await onTrackChangeChapterChange(matchingChapter.id, {
+            scrollPosition: "top",
+            isManualSelection: false,
+          });
+        } else if (matchingChapter) {
+          logger.debug("[Audio Player Progress] Track change - chapter already matches", {
+            trackHref,
+            chapterId: matchingChapter.id,
+          });
+        }
+      }
+    }
+
     // Preload next track
     const trackIndex = activeBook.audioTracks.findIndex(t => t.id === track.id);
     if (trackIndex >= 0) {
       await preloadNextAudioTrack(trackIndex);
     }
-  }, [activeBook, activeChapter, onSaveProgress, preloadNextAudioTrack, audioSync]);
+  }, [activeBook, activeChapter, onSaveProgress, preloadNextAudioTrack, audioSync, autoScrollEnabled, onTrackChangeChapterChange]);
 
   // Handle audio player close
   const handleAudioPlayerClose = useCallback(async () => {

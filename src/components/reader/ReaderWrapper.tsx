@@ -31,6 +31,7 @@ type ReaderWrapperProps = {
   onCloseAudioPlayer?: () => void;
   autoScrollEnabled?: boolean;
   currentAudioProgress?: AudioProgressSnapshot;
+  onTrackChangeHandlerReady?: (handler: (trackHref: string) => Promise<void>) => void;
 };
 
 export function ReaderWrapper(props: ReaderWrapperProps) {
@@ -39,6 +40,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     activeChapterId,
     preferences,
     onPreferencesChange,
+    onTrackChangeHandlerReady,
     onSelectChapter,
     onChapterProgress,
     onSaveProgress,
@@ -525,7 +527,15 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     onChapterChange: handleAudioSyncChapterChange,
     onChapterReload: handleChapterReload,
     audioPlayerVisible,
+    onTrackChangeChapterChange: handleChapterChange,
   });
+
+  // Expose handleAudioTrackChange to parent (App.tsx) via callback
+  useEffect(() => {
+    if (onTrackChangeHandlerReady) {
+      onTrackChangeHandlerReady(audioPlayerProgress.handleAudioTrackChange);
+    }
+  }, [onTrackChangeHandlerReady, audioPlayerProgress.handleAudioTrackChange]);
 
   // Handle audio progress updates from App.tsx
   // This ensures highlighting and scrolling are updated when audio plays

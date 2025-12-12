@@ -20,6 +20,7 @@ type ReaderPanelProps = ReaderPanelBaseProps & {
   onSaveProgress?: (saveFn: () => void) => void;
   autoScrollEnabled?: boolean;
   currentAudioProgress?: AudioProgressSnapshot;
+  onTrackChangeHandlerReady?: (handler: (trackHref: string) => Promise<void>) => void;
 };
 
 export function ReaderPanel({
@@ -40,6 +41,7 @@ export function ReaderPanel({
   onSaveProgress,
   autoScrollEnabled,
   currentAudioProgress,
+  onTrackChangeHandlerReady,
 }: ReaderPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
@@ -245,6 +247,7 @@ export function ReaderPanel({
           onSaveProgress={onSaveProgress}
           autoScrollEnabled={autoScrollEnabled}
           currentAudioProgress={currentAudioProgress}
+          onTrackChangeHandlerReady={onTrackChangeHandlerReady}
         />
       </div>
     </section>
