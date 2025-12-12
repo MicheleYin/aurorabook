@@ -646,7 +646,7 @@ export function BookDetailDialog({
           }}
         >
           <DrawerContent>
-            <DrawerHandle className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-muted" />
+            <DrawerHandle />
             <div className="flex flex-1 flex-col gap-6 overflow-y-auto">
               <DrawerHeader className="gap-3 text-left">
                 <div className="flex items-start justify-between gap-2">

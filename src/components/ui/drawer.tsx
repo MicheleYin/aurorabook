@@ -7,7 +7,23 @@ const Drawer = DrawerPrimitive.Root;
 const DrawerTrigger = DrawerPrimitive.Trigger;
 const DrawerPortal = DrawerPrimitive.Portal;
 const DrawerClose = DrawerPrimitive.Close;
-const DrawerHandle = DrawerPrimitive.Handle;
+
+// Custom DrawerHandle with larger size and better hit area
+const DrawerHandle = React.forwardRef<
+  React.ElementRef<typeof DrawerPrimitive.Handle>,
+  React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Handle>
+>(({ className, ...props }, ref) => (
+  <DrawerPrimitive.Handle
+    ref={ref}
+    className={cn(
+      "mx-auto mb-4 h-2 w-20 rounded-full bg-muted touch-none",
+      "[&_[vaul-handle-hitarea]]:h-12 [&_[vaul-handle-hitarea]]:w-full",
+      className,
+    )}
+    {...props}
+  />
+));
+DrawerHandle.displayName = "DrawerHandle";
 
 type DrawerOverlayProps = React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Overlay> & {
   backdropBlur?: boolean;

@@ -285,7 +285,7 @@ export function ReaderSettingsControl({
         </Button>
       </DrawerTrigger>
       <DrawerContent backdropBlur={false}>
-        <DrawerHandle className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-muted" />
+        <DrawerHandle />
         <DrawerModalHeader className="flex flex-row items-start justify-between text-left">
           <div>
             <DrawerTitle className="text-lg font-semibold">Reader preferences</DrawerTitle>
