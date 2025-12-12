@@ -393,11 +393,47 @@ export function ReaderAudioPlayer({
       emitProgressRef.current(seconds);
     };
 
+    // Handle play/pause events to keep state in sync (important for iOS background controls)
+    const handlePlay = () => {
+      // Don't sync state if we're auto-advancing (track ended and moving to next)
+      if (isAutoAdvancingRef.current) {
+        return;
+      }
+      logger.log("[Audio Player] play event fired", {
+        audioPaused: audio.paused,
+        isPlayingRef: isPlayingRef.current,
+      });
+      setIsPlaying(true);
+      isPlayingRef.current = true;
+    };
+
+    const handlePause = () => {
+      // Don't sync state if we're auto-advancing (track ended and moving to next)
+      if (isAutoAdvancingRef.current) {
+        return;
+      }
+      logger.log("[Audio Player] pause event fired", {
+        audioPaused: audio.paused,
+        isPlayingRef: isPlayingRef.current,
+      });
+      setIsPlaying(false);
+      isPlayingRef.current = false;
+      // Emit progress to save state when paused
+      const audioTime = audio.currentTime || 0;
+      emitProgressRef.current(audioTime);
+      // Flush audio state update immediately on pause
+      flushAudioStateUpdate().catch((error) => {
+        logger.warn("Failed to flush audio state on pause", error);
+      });
+    };
+
     audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
     audio.addEventListener("canplay", handleAudioReady);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("seeked", handleSeeked);
+    audio.addEventListener("play", handlePlay);
+    audio.addEventListener("pause", handlePause);
 
     return () => {
       audio.pause();
@@ -406,8 +442,10 @@ export function ReaderAudioPlayer({
       audio.removeEventListener("canplay", handleAudioReady);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("seeked", handleSeeked);
+      audio.removeEventListener("play", handlePlay);
+      audio.removeEventListener("pause", handlePause);
     };
-  }, [currentIndex, tracks.length, isRestoring, restoreTime]);
+  }, [currentIndex, tracks.length, isRestoring, restoreTime, flushAudioStateUpdate]);
 
   // Track loaded count to trigger re-renders when URLs are loaded
   // Use ref to avoid unnecessary re-renders, only update state when needed for UI
@@ -904,7 +942,9 @@ export function ReaderAudioPlayer({
       trackId: currentTrack.id,
     });
 
-    if (isPlayingRef.current) {
+    // Use audio element's actual state as source of truth (important for iOS background controls)
+    // Check audio.paused instead of isPlayingRef to handle external pause/play from iOS control center
+    if (!audio.paused) {
       logger.log("[Audio Player] Pausing playback");
       audio.pause();
       // Single source of truth: read from audio element
