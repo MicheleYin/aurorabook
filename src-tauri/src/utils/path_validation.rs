@@ -1,4 +1,3 @@
-use std::path::Path;
 use crate::utils::errors::{AppError, AppResult};
 
 /// Validate that a path within an EPUB archive is safe and doesn't escape the archive.
@@ -64,6 +63,80 @@ pub fn validate_epub_path(href: &str) -> AppResult<String> {
     Ok(normalized.to_string())
 }
 
+/// Validate a relative path for use in SMIL files.
+///
+/// This function is more lenient than `validate_epub_path` because SMIL files
+/// legitimately use relative paths with `../` sequences to reference audio files.
+/// However, it still ensures the path doesn't contain dangerous patterns.
+///
+/// # Arguments
+/// * `href` - The relative path from a SMIL file (e.g., "../Audio/chapter1.mp3")
+/// * `base_path` - The base path of the SMIL file (e.g., "Text/chapter1.smil")
+///
+/// # Returns
+/// A validated path if it's safe, or an error if it contains dangerous patterns.
+///
+/// # Security
+/// This validates that when resolved, the path stays within the EPUB archive.
+/// It allows `../` sequences but ensures they don't escape the archive root.
+///
+/// # Example
+/// ```rust
+/// let safe_path = validate_smil_relative_path("../Audio/chapter1.mp3", "Text/chapter1.smil")?; // Returns Ok
+/// let safe_path = validate_smil_relative_path("../../etc/passwd", "Text/chapter1.smil")?; // Returns error (escapes archive)
+/// ```
+pub fn validate_smil_relative_path(href: &str, base_path: &str) -> AppResult<String> {
+    // Check for null bytes (potential security issue)
+    if href.contains('\0') {
+        return Err(AppError::InvalidPath(format!(
+            "Path contains null byte: {}",
+            href
+        )));
+    }
+    
+    // Reject absolute paths that escape the archive
+    // Absolute paths starting with / are allowed only if they're single-component
+    if href.starts_with('/') {
+        let without_slash = &href[1..];
+        if without_slash.contains('/') {
+            return Err(AppError::InvalidPath(format!(
+                "Path is absolute with multiple components (not allowed in EPUB): {}",
+                href
+            )));
+        }
+    }
+    
+    // Resolve the relative path to check if it escapes the archive root
+    // Count the number of ../ sequences
+    let mut depth = 0;
+    let mut remaining = href;
+    
+    while remaining.starts_with("../") {
+        depth += 1;
+        remaining = &remaining[3..];
+    }
+    
+    // Count the depth of the base path (how many directories deep it is)
+    let base_depth = base_path.matches('/').count();
+    
+    // If we go up more levels than the base path has, we'd escape the archive
+    if depth > base_depth {
+        return Err(AppError::InvalidPath(format!(
+            "Path escapes EPUB archive root: {} (base: {}, depth: {}, base_depth: {})",
+            href, base_path, depth, base_depth
+        )));
+    }
+    
+    // Normalize: remove leading slash if present
+    let normalized = if href.starts_with('/') {
+        &href[1..]
+    } else {
+        href
+    };
+    
+    Ok(normalized.to_string())
+}
+
 /// Validate file size against maximum allowed size.
 ///
 /// # Arguments
@@ -96,82 +169,5 @@ pub fn validate_chapter_count(count: usize, max_count: usize) -> AppResult<()> {
         return Err(AppError::TooManyChapters(count, max_count));
     }
     Ok(())
-}
-
-/// Decode URL-encoded file path.
-///
-/// On iOS, file paths from the file picker may be URL-encoded (e.g., `%20` for spaces).
-/// This function decodes common URL-encoded characters in file paths.
-///
-/// # Arguments
-/// * `path` - The URL-encoded path string
-///
-/// # Returns
-/// The decoded path string
-///
-/// # Example
-/// ```
-/// let encoded = "file:///path/to/my%20book.epub";
-/// let decoded = decode_url_path(encoded);
-/// // Returns: "file:///path/to/my book.epub"
-/// ```
-pub fn decode_url_path(path: &str) -> String {
-    // Handle URL-encoded characters
-    // This decodes percent-encoded sequences like %20 (space), %2F (/), etc.
-    // Important for iOS file picker which returns URL-encoded paths
-    let mut result = String::with_capacity(path.len());
-    let mut chars = path.chars().peekable();
-    
-    while let Some(ch) = chars.next() {
-        if ch == '%' {
-            // Try to decode %XX hex sequence
-            let mut hex_str = String::new();
-            let mut valid_hex = true;
-            
-            for _ in 0..2 {
-                if let Some(&next_ch) = chars.peek() {
-                    if next_ch.is_ascii_hexdigit() {
-                        hex_str.push(chars.next().unwrap());
-                    } else {
-                        // Not a valid hex sequence, treat % as literal
-                        valid_hex = false;
-                        result.push(ch);
-                        break;
-                    }
-                } else {
-                    // Not enough characters, treat % as literal
-                    valid_hex = false;
-                    result.push(ch);
-                    break;
-                }
-            }
-            
-            if valid_hex && hex_str.len() == 2 {
-                // Try to decode the hex value
-                if let Ok(byte_val) = u8::from_str_radix(&hex_str, 16) {
-                    // Decode the byte value to a character
-                    // All ASCII bytes (0-127) are valid UTF-8, so decode them
-                    // This handles common cases like %20 (space), %2F (/), etc.
-                    if byte_val <= 127 {
-                        result.push(byte_val as char);
-                    } else {
-                        // For non-ASCII bytes (>127), keep them encoded
-                        // as they might be part of a multi-byte UTF-8 sequence
-                        // and we can't decode a single byte in isolation
-                        result.push('%');
-                        result.push_str(&hex_str);
-                    }
-                } else {
-                    // Invalid hex, keep the original
-                    result.push('%');
-                    result.push_str(&hex_str);
-                }
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-    
-    result
 }
 

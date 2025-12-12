@@ -11,7 +11,7 @@ use database::get_db_connection;
 use repositories::*;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::constants::MAX_EPUB_SIZE;
-use crate::utils::path_validation::{validate_file_size, decode_url_path};
+use crate::utils::path_validation::validate_file_size;
 use crate::epub::parser::extract_audio_tracks_from_manifest;
 
 /// Normalize an EPUB href by removing leading slash.
@@ -991,15 +991,14 @@ pub async fn ingest_epub(
     use std::fs;
 
     // Read EPUB from file system
-        // Handle file:// URL prefix and decode URL-encoded paths (important for iOS)
-        let decoded_path = decode_url_path(&epub_path);
-        let actual_path = if decoded_path.starts_with("file://") {
-            decoded_path.replacen("file://", "", 1)
+        // Handle file:// URL prefix
+        let actual_path = if epub_path.starts_with("file://") {
+            epub_path.replacen("file://", "", 1)
         } else {
-            decoded_path
+            epub_path.clone()
         };
         
-        log::info!("Reading EPUB from file system: {} (decoded from: {})", actual_path, epub_path);
+        log::info!("Reading EPUB from file system: {}", actual_path);
     let epub_data = fs::read(&actual_path)
         .map_err(|e| AppError::Io(e).with_context(format!("Failed to read EPUB file from path '{}'", actual_path)))?;
     
@@ -1401,6 +1400,16 @@ pub async fn ingest_epub(
     // Note: This will delete existing images/audio if updating, so we save them after
     BookRepository::save(db.as_ref(), &book).await
         .map_err(|e| AppError::Store(e))?;
+    
+    // Store original EPUB data in database
+    use repositories::EpubRepository;
+    log::info!("Storing original EPUB data ({} bytes)...", epub_data.len());
+    if let Err(e) = EpubRepository::save(db.as_ref(), &source_path, &book_id, &epub_data).await {
+        log::error!("Failed to store original EPUB data: {}", e);
+        // Don't fail ingestion if EPUB storage fails, but log it
+    } else {
+        log::debug!("Successfully stored original EPUB data ({} bytes)", epub_data.len());
+    }
     
     // Store all images AFTER book save (since book save deletes them first)
     log::info!("Storing {} images...", images_extracted.len());

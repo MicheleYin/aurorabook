@@ -586,7 +586,9 @@ pub(crate) async fn process_chapter(
     let audio_href_for_smil = if validated_chapter_href.contains('/') {
         let depth = validated_chapter_href.matches('/').count();
         let relative_path = format!("{}{}", "../".repeat(depth), audio_href_manifest);
-        validate_epub_path(&relative_path)
+        // Use validate_smil_relative_path which allows ../ sequences
+        use crate::utils::path_validation::validate_smil_relative_path;
+        validate_smil_relative_path(&relative_path, &validated_chapter_href)
             .map_err(|e| AppError::InvalidPath(format!("Invalid audio href for SMIL: {}", e)))?
     } else {
         audio_href_manifest.clone()

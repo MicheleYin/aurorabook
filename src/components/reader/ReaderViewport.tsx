@@ -401,10 +401,6 @@ export function ReaderViewport({
                 data-reader-chapter-content="true"
                 data-chapter-id={activeChapter.id}
                 className="animate-in fade-in duration-300"
-                style={{
-                  // Use CSS containment for better rendering performance
-                  contain: "layout style paint",
-                }}
                 dangerouslySetInnerHTML={{
                   __html: activeChapter.contentHtml,
                 }}

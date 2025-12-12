@@ -124,21 +124,18 @@ pub async fn convert_epub_to_audiobook_command(
 
 /// Load EPUB file from file system using source_path
 fn load_epub_from_file_system(source_path: &str) -> AppResult<Vec<u8>> {
-    use crate::utils::path_validation::decode_url_path;
-    
-    // Handle file:// URL prefix and decode URL-encoded paths (important for iOS)
-    let decoded_path = decode_url_path(source_path);
-    let actual_path = if decoded_path.starts_with("file://") {
-        decoded_path.replacen("file://", "", 1)
-    } else if decoded_path.starts_with("web://") {
+    // Handle file:// URL prefix
+    let actual_path = if source_path.starts_with("file://") {
+        source_path.replacen("file://", "", 1)
+    } else if source_path.starts_with("web://") {
         return Err(AppError::EpubParse(
-            format!("Cannot load EPUB from web source: {}", decoded_path)
+            format!("Cannot load EPUB from web source: {}", source_path)
         ));
     } else {
-        decoded_path
+        source_path.to_string()
     };
     
-    log::info!("Loading EPUB from file system: {} (decoded from: {})", actual_path, source_path);
+    log::info!("Loading EPUB from file system: {}", actual_path);
     let epub_data = fs::read(&actual_path)
         .map_err(|e| AppError::Io(e).with_context(format!("Failed to read EPUB file from path '{}'", actual_path)))?;
     

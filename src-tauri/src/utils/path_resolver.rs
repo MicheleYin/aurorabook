@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 use crate::utils::errors::{AppError, AppResult};
-use crate::utils::path_validation::decode_url_path;
 
 /// Resolves paths for TTS model and voice files.
 ///
@@ -142,12 +141,11 @@ impl ResourcePathResolver {
     /// let path = ResourcePathResolver::validate_path("file.txt", Some(base))?;
     /// ```
     pub fn validate_path(path: &str, allowed_base: Option<&Path>) -> AppResult<PathBuf> {
-        // Decode URL-encoded paths (important for iOS) and remove file:// prefix if present
-        let decoded_path = decode_url_path(path);
-        let clean_path = if decoded_path.starts_with("file://") {
-            decoded_path.replacen("file://", "", 1)
+        // Remove file:// prefix if present
+        let clean_path = if path.starts_with("file://") {
+            path.replacen("file://", "", 1)
         } else {
-            decoded_path
+            path.to_string()
         };
 
         let path_buf = PathBuf::from(&clean_path);
