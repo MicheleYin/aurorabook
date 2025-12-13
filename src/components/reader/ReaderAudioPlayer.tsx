@@ -683,43 +683,7 @@ export function ReaderAudioPlayer({
     // Check if already loaded
     if (loadedTrackUrlsRef.current.has(trackId)) {
       setIsTrackLoading(false);
-      // Even if current track is already loaded, preload next track if needed
-      const nextIndex = currentIndex + 1;
-      if (nextIndex < tracks.length) {
-        const nextTrack = tracks[nextIndex];
-        // Only preload if next track doesn't already have a URL and isn't already loading
-        if (nextTrack && !nextTrack.url && !loadedTrackUrlsRef.current.has(nextTrack.id) && !loadingTracksRef.current.has(nextTrack.id)) {
-          logger.log("[Audio Player] Preloading next audio track", {
-            nextTrackId: nextTrack.id,
-            nextTrackTitle: nextTrack.title,
-            nextIndex,
-          });
-          
-          // Mark as loading
-          loadingTracksRef.current.add(nextTrack.id);
-          
-          ensureAudioTrackLoaded(bookId, nextTrack)
-            .then((preloadedTrack) => {
-              if (preloadedTrack.url) {
-                loadingTracksRef.current.delete(nextTrack.id);
-                loadedTrackUrlsRef.current.set(nextTrack.id, preloadedTrack.url);
-                // Trigger re-render to update track memos (only when needed)
-                loadedCountRef.current += 1;
-                setLoadedCount(loadedCountRef.current);
-                logger.log("[Audio Player] Next audio track preloaded", {
-                  nextTrackId: preloadedTrack.id,
-                });
-              }
-            })
-            .catch((error) => {
-              loadingTracksRef.current.delete(nextTrack.id);
-              logger.warn("[Audio Player] Failed to preload next audio track", {
-                nextTrackId: nextTrack.id,
-                error,
-              });
-            });
-        }
-      }
+      // Preload next track disabled for memory optimization
       return;
     }
     
@@ -757,43 +721,7 @@ export function ReaderAudioPlayer({
             urlLength: loadedTrack.url.length,
           });
           
-          // Preload next audio track if it exists
-          const nextIndex = currentIndex + 1;
-          if (nextIndex < tracks.length) {
-            const nextTrack = tracks[nextIndex];
-            // Only preload if next track doesn't already have a URL and isn't already loading
-            if (nextTrack && !nextTrack.url && !loadedTrackUrlsRef.current.has(nextTrack.id) && !loadingTracksRef.current.has(nextTrack.id)) {
-              logger.log("[Audio Player] Preloading next audio track", {
-                nextTrackId: nextTrack.id,
-                nextTrackTitle: nextTrack.title,
-                nextIndex,
-              });
-              
-              // Mark as loading
-              loadingTracksRef.current.add(nextTrack.id);
-              
-              ensureAudioTrackLoaded(bookId, nextTrack)
-                .then((preloadedTrack) => {
-                  if (preloadedTrack.url) {
-                    loadingTracksRef.current.delete(nextTrack.id);
-                loadedTrackUrlsRef.current.set(nextTrack.id, preloadedTrack.url);
-                // Trigger re-render to update track memos (only when needed)
-                loadedCountRef.current += 1;
-                setLoadedCount(loadedCountRef.current);
-                    logger.log("[Audio Player] Next audio track preloaded", {
-                      nextTrackId: preloadedTrack.id,
-                    });
-                  }
-                })
-                .catch((error) => {
-                  loadingTracksRef.current.delete(nextTrack.id);
-                  logger.warn("[Audio Player] Failed to preload next audio track", {
-                    nextTrackId: nextTrack.id,
-                    error,
-                  });
-                });
-            }
-          }
+          // Preload next audio track disabled for memory optimization
         }
       })
       .catch((error) => {

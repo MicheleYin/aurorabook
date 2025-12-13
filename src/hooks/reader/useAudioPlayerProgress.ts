@@ -68,15 +68,15 @@ export function useAudioPlayerProgress({
     });
   }, [activeBook, audioLoader.loadedTracks]);
 
-  // Preload next audio track
-  const preloadNextAudioTrack = useCallback(async (currentIndex: number) => {
-    if (!activeBook || currentIndex + 1 >= activeBook.audioTracks.length) return;
-    
-    const nextTrack = activeBook.audioTracks[currentIndex + 1];
-    if (!nextTrack.url && !audioLoader.isTrackLoaded(activeBook.id, nextTrack.id)) {
-      await audioLoader.loadTrack(activeBook.id, nextTrack);
-    }
-  }, [activeBook, audioLoader]);
+  // Preload next audio track disabled for memory optimization
+  // const preloadNextAudioTrack = useCallback(async (currentIndex: number) => {
+  //   if (!activeBook || currentIndex + 1 >= activeBook.audioTracks.length) return;
+  //   
+  //   const nextTrack = activeBook.audioTracks[currentIndex + 1];
+  //   if (!nextTrack.url && !audioLoader.isTrackLoaded(activeBook.id, nextTrack.id)) {
+  //     await audioLoader.loadTrack(activeBook.id, nextTrack);
+  //   }
+  // }, [activeBook, audioLoader]);
 
   // Handle audio progress updates
   const handleAudioProgress = useCallback((snapshot: AudioProgressSnapshot) => {
@@ -158,12 +158,12 @@ export function useAudioPlayerProgress({
       }
     }
 
-    // Preload next track
-    const trackIndex = activeBook.audioTracks.findIndex(t => t.id === track.id);
-    if (trackIndex >= 0) {
-      await preloadNextAudioTrack(trackIndex);
-    }
-  }, [activeBook, activeChapter, onSaveProgress, preloadNextAudioTrack, audioSync, autoScrollEnabled, onTrackChangeChapterChange, coordinator]);
+    // Preload next track disabled for memory optimization
+    // const trackIndex = activeBook.audioTracks.findIndex(t => t.id === track.id);
+    // if (trackIndex >= 0) {
+    //   await preloadNextAudioTrack(trackIndex);
+    // }
+  }, [activeBook, activeChapter, onSaveProgress, audioSync, autoScrollEnabled, onTrackChangeChapterChange, coordinator]);
 
   // Handle audio player close
   const handleAudioPlayerClose = useCallback(async () => {

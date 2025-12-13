@@ -167,14 +167,14 @@ export function useAudioPlayerManager(params: UseAudioPlayerManagerParams) {
       }
     }
 
-    // Preload next track
-    const trackIndex = activeBook.audioTracks.findIndex(t => t.id === track.id);
-    if (trackIndex >= 0 && trackIndex + 1 < activeBook.audioTracks.length) {
-      const nextTrack = activeBook.audioTracks[trackIndex + 1];
-      if (!nextTrack.url && !audioTrackLoader.isTrackLoaded(activeBook.id, nextTrack.id)) {
-        await coordinator.loadAudioTrack(activeBook.id, nextTrack.id);
-      }
-    }
+    // Preload next track disabled for memory optimization
+    // const trackIndex = activeBook.audioTracks.findIndex(t => t.id === track.id);
+    // if (trackIndex >= 0 && trackIndex + 1 < activeBook.audioTracks.length) {
+    //   const nextTrack = activeBook.audioTracks[trackIndex + 1];
+    //   if (!nextTrack.url && !audioTrackLoader.isTrackLoaded(activeBook.id, nextTrack.id)) {
+    //     await coordinator.loadAudioTrack(activeBook.id, nextTrack.id);
+    //   }
+    // }
   }, [
     activeBook,
     activeChapter,
