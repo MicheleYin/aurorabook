@@ -80,7 +80,8 @@ fn compute_audio_duration(audio_bytes: &[u8], mime_type: &str) -> Option<f64> {
 /// * `manifest_items` - HashMap of manifest item IDs to ManifestItem objects
 ///
 /// # Returns
-/// A vector of AudioTrack objects sorted by their href paths.
+/// A vector of AudioTrack objects. The order is not guaranteed and should be
+/// sorted by calling `order_audio_tracks_by_chapters` to match chapter order.
 pub fn extract_audio_tracks_from_manifest(
     manifest_items: &HashMap<String, ManifestItem>,
 ) -> Vec<crate::book_service::models::AudioTrack> {
@@ -111,8 +112,8 @@ pub fn extract_audio_tracks_from_manifest(
         }
     }
     
-    // Sort by href to ensure consistent ordering
-    audio_tracks.sort_by(|a, b| a.href.cmp(&b.href));
+    // Don't sort by href - let order_audio_tracks_by_chapters handle ordering
+    // based on chapter order (spine/NCX order) instead of alphabetical href order
     
     audio_tracks
 }
