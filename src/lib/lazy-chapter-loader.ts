@@ -33,7 +33,6 @@ const audioTrackCache = new LRUCache<string, string>({
  */
 export function clearChapterCache(sourcePath: string, chapterHref: string): void {
   const bookId = sourcePath;
-  const cacheKey = `${bookId}:${chapterHref}`;
   
   // Try multiple href variations to ensure we clear all possible cache keys
   const hrefVariations = [
@@ -212,7 +211,7 @@ export async function loadChapterContent(
     const result = { contentHtml: sanitized, plainText, wordCount };
     chapterCache.set(cacheKey, result);
     
-    logger.info(`${LOADER_LOG_PREFIX} ✓ loaded chapter from backend`, {
+    logger.debug(`${LOADER_LOG_PREFIX} ✓ loaded chapter from backend`, {
       bookId,
       href: chapter.href,
       cacheKey,
