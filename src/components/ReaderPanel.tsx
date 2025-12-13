@@ -31,7 +31,6 @@ export function ReaderPanel({
   onPreferencesChange,
   onSelectChapter,
   onNavigateLibrary,
-  resolvedUiTheme,
   uiTheme,
   onThemeChange,
   onChapterProgress,
