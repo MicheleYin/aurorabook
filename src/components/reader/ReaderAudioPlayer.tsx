@@ -1018,6 +1018,7 @@ export function ReaderAudioPlayer({
           trackId: track.id,
         });
         trackChangeInProgressRef.current = false;
+        setIsLocalTrackChanging(false);
       }
     };
     
