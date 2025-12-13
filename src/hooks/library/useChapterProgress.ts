@@ -15,6 +15,8 @@ import {
 import type { UseChapterProgressParams } from "./types";
 import type { ScrollMetrics } from "../../lib/scroll-utils";
 import { computeScrollMetrics, computeWindowScrollMetrics } from "../../lib/scroll-utils";
+import { useContext } from "react";
+import { ReaderCoordinatorContext } from "../../contexts/ReaderCoordinatorContext";
 
 export function useChapterProgress(params: UseChapterProgressParams) {
   const {
@@ -24,6 +26,9 @@ export function useChapterProgress(params: UseChapterProgressParams) {
     onSaveProgress,
     isRestoringScroll = false,
   } = params;
+
+  // Get coordinator for operation management (optional - may not be available at library level)
+  const coordinator = useContext(ReaderCoordinatorContext); // May be null if provider isn't available
 
   // Internal scroll state - tracks the current scroll position for the active chapter
   // This is updated on every scroll event and used when saving progress
@@ -120,6 +125,11 @@ export function useChapterProgress(params: UseChapterProgressParams) {
       return;
     }
 
+    // Check if a save operation is already in progress (if coordinator available)
+    if (coordinator && coordinator.isOperationInProgress && coordinator.isOperationInProgress("saveChapterProgress")) {
+      return;
+    }
+
     // Always read fresh from DOM first to get the absolute latest scroll position
     // This ensures we save the most up-to-date position, not a cached one
     const currentMetrics = getCurrentScrollMetricsFromDOM();
@@ -154,8 +164,11 @@ export function useChapterProgress(params: UseChapterProgressParams) {
 
     const snapshot = createProgressSnapshot(activeChapter.id, metricsToUse);
     progressStateRef.current.lastProgress = snapshot;
+    
+    // Use coordinator to save progress (if bookId is available from context)
+    // For now, still call onProgress directly, but coordinator will handle the actual save
     onProgress(snapshot);
-  }, [activeChapter, onProgress, getCurrentScrollMetricsFromDOM]);
+  }, [activeChapter, onProgress, getCurrentScrollMetricsFromDOM, coordinator]);
 
   // Use requestAnimationFrame for more responsive scroll tracking
   // This batches DOM reads to the next frame while still being very responsive

@@ -6,11 +6,13 @@
 
 import { useRef } from "react";
 import type { Chapter } from "../../types/reader";
+import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
 
 export function useChapterLoadedCallback(
   chapter: Chapter | undefined,
   onChapterLoaded?: () => void
 ) {
+  const coordinator = useReaderCoordinator();
   const chapterLoadedRef = useRef<string | null>(null);
   const timeoutRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -50,6 +52,16 @@ export function useChapterLoadedCallback(
           );
           
           if (contentElement) {
+            // Check if chapter change operation was cancelled
+            const currentOp = coordinator.getCurrentOperation("changeChapter");
+            if (currentOp?.cancelled || currentOp?.chapterId !== chapter.id) {
+              console.log("[useChapterLoadedCallback] Chapter change was cancelled, skipping callback", {
+                chapterId: chapter.id,
+                operationId: currentOp?.id,
+              });
+              return;
+            }
+            
             // Content is in DOM, call callback
             console.log("[useChapterLoadedCallback] ✓ Chapter content found in DOM, calling onChapterLoaded", {
               chapterId: chapter.id,

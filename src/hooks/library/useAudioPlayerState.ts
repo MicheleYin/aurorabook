@@ -7,11 +7,15 @@
 import { useCallback, useRef, useState } from "react";
 import { logger } from "../../lib/logger";
 import type { UseAudioPlayerStateParams } from "./types";
+import { useContext } from "react";
+import { ReaderCoordinatorContext } from "../../contexts/ReaderCoordinatorContext";
 
 const PROGRESS_ECHO_TOLERANCE_SECONDS = 0.5;
 
 export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
   const { bookId, tracks, library, onProgress } = params;
+  // Get coordinator for operation management (optional - may not be available at library level)
+  const coordinator = useContext(ReaderCoordinatorContext); // May be null if provider isn't available
   
   // Get audio state from library (single source of truth)
   const book = bookId ? library.find((b) => b.id === bookId) : undefined;
@@ -174,13 +178,21 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
       return;
     }
 
+    // Check if track change operation is in progress or cancelled (if coordinator available)
+    if (coordinator && coordinator.isOperationInProgress("changeAudioTrack")) {
+      const currentOp = coordinator.getCurrentOperation("changeAudioTrack");
+      if (currentOp?.cancelled) {
+        return;
+      }
+    }
+
     if (isRestoringRef.current) {
       return;
     }
 
     setRestoreTime(null);
     restorationAppliedRef.current = null;
-  }, []);
+  }, [coordinator]);
 
   const emitProgress = useCallback((timeSeconds: number) => {
     const track = tracksRef.current[currentIndexRef.current];

@@ -8,11 +8,15 @@ import { logger } from "../../lib/logger";
 import { updateBookAudioState as updateBookAudioStateBackend } from "../../lib/book-service";
 import { createDebounce } from "../../lib/debounce-utils";
 import type { Book } from "../../types/reader";
+import { useContext } from "react";
+import { ReaderCoordinatorContext } from "../../contexts/ReaderCoordinatorContext";
 
 export function useAudioStatePersistence(
   library: Book[],
   setLibrary: React.Dispatch<React.SetStateAction<Book[]>>,
 ) {
+  // Get coordinator for operation management (optional - may not be available at library level)
+  const coordinator = useContext(ReaderCoordinatorContext); // May be null if provider isn't available
   // Pending audio update
   const pendingAudioUpdateRef = useRef<{
     bookId: string;
@@ -56,6 +60,15 @@ export function useAudioStatePersistence(
         updatedAt?: string;
       },
     ) => {
+      // Use coordinator to save audio timestamp if available
+      // This ensures proper coordination and cancellation
+      if (snapshot.trackId && coordinator && coordinator.saveAudioTimestamp) {
+        await coordinator.saveAudioTimestamp(
+          bookId,
+          snapshot.trackId,
+          snapshot.currentTimeSeconds
+        );
+      }
       if (
         !bookId ||
         typeof snapshot?.currentTimeSeconds !== "number" ||
@@ -105,6 +118,11 @@ export function useAudioStatePersistence(
         ),
       );
 
+      // Use coordinator to save audio timestamp if available
+      if (coordinator && coordinator.saveAudioTimestamp) {
+        await coordinator.saveAudioTimestamp(bookId, resolvedTrack.id, normalizedSeconds);
+      }
+      
       // Store pending update and trigger debounced backend sync
       pendingAudioUpdateRef.current = {
         bookId,
@@ -114,7 +132,7 @@ export function useAudioStatePersistence(
       
       audioUpdateDebouncerRef.current.call();
     },
-    [library, setLibrary],
+    [library, setLibrary, coordinator],
   );
 
   // Flush pending audio state updates immediately (for pause/close)

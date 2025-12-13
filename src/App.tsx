@@ -24,6 +24,7 @@ import type { ChapterSelectionOptions, AudioProgressSnapshot } from "./component
 import { cn } from "./lib/utils";
 import { animPatterns, viewTransition } from "./lib/animations";
 import { findChaptersForAudioTrack } from "./lib/epub";
+import { ReaderCoordinatorProvider } from "./contexts/ReaderCoordinatorContext";
 
 function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary> }) {
   const {
@@ -37,6 +38,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     updateBookAudioState,
     handleChapterProgress,
     flushProgressUpdate,
+    flushAudioStateUpdate,
   } = libraryHook;
 
   const {
@@ -513,26 +515,90 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   const readerView = useMemo(
     () => (
       <ErrorBoundary>
-        <ReaderPanel
-          activeBook={activeBook}
-          activeChapter={activeChapter}
-          preferences={readerPreferences}
-          onPreferencesChange={updateReaderPreferences}
-          onSelectChapter={handleSelectChapter}
-          onNavigateLibrary={handleNavigateLibrary}
-          resolvedUiTheme={resolvedUiTheme}
-          uiTheme={uiTheme}
-          onThemeChange={handleThemeChange}
-          onChapterProgress={handleChapterProgress}
-          onChromeVisibilityChange={setIsReaderChromeVisible}
-          audioPlayerVisible={Boolean(activeBook?.audioTracks?.length) && isAudioPlayerOpen}
-          onOpenAudioPlayer={handleOpenAudioPlayer}
-          currentAudioTrackHref={currentAudioTrackHref}
-          onSaveProgress={handleSaveProgress}
-          autoScrollEnabled={autoScrollEnabled}
-          currentAudioProgress={currentAudioProgress}
-          onTrackChangeHandlerReady={handleTrackChangeHandlerReady}
-        />
+        <ReaderCoordinatorProvider
+          onChapterChange={async (_bookId, chapterId, options) => {
+            // This will be handled by ReaderWrapper's handleChapterChange
+            // The coordinator just coordinates the operation
+            await handleSelectChapter(chapterId, options);
+          }}
+          onChapterRestore={async () => {
+            // Chapter restore is handled by ReaderWrapper
+          }}
+          onChapterProgressRestore={async () => {
+            // Progress restore is handled by ReaderWrapper's restoreProgress
+          }}
+          onChapterSave={async () => {
+            // Chapter save is handled by ReaderWrapper's saveProgress
+          }}
+          onChapterProgressSave={async (bookId, _chapterId, snapshot) => {
+            // Progress save is handled by handleChapterProgress
+            handleChapterProgress(bookId, snapshot);
+          }}
+          onAudioTrackLoad={async (bookId, trackId) => {
+            // Audio track loading is handled by useAudioTrackLoader
+            const { ensureAudioTrackLoaded } = await import("./lib/lazy-chapter-loader");
+            const book = library.find(b => b.id === bookId);
+            if (!book) return null;
+            const track = book.audioTracks.find(t => t.id === trackId);
+            if (!track) return null;
+            const loaded = await ensureAudioTrackLoaded(bookId, track);
+            return loaded.url || null;
+          }}
+          onAudioTimestampRestore={async () => {
+            // Audio timestamp restore is handled by audio player
+          }}
+          onAudioTrackSave={async () => {
+            // Flush audio state
+            await flushAudioStateUpdate();
+          }}
+          onAudioTimestampSave={async (bookId, trackId, timestamp) => {
+            // Update audio state
+            const book = library.find(b => b.id === bookId);
+            if (book) {
+              const track = book.audioTracks.find(t => t.id === trackId);
+              if (track) {
+                await updateBookAudioState(bookId, {
+                  currentTimeSeconds: timestamp,
+                  trackId: trackId,
+                  trackHref: track.href,
+                  trackIndex: book.audioTracks.findIndex(t => t.id === trackId),
+                  updatedAt: new Date().toISOString(),
+                });
+              }
+            }
+          }}
+          onAudioTrackChange={async (bookId, trackId) => {
+            // Audio track change is handled by handleTrackChange
+            const book = library.find(b => b.id === bookId);
+            if (book) {
+              const track = book.audioTracks.find(t => t.id === trackId);
+              if (track) {
+                await handleTrackChange(track.href);
+              }
+            }
+          }}
+        >
+          <ReaderPanel
+            activeBook={activeBook}
+            activeChapter={activeChapter}
+            preferences={readerPreferences}
+            onPreferencesChange={updateReaderPreferences}
+            onSelectChapter={handleSelectChapter}
+            onNavigateLibrary={handleNavigateLibrary}
+            resolvedUiTheme={resolvedUiTheme}
+            uiTheme={uiTheme}
+            onThemeChange={handleThemeChange}
+            onChapterProgress={handleChapterProgress}
+            onChromeVisibilityChange={setIsReaderChromeVisible}
+            audioPlayerVisible={Boolean(activeBook?.audioTracks?.length) && isAudioPlayerOpen}
+            onOpenAudioPlayer={handleOpenAudioPlayer}
+            currentAudioTrackHref={currentAudioTrackHref}
+            onSaveProgress={handleSaveProgress}
+            autoScrollEnabled={autoScrollEnabled}
+            currentAudioProgress={currentAudioProgress}
+            onTrackChangeHandlerReady={handleTrackChangeHandlerReady}
+          />
+        </ReaderCoordinatorProvider>
       </ErrorBoundary>
     ),
     [
@@ -555,6 +621,11 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       handleSaveProgress,
       autoScrollEnabled,
       currentAudioProgress,
+      library,
+      handleChapterProgress,
+      updateBookAudioState,
+      flushAudioStateUpdate,
+      handleTrackChange,
     ]
   );
 

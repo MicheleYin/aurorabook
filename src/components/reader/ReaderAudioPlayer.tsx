@@ -20,6 +20,8 @@ import { useLibrary } from "../../hooks/useLibrary";
 import { animPatterns, enterExit } from "../../lib/animations";
 import { ensureAudioTrackLoaded } from "../../lib/lazy-chapter-loader";
 import { usePersistentSettings } from "../../hooks/usePersistentSettings";
+import { useContext } from "react";
+import { ReaderCoordinatorContext } from "../../contexts/ReaderCoordinatorContext";
 
 import { formatTime } from "../../lib/format-time";
 
@@ -87,6 +89,12 @@ export function ReaderAudioPlayer({
   });
   
   const flushAudioStateUpdate = libraryHook.flushAudioStateUpdate;
+
+  // Get coordinator to check if track change operation is in progress
+  const coordinator = useContext(ReaderCoordinatorContext);
+  const isTrackChangeInProgress = coordinator 
+    ? (coordinator.loading.trackChanging || coordinator.isOperationInProgress("changeAudioTrack"))
+    : false;
 
   // Get settings for playback speed
   const { settings, updateSettings, isHydrated: settingsHydrated } = usePersistentSettings();
@@ -535,6 +543,10 @@ export function ReaderAudioPlayer({
   const [loadedCount, setLoadedCount] = useState(0);
   // Track if current track is loading
   const [isTrackLoading, setIsTrackLoading] = useState(false);
+  
+  // Combine track loading state with coordinator track change state
+  // This shows spinner and disables buttons when track change is queued/in progress
+  const isLoadingOrChanging = isTrackLoading || isTrackChangeInProgress;
   
   // Get current track with URL if loaded
   // Memoize to prevent unnecessary recalculations
@@ -1652,7 +1664,7 @@ export function ReaderAudioPlayer({
               onClick={handleSkipBack}
               aria-label="Skip back 10 seconds"
               title="Skip back 10 seconds"
-              disabled={isTrackLoading}
+              disabled={isLoadingOrChanging}
             >
               <StepBack className="h-4 w-4" />
             </Button>
@@ -1662,9 +1674,9 @@ export function ReaderAudioPlayer({
               className="h-12 w-12 rounded-full"
               onClick={togglePlayback}
               aria-label={isPlaying ? "Pause audio" : "Play audio"}
-              disabled={isTrackLoading}
+              disabled={isLoadingOrChanging}
             >
-              {isTrackLoading ? (
+              {isLoadingOrChanging ? (
                 <Loader2 className="h-5 w-5 animate-spin" />
               ) : isPlaying ? (
                 <Pause className="h-5 w-5" />
@@ -1679,7 +1691,7 @@ export function ReaderAudioPlayer({
               onClick={handleSkipForward}
               aria-label="Skip forward 10 seconds"
               title="Skip forward 10 seconds"
-              disabled={isTrackLoading}
+              disabled={isLoadingOrChanging}
             >
               <StepForward className="h-4 w-4" />
             </Button>
@@ -1713,7 +1725,7 @@ export function ReaderAudioPlayer({
                   className="rounded-full"
                   onClick={handlePrevious}
                   aria-label="Previous track"
-                  disabled={currentIndex <= 0}
+                  disabled={currentIndex <= 0 || isLoadingOrChanging}
                 >
                   <SkipBack className="h-4 w-4" />
                 </Button>
@@ -1724,7 +1736,7 @@ export function ReaderAudioPlayer({
               onClick={handleSkipBack}
               aria-label="Skip back 10 seconds"
               title="Skip back 10 seconds"
-              disabled={isTrackLoading}
+              disabled={isLoadingOrChanging}
             >
               <StepBack className="h-4 w-4" />
             </Button>
@@ -1734,9 +1746,9 @@ export function ReaderAudioPlayer({
               className="h-12 w-12 rounded-full"
               onClick={togglePlayback}
               aria-label={isPlaying ? "Pause audio" : "Play audio"}
-              disabled={isTrackLoading}
+              disabled={isLoadingOrChanging}
             >
-              {isTrackLoading ? (
+              {isLoadingOrChanging ? (
                 <Loader2 className="h-5 w-5 animate-spin" />
               ) : isPlaying ? (
                 <Pause className="h-5 w-5" />
@@ -1751,7 +1763,7 @@ export function ReaderAudioPlayer({
               onClick={handleSkipForward}
               aria-label="Skip forward 10 seconds"
               title="Skip forward 10 seconds"
-              disabled={isTrackLoading}
+              disabled={isLoadingOrChanging}
             >
               <StepForward className="h-4 w-4" />
             </Button>
@@ -1761,7 +1773,7 @@ export function ReaderAudioPlayer({
                   className="rounded-full"
                   onClick={handleNext}
                   aria-label="Next track"
-                  disabled={currentIndex + 1 >= tracks.length}
+                  disabled={currentIndex + 1 >= tracks.length || isLoadingOrChanging}
                 >
                   <SkipForward className="h-4 w-4" />
                 </Button>

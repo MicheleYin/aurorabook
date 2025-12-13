@@ -8,13 +8,23 @@ import { useCallback, useState } from "react";
 import type { Chapter } from "../../types/reader";
 import { ensureChapterLoaded } from "../../lib/lazy-chapter-loader";
 import { useResourceLoader } from "./useResourceLoader";
+import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
 
 export function useChapterLoader() {
   const [loadedChapter, setLoadedChapter] = useState<Chapter | null>(null);
+  const coordinator = useReaderCoordinator();
   
   const loader = useResourceLoader<Chapter>({
     isLoaded: (chapter) => !!chapter.contentHtml,
     loadResource: async (bookId, chapter) => {
+      // Check if operation is cancelled
+      const currentOp = coordinator.getCurrentOperation("changeChapter");
+      if (currentOp?.cancelled) {
+        throw new Error("Chapter load cancelled");
+      }
+      
+      // Use coordinator to load chapter (if available)
+      // For now, still use direct loading but check coordinator state
       return await ensureChapterLoaded(bookId, chapter);
     },
     getResourceId: (chapter) => chapter.id,

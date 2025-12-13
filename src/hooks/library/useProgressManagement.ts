@@ -15,11 +15,15 @@ import {
   getElementIndex,
   isProgressUnchanged,
 } from "./libraryHelpers";
+import { useContext } from "react";
+import { ReaderCoordinatorContext } from "../../contexts/ReaderCoordinatorContext";
 
 export function useProgressManagement(
   library: Book[],
   setLibrary: React.Dispatch<React.SetStateAction<Book[]>>,
 ) {
+  // Get coordinator for operation management (optional - may not be available at library level)
+  const coordinator = useContext(ReaderCoordinatorContext); // May be null if provider isn't available
   // Pending progress update
   const pendingProgressUpdateRef = useRef<{
     bookId: string;
@@ -224,7 +228,14 @@ export function useProgressManagement(
   );
 
   const handleChapterProgress = useCallback(
-    (bookId: string, snapshot: ChapterProgressSnapshot) => {
+    async (bookId: string, snapshot: ChapterProgressSnapshot) => {
+      // Use coordinator to save chapter progress if available
+      // This ensures proper coordination and cancellation
+      if (coordinator && coordinator.saveChapterProgress) {
+        await coordinator.saveChapterProgress(bookId, snapshot.chapterId, snapshot);
+      }
+      
+      // Also update local state via updateBookProgress for immediate UI updates
       updateBookProgress(bookId, {
         chapterId: snapshot.chapterId,
         scrollTop: snapshot.scrollTop,
@@ -235,7 +246,7 @@ export function useProgressManagement(
         elementIndex: snapshot.activeElementIndex,
       });
     },
-    [updateBookProgress],
+    [updateBookProgress, coordinator],
   );
 
   return {

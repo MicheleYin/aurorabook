@@ -10,6 +10,7 @@ import { useAudioTrackLoader } from "./useAudioTrackLoader";
 import { useAudioTextSync } from "./useAudioTextSync";
 import { findChaptersForAudioTrack, chapterHrefsMatch } from "../../lib/epub";
 import { logger } from "../../lib/logger";
+import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
 
 type UseAudioPlayerProgressParams = {
   activeBook?: Book;
@@ -40,6 +41,7 @@ export function useAudioPlayerProgress({
   audioPlayerVisible = false,
   onTrackChangeChapterChange,
 }: UseAudioPlayerProgressParams) {
+  const coordinator = useReaderCoordinator();
   const audioLoader = useAudioTrackLoader();
   
   // Calculate header offset - will be computed dynamically in useAudioTextSync
@@ -96,6 +98,10 @@ export function useAudioPlayerProgress({
     const track = activeBook.audioTracks.find(t => t.href === trackHref);
     if (!track) return;
 
+    // Use coordinator to change audio track
+    // This ensures proper coordination and cancellation
+    await coordinator.changeAudioTrack(activeBook.id, track.id);
+
     // IMPORTANT: Mark track change FIRST (synchronously) before any async operations
     // This prevents updateHighlight from triggering chapter changes during track change
     audioSync.markTrackChange(trackHref);
@@ -147,7 +153,7 @@ export function useAudioPlayerProgress({
     if (trackIndex >= 0) {
       await preloadNextAudioTrack(trackIndex);
     }
-  }, [activeBook, activeChapter, onSaveProgress, preloadNextAudioTrack, audioSync, autoScrollEnabled, onTrackChangeChapterChange]);
+  }, [activeBook, activeChapter, onSaveProgress, preloadNextAudioTrack, audioSync, autoScrollEnabled, onTrackChangeChapterChange, coordinator]);
 
   // Handle audio player close
   const handleAudioPlayerClose = useCallback(async () => {

@@ -8,8 +8,12 @@ import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import type { AudioTrack } from "../../types/reader";
 import { loadEpubAudioBlob } from "../../lib/book-service";
 import { useResourceLoader } from "./useResourceLoader";
+import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
 
 export function useAudioTrackLoader() {
+  // Get coordinator for operation management
+  const coordinator = useReaderCoordinator();
+  
   // Track Blob URLs for cleanup
   const blobUrlsRef = useRef<Set<string>>(new Set());
   // Track cache version to trigger updates (minimal state for memory optimization)
@@ -28,6 +32,23 @@ export function useAudioTrackLoader() {
   const loader = useResourceLoader<AudioTrack>({
     isLoaded: (track) => !!track.url,
     loadResource: async (bookId, track) => {
+      // Check if operation is cancelled
+      const currentOp = coordinator.getCurrentOperation("loadAudioTrack");
+      if (currentOp?.cancelled) {
+        throw new Error("Audio track load cancelled");
+      }
+      
+      // Use coordinator to load track
+      const url = await coordinator.loadAudioTrack(bookId, track.id);
+      if (url) {
+        // Track Blob URL for cleanup
+        if (url.startsWith("blob:")) {
+          blobUrlsRef.current.add(url);
+        }
+        return { ...track, url };
+      }
+      
+      // Fallback to direct loading if coordinator doesn't have handler
       console.log("[useAudioTrackLoader] Loading audio track", {
         bookId,
         trackId: track.id,
