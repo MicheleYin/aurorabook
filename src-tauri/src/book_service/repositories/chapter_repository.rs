@@ -139,13 +139,43 @@ impl ChapterRepository {
             .ok_or_else(|| "Chapter not found".to_string())?
             .into();
         
+        let old_html_size = match &chapter.content_html {
+            sea_orm::ActiveValue::Set(Some(html)) => html.len(),
+            sea_orm::ActiveValue::Set(None) => 0,
+            _ => 0, // Unset or NotSet
+        };
+        let new_html_size = content_html.len();
+        
+        log::info!("[ChapterRepository] Updating chapter content in database: book_id={}, chapter_id={}, old_html_size={} bytes, new_html_size={} bytes", 
+            book_id, chapter_id, old_html_size, new_html_size);
+        
         chapter.content_html = Set(Some(content_html.to_string()));
         chapter.plain_text = Set(plain_text.map(|s| s.to_string()));
         
-        chapter.update(db).await
-            .map_err(|e| format!("Failed to update chapter content: {}", e))?;
-        
-        Ok(())
+        match chapter.update(db).await {
+            Ok(_) => {
+                log::info!("[ChapterRepository] ✓ Successfully updated chapter content in database: book_id={}, chapter_id={}, html_size={} bytes", 
+                    book_id, chapter_id, new_html_size);
+                
+                // Invalidate cache after updating content
+                if let Ok(cache) = crate::book_service::database::get_db_cache() {
+                    log::debug!("[ChapterRepository] Invalidating cache for chapter: book_id={}, chapter_id={}", book_id, chapter_id);
+                    cache.invalidate_chapter(book_id, chapter_id).await;
+                    // Also invalidate the chapters list cache to ensure fresh data
+                    cache.chapters_list.invalidate(book_id).await;
+                    log::debug!("[ChapterRepository] ✓ Cache invalidated for chapter: book_id={}, chapter_id={}", book_id, chapter_id);
+                } else {
+                    log::warn!("[ChapterRepository] Failed to get cache, cannot invalidate: book_id={}, chapter_id={}", book_id, chapter_id);
+                }
+                
+                Ok(())
+            }
+            Err(e) => {
+                log::error!("[ChapterRepository] ✗ Failed to update chapter content in database: book_id={}, chapter_id={}, error={}", 
+                    book_id, chapter_id, e);
+                Err(format!("Failed to update chapter content: {}", e))
+            }
+        }
     }
     
     /// Delete all chapters for a book

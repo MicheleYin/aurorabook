@@ -8,7 +8,7 @@ import type { VoiceId } from "../types/reader";
 import type { ConversionProgress } from "../lib/audiobook-converter";
 import { convertEpubToAudiobook } from "../lib/audiobook-converter";
 import { readAllBooks, readOneBook } from "../lib/book-service";
-import { clearBookCache } from "../lib/lazy-chapter-loader";
+import { clearBookCache, clearChapterCache } from "../lib/lazy-chapter-loader";
 
 export type PendingBookForConversion = {
   book: Book;
@@ -58,7 +58,14 @@ export function useBookConversion(
           chapter_title: string;
           audio_generated: boolean;
         }>("chapter-completed", async (event) => {
-          const { source_path, chapter_title, audio_generated } = event.payload;
+          const { source_path, chapter_title, audio_generated, chapter_index } = event.payload;
+          
+          logger.log("[useBookConversion] 📥 Received chapter-completed event", {
+            source_path,
+            chapter_index,
+            chapter_title,
+            audio_generated,
+          });
           
           // Fetch the updated book and merge only audio-related fields
           // This preserves the existing book state so audio playback doesn't stop
@@ -93,8 +100,61 @@ export function useBookConversion(
               return;
             }
             
+            // Find the completed chapter by index (chapter_index is 1-based in the event)
+            // Clear cache for the specific completed chapter to force reload of updated HTML with spans
+            const completedChapterIndex = chapter_index - 1; // Convert to 0-based
+            let completedChapter: typeof updatedBook.chapters[0] | null = null;
+            
+            logger.debug("[useBookConversion] Finding completed chapter", {
+              chapterIndex: chapter_index,
+              completedChapterIndex,
+              totalChapters: updatedBook.chapters.length,
+            });
+            
+            if (completedChapterIndex >= 0 && completedChapterIndex < updatedBook.chapters.length) {
+              completedChapter = updatedBook.chapters[completedChapterIndex];
+              
+              logger.log("[useBookConversion] Found completed chapter, clearing cache", {
+                sourcePath: source_path,
+                chapterIndex: chapter_index,
+                chapterId: completedChapter.id,
+                chapterHref: completedChapter.href,
+                chapterTitle: completedChapter.title,
+                hasContentHtml: !!completedChapter.contentHtml,
+                contentHtmlSize: completedChapter.contentHtml?.length || 0,
+              });
+              
+              // Clear cache for this specific chapter (tries multiple href variations)
+              clearChapterCache(source_path, completedChapter.href);
+              
+              logger.log("[useBookConversion] ✓ Cleared cache for completed chapter", {
+                sourcePath: source_path,
+                chapterIndex: chapter_index,
+                chapterId: completedChapter.id,
+                chapterHref: completedChapter.href,
+                chapterTitle: completedChapter.title,
+              });
+            } else {
+              logger.warn("[useBookConversion] ✗ Completed chapter index out of bounds", {
+                chapterIndex: chapter_index,
+                completedChapterIndex,
+                totalChapters: updatedBook.chapters.length,
+                sourcePath: source_path,
+              });
+              // Fallback: clear all chapters for this book if we can't find the specific one
+              clearBookCache(source_path);
+              logger.log("[useBookConversion] Cleared all chapters cache as fallback", { source_path });
+            }
+            
             // Merge only audio-related fields into the existing book
             // This preserves all other state including loaded chapters, audio playback state, etc.
+            // Note: chapters are included in mergeBookAudioFields, so updated chapter HTML will be available
+            logger.debug("[useBookConversion] Updating library state with merged book", {
+              bookId: existingBook.id,
+              source_path,
+              hasCompletedChapter: !!completedChapter,
+            });
+            
             setLibrary((currentLibrary) => {
               const bookIndex = currentLibrary.findIndex(
                 (book) => book.id === existingBook.id || book.sourcePath === source_path
@@ -102,17 +162,80 @@ export function useBookConversion(
               
               if (bookIndex === -1) {
                 // Book not in current library state, add it
+                logger.log("[useBookConversion] Book not in library, adding it", { bookId: updatedBook.id });
                 return [...currentLibrary, updatedBook];
               }
               
               const currentBook = currentLibrary[bookIndex];
               const mergedBook = mergeBookAudioFields(currentBook, updatedBook);
               
+              // Log chapter comparison if we have the completed chapter
+              if (completedChapter) {
+                const currentChapter = currentBook.chapters.find(ch => ch.id === completedChapter.id);
+                const mergedChapter = mergedBook.chapters.find(ch => ch.id === completedChapter.id);
+                
+                logger.log("[useBookConversion] Merged book data", {
+                  bookId: mergedBook.id,
+                  chapterId: completedChapter.id,
+                  currentChapterHasHtml: !!currentChapter?.contentHtml,
+                  currentChapterHtmlSize: currentChapter?.contentHtml?.length || 0,
+                  mergedChapterHasHtml: !!mergedChapter?.contentHtml,
+                  mergedChapterHtmlSize: mergedChapter?.contentHtml?.length || 0,
+                  chaptersCount: mergedBook.chapters.length,
+                });
+              }
+              
+              // If the completed chapter exists and is different from the cached version,
+              // the library update will trigger a re-render, and since we cleared the cache,
+              // the chapter will be automatically refetched when accessed
+              
               const updated = [...currentLibrary];
               updated[bookIndex] = mergedBook;
               
+              logger.log("[useBookConversion] ✓ Updated library state", {
+                bookId: mergedBook.id,
+                source_path,
+              });
+              
               return updated;
             });
+            
+            // Emit a custom event to notify components that a specific chapter was updated
+            // This allows the reader to reload the chapter if it's currently being viewed
+            if (completedChapter) {
+              try {
+                logger.log("[useBookConversion] Emitting chapter-updated event", {
+                  bookId: existingBook.id,
+                  chapterId: completedChapter.id,
+                  chapterHref: completedChapter.href,
+                  chapterIndex: chapter_index,
+                });
+                
+                const chapterUpdatedEvent = new CustomEvent("chapter-updated", {
+                  detail: {
+                    bookId: existingBook.id,
+                    sourcePath: source_path,
+                    chapterId: completedChapter.id,
+                    chapterHref: completedChapter.href,
+                    chapterIndex: chapter_index,
+                  },
+                });
+                window.dispatchEvent(chapterUpdatedEvent);
+                
+                logger.log("[useBookConversion] ✓ Successfully emitted chapter-updated event", {
+                  bookId: existingBook.id,
+                  chapterId: completedChapter.id,
+                  chapterHref: completedChapter.href,
+                });
+              } catch (error) {
+                logger.warn("[useBookConversion] ✗ Failed to emit chapter-updated event", error);
+              }
+            } else {
+              logger.warn("[useBookConversion] No completed chapter, skipping chapter-updated event", {
+                source_path,
+                chapter_index,
+              });
+            }
             
             // Show notification that a new chapter is available only if audio was generated
             if (audio_generated) {

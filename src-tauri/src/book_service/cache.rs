@@ -129,8 +129,12 @@ impl DbCache {
 
     /// Invalidate a specific chapter
     pub async fn invalidate_chapter(&self, book_id: &str, chapter_id: &str) {
+        // Invalidate the specific chapter cache
         self.chapters.invalidate(&(book_id.to_string(), chapter_id.to_string())).await;
+        // Invalidate the chapters list cache (since it contains all chapters for the book)
         self.chapters_list.invalidate(book_id).await;
+        // Invalidate the book cache (since books contain chapters, and the chapter was updated)
+        self.books.invalidate(book_id).await;
     }
 
     /// Invalidate an image

@@ -19,6 +19,7 @@ pub use types::*;
 pub use progress::{emit_progress, get_parallelism};
 pub use progress::ProgressCallback;
 pub use extraction::extract_chapters;
+pub use epub_builder::CachedEpubStructure;
 
 use crate::utils::errors::{AppError, AppResult};
 use crate::epub::converter::conversion::convert_epub_core_with_durations;

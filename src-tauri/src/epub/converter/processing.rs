@@ -455,17 +455,34 @@ pub(crate) async fn process_chapter(
         if let Ok(db) = get_db_connection(app_ref).await {
             if let Ok(Some(book)) = BookRepository::find_by_source_path(db.as_ref(), source_path_ref).await {
                 // Find chapter by href
-                if let Ok(Some(chapter_entity)) = ChapterRepository::find_by_href(db.as_ref(), &book.id, &chapter.href).await {
-                    if let Err(e) = ChapterRepository::update_content(db.as_ref(), &book.id, &chapter_entity.id, &updated_html, None).await {
-                        log::warn!("Failed to update chapter HTML in database for '{}': {}", chapter.href, e);
-                    } else {
-                        log::debug!("Updated chapter HTML in database for '{}' ({} bytes)", chapter.href, updated_html.len());
+                match ChapterRepository::find_by_href(db.as_ref(), &book.id, &chapter.href).await {
+                    Ok(Some(chapter_entity)) => {
+                        log::info!("Updating chapter HTML in database: book_id={}, chapter_id={}, href='{}', html_size={} bytes", 
+                            book.id, chapter_entity.id, chapter.href, updated_html.len());
+                        match ChapterRepository::update_content(db.as_ref(), &book.id, &chapter_entity.id, &updated_html, None).await {
+                            Ok(()) => {
+                                log::info!("✓ Successfully updated chapter HTML in database for '{}' ({} bytes)", chapter.href, updated_html.len());
+                            }
+                            Err(e) => {
+                                log::error!("✗ Failed to update chapter HTML in database for '{}': {}", chapter.href, e);
+                            }
+                        }
                     }
-                } else {
-                    log::debug!("Chapter not found in database for href '{}', skipping HTML update", chapter.href);
+                    Ok(None) => {
+                        log::warn!("Chapter not found in database for href '{}' (book_id: {}), skipping HTML update", chapter.href, book.id);
+                    }
+                    Err(e) => {
+                        log::warn!("Error finding chapter in database for href '{}': {}, skipping HTML update", chapter.href, e);
+                    }
                 }
+            } else {
+                log::warn!("Book not found in database for source_path '{}', cannot update chapter HTML", source_path_ref);
             }
+        } else {
+            log::warn!("Failed to get database connection, cannot update chapter HTML");
         }
+    } else {
+        log::debug!("No app or source_path available, skipping chapter HTML database update");
     }
     
     // Extract actual span IDs from the generated HTML to ensure we only create segments for spans that exist

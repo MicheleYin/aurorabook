@@ -54,7 +54,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
   } = props;
 
   // Get book and chapter from library context (single source of truth)
-  const { library } = useLibraryContext();
+  const { library, setLibrary } = useLibraryContext();
   const activeBook = activeBookId ? library.find(b => b.id === activeBookId) : undefined;
   const activeChapter = activeBook && activeChapterId 
     ? activeBook.chapters.find(ch => ch.id === activeChapterId)
@@ -218,28 +218,145 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     return null;
   }, [chapterLoader]);
 
-  // Handle chapter reload (for when content is missing spans)
+  // Handle chapter reload (for when content is missing spans or when chapter is updated during conversion)
   const handleChapterReload = useCallback(async (chapterId: string) => {
     if (!activeBook || !activeChapter || activeChapter.id !== chapterId) {
+      logger.warn("[ReaderWrapper] Cannot reload chapter - conditions not met", {
+        chapterId,
+        hasActiveBook: !!activeBook,
+        hasActiveChapter: !!activeChapter,
+        activeChapterId: activeChapter?.id,
+        matches: activeChapter?.id === chapterId,
+      });
       return;
     }
 
-    logger.log("[ReaderWrapper] Reloading chapter due to missing spans", {
+    logger.log("[ReaderWrapper] 🔄 Starting chapter reload", {
       chapterId,
       bookId: activeBook.id,
+      chapterHref: activeChapter.href,
+      reason: "chapter updated or missing spans",
+      currentContentHtmlSize: activeChapter.contentHtml?.length || 0,
     });
 
-    // Force reload the chapter
+    // Force reload the chapter (this will clear cache and fetch fresh data)
     const reloaded = await ensureChapterLoaded(activeBook.id, activeChapter, true);
     if (reloaded && reloaded.contentHtml) {
+      logger.log("[ReaderWrapper] ✓ Chapter reloaded successfully", {
+        chapterId,
+        bookId: activeBook.id,
+        newContentHtmlSize: reloaded.contentHtml.length,
+        hasSpans: reloaded.contentHtml.includes('id="f'),
+      });
+      
+      // IMPORTANT: Update the library state with the reloaded chapter
+      // This ensures the component re-renders with the new content
+      setLibrary((currentLibrary) => {
+        const bookIndex = currentLibrary.findIndex((b) => b.id === activeBook.id);
+        if (bookIndex === -1) {
+          logger.warn("[ReaderWrapper] Book not found in library when updating chapter", {
+            bookId: activeBook.id,
+          });
+          return currentLibrary;
+        }
+        
+        const updatedBook = { ...currentLibrary[bookIndex] };
+        const chapterIndex = updatedBook.chapters.findIndex((ch) => ch.id === chapterId);
+        if (chapterIndex === -1) {
+          logger.warn("[ReaderWrapper] Chapter not found in book when updating", {
+            bookId: activeBook.id,
+            chapterId,
+          });
+          return currentLibrary;
+        }
+        
+        // Update the chapter with the reloaded content
+        updatedBook.chapters = [...updatedBook.chapters];
+        updatedBook.chapters[chapterIndex] = reloaded;
+        
+        const updated = [...currentLibrary];
+        updated[bookIndex] = updatedBook;
+        
+        logger.log("[ReaderWrapper] ✓ Updated library state with reloaded chapter", {
+          bookId: activeBook.id,
+          chapterId,
+          newContentHtmlSize: reloaded.contentHtml?.length || 0,
+          hasSpans: reloaded.contentHtml?.includes('id="f') || false,
+        });
+        
+        return updated;
+      });
+      
       // Update the chapter in state by triggering a re-render
       // The chapter change handler will pick it up
       setChapterAnimationState("entering");
       setTimeout(() => {
         setChapterAnimationState("entered");
       }, 50);
+    } else {
+      logger.error("[ReaderWrapper] ✗ Failed to reload chapter", {
+        chapterId,
+        bookId: activeBook.id,
+        reloaded: !!reloaded,
+        hasContent: !!reloaded?.contentHtml,
+      });
     }
-  }, [activeBook, activeChapter, ensureChapterLoaded]);
+  }, [activeBook, activeChapter, ensureChapterLoaded, setLibrary]);
+
+  // Listen for chapter-updated events to reload chapter if user is viewing it
+  useEffect(() => {
+    const handleChapterUpdated = async (event: Event) => {
+      const customEvent = event as CustomEvent<{
+        bookId: string;
+        sourcePath: string;
+        chapterId: string;
+        chapterHref: string;
+        chapterIndex: number;
+      }>;
+      
+      const { bookId, chapterId, chapterHref, chapterIndex } = customEvent.detail;
+      
+      logger.log("[ReaderWrapper] 📥 Received chapter-updated event", {
+        bookId,
+        chapterId,
+        chapterHref,
+        chapterIndex,
+        activeBookId: activeBook?.id,
+        activeChapterId: activeChapter?.id,
+        isActiveBook: activeBook?.id === bookId,
+        isActiveChapter: activeChapter?.id === chapterId,
+      });
+      
+      // Only reload if this is the currently active chapter
+      if (activeBook?.id === bookId && activeChapter?.id === chapterId) {
+        logger.log("[ReaderWrapper] ✓ Chapter matches active chapter, reloading", {
+          bookId,
+          chapterId,
+          activeBookId: activeBook.id,
+          activeChapterId: activeChapter.id,
+        });
+        
+        // Reload the chapter to get the updated HTML with spans
+        await handleChapterReload(chapterId);
+      } else {
+        logger.debug("[ReaderWrapper] Chapter updated but not active, skipping reload", {
+          bookId,
+          chapterId,
+          activeBookId: activeBook?.id,
+          activeChapterId: activeChapter?.id,
+          reason: activeBook?.id !== bookId ? "different book" : "different chapter",
+        });
+      }
+    };
+
+    logger.debug("[ReaderWrapper] Setting up chapter-updated event listener");
+    window.addEventListener("chapter-updated", handleChapterUpdated);
+    
+    return () => {
+      logger.debug("[ReaderWrapper] Cleaning up chapter-updated event listener");
+      window.removeEventListener("chapter-updated", handleChapterUpdated);
+    };
+  }, [activeBook, activeChapter, handleChapterReload]);
 
   // Callback when chapter is loaded and ready (called from ReaderViewport after DOM is updated)
   // This ALWAYS handles restoration after chapter content is in the DOM, regardless of cache status

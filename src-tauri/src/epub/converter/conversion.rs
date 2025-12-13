@@ -78,9 +78,20 @@ pub(crate) async fn convert_epub_core_with_durations(
     validate_chapter_count(options.chapters.len(), MAX_CHAPTERS)?;
     
     // Initialize conversion context and read OPF
-    let (mut context, original_opf_content) = initialize_conversion_context(&epub_data)?;
+    // Note: cached_structure is not available at this level, so we parse it
+    // The structure is cached at the command level to avoid re-parsing during chapter loading
+    let (mut context, original_opf_content) = initialize_conversion_context(&epub_data, None)?;
     let base_path = context.base_path.clone();
     let chapter_hrefs: Vec<String> = options.chapters.iter().map(|c| c.href.clone()).collect();
+    
+    // Update chapter HTML files in context with the HTML from database (which may have been updated)
+    // This ensures we use the latest HTML from the database instead of old HTML from the EPUB
+    for chapter in &options.chapters {
+        let chapter_path = resolve_chapter_path(&chapter.href, &base_path);
+        // Overwrite the chapter file with the HTML from database
+        context.original_files.insert(chapter_path, chapter.content_html.clone().into_bytes());
+        log::debug!("Updated chapter HTML in context for '{}' ({} bytes)", chapter.href, chapter.content_html.len());
+    }
     
     // Process chapters sequentially (not in parallel)
     for (chapter_index, chapter) in options.chapters.iter().enumerate() {

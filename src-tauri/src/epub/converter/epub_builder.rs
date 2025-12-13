@@ -87,15 +87,31 @@ pub(crate) fn build_epub_zip(
     Ok(zip_data.into_inner())
 }
 
+/// Cached EPUB structure to avoid repeated parsing
+pub struct CachedEpubStructure {
+    pub opf_path: String,
+    pub base_path: String,
+}
+
 /// Initialize conversion context and read original OPF content
+/// If cached_structure is provided, uses it instead of parsing EPUB
 pub(crate) fn initialize_conversion_context(
     epub_data: &[u8],
+    cached_structure: Option<&CachedEpubStructure>,
 ) -> AnyhowResult<(ConversionContext, String)> {
     use std::io::{Cursor, Read};
     use zip::ZipArchive;
     use crate::epub::converter::extraction::{initialize_conversion, extract_original_files};
     
-    let (opf_path, base_path) = initialize_conversion(epub_data)?;
+    // Use cached structure if available, otherwise parse
+    let (opf_path, base_path) = if let Some(cached) = cached_structure {
+        log::debug!("Using cached EPUB structure: opf_path={}, base_path={}", cached.opf_path, cached.base_path);
+        (cached.opf_path.clone(), cached.base_path.clone())
+    } else {
+        log::debug!("Parsing EPUB structure (no cache available)");
+        initialize_conversion(epub_data)?
+    };
+    
     let original_files = extract_original_files(epub_data, &opf_path)?;
     
     let context = ConversionContext {
@@ -253,18 +269,24 @@ pub(crate) async fn rebuild_and_save_epub(
             
             // Emit event to frontend to refetch the book
             use crate::epub::converter::types::ChapterCompletedEvent;
+            let chapter_title_str = chapter_title.unwrap_or(&format!("Chapter {}", chapter_index + 1)).to_string();
             let event = ChapterCompletedEvent {
                 source_path: source_path_ref.to_string(),
                 chapter_index: chapter_index + 1,
                 total_chapters,
-                chapter_title: chapter_title.unwrap_or(&format!("Chapter {}", chapter_index + 1)).to_string(),
+                chapter_title: chapter_title_str.clone(),
                 audio_generated,
             };
             
+            log::info!("[EpubBuilder] Preparing to emit chapter-completed event: source_path='{}', chapter_index={}, chapter_title='{}', audio_generated={}", 
+                source_path_ref, chapter_index + 1, chapter_title_str, audio_generated);
+            
             if let Err(e) = app_ref.emit("chapter-completed", event) {
-                log::warn!("Failed to emit chapter-completed event: {}", e);
+                log::error!("[EpubBuilder] ✗ Failed to emit chapter-completed event: source_path='{}', chapter_index={}, error={}", 
+                    source_path_ref, chapter_index + 1, e);
             } else {
-                log::debug!("Emitted chapter-completed event for chapter {} (audio_generated: {})", chapter_index + 1, audio_generated);
+                log::info!("[EpubBuilder] ✓ Successfully emitted chapter-completed event: source_path='{}', chapter_index={}, chapter_title='{}', audio_generated={}", 
+                    source_path_ref, chapter_index + 1, chapter_title_str, audio_generated);
             }
         }
     }

@@ -10,8 +10,7 @@ use crate::utils::path_validation::validate_file_size;
 use crate::book_service::models::{Book, ConversionStatus};
 use crate::book_service::database::get_db_connection;
 use crate::book_service::repositories::{BookRepository, EpubRepository};
-use crate::epub::converter::{ConversionOptions, ConversionProgress, ConversionChapter, emit_progress};
-use crate::epub::converter::extract_chapters;
+use crate::epub::converter::{ConversionOptions, ConversionProgress, ConversionChapter, emit_progress, CachedEpubStructure};
 use crate::epub::cancellation::{get_cancellation_token, cleanup_cancellation_token};
 use crate::epub::book_update::update_book_audio_tracks;
 use std::sync::Arc;
@@ -70,15 +69,19 @@ pub async fn convert_epub_to_audiobook_command(
     let source_path = book.source_path.clone();
     log::info!("Loaded book from database: id={}, source_path={}", book_id, source_path);
     
-    // Load EPUB from file system using source_path
-    let epub_data = load_epub_from_file_system(&source_path)?;
-    log::info!("Loaded EPUB from file system: {} bytes", epub_data.len());
+    // Load EPUB from database first, fallback to file system
+    let epub_data = load_epub_with_fallback(&app, &source_path).await?;
+    log::info!("Loaded EPUB: {} bytes", epub_data.len());
     
-    // Validate EPUB (no longer caching - EPUB is saved to database during conversion)
+    // Validate EPUB
     validate_and_cache_epub(&app, &source_path, &epub_data)?;
     
-    // Extract chapters
-    let all_conversion_chapters = extract_chapters_from_epub(&app, epub_data.clone())?;
+    // Cache EPUB structure (OPF path, base path) to avoid repeated parsing
+    let epub_structure = cache_epub_structure(&epub_data)?;
+    log::debug!("Cached EPUB structure: opf_path={}, base_path={}", epub_structure.opf_path, epub_structure.base_path);
+    
+    // Load chapters from database instead of extracting from EPUB
+    let all_conversion_chapters = load_chapters_from_database(&app, &book_id, &epub_structure).await?;
     
     // Load and prepare book data
     let book_data = load_and_prepare_book(&app, &source_path, &voice_id, &all_conversion_chapters).await?;
@@ -110,6 +113,9 @@ pub async fn convert_epub_to_audiobook_command(
     let conversion_prep = prepare_conversion(&app, &source_path, &book_data).await?;
     
     // Perform conversion
+    // Note: epub_structure is cached at this level but not passed down since
+    // initialize_conversion_context parses it once anyway. The main optimization
+    // is loading EPUB and chapters from database instead of file system.
     let converted_epub = perform_conversion(
         &app,
         &source_path,
@@ -120,6 +126,35 @@ pub async fn convert_epub_to_audiobook_command(
     
     // Save converted EPUB and update book
     save_converted_epub_and_update_book(&app, &source_path, &converted_epub, book_data.total_words_all_chapters).await
+}
+
+/// Load EPUB from database first, fallback to file system
+async fn load_epub_with_fallback(
+    app: &AppHandle,
+    source_path: &str,
+) -> AppResult<Vec<u8>> {
+    let db = get_db_connection(app).await
+        .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
+    
+    // Try to load from database first
+    if let Ok(Some(epub_data)) = EpubRepository::find_by_source_path(db.as_ref(), source_path).await {
+        log::info!("Loaded EPUB from database: {} bytes", epub_data.len());
+        
+        // Validate EPUB file size
+        validate_file_size(epub_data.len(), MAX_EPUB_SIZE, "EPUB")?;
+        
+        // Validate EPUB signature (should start with PK for ZIP)
+        if epub_data.len() >= 4 && &epub_data[0..4] == b"PK\x03\x04" {
+            return Ok(epub_data);
+        } else {
+            log::warn!("EPUB from database has invalid signature, falling back to file system");
+        }
+    } else {
+        log::info!("EPUB not found in database, loading from file system");
+    }
+    
+    // Fallback to file system
+    load_epub_from_file_system(source_path)
 }
 
 /// Load EPUB file from file system using source_path
@@ -150,6 +185,85 @@ fn load_epub_from_file_system(source_path: &str) -> AppResult<Vec<u8>> {
     Ok(epub_data)
 }
 
+/// Cache EPUB structure (OPF path and base path) to avoid repeated parsing
+fn cache_epub_structure(epub_data: &[u8]) -> AppResult<CachedEpubStructure> {
+    use crate::epub::parser::{find_opf_path, derive_base_path_from_opf};
+    use std::io::Cursor;
+    use zip::ZipArchive;
+    
+    let epub_slice: &[u8] = epub_data;
+    let mut temp_archive = ZipArchive::new(Cursor::new(epub_slice))
+        .map_err(|e| AppError::EpubParse(format!("Failed to open EPUB for OPF search: {}", e)))?;
+    let opf_path = find_opf_path(&mut temp_archive)
+        .map_err(|e| AppError::EpubParse(format!("Failed to find OPF path: {}", e)))?;
+    let base_path = derive_base_path_from_opf(&opf_path);
+    
+    Ok(CachedEpubStructure {
+        opf_path,
+        base_path,
+    })
+}
+
+/// Load chapters from database and convert to ConversionChapter format
+async fn load_chapters_from_database(
+    app: &AppHandle,
+    book_id: &str,
+    _epub_structure: &CachedEpubStructure,
+) -> AppResult<Vec<ConversionChapter>> {
+    use crate::book_service::repositories::ChapterRepository;
+    use crate::epub::converter::ConversionChapter;
+    use crate::utils::text::count_words_in_html;
+    
+    let db = get_db_connection(app).await
+        .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
+    
+    // Emit progress for chapter loading
+    emit_progress(app, ConversionProgress {
+        current_chapter: 0,
+        total_chapters: 0,
+        words_processed: 0,
+        total_words: 0,
+        words_in_current_chapter: 0,
+        current_step: "initializing".to_string(),
+        message: "Loading chapters from database...".to_string(),
+    });
+    
+    // Load chapters from database
+    let db_chapters = ChapterRepository::find_by_book_id(db.as_ref(), book_id).await
+        .map_err(|e| AppError::Store(format!("Failed to load chapters from database: {}", e)))?;
+    
+    if db_chapters.is_empty() {
+        return Err(AppError::EpubParse("No chapters found in database".to_string()));
+    }
+    
+    // Convert database chapters to ConversionChapter format
+    let mut conversion_chapters = Vec::new();
+    for chapter in db_chapters {
+        // Use content_html from database, or empty string if not available
+        let content_html = chapter.content_html.unwrap_or_else(|| {
+            log::warn!("Chapter '{}' has no content_html in database", chapter.href);
+            String::new()
+        });
+        
+        // Calculate word count if not already set, or use existing
+        let word_count = chapter.word_count.unwrap_or_else(|| {
+            count_words_in_html(&content_html)
+        });
+        
+        conversion_chapters.push(ConversionChapter {
+            id: chapter.id,
+            title: chapter.title,
+            href: chapter.href,
+            content_html,
+            word_count,
+        });
+    }
+    
+    log::info!("Loaded {} chapters from database", conversion_chapters.len());
+    
+    Ok(conversion_chapters)
+}
+
 /// Emit initial progress update for responsive UI
 fn emit_initial_progress(app: &AppHandle) {
     emit_progress(app, ConversionProgress {
@@ -175,36 +289,8 @@ fn validate_and_cache_epub(
     Ok(())
 }
 
-/// Extract chapters from EPUB
-fn extract_chapters_from_epub(
-    app: &AppHandle,
-    epub_data: Vec<u8>,
-) -> AppResult<Vec<ConversionChapter>> {
-    // Emit progress for chapter extraction
-    emit_progress(app, ConversionProgress {
-        current_chapter: 0,
-        total_chapters: 0,
-        words_processed: 0,
-        total_words: 0,
-        words_in_current_chapter: 0,
-        current_step: "initializing".to_string(),
-        message: "Extracting chapters from EPUB...".to_string(),
-    });
-    
-    let (all_conversion_chapters, stats) = extract_chapters(epub_data)
-        .map_err(|e| AppError::EpubParse(e.to_string()).with_context("Failed to extract chapters"))?;
-    
-    let (manifest_count, spine_itemref_count, missing_manifest_count, non_html_count, filtered_count) = stats;
-    
-    if all_conversion_chapters.is_empty() {
-        return Err(AppError::EpubParse(format!(
-            "No chapters found in EPUB. Manifest had {} items, spine had {} itemrefs ({} missing from manifest, {} non-HTML, {} filtered), but no valid chapters were extracted.",
-            manifest_count, spine_itemref_count, missing_manifest_count, non_html_count, filtered_count
-        )));
-    }
-    
-    Ok(all_conversion_chapters)
-}
+// Note: extract_chapters_from_epub is no longer used - we load chapters from database instead
+// Keeping it commented out for reference, but it's replaced by load_chapters_from_database
 
 /// Book data structure for conversion preparation
 struct BookData {

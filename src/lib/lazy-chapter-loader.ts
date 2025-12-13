@@ -29,6 +29,43 @@ const audioTrackCache = new LRUCache<string, string>({
 });
 
 /**
+ * Clear cache for a specific chapter (useful when chapter is updated during conversion)
+ */
+export function clearChapterCache(sourcePath: string, chapterHref: string): void {
+  const bookId = sourcePath;
+  const cacheKey = `${bookId}:${chapterHref}`;
+  
+  // Try multiple href variations to ensure we clear all possible cache keys
+  const hrefVariations = [
+    chapterHref,
+    chapterHref.replace(/^\/+/, ""),
+    chapterHref.replace(/^OEBPS\//, ""),
+    `OEBPS/${chapterHref.replace(/^\/+/, "").replace(/^OEBPS\//, "")}`,
+  ];
+  
+  let cleared = false;
+  for (const href of hrefVariations) {
+    const key = `${bookId}:${href}`;
+    if (chapterCache.has(key)) {
+      chapterCache.delete(key);
+      cleared = true;
+      logger.debug(`${LOADER_LOG_PREFIX} cleared chapter cache`, {
+        sourcePath,
+        chapterHref: href,
+        cacheKey: key,
+      });
+    }
+  }
+  
+  if (!cleared) {
+    logger.debug(`${LOADER_LOG_PREFIX} chapter cache not found (may not be cached yet)`, {
+      sourcePath,
+      chapterHref,
+    });
+  }
+}
+
+/**
  * Clear cache for a book (useful when book is deleted or updated)
  */
 export function clearBookCache(sourcePath: string): void {
@@ -112,9 +149,18 @@ export async function loadChapterContent(
     logger.debug(`${LOADER_LOG_PREFIX} using cached chapter`, { 
       bookId, 
       href: chapter.href,
+      cacheKey,
+      cachedHtmlSize: cached.contentHtml.length,
+      hasSpans: cached.contentHtml.includes('id="f'),
     });
     return cached;
   }
+  
+  logger.debug(`${LOADER_LOG_PREFIX} cache miss, loading from backend`, {
+    bookId,
+    href: chapter.href,
+    cacheKey,
+  });
 
   try {
     // Load chapter content from Rust backend
@@ -166,10 +212,14 @@ export async function loadChapterContent(
     const result = { contentHtml: sanitized, plainText, wordCount };
     chapterCache.set(cacheKey, result);
     
-    logger.debug(`${LOADER_LOG_PREFIX} loaded chapter`, {
+    logger.info(`${LOADER_LOG_PREFIX} ✓ loaded chapter from backend`, {
       bookId,
       href: chapter.href,
+      cacheKey,
+      htmlSize: sanitized.length,
       wordCount,
+      hasSpans: sanitized.includes('id="f'),
+      spanCount: (sanitized.match(/id="f\d{6}"/g) || []).length,
     });
 
     return result;
