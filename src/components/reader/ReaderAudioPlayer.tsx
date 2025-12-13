@@ -543,10 +543,25 @@ export function ReaderAudioPlayer({
   const [loadedCount, setLoadedCount] = useState(0);
   // Track if current track is loading
   const [isTrackLoading, setIsTrackLoading] = useState(false);
+  // Local track changing state that updates immediately (before async coordinator state)
+  const [isLocalTrackChanging, setIsLocalTrackChanging] = useState(false);
   
-  // Combine track loading state with coordinator track change state
-  // This shows spinner and disables buttons when track change is queued/in progress
-  const isLoadingOrChanging = isTrackLoading || isTrackChangeInProgress;
+  // Clear local track changing state when coordinator's state clears
+  // This ensures we don't stay in loading state if coordinator clears before we do
+  useEffect(() => {
+    if (!isTrackChangeInProgress && isLocalTrackChanging) {
+      // Use a small delay to ensure coordinator state has propagated
+      const timeoutId = setTimeout(() => {
+        setIsLocalTrackChanging(false);
+      }, 100);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [isTrackChangeInProgress, isLocalTrackChanging]);
+  
+  // Combine track loading state with coordinator track change state and local state
+  // Local state updates immediately for instant UI feedback
+  // Coordinator state updates when async operation starts
+  const isLoadingOrChanging = isTrackLoading || isTrackChangeInProgress || isLocalTrackChanging;
   
   // Get current track with URL if loaded
   // Memoize to prevent unnecessary recalculations
@@ -612,6 +627,8 @@ export function ReaderAudioPlayer({
   const restorationInProgressRef = useRef<string | null>(null);
   // Track when a track change is in progress to prevent audio from starting
   const trackChangeInProgressRef = useRef(false);
+  // Track the last track href we notified about to prevent duplicate onTrackChange calls
+  const lastNotifiedTrackHrefRef = useRef<string | null>(null);
 
   // Simplified: Pre-load track URL only when needed
   useEffect(() => {
@@ -851,7 +868,14 @@ export function ReaderAudioPlayer({
     // Notify parent about track change (for chapter sync)
     // BUT: Don't trigger chapter changes during audio restoration
     // This prevents resetting chapter progress when restoring audio state
-    if (onTrackChange && !isRestoringRef.current) {
+    // Also skip if we already notified about this track (to prevent duplicate calls)
+    if (onTrackChange && !isRestoringRef.current && lastNotifiedTrackHrefRef.current !== track.href) {
+      logger.log("[Audio Player] Notifying parent of track change (via effect)", {
+        trackHref: track.href,
+      });
+      lastNotifiedTrackHrefRef.current = track.href;
+      // Set local loading state if not already set
+      setIsLocalTrackChanging(true);
       onTrackChange(track.href);
     }
     
@@ -892,6 +916,7 @@ export function ReaderAudioPlayer({
       if (shouldAutoplay && !audio.paused) {
         isAutoAdvancingRef.current = false;
         trackChangeInProgressRef.current = false;
+        setIsLocalTrackChanging(false);
       }
       return; // Already playing, no need for event listener
     }
@@ -908,6 +933,7 @@ export function ReaderAudioPlayer({
           trackId: track.id,
         });
         trackChangeInProgressRef.current = false;
+        setIsLocalTrackChanging(false);
       }
     };
     
@@ -929,6 +955,7 @@ export function ReaderAudioPlayer({
             isAutoAdvancingRef.current = false;
             // Clear track change flag when playback starts
             trackChangeInProgressRef.current = false;
+            setIsLocalTrackChanging(false);
           }
         });
       }
@@ -948,6 +975,7 @@ export function ReaderAudioPlayer({
             isAutoAdvancingRef.current = false;
             // Clear track change flag when playback starts
             trackChangeInProgressRef.current = false;
+            setIsLocalTrackChanging(false);
           }
         });
       }
@@ -970,6 +998,7 @@ export function ReaderAudioPlayer({
             isAutoAdvancingRef.current = false;
             // Clear track change flag when playback starts
             trackChangeInProgressRef.current = false;
+            setIsLocalTrackChanging(false);
           }
         });
       }
@@ -1013,6 +1042,7 @@ export function ReaderAudioPlayer({
             isAutoAdvancingRef.current = false;
             // Clear track change flag when playback starts
             trackChangeInProgressRef.current = false;
+            setIsLocalTrackChanging(false);
           }
         });
       }
@@ -1029,6 +1059,7 @@ export function ReaderAudioPlayer({
       // Note: handleAudioReadyForTrackChange uses { once: true }, so it auto-removes
       // Clear track change flag on cleanup as a safety measure
       trackChangeInProgressRef.current = false;
+      setIsLocalTrackChanging(false);
     };
   }, [playbackRate, onTrackChanged, onTrackChange, tryPlayIfReady, attemptAutoplay]);
 
@@ -1228,6 +1259,28 @@ export function ReaderAudioPlayer({
         return;
       }
       
+      // Get the next track to notify parent/coordinator BEFORE changing index
+      // This ensures the coordinator's loading state is set before the track index changes
+      const nextTrack = tracks[nextIndex];
+      if (!nextTrack) return;
+      
+      // Set local loading state IMMEDIATELY for instant UI feedback
+      // This updates synchronously before any async operations
+      setIsLocalTrackChanging(true);
+      
+      // Notify parent about track change IMMEDIATELY (synchronously) to trigger coordinator
+      // This ensures buttons are disabled before the track change happens
+      if (onTrackChange && !isRestoringRef.current && lastNotifiedTrackHrefRef.current !== nextTrack.href) {
+        logger.log("[Audio Player] Notifying parent of track change (via playTrackAt)", {
+          nextIndex,
+          trackHref: nextTrack.href,
+        });
+        lastNotifiedTrackHrefRef.current = nextTrack.href;
+        // Fire and forget - call synchronously to trigger coordinator immediately
+        // The coordinator will handle the async operation
+        onTrackChange(nextTrack.href);
+      }
+      
       // Mark track change as in progress to prevent audio from starting
       trackChangeInProgressRef.current = true;
       
@@ -1266,7 +1319,7 @@ export function ReaderAudioPlayer({
       setCurrentTime(0);
       setDuration(0);
     },
-    [setCurrentIndex, tracks],
+    [setCurrentIndex, tracks, onTrackChange],
   );
 
   const handlePrevious = useCallback(() => {
