@@ -771,7 +771,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
           bookTitle={pendingBookForConversion.book.title}
         />
       ) : null}
-      <Toaster position="top-center" richColors />
+      <Toaster position="top-center" richColors style={{ top: "max(env(safe-area-inset-top), 1rem)" }} />
     </div>
   );
 }
