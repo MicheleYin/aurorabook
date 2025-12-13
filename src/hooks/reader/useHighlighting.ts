@@ -149,11 +149,21 @@ export function useHighlighting(
     }
 
     // Find and apply new highlight
-    const selector =
-      typeof CSS !== "undefined" && CSS.escape
-        ? `#${CSS.escape(elementId)}`
-        : `#${elementId}`;
-    const element = root.querySelector<HTMLElement>(selector);
+    // Use getElementById for better performance (O(1) vs O(n) for querySelector)
+    let element: HTMLElement | null = null;
+    const docElement = document.getElementById(elementId);
+    if (docElement && root.contains(docElement)) {
+      element = docElement;
+    }
+    
+    // Fallback to querySelector only if getElementById didn't find it in our container
+    if (!element) {
+      const selector =
+        typeof CSS !== "undefined" && CSS.escape
+          ? `#${CSS.escape(elementId)}`
+          : `#${elementId}`;
+      element = root.querySelector<HTMLElement>(selector);
+    }
 
     if (element) {
       // Cancel any exit animation on this element

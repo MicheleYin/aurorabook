@@ -390,6 +390,11 @@ export function ReaderViewport({
               fontSizeTokenClass,
               chapterAnimationClass,
             )}
+            style={{
+              // CSS containment to limit layout calculations
+              // This tells the browser to optimize rendering for this subtree
+              contain: "layout style paint",
+            }}
           >
             <h2 className="text-2xl font-semibold">{activeChapter.title}</h2>
             {isLoadingChapter ? (
@@ -401,6 +406,11 @@ export function ReaderViewport({
                 data-reader-chapter-content="true"
                 data-chapter-id={activeChapter.id}
                 className="animate-in fade-in duration-300"
+                style={{
+                  // CSS containment to limit layout calculations for off-screen content
+                  contain: "layout style paint",
+                  contentVisibility: "auto",
+                }}
                 dangerouslySetInnerHTML={{
                   __html: activeChapter.contentHtml,
                 }}

@@ -320,25 +320,25 @@ export function scrollToElement(
     playerOffset,
   });
 
-  const selector = typeof CSS !== "undefined" && CSS.escape
-    ? `#${CSS.escape(elementId)}`
-    : `#${elementId}`;
+  // Use getElementById for better performance (O(1) vs O(n) for querySelector)
+  // This is much faster, especially with large DOMs
+  let element: HTMLElement | null = null;
+  const docElement = document.getElementById(elementId);
+  if (docElement && root.contains(docElement)) {
+    element = docElement;
+  }
   
-  console.log("[Scroll] Searching for element", { selector });
-  
-  const element = root.querySelector<HTMLElement>(selector) ??
-    root.querySelector<HTMLElement>(`a[name="${elementId}"]`);
+  // Fallback to querySelector for anchor tags with name attribute
+  if (!element) {
+    const selector = typeof CSS !== "undefined" && CSS.escape
+      ? `#${CSS.escape(elementId)}`
+      : `#${elementId}`;
+    element = root.querySelector<HTMLElement>(selector) ??
+      root.querySelector<HTMLElement>(`a[name="${elementId}"]`);
+  }
   
   if (!element) {
-    console.log("[Scroll] Element not found", { elementId, selector });
-    // Try to find any element with this ID in the document
-    const docElement = document.getElementById(elementId);
-    if (docElement) {
-      console.log("[Scroll] Element found in document but not in root", {
-        elementId,
-        rootContains: root.contains(docElement),
-      });
-    }
+    console.log("[Scroll] Element not found", { elementId });
     return false;
   }
 

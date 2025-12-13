@@ -420,9 +420,14 @@ export function useAudioTextSync(
 
     // Check if the element exists in the DOM
     // If not, and we have audio sync, the chapter might need to be reloaded with spans
-    // Use getElementById for better performance than querySelector
+    // Use getElementById for better performance (O(1) vs O(n) for querySelector)
+    let element: HTMLElement | null = null;
     if (contentRef.current) {
-      const element = contentRef.current.querySelector<HTMLElement>(`#${CSS.escape ? CSS.escape(segment.textElementId) : segment.textElementId}`);
+      // Try getElementById first (much faster - uses browser's ID map)
+      const docElement = document.getElementById(segment.textElementId);
+      if (docElement && contentRef.current.contains(docElement)) {
+        element = docElement;
+      }
       
       if (!element) {
         // Element not found - check if chapter content has any spans at all
