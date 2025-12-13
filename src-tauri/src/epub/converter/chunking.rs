@@ -75,139 +75,258 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
         span_mappings.push((span_id, start_word, end_word));
     }
     
-    // Rebuild HTML properly by parsing it and inserting spans only around text nodes
-    // This ensures we don't break HTML tag structure
-    let mut in_body = false;
-    let mut body_depth = 0;
+    // Parse HTML and insert spans around text content
+    // Strategy:
+    // 1. Open a span when we encounter the start of a sentence in a text token
+    // 2. Close a span when we encounter the end of a sentence OR when its containing element closes
+    // 3. Spans can span multiple text tokens (sentences can be split by HTML elements)
+    // 4. Track element stack to close spans when their containing elements close
+    
     let mut html_pos = 0;
     let mut output = String::with_capacity(html.len() + sentences.len() * 50);
     
-    // Build a map of sentence ranges
-    let mut sentence_ranges: Vec<(usize, usize, usize)> = Vec::new(); // (start, end, sentence_idx)
-    for (sentence_idx, span) in sentences_with_spans.iter().enumerate() {
-        sentence_ranges.push((span.start_byte, span.end_byte, sentence_idx));
-    }
-    // Sort by start position
-    sentence_ranges.sort_by_key(|(start, _, _)| *start);
+    // Track which sentence is currently open (only one at a time - no nesting)
+    let mut current_open_sentence: Option<usize> = None;
     
-    // Track which sentences are currently "open" (span opened but not yet closed)
-    let mut open_spans: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    // Track HTML element stack to know when to close spans
+    // Maps element name to its start position in HTML
+    let mut element_stack: Vec<(String, usize)> = Vec::new();
     
-    // Parse HTML and rebuild with spans inserted around text nodes
     for token in Tokenizer::from(html) {
         match token {
             Ok(Token::ElementStart { local, span, .. }) => {
-                let local_str = local.as_str();
-                if local_str.eq_ignore_ascii_case("body") {
-                    in_body = true;
-                    body_depth = 1;
-                } else if in_body {
-                    body_depth += 1;
+                // Output HTML before this token
+                output.push_str(&html[html_pos..span.start()]);
+                
+                // Check if this is a self-closing tag (like <a id="page-1"/>)
+                // Self-closing tags don't need to be tracked in the stack
+                let element_str = &html[span.start()..span.end()];
+                let is_self_closing = element_str.ends_with("/>") || element_str.ends_with(" />");
+                
+                // Only push to stack if not self-closing
+                if !is_self_closing {
+                    let element_name = local.as_str().to_string();
+                    element_stack.push((element_name.clone(), span.start()));
                 }
-                // Output HTML before this token and the token itself
-                let token_start = span.start();
-                let token_end = span.end();
-                output.push_str(&html[html_pos..token_start]);
-                output.push_str(&html[token_start..token_end]);
-                html_pos = token_end;
+                
+                // Output the element start tag
+                output.push_str(element_str);
+                html_pos = span.end();
             }
-            Ok(Token::ElementEnd { span, .. }) => {
-                if in_body && body_depth > 0 {
-                    body_depth -= 1;
-                    if body_depth == 0 {
-                        in_body = false;
+            Ok(Token::ElementEnd { end, span, .. }) => {
+                use htmlparser::ElementEnd;
+                
+                // Output HTML before this token
+                output.push_str(&html[html_pos..span.start()]);
+                
+                // Check if this is a closing tag and if we need to close spans
+                if let ElementEnd::Close(closing_local, _) = end {
+                    let closing_name = closing_local.as_str();
+                    
+                    // Find the matching opening tag in the stack
+                    if let Some(stack_pos) = element_stack.iter().rposition(|(name, _)| name.eq_ignore_ascii_case(closing_name)) {
+                        let (_, element_start) = element_stack[stack_pos];
+                        
+                        // If we have an open span, check if it's inside this closing element
+                        if let Some(current_sent_idx) = current_open_sentence {
+                            if let Some(span_data) = sentences_with_spans.get(current_sent_idx) {
+                                // Close span if it started inside this element
+                                // (span start is after element start and before element end)
+                                let span_inside = span_data.start_byte >= element_start && span_data.start_byte < span.start();
+                                if span_inside {
+                                    // Span is inside this element - close it before element closes
+                                    output.push_str("</span>");
+                                    current_open_sentence = None;
+                                }
+                            }
+                        }
+                        
+                        // Pop the element from stack
+                        element_stack.remove(stack_pos);
+                    } else {
+                        // Element not found in stack - might be a self-closing tag or malformed HTML
+                        // Still check if we need to close spans
+                        if current_open_sentence.is_some() {
+                            // For safety, close any open span when an element closes
+                            // (this handles edge cases where element wasn't in stack)
+                            output.push_str("</span>");
+                            current_open_sentence = None;
+                        }
                     }
                 }
-                // Output HTML before this token and the token itself
-                let token_start = span.start();
-                let token_end = span.end();
-                output.push_str(&html[html_pos..token_start]);
-                output.push_str(&html[token_start..token_end]);
-                html_pos = token_end;
+                
+                // Output the element end tag
+                output.push_str(&html[span.start()..span.end()]);
+                html_pos = span.end();
             }
             Ok(Token::Text { text }) => {
                 let text_start = text.start();
                 let text_end = text.end();
+                let text_content = text.as_str();
                 
-                // Output HTML before this text
+                // Output HTML before this text token
                 output.push_str(&html[html_pos..text_start]);
                 
-                if in_body {
-                    // Find which sentences start or end within this text token
-                    let mut spans_to_open: Vec<usize> = Vec::new();
-                    let mut spans_to_close: Vec<usize> = Vec::new();
-                    
-                    for (sent_start, sent_end, sent_idx) in &sentence_ranges {
-                        // Check if sentence overlaps with this text token
-                        if *sent_start < text_end && *sent_end > text_start {
-                            // Open span if sentence starts within or at the start of this text token
-                            // and isn't already open
-                            if *sent_start <= text_start && !open_spans.contains(sent_idx) {
-                                spans_to_open.push(*sent_idx);
-                                open_spans.insert(*sent_idx);
-                            } else if *sent_start > text_start && *sent_start < text_end && !open_spans.contains(sent_idx) {
-                                // Sentence starts in the middle of this text token
-                                // We need to split the text, but htmlparser doesn't support that easily
-                                // So we'll open the span at the start of the text token as an approximation
-                                // This might create slightly larger spans, but won't break HTML structure
-                                spans_to_open.push(*sent_idx);
-                                open_spans.insert(*sent_idx);
-                            }
-                            // Close span if sentence ends within this text token
-                            if *sent_end > text_start && *sent_end <= text_end && open_spans.contains(sent_idx) {
-                                spans_to_close.push(*sent_idx);
-                                open_spans.remove(sent_idx);
+                // Only process spans for content in the body (after byte 400)
+                if text_start > 400 {
+                    // Step 1: Close current sentence if it ended before this token
+                    if let Some(sent_idx) = current_open_sentence {
+                        if let Some(span_data) = sentences_with_spans.get(sent_idx) {
+                            if span_data.end_byte <= text_start {
+                                output.push_str("</span>");
+                                current_open_sentence = None;
                             }
                         }
                     }
                     
-                    // Sort spans to open/close in order
-                    spans_to_open.sort();
-                    spans_to_close.sort();
-                    spans_to_close.reverse(); // Close in reverse order
+                    // Step 2: Find all sentences that overlap with this text token, sorted by start position
+                    // Exclude sentences that have already completely ended before this token starts
+                    let mut relevant_sentences: Vec<(usize, &SentenceWithSpan)> = sentences_with_spans
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, span_data)| {
+                            // Sentence overlaps if it starts before token ends and ends after token starts
+                            // CRITICAL: end_byte must be > text_start (not >=) to ensure we don't
+                            // reopen sentences that have already completely ended
+                            span_data.start_byte < text_end && span_data.end_byte > text_start
+                        })
+                        .collect();
+                    relevant_sentences.sort_by_key(|(_, span_data)| span_data.start_byte);
                     
-                    // Open spans
-                    for sent_idx in spans_to_open {
-                        let span_id = format!("f{:06}", sent_idx + 1);
-                        output.push_str(&format!(r#"<span id="{}">"#, span_id));
-                    }
-                    
-                    // Output the text itself
-                    output.push_str(text.as_str());
-                    
-                    // Close spans
-                    for sent_idx in spans_to_close {
-                        output.push_str("</span>");
+                    if relevant_sentences.is_empty() {
+                        // No sentences in this token - just output text
+                        output.push_str(text_content);
+                        // Make sure we clear current_open_sentence if the sentence ended
+                        if let Some(sent_idx) = current_open_sentence {
+                            if let Some(span_data) = sentences_with_spans.get(sent_idx) {
+                                if span_data.end_byte <= text_end {
+                                    current_open_sentence = None;
+                                }
+                            }
+                        }
+                    } else {
+                        // Step 3: Process sentences in order, outputting text in chunks
+                        let mut pos_in_token = 0; // Position relative to text_start
+                        let mut active_sent_idx: Option<usize> = current_open_sentence;
+                        
+                        // If current_open_sentence has ended, clear it
+                        if let Some(sent_idx) = active_sent_idx {
+                            if let Some(span_data) = sentences_with_spans.get(sent_idx) {
+                                if span_data.end_byte <= text_start {
+                                    active_sent_idx = None;
+                                }
+                            }
+                        }
+                        
+                        for (sent_idx, span_data) in relevant_sentences {
+                            // Determine boundaries within this token
+                            let sent_start_in_token = if span_data.start_byte >= text_start {
+                                span_data.start_byte - text_start
+                            } else {
+                                0 // Sentence started before this token
+                            };
+                            
+                            let sent_end_in_token = if span_data.end_byte <= text_end {
+                                span_data.end_byte - text_start
+                            } else {
+                                text_content.len() // Sentence continues beyond this token
+                            };
+                            
+                            // Close previous sentence if needed
+                            if let Some(prev_sent_idx) = active_sent_idx {
+                                if prev_sent_idx != sent_idx {
+                                    // Close at the earlier of: previous sentence end or new sentence start
+                                    let close_pos = if let Some(prev_span_data) = sentences_with_spans.get(prev_sent_idx) {
+                                        let prev_end = if prev_span_data.end_byte <= text_end {
+                                            prev_span_data.end_byte - text_start
+                                        } else {
+                                            sent_start_in_token
+                                        };
+                                        prev_end.min(sent_start_in_token)
+                                    } else {
+                                        sent_start_in_token
+                                    };
+                                    
+                                    // Output text up to close position
+                                    if close_pos > pos_in_token {
+                                        let slice = &text_content[pos_in_token..close_pos.min(text_content.len())];
+                                        output.push_str(slice);
+                                    }
+                                    output.push_str("</span>");
+                                    pos_in_token = close_pos;
+                                    active_sent_idx = None;
+                                }
+                            }
+                            
+                            // Open new sentence if it starts in this token
+                            if sent_start_in_token > pos_in_token {
+                                // Output text between sentences (shouldn't happen often, but handle it)
+                                let slice = &text_content[pos_in_token..sent_start_in_token.min(text_content.len())];
+                                output.push_str(slice);
+                                pos_in_token = sent_start_in_token;
+                            }
+                            
+                            if active_sent_idx != Some(sent_idx) {
+                                // Only open if:
+                                // 1. Sentence hasn't already ended (end_byte > text_start)
+                                // 2. Sentence actually starts in this token OR we had it open before
+                                //    (if it started before this token and we don't have it open,
+                                //     it means it was closed at an element boundary and shouldn't be reopened)
+                                let should_open = span_data.end_byte > text_start && 
+                                    (span_data.start_byte >= text_start || current_open_sentence == Some(sent_idx));
+                                
+                                if should_open {
+                                    // Open the new sentence span
+                                    let span_id = format!("f{:06}", sent_idx + 1);
+                                    output.push_str(&format!(r#"<span id="{}">"#, span_id));
+                                    active_sent_idx = Some(sent_idx);
+                                }
+                            }
+                            
+                            // Output text for this sentence
+                            if sent_end_in_token > pos_in_token {
+                                let slice = &text_content[pos_in_token..sent_end_in_token.min(text_content.len())];
+                                output.push_str(slice);
+                                pos_in_token = sent_end_in_token;
+                            }
+                            
+                            // Close sentence if it ends in this token
+                            if span_data.end_byte > text_start && span_data.end_byte <= text_end {
+                                output.push_str("</span>");
+                                active_sent_idx = None;
+                            }
+                        }
+                        
+                        // Output any remaining text after the last sentence
+                        if pos_in_token < text_content.len() {
+                            let slice = &text_content[pos_in_token..];
+                            output.push_str(slice);
+                        }
+                        
+                        // Update current_open_sentence for next token
+                        current_open_sentence = active_sent_idx;
                     }
                 } else {
-                    // Not in body, just copy the text as-is
-                    output.push_str(text.as_str());
+                    // Not in body - just output text
+                    output.push_str(text_content);
                 }
                 
                 html_pos = text_end;
             }
             Err(e) => {
                 log::warn!("htmlparser error while rebuilding HTML: {:?}", e);
-                // Continue processing, htmlparser will try to recover
             }
-            _ => {
-                // For other tokens (attributes, comments, etc.), htmlparser doesn't give us
-                // direct access, but they're included in the raw HTML between tokens
-                // So we don't need to handle them explicitly - they'll be in the gaps
-            }
+            _ => {}
         }
     }
     
-    // Output any remaining HTML and close any remaining open spans
+    // Output any remaining HTML
     if html_pos < html.len() {
         output.push_str(&html[html_pos..]);
     }
     
-    // Close any spans that are still open (shouldn't happen, but be safe)
-    let mut remaining_spans: Vec<usize> = open_spans.iter().copied().collect();
-    remaining_spans.sort();
-    remaining_spans.reverse();
-    for _sent_idx in remaining_spans {
+    // Close any remaining open spans
+    if current_open_sentence.is_some() {
         output.push_str("</span>");
     }
     
@@ -232,124 +351,118 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
 ///
 /// # Returns
 /// A vector of sentences with their byte positions in the original HTML
+
+/// Represents a text segment extracted from HTML with its exact position
+#[derive(Debug, Clone)]
+struct TextSegment {
+    /// The text content
+    text: String,
+    /// Start byte position in HTML
+    html_start: usize,
+    /// End byte position in HTML
+    html_end: usize,
+    /// Start byte position in the combined text (after concatenating all segments)
+    combined_start: usize,
+    /// End byte position in the combined text
+    combined_end: usize,
+}
+
 pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
     let sentence_pattern = &*SENTENCE_PATTERN;
     
-    // Extract text using htmlparser, tracking positions
-    // We'll collect text tokens and their positions
-    let mut text_parts: Vec<(usize, &str)> = Vec::new(); // (byte_offset, text)
+    // Extract text segments from HTML body, tracking their exact positions
+    let mut text_segments: Vec<TextSegment> = Vec::new();
     let mut in_body = false;
     let mut body_depth = 0;
-    let mut token_count = 0;
-    let mut error_count = 0;
-    
-    // Track the element stack to know when we're exiting body
-    let mut element_stack: Vec<String> = Vec::new();
+    let mut combined_byte_pos = 0;
     
     for token in Tokenizer::from(html) {
-        token_count += 1;
         match token {
             Ok(Token::ElementStart { local, .. }) => {
                 let local_str = local.as_str();
-                log::debug!("ElementStart: {}", local_str);
-                element_stack.push(local_str.to_string());
                 if local_str.eq_ignore_ascii_case("body") {
                     in_body = true;
                     body_depth = 1;
-                    log::debug!("Entered body, depth: {}", body_depth);
                 } else if in_body {
                     body_depth += 1;
-                    log::debug!("Inside body, depth increased to: {}", body_depth);
                 }
             }
             Ok(Token::ElementEnd { end, .. }) => {
-                // Check if this is a self-closing tag (end == ElementEnd::Open)
-                // or a closing tag (end == ElementEnd::Close)
                 use htmlparser::ElementEnd;
                 match end {
-                    ElementEnd::Open => {
-                        // Self-closing tag (like <br/>), don't exit body for these
-                        // Only pop from stack, but don't change body state
-                        if !element_stack.is_empty() {
-                            element_stack.pop();
-                        }
-                    }
                     ElementEnd::Close(local, _) => {
-                        // Closing tag, check if it's body
                         let local_str = local.as_str();
-                        log::debug!("ElementEnd::Close: {}", local_str);
                         if local_str.eq_ignore_ascii_case("body") && in_body {
                             in_body = false;
                             body_depth = 0;
-                            log::debug!("Exited body (closing tag)");
                         } else if in_body && body_depth > 1 {
                             body_depth -= 1;
-                            log::debug!("Inside body, depth decreased to: {} (closing tag: {})", body_depth, local_str);
-                        }
-                        // Pop from stack
-                        if !element_stack.is_empty() {
-                            element_stack.pop();
                         }
                     }
-                    ElementEnd::Empty => {
-                        // Empty element (like <br/>), don't exit body for these
-                        // Only pop from stack, but don't change body state
-                        if !element_stack.is_empty() {
-                            element_stack.pop();
+                    _ => {
+                        if in_body && body_depth > 0 {
+                            body_depth -= 1;
                         }
                     }
                 }
             }
             Ok(Token::Text { text }) => {
-                let text_str = text.as_str();
-                log::debug!("Text token found: '{}' (in_body: {})", text_str.chars().take(50).collect::<String>(), in_body);
                 if in_body {
-                    text_parts.push((text.start(), text_str));
+                    let text_str = text.as_str();
+                    let html_start = text.start();
+                    let html_end = text.end();
+                    let text_len = text_str.len();
+                    
+                    text_segments.push(TextSegment {
+                        text: text_str.to_string(),
+                        html_start,
+                        html_end,
+                        combined_start: combined_byte_pos,
+                        combined_end: combined_byte_pos + text_len,
+                    });
+                    
+                    combined_byte_pos += text_len;
                 }
             }
             Err(e) => {
-                error_count += 1;
                 log::warn!("htmlparser error: {:?}", e);
             }
-            _ => {
-                log::debug!("Other token: {:?}", token);
-            }
+            _ => {}
         }
     }
     
-    log::debug!("htmlparser: processed {} tokens, {} errors, {} text parts found", token_count, error_count, text_parts.len());
-    
-    // Combine all text parts
-    let all_text: String = text_parts.iter().map(|(_, text)| *text).collect();
-    
-    // Trim the text and check if it's empty
-    let trimmed_text = all_text.trim();
-    if trimmed_text.is_empty() {
-        log::debug!("No text found in HTML body");
+    if text_segments.is_empty() {
         return Ok(Vec::new());
     }
     
-    // Build mapping from character positions in combined_text to HTML byte positions
-    // This maps each character in the combined text to its byte position in the original HTML
-    let mut char_to_html: Vec<Option<usize>> = Vec::new();
-    for (html_byte_pos, text) in text_parts.iter() {
-        let mut byte_offset = 0;
-        for ch in text.chars() {
-            char_to_html.push(Some(*html_byte_pos + byte_offset));
-            byte_offset += ch.len_utf8();
-        }
+    // Combine all text segments
+    let all_text: String = text_segments.iter().map(|seg| seg.text.as_str()).collect();
+    
+    // Trim and find sentences
+    let trimmed_text = all_text.trim();
+    if trimmed_text.is_empty() {
+        return Ok(Vec::new());
     }
     
-    // Find where trimmed_text starts in combined_text
     let trim_offset = all_text.find(trimmed_text).unwrap_or(0);
-    let trim_offset_chars = all_text[..trim_offset].chars().count();
     
-    // Split into sentences and map to HTML positions
+    // Helper: map a byte position in combined text to HTML byte position
+    let map_to_html = |combined_pos: usize| -> Option<usize> {
+        for seg in &text_segments {
+            if combined_pos >= seg.combined_start && combined_pos < seg.combined_end {
+                let offset_in_seg = combined_pos - seg.combined_start;
+                return Some(seg.html_start + offset_in_seg);
+            }
+        }
+        None
+    };
+    
+    // Find sentences in trimmed text
     let sentence_matches: Vec<(usize, usize, &str)> = sentence_pattern
         .find_iter(trimmed_text)
         .map(|m| {
-            let start = m.start();
-            let end = m.end();
+            let start = m.start(); // Byte position in trimmed_text
+            let end = m.end();     // Byte position in trimmed_text
             let text = m.as_str().trim();
             (start, end, text)
         })
@@ -357,14 +470,14 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
         .collect();
     
     let all_sentences: Vec<SentenceWithSpan> = if sentence_matches.is_empty() {
-        // If no sentences found but text exists, treat the whole text as one sentence
-        let start_chars = trim_offset_chars;
-        let end_chars = start_chars + trimmed_text.chars().count();
-        let start_byte = char_to_html.get(start_chars).and_then(|&pos| pos)
-            .or_else(|| text_parts.first().map(|(pos, _)| *pos))
+        // Treat whole text as one sentence
+        let start_combined = trim_offset;
+        let end_combined = trim_offset + trimmed_text.len();
+        let start_byte = map_to_html(start_combined)
+            .or_else(|| text_segments.first().map(|s| s.html_start))
             .unwrap_or(0);
-        let end_byte = char_to_html.get(end_chars).and_then(|&pos| pos)
-            .or_else(|| text_parts.last().map(|(pos, text)| *pos + text.len()))
+        let end_byte = map_to_html(end_combined)
+            .or_else(|| text_segments.last().map(|s| s.html_end))
             .unwrap_or(html.len());
         vec![SentenceWithSpan {
             text: trimmed_text.to_string(),
@@ -372,63 +485,17 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
             end_byte,
         }]
     } else {
-        sentence_matches.into_iter().map(|(sent_start, _sent_end, text)| {
-            // Map from trimmed_text character positions to combined_text character positions
-            let sent_start_chars = trimmed_text[..sent_start].chars().count();
-            let sent_end_chars = sent_start_chars + text.chars().count();
+        sentence_matches.into_iter().map(|(sent_start, sent_end, text)| {
+            // Map from trimmed_text positions to combined_text positions
+            let start_combined = trim_offset + sent_start;
+            let end_combined = trim_offset + sent_end;
             
-            let start_in_combined = trim_offset_chars + sent_start_chars;
-            let end_in_combined = trim_offset_chars + sent_end_chars;
-            
-            // Get HTML byte positions with better fallback handling
-            let start_byte = char_to_html.get(start_in_combined)
-                .and_then(|&pos| pos)
-                .or_else(|| {
-                    // Find the text part that contains this character position
-                    let mut char_count = 0;
-                    for (html_byte_pos, text_part) in text_parts.iter() {
-                        let part_char_count = text_part.chars().count();
-                        if char_count <= start_in_combined && start_in_combined < char_count + part_char_count {
-                            // Calculate byte offset within this text part
-                            let offset_in_part = start_in_combined - char_count;
-                            let mut byte_offset = 0;
-                            for (i, ch) in text_part.chars().enumerate() {
-                                if i == offset_in_part {
-                                    break;
-                                }
-                                byte_offset += ch.len_utf8();
-                            }
-                            return Some(*html_byte_pos + byte_offset);
-                        }
-                        char_count += part_char_count;
-                    }
-                    text_parts.first().map(|(pos, _)| *pos)
-                })
+            // Map to HTML positions
+            let start_byte = map_to_html(start_combined)
+                .or_else(|| text_segments.first().map(|s| s.html_start))
                 .unwrap_or(0);
-            
-            let end_byte = char_to_html.get(end_in_combined)
-                .and_then(|&pos| pos)
-                .or_else(|| {
-                    // Find the text part that contains this character position
-                    let mut char_count = 0;
-                    for (html_byte_pos, text_part) in text_parts.iter() {
-                        let part_char_count = text_part.chars().count();
-                        if char_count <= end_in_combined && end_in_combined <= char_count + part_char_count {
-                            // Calculate byte offset within this text part
-                            let offset_in_part = end_in_combined - char_count;
-                            let mut byte_offset = 0;
-                            for (i, ch) in text_part.chars().enumerate() {
-                                if i >= offset_in_part {
-                                    break;
-                                }
-                                byte_offset += ch.len_utf8();
-                            }
-                            return Some(*html_byte_pos + byte_offset);
-                        }
-                        char_count += part_char_count;
-                    }
-                    text_parts.last().map(|(pos, text)| *pos + text.len())
-                })
+            let end_byte = map_to_html(end_combined)
+                .or_else(|| text_segments.last().map(|s| s.html_end))
                 .unwrap_or(html.len());
             
             SentenceWithSpan {
@@ -443,5 +510,6 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
     
     Ok(all_sentences)
 }
+
 
 
