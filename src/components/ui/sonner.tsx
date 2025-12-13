@@ -11,7 +11,7 @@ import { Toaster as SonnerToaster, type ToasterProps } from "sonner";
 export function Toaster(props: ToasterProps) {
   return (
     <SonnerToaster
-      className="toaster group"
+      className="toaster group safe-area-top"
       icons={{
         success: <CircleCheck className="h-4 w-4" />,
         info: <Info className="h-4 w-4" />,
