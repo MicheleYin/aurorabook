@@ -9,6 +9,7 @@ import { ReaderWrapper } from "./reader/ReaderWrapper";
 import { cn } from "../lib/utils";
 import { animPatterns, enterExit, anim } from "../lib/animations";
 import { Button } from "./ui/button";
+import { useResolvedTheme } from "../hooks/useResolvedTheme";
 type ReaderPanelProps = ReaderPanelBaseProps & {
   resolvedUiTheme: "light" | "dark";
   uiTheme: UITheme;
@@ -104,7 +105,8 @@ export function ReaderPanel({
     onNavigateLibrary?.();
   };
 
-  const appliedTheme: "light" | "dark" = resolvedUiTheme;
+  // Resolve reader theme (separate from UI theme, listens to system changes)
+  const resolvedReaderTheme = useResolvedTheme(preferences.theme as UITheme);
   const audioTracks = activeBook?.audioTracks ?? [];
   const hasAudioTracks = audioTracks.length > 0;
   const showAudioPlayer = audioPlayerVisible ?? hasAudioTracks;
@@ -240,7 +242,7 @@ export function ReaderPanel({
           onPreferencesChange={onPreferencesChange}
           onSelectChapter={handleChapterChange}
           chromeVisible={chromeVisible}
-          resolvedTheme={appliedTheme}
+          resolvedTheme={resolvedReaderTheme}
           onToggleChrome={handleToggleImmersive}
           audioPlayerVisible={showAudioPlayer}
           onChapterProgress={onChapterProgress}
