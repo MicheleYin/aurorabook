@@ -97,3 +97,4 @@
 4. Test audio sync still works correctly
 5. Test scrolling performance
 
+

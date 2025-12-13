@@ -13,7 +13,7 @@ pub use parser::{
     extract_metadata_with_epub_crate, parse_opf_content,
     parse_ncx_titles,
     find_cover_image, extract_cover_image_as_data_url,
-    extract_audio_tracks_from_manifest, compute_audio_track_durations,
+    extract_audio_tracks_from_manifest, extract_audio_tracks_from_spine, compute_audio_track_durations,
     extract_chapters_from_epub,
     extract_year, derive_title_from_path, generate_audio_track_title,
 };

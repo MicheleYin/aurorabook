@@ -7,7 +7,7 @@ use tauri::AppHandle;
 use crate::book_service::models::{Book, ConversionStatus};
 use crate::book_service::database::get_db_connection;
 use crate::book_service::repositories::BookRepository;
-use crate::epub::parser::{find_opf_path, parse_opf_content, extract_audio_tracks_from_manifest, extract_chapters_from_epub, parse_ncx_ordered_hrefs};
+use crate::epub::parser::{find_opf_path, parse_opf_content, extract_audio_tracks_from_spine, extract_chapters_from_epub, parse_ncx_ordered_hrefs};
 use crate::epub::converter::smil::build_audio_sync_map;
 use std::io::Cursor;
 use zip::ZipArchive;
@@ -130,13 +130,14 @@ fn extract_audio_data_from_epub(
             .map_err(|e| format!("Failed to read OPF: {}", e))?;
         content
     };
-    let (_metadata, manifest_items, _spine_items) = parse_opf_content(&opf_content)
+    let (_metadata, manifest_items, spine_items) = parse_opf_content(&opf_content)
         .map_err(|e| format!("Failed to parse OPF content: {}", e))?;
     
     log_manifest_items(&manifest_items);
     
-    let audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
-    log::info!("Extracted {} audio tracks from manifest", audio_tracks.len());
+    // Extract audio tracks from spine in order (ensures tracks match chapter order)
+    let audio_tracks = extract_audio_tracks_from_spine(&spine_items, &manifest_items);
+    log::info!("Extracted {} audio tracks from spine (in order)", audio_tracks.len());
     
     // Extract chapters from converted EPUB for building audio sync map
     let (mut chapters, _) = extract_chapters_from_epub(converted_epub)
@@ -318,15 +319,159 @@ fn extract_audio_data_from_epub(
         log::warn!("🔍 DEBUG: No NCX file found, using chapters in spine order");
     }
     
+    // Build a map of actual file paths in the EPUB archive for path normalization
+    let mut archive_file_paths = std::collections::HashSet::new();
+    for i in 0..archive.len() {
+        if let Ok(file) = archive.by_index(i) {
+            let name = file.name().to_string();
+            archive_file_paths.insert(name.clone());
+            // Also add normalized versions (without leading slash, etc.)
+            archive_file_paths.insert(name.trim_start_matches('/').to_string());
+        }
+    }
+    
     // Order audio tracks to match chapter order using manifest relationships
     log::info!("🔍 DEBUG: Starting to order {} audio tracks to match {} chapters", audio_tracks.len(), chapters.len());
-    let ordered_audio_tracks = order_audio_tracks_by_chapters(&audio_tracks, &chapters, &manifest_items);
+    let ordered_audio_tracks = order_audio_tracks_by_chapters(&audio_tracks, &chapters, &manifest_items, &archive_file_paths);
     log::info!("🔍 DEBUG: Ordered {} audio tracks to match {} chapters", ordered_audio_tracks.len(), chapters.len());
     for (idx, track) in ordered_audio_tracks.iter().enumerate() {
         log::info!("🔍 DEBUG: Audio Track #{}: order={}, href='{}', title='{}'", idx, track.order, track.href, track.title);
     }
     
     Ok((ordered_audio_tracks, chapters))
+}
+
+/// Normalize an EPUB href path to match the actual structure in the EPUB archive
+/// This function tries to find the actual file path that exists in the archive
+fn normalize_epub_href_to_archive(
+    href: &str,
+    archive_file_paths: &std::collections::HashSet<String>,
+) -> Option<String> {
+    // First, try exact match
+    if archive_file_paths.contains(href) {
+        return Some(href.to_string());
+    }
+    
+    // Try without leading slash
+    let no_leading_slash = href.trim_start_matches('/');
+    if no_leading_slash != href && archive_file_paths.contains(no_leading_slash) {
+        return Some(no_leading_slash.to_string());
+    }
+    
+    // Try with leading slash
+    let with_leading_slash = if !href.starts_with("/") {
+        format!("/{}", href)
+    } else {
+        href.to_string()
+    };
+    if archive_file_paths.contains(&with_leading_slash) {
+        return Some(with_leading_slash);
+    }
+    
+    // Try to find by filename (case-insensitive search for actual files)
+    let filename = href.split("/").last().unwrap_or(href);
+    for archive_path in archive_file_paths {
+        let archive_filename = archive_path.split("/").last().unwrap_or(archive_path);
+        if archive_filename == filename {
+            return Some(archive_path.clone());
+        }
+    }
+    
+    // Try common path variations
+    let variations = vec![
+        href.to_string(),
+        no_leading_slash.to_string(),
+        with_leading_slash.clone(),
+        // Try with common prefixes
+        format!("OEBPS/{}", no_leading_slash),
+        format!("EPUB/{}", no_leading_slash),
+        // Try without common prefixes
+        href.strip_prefix("OEBPS/").unwrap_or(href).to_string(),
+        href.strip_prefix("EPUB/").unwrap_or(href).to_string(),
+        href.strip_prefix("/OEBPS/").unwrap_or(href).to_string(),
+        href.strip_prefix("/EPUB/").unwrap_or(href).to_string(),
+    ];
+    
+    for variant in variations {
+        if archive_file_paths.contains(&variant) {
+            return Some(variant);
+        }
+    }
+    
+    None
+}
+
+/// Generate all possible path variations for matching (fallback when archive not available)
+fn normalize_epub_href_for_matching(href: &str) -> Vec<String> {
+    let mut variations = Vec::new();
+    
+    // Original
+    variations.push(href.to_string());
+    
+    // Without leading slash
+    let no_leading_slash = href.trim_start_matches('/');
+    if no_leading_slash != href {
+        variations.push(no_leading_slash.to_string());
+    }
+    
+    // With leading slash
+    if !href.starts_with("/") {
+        variations.push(format!("/{}", href));
+    }
+    
+    // Without OEBPS/ prefix
+    let without_oebps = href
+        .strip_prefix("OEBPS/")
+        .or_else(|| href.strip_prefix("/OEBPS/"))
+        .unwrap_or(href);
+    if without_oebps != href {
+        variations.push(without_oebps.to_string());
+        // Also without leading slash
+        let without_oebps_no_slash = without_oebps.trim_start_matches('/');
+        if without_oebps_no_slash != without_oebps {
+            variations.push(without_oebps_no_slash.to_string());
+        }
+    }
+    
+    // With OEBPS/ prefix
+    if !href.starts_with("OEBPS/") && !href.starts_with("/OEBPS/") {
+        let with_oebps = format!("OEBPS/{}", href.trim_start_matches('/'));
+        variations.push(with_oebps.clone());
+        // Also with leading slash
+        variations.push(format!("/{}", with_oebps));
+    }
+    
+    // Without EPUB/ prefix
+    let without_epub = href
+        .strip_prefix("EPUB/")
+        .or_else(|| href.strip_prefix("/EPUB/"))
+        .unwrap_or(href);
+    if without_epub != href {
+        variations.push(without_epub.to_string());
+    }
+    
+    // With EPUB/ prefix
+    if !href.starts_with("EPUB/") && !href.starts_with("/EPUB/") {
+        let with_epub = format!("EPUB/{}", href.trim_start_matches('/'));
+        variations.push(with_epub);
+    }
+    
+    // Just filename (last resort)
+    if let Some(filename) = href.split("/").last() {
+        if filename != href {
+            variations.push(filename.to_string());
+        }
+    }
+    
+    // Remove duplicates while preserving order
+    let mut unique = Vec::new();
+    for v in variations {
+        if !unique.contains(&v) {
+            unique.push(v);
+        }
+    }
+    
+    unique
 }
 
 /// Order audio tracks to match the chapter order.
@@ -339,15 +484,18 @@ fn extract_audio_data_from_epub(
 /// 
 /// Falls back to ID pattern matching (e.g., p001 → s001 → m001) if media-overlay chain is incomplete.
 /// Each audio track's order is set to match the order of its corresponding chapter.
+/// 
+/// Paths are normalized to match the actual EPUB archive structure.
 pub fn order_audio_tracks_by_chapters(
     audio_tracks: &[crate::book_service::models::AudioTrack],
     chapters: &[crate::book_service::models::Chapter],
     manifest_items: &std::collections::HashMap<String, crate::epub::parser::ManifestItem>,
+    archive_file_paths: &std::collections::HashSet<String>,
 ) -> Vec<crate::book_service::models::AudioTrack> {
     use std::collections::HashMap;
     
     // Build maps for efficient lookup
-    // Map: chapter href -> chapter manifest item ID
+    // Map: chapter href -> chapter manifest item ID (with all path variations)
     let mut chapter_href_to_id: HashMap<String, String> = HashMap::new();
     // Map: audio track manifest ID -> audio track
     let mut audio_track_by_id: HashMap<String, crate::book_service::models::AudioTrack> = HashMap::new();
@@ -360,10 +508,22 @@ pub fn order_audio_tracks_by_chapters(
     }
     
     // Find chapter manifest items by href and audio tracks by manifest ID
+    // Normalize manifest item hrefs to match actual EPUB archive structure
     for (id, item) in manifest_items {
         if let Some(ref mt) = item.media_type {
             if mt == "application/xhtml+xml" || mt == "text/html" || mt == "application/html+xml" {
-                chapter_href_to_id.insert(item.href.clone(), id.clone());
+                // Normalize the manifest item href to match actual archive structure
+                let normalized_href = normalize_epub_href_to_archive(&item.href, archive_file_paths)
+                    .unwrap_or_else(|| item.href.clone());
+                
+                // Insert normalized href
+                chapter_href_to_id.insert(normalized_href.clone(), id.clone());
+                
+                // Also insert all path variations for fallback matching
+                let href_variations = normalize_epub_href_for_matching(&normalized_href);
+                for href_variant in href_variations {
+                    chapter_href_to_id.insert(href_variant, id.clone());
+                }
             } else if mt.starts_with("audio/") {
                 // Find matching audio track by href (exact match)
                 if let Some(track) = audio_track_by_href.get(&item.href) {
@@ -400,32 +560,28 @@ pub fn order_audio_tracks_by_chapters(
         // Find the manifest item for this chapter by href
         let mut matched_track: Option<crate::book_service::models::AudioTrack> = None;
         
-        // Try multiple href variations to find the manifest item
-        let chapter_manifest_id = chapter_href_to_id.get(&chapter.href)
-            .or_else(|| {
-                // Try without leading slash
-                let href_no_slash = if chapter.href.starts_with("/") { &chapter.href[1..] } else { &chapter.href };
-                chapter_href_to_id.get(href_no_slash)
-            })
-            .or_else(|| {
-                // Try with leading slash
-                let href_with_slash = if !chapter.href.starts_with("/") { format!("/{}", chapter.href) } else { chapter.href.clone() };
-                chapter_href_to_id.get(&href_with_slash)
-            })
-            .or_else(|| {
-                // Try just filename
-                let filename = chapter.href.split("/").last().unwrap_or(&chapter.href);
-                chapter_href_to_id.get(filename)
-            });
+        // Normalize chapter href to match actual EPUB archive structure
+        let normalized_chapter_href = normalize_epub_href_to_archive(&chapter.href, archive_file_paths)
+            .unwrap_or_else(|| chapter.href.clone());
         
-        if let Some(chapter_manifest_id) = chapter_manifest_id {
+        // Try to find manifest item using normalized href first, then fallback to variations
+        let chapter_manifest_id = chapter_href_to_id.get(&normalized_chapter_href)
+            .or_else(|| {
+                // Fallback: try all path variations
+                let chapter_href_variations = normalize_epub_href_for_matching(&normalized_chapter_href);
+                chapter_href_variations.iter()
+                    .find_map(|href_variant| chapter_href_to_id.get(href_variant))
+            })
+            .map(|id| id.clone());
+        
+        if let Some(ref chapter_manifest_id) = chapter_manifest_id {
             log::info!("🔍 DEBUG: Found chapter manifest ID '{}' for href '{}'", chapter_manifest_id, chapter.href);
             if let Some(chapter_item) = manifest_items.get(chapter_manifest_id) {
                 log::info!("🔍 DEBUG: Chapter manifest item: id='{}', href='{}', media_overlay={:?}", 
                     chapter_manifest_id, chapter_item.href, chapter_item.media_overlay);
                 // Strategy 1: Use media-overlay chain from OPF (chapter → SMIL → audio)
-                // This is the primary and most reliable method - only chapters with media-overlay
-                // should be matched to audio tracks
+                // This is the PRIMARY method - tracks MUST be ordered by media-overlay chain, NOT alphabetically
+                // The chain is: chapter (p001) → media-overlay (s001) → audio track (m001)
                 if let Some(ref smil_id) = chapter_item.media_overlay {
                     log::info!("🔍 DEBUG: Chapter '{}' has media-overlay '{}', following chain to find audio track", chapter.title, smil_id);
                     
@@ -457,48 +613,21 @@ pub fn order_audio_tracks_by_chapters(
                     }
                 } else {
                     // Chapter has no media-overlay - it likely doesn't have audio
-                    // Only use conservative filename matching as a last resort
-                    log::debug!("🔍 DEBUG: Chapter '{}' (id: '{}', href: '{}') has no media-overlay, trying filename match as fallback", 
+                    // Skip chapters without media-overlay to ensure tracks are only ordered by media-overlay chain
+                    // This prevents accidental alphabetical ordering
+                    log::debug!("🔍 DEBUG: Chapter '{}' (id: '{}', href: '{}') has no media-overlay, skipping audio track matching", 
                         chapter.title, chapter_manifest_id, chapter.href);
-                    
-                    let chapter_filename = chapter.href.split("/").last().unwrap_or(&chapter.href);
-                    let chapter_base = chapter_filename
-                        .rsplit(".")
-                        .skip(1)
-                        .next()
-                        .unwrap_or(chapter_filename)
-                        .to_lowercase();
-                    
-                    // Try to find audio track with matching base filename
-                    for (id, track) in audio_track_by_id.iter() {
-                        if matched_audio_ids.contains(id) {
-                            continue;
-                        }
-                        
-                        let track_filename = track.href.split("/").last().unwrap_or(&track.href);
-                        let track_base = track_filename
-                            .rsplit(".")
-                            .skip(1)
-                            .next()
-                            .unwrap_or(track_filename)
-                            .to_lowercase();
-                        
-                        if track_base == chapter_base {
-                            matched_track = Some(track.clone());
-                            matched_audio_ids.insert(id.clone());
-                            log::info!("🔍 DEBUG: Matched audio track '{}' (href: '{}', id: {}) to chapter '{}' (href: '{}') via filename match (order: {}) - NOTE: chapter has no media-overlay", 
-                                track.title, track.href, id, chapter.title, chapter.href, chapter.order);
-                            break;
-                        }
-                    }
                 }
             }
         }
         
         // Set order and append to ordered list
+        // Use sequential ordering (0, 1, 2, ...) instead of chapter.order to ensure
+        // tracks have correct sequential order regardless of chapter positions
         if let Some(mut track) = matched_track {
-            track.order = chapter.order;
-            log::info!("🔍 DEBUG: Matched audio track '{}' (href: '{}') to chapter '{}' (order: {})", track.title, track.href, chapter.title, chapter.order);
+            track.order = ordered_tracks.len(); // Sequential order within audio tracks
+            log::info!("🔍 DEBUG: Matched audio track '{}' (href: '{}') to chapter '{}' (track order: {}, chapter order: {})", 
+                track.title, track.href, chapter.title, track.order, chapter.order);
             ordered_tracks.push(track);
         } else {
             log::warn!("🔍 DEBUG: Could not match audio track to chapter '{}' (href: '{}', order: {})", chapter.title, chapter.href, chapter.order);
@@ -515,23 +644,23 @@ pub fn order_audio_tracks_by_chapters(
         if let Some(id) = track_id {
             if !matched_audio_ids.contains(id) {
                 let mut track = track.clone();
-                // Use max chapter order + 1 for unmatched tracks
-                let max_order = chapters.iter().map(|ch| ch.order).max().unwrap_or(0);
-                track.order = max_order + 1 + ordered_tracks.len();
+                // Continue sequential ordering for unmatched tracks
+                track.order = ordered_tracks.len();
                 log::warn!("Audio track '{}' (id: {}) didn't match any chapter, assigning order {}", track.href, id, track.order);
                 ordered_tracks.push(track);
             }
         } else {
             // Track not in manifest, add it anyway
             let mut track = track.clone();
-            let max_order = chapters.iter().map(|ch| ch.order).max().unwrap_or(0);
-            track.order = max_order + 1 + ordered_tracks.len();
+            // Continue sequential ordering for unmatched tracks
+            track.order = ordered_tracks.len();
             log::warn!("Audio track '{}' not found in manifest, assigning order {}", track.href, track.order);
             ordered_tracks.push(track);
         }
     }
     
-    // Sort by order to ensure correct sequence
+    // Sort by order to ensure correct sequence based on chapter order (via media-overlay chain)
+    // This ensures tracks are ordered by their corresponding chapters' order, NOT alphabetically
     ordered_tracks.sort_by_key(|t| t.order);
     
     log::info!("Audio track ordering complete: {} tracks ordered (matched {} to chapters, {} unmatched)", 

@@ -204,3 +204,4 @@ const elementCache = new WeakMap<HTMLElement, {
 - Parse chapter into segments
 - Track scroll position
 
+

@@ -38,7 +38,7 @@ pub use navigation::{parse_ncx_titles, parse_ncx_ordered_hrefs};
 pub use cover::{find_cover_image, extract_cover_image_as_data_url};
 
 // Re-export audio functions
-pub use audio::{extract_audio_tracks_from_manifest, compute_audio_track_durations};
+pub use audio::{extract_audio_tracks_from_manifest, extract_audio_tracks_from_spine, compute_audio_track_durations};
 
 // Re-export chapter functions
 pub use chapters::extract_chapters_from_epub;

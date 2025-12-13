@@ -168,3 +168,4 @@ This document traces the complete flow from when a chapter is completed in the b
 
 4. **Add error handling** if chapter doesn't have spans after merge - should trigger backend reload
 
+

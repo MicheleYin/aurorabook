@@ -70,6 +70,138 @@ fn compute_audio_duration(audio_bytes: &[u8], mime_type: &str) -> Option<f64> {
     }
 }
 
+/// Extract audio tracks from EPUB manifest items in spine order.
+///
+/// This function iterates through the spine items in order and extracts audio tracks
+/// by following the media-overlay chain: chapter → SMIL → audio. This ensures
+/// audio tracks are in the same order as chapters appear in the spine/TOC.
+///
+/// # Arguments
+/// * `spine_items` - Vector of spine items as (idref, href) pairs in reading order
+/// * `manifest_items` - HashMap of manifest item IDs to ManifestItem objects
+///
+/// # Returns
+/// A vector of AudioTrack objects in spine order. Each track's order field is set
+/// to match its position in the spine.
+pub fn extract_audio_tracks_from_spine(
+    spine_items: &[(String, String)],
+    manifest_items: &HashMap<String, ManifestItem>,
+) -> Vec<crate::book_service::models::AudioTrack> {
+    use crate::book_service::models::AudioTrack;
+    use uuid::Uuid;
+    use log::debug;
+    
+    let mut audio_tracks: Vec<AudioTrack> = Vec::new();
+    let mut matched_audio_ids = std::collections::HashSet::new();
+    
+    // Helper to extract numeric suffix from ID (e.g., "p001" -> "001", "m001" -> "001")
+    let extract_id_suffix = |id: &str| -> Option<String> {
+        let mut suffix = String::new();
+        for ch in id.chars().rev() {
+            if ch.is_ascii_digit() {
+                suffix.insert(0, ch);
+            } else {
+                break;
+            }
+        }
+        if suffix.is_empty() { None } else { Some(suffix) }
+    };
+    
+    // Iterate through spine items in order
+    for (spine_index, (idref, _href)) in spine_items.iter().enumerate() {
+        // Get the manifest item for this spine item
+        if let Some(chapter_item) = manifest_items.get(idref) {
+            // Check if this chapter has a media-overlay (SMIL file)
+            if let Some(ref smil_id) = chapter_item.media_overlay {
+                debug!("Spine item #{} (idref: '{}') has media-overlay '{}'", spine_index, idref, smil_id);
+                
+                // Find SMIL file in manifest
+                if let Some(_smil_item) = manifest_items.get(smil_id) {
+                    // Extract numeric suffix from SMIL ID (e.g., "s001" -> "001")
+                    if let Some(suffix) = extract_id_suffix(smil_id) {
+                        // Match SMIL ID to audio track ID using pattern: s001 -> m001
+                        // Try common audio ID patterns: m{suffix}, audio{suffix}, a{suffix}
+                        let mut found_audio = false;
+                        for prefix in &["m", "audio", "a"] {
+                            let audio_id = format!("{}{}", prefix, suffix);
+                            if let Some(audio_item) = manifest_items.get(&audio_id) {
+                                // Check if this is actually an audio file
+                                if let Some(ref media_type) = audio_item.media_type {
+                                    if media_type.starts_with("audio/") {
+                                        // Check if we've already matched this audio track
+                                        if !matched_audio_ids.contains(&audio_id) {
+                                            // Generate a title from the filename
+                                            let filename = audio_item.href.split('/').last().unwrap_or(&audio_item.href);
+                                            let track_order = audio_tracks.len(); // Sequential order starting from 0
+                                            let title = generate_audio_track_title(filename, track_order);
+                                            
+                                            debug!("Matched audio track '{}' (id: {}, href: '{}') to spine position {} (track order: {})", 
+                                                title, audio_id, audio_item.href, spine_index, track_order);
+                                            
+                                            audio_tracks.push(AudioTrack {
+                                                id: Uuid::new_v4().to_string(),
+                                                title,
+                                                href: audio_item.href.clone(),
+                                                url: None,
+                                                duration: None,
+                                                order: track_order, // Sequential order within audio tracks (0, 1, 2, ...)
+                                            });
+                                            
+                                            matched_audio_ids.insert(audio_id.clone());
+                                            found_audio = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if !found_audio {
+                            debug!("Could not find audio track for SMIL '{}' (suffix: '{}')", smil_id, suffix);
+                        }
+                    } else {
+                        debug!("Could not extract numeric suffix from SMIL ID '{}'", smil_id);
+                    }
+                } else {
+                    debug!("SMIL file '{}' referenced by media-overlay not found in manifest", smil_id);
+                }
+            }
+        }
+    }
+    
+    // Add any remaining audio tracks that weren't matched via spine (fallback)
+    // This ensures we don't lose any audio tracks, but they'll be added at the end
+    let mut unmatched_audio_tracks = Vec::new();
+    for (id, item) in manifest_items.iter() {
+        if let Some(media_type) = &item.media_type {
+            if media_type.starts_with("audio/") && !matched_audio_ids.contains(id) {
+                let filename = item.href.split('/').last().unwrap_or(&item.href);
+                let track_order = audio_tracks.len() + unmatched_audio_tracks.len(); // Continue sequential ordering
+                let title = generate_audio_track_title(filename, track_order);
+                
+                unmatched_audio_tracks.push(AudioTrack {
+                    id: Uuid::new_v4().to_string(),
+                    title,
+                    href: item.href.clone(),
+                    url: None,
+                    duration: None,
+                    order: track_order, // Continue sequential order after matched tracks
+                });
+            }
+        }
+    }
+    
+    // Append unmatched tracks at the end
+    audio_tracks.extend(unmatched_audio_tracks);
+    
+    debug!("Extracted {} audio tracks in spine order ({} matched via spine, {} unmatched)", 
+        audio_tracks.len(), 
+        audio_tracks.len().saturating_sub(spine_items.len().saturating_sub(audio_tracks.len())),
+        audio_tracks.len().saturating_sub(spine_items.len()));
+    
+    audio_tracks
+}
+
 /// Extract audio tracks from EPUB manifest items.
 ///
 /// This function scans the manifest for items with audio media types
@@ -82,6 +214,11 @@ fn compute_audio_duration(audio_bytes: &[u8], mime_type: &str) -> Option<f64> {
 /// # Returns
 /// A vector of AudioTrack objects. The order is not guaranteed and should be
 /// sorted by calling `order_audio_tracks_by_chapters` to match chapter order.
+///
+/// # Deprecated
+/// This function is deprecated in favor of `extract_audio_tracks_from_spine` which
+/// extracts audio tracks in spine order. Use this function only when spine items
+/// are not available.
 pub fn extract_audio_tracks_from_manifest(
     manifest_items: &HashMap<String, ManifestItem>,
 ) -> Vec<crate::book_service::models::AudioTrack> {
