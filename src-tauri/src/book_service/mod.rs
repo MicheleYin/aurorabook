@@ -1428,6 +1428,36 @@ pub async fn ingest_epub(
         }
     }
     
+    // Process chapter HTML to resolve images to data URLs
+    // Reload chapters from database since chapters_with_content was moved into Book
+    log::info!("Resolving images in chapter HTML content...");
+    let chapters_to_process = ChapterRepository::find_by_book_id(db.as_ref(), &book_id).await
+        .map_err(|e| AppError::Store(format!("Failed to reload chapters for image processing: {}", e)))?;
+    
+    for chapter in &chapters_to_process {
+        if let Some(ref content_html) = chapter.content_html {
+            match process_images_in_html(db.as_ref(), &book_id, content_html, &chapter.href).await {
+                Ok(processed_html) => {
+                    // Only update if HTML was actually changed
+                    if processed_html != *content_html {
+                        log::debug!("Updating chapter '{}' with resolved images ({} -> {} bytes)", 
+                            chapter.href, content_html.len(), processed_html.len());
+                        if let Err(e) = ChapterRepository::update_content(db.as_ref(), &book_id, &chapter.id, &processed_html, None).await {
+                            log::error!("Failed to update chapter '{}' with resolved images: {}", chapter.href, e);
+                        } else {
+                            log::debug!("Successfully updated chapter '{}' with resolved images", chapter.href);
+                        }
+                    } else {
+                        log::debug!("Chapter '{}' HTML unchanged (no images to resolve)", chapter.href);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to process images in chapter '{}': {}", chapter.href, e);
+                }
+            }
+        }
+    }
+    
     // Store all audio track data AFTER book save (since book save deletes them first)
     log::info!("Storing {} audio tracks...", audio_extracted.len());
     if audio_extracted.is_empty() {
