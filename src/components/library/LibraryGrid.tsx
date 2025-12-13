@@ -173,7 +173,6 @@ function BookCoverCard({
               "group flex h-full flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm",
               animPatterns.cardHover,
               isActive && "border-primary shadow-md ring-1 ring-primary/40",
-              isActive && animPatterns.cardActive,
             )}
             aria-label={`Open ${book.title} by ${book.author}`}
           >
