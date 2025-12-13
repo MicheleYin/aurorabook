@@ -24,6 +24,7 @@ import { useContext } from "react";
 import { ReaderCoordinatorContext } from "../../contexts/ReaderCoordinatorContext";
 
 import { formatTime } from "../../lib/format-time";
+import { findChaptersForAudioTrack, chapterHrefsMatch } from "../../lib/epub";
 
 const PLAYBACK_RATE_OPTIONS = [0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 
@@ -139,6 +140,10 @@ export function ReaderAudioPlayer({
   const [isDismissing, setIsDismissing] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const [showTracksDialog, setShowTracksDialog] = useState(false);
+  // Track animation state for title/subtitle transitions
+  const [trackAnimationState, setTrackAnimationState] = useState<"entering" | "entered" | null>(null);
+  const [trackAnimationDirection, setTrackAnimationDirection] = useState<"left" | "right" | null>(null);
+  const previousTrackIndexRef = useRef<number | undefined>(undefined);
   // Simplified: Use ref to track loaded URLs instead of state to avoid re-render loops
   const loadedTrackUrlsRef = useRef<Map<string, string>>(new Map());
 
@@ -177,6 +182,42 @@ export function ReaderAudioPlayer({
     setIsDismissing(false);
     setIsVisible(false);
   }, [bookId, tracks.length]);
+
+  // Trigger track animation when track index changes
+  useEffect(() => {
+    const previousIndex = previousTrackIndexRef.current;
+    
+    if (previousIndex !== undefined && previousIndex !== currentIndex) {
+      // Determine direction based on previous vs current index
+      const direction = currentIndex > previousIndex ? "left" : "right";
+      setTrackAnimationDirection(direction);
+      
+      // Track changed - trigger animation
+      setTrackAnimationState("entering");
+      setTimeout(() => {
+        setTrackAnimationState("entered");
+      }, 50);
+    } else if (previousIndex === undefined) {
+      // First render - no animation
+      setTrackAnimationDirection(null);
+    }
+    
+    previousTrackIndexRef.current = currentIndex;
+  }, [currentIndex]);
+
+  // Determine track animation class
+  const trackAnimationClass = useMemo(() => {
+    if (trackAnimationState === "entering" || trackAnimationState === "entered") {
+      if (trackAnimationDirection === "left") {
+        return animPatterns.chapterSlideLeft;
+      } else if (trackAnimationDirection === "right") {
+        return animPatterns.chapterSlideRight;
+      } else {
+        return animPatterns.chapterCrossFade;
+      }
+    }
+    return null;
+  }, [trackAnimationState, trackAnimationDirection]);
 
   const commitSeek = useCallback(
     (targetSeconds: number) => {
@@ -1385,6 +1426,34 @@ export function ReaderAudioPlayer({
       return;
     }
 
+    // Find related chapters for the current track
+    const chapterHrefs = audioSyncMap
+      ? findChaptersForAudioTrack(audioSyncMap, currentTrack.href)
+      : [];
+    const relatedChapters = chapters
+      ? chapters.filter((chapter) => {
+          return chapterHrefs.some((chapterHref) =>
+            chapterHrefsMatch(chapter.href, chapterHref)
+          );
+        })
+      : [];
+    
+    // Build title with chapter information
+    const trackTitle = currentTrack.title || bookTitle;
+    let title = trackTitle;
+    if (relatedChapters.length > 0) {
+      const chapterTitle = relatedChapters[0].title;
+      title = `${chapterTitle} - ${trackTitle}`;
+    }
+
+    // Build artist with app name
+    const artist = bookAuthor 
+      ? `${bookAuthor} - AuroraBook`
+      : "AuroraBook";
+
+    // Build album with book title and app name
+    const album = `${bookTitle} - AuroraBook`;
+
     // Prepare artwork array
     const artwork: MediaImage[] = [];
     if (coverUrl) {
@@ -1399,16 +1468,17 @@ export function ReaderAudioPlayer({
     // Set metadata
     try {
       mediaSession.metadata = new MediaMetadata({
-        title: currentTrack.title || bookTitle,
-        artist: bookAuthor || "Audiobook",
-        album: bookTitle,
+        title,
+        artist,
+        album,
         artwork,
       });
 
       logger.log("[Audio Player] MediaSession metadata updated", {
-        title: currentTrack.title || bookTitle,
-        artist: bookAuthor || "Audiobook",
-        album: bookTitle,
+        title,
+        artist,
+        album,
+        chapterTitle: relatedChapters.length > 0 ? relatedChapters[0].title : undefined,
         hasArtwork: artwork.length > 0,
       });
     } catch (error) {
@@ -1467,7 +1537,7 @@ export function ReaderAudioPlayer({
         // Ignore errors when clearing handlers
       }
     };
-  }, [currentTrack, bookTitle, bookAuthor, coverUrl, isPlaying, togglePlayback, handlePrevious, handleNext, handleSkipBack, handleSkipForward]);
+  }, [currentTrack, bookTitle, bookAuthor, coverUrl, isPlaying, togglePlayback, handlePrevious, handleNext, handleSkipBack, handleSkipForward, audioSyncMap, chapters]);
 
   const displayedCurrentTime = useMemo(() => {
     if (isScrubbing && typeof scrubTime === "number") {
@@ -1637,9 +1707,9 @@ export function ReaderAudioPlayer({
         {/* Mobile: Top row with title, speed, sync, close */}
         <div className="flex sm:hidden flex-row justify-between items-center gap-2">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">{currentTrack.title}</p>
+            <p className={cn("truncate text-sm font-semibold", trackAnimationClass)}>{currentTrack.title}</p>
             {bookTitle ? (
-              <p className="truncate text-xs text-muted-foreground">{bookTitle}</p>
+              <p className={cn("truncate text-xs text-muted-foreground", trackAnimationClass)}>{bookTitle}</p>
             ) : null}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -1772,9 +1842,9 @@ export function ReaderAudioPlayer({
         <div className="hidden sm:flex flex-row justify-between items-start gap-3">
           <div className="flex flex-row items-center gap-3 min-w-0 flex-1">
             <div className="min-w-0 flex-1 w-auto">
-              <p className="truncate text-sm font-semibold">{currentTrack.title}</p>
+              <p className={cn("truncate text-sm font-semibold", trackAnimationClass)}>{currentTrack.title}</p>
               {bookTitle ? (
-                <p className="truncate text-xs text-muted-foreground">{bookTitle}</p>
+                <p className={cn("truncate text-xs text-muted-foreground", trackAnimationClass)}>{bookTitle}</p>
               ) : null}
             </div>
             <div className="flex flex-row items-center gap-2 sm:gap-3">
