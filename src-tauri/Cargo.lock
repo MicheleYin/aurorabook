@@ -399,6 +399,7 @@ dependencies = [
  "num_cpus",
  "once_cell",
  "ort",
+ "percent-encoding",
  "quick-xml 0.31.0",
  "regex",
  "scraper",

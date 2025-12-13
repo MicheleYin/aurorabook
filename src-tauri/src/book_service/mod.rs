@@ -986,17 +986,15 @@ pub async fn ingest_epub(
     source_path: String,
     app: tauri::AppHandle,
 ) -> AppResult<Book> {
-    use crate::epub::parser::{extract_chapters_from_epub, find_cover_image, extract_year, derive_title_from_path}; 
+    use crate::epub::parser::{extract_chapters_from_epub, find_cover_image, extract_year, derive_title_from_path, parse_ncx_ordered_hrefs}; 
     use uuid::Uuid;
     use std::fs;
 
     // Read EPUB from file system
-        // Handle file:// URL prefix
-        let actual_path = if epub_path.starts_with("file://") {
-            epub_path.replacen("file://", "", 1)
-        } else {
-            epub_path.clone()
-        };
+        // Normalize path (remove file:// prefix and decode URL-encoded characters)
+        // This is important on iOS where file picker returns URL-encoded paths
+        use crate::utils::path_resolver::ResourcePathResolver;
+        let actual_path = ResourcePathResolver::normalize_file_path(&epub_path);
         
         log::info!("Reading EPUB from file system: {}", actual_path);
     let epub_data = fs::read(&actual_path)
@@ -1060,10 +1058,162 @@ pub async fn ingest_epub(
     // Extract published year from date
     let published_year = extract_year(metadata.pubdate.as_ref());
     
+    // Sort chapters by NCX/TOC order if available (same logic as in book_update.rs)
+    let mut chapters = chapters;
+    let ncx_ordered_hrefs = {
+        use std::io::Read;
+        use zip::ZipArchive;
+        use std::io::Cursor;
+        
+        // Find NCX file from manifest
+        let mut ncx_path: Option<String> = None;
+        for item in manifest_items.values() {
+            if item.media_type.as_ref().map(|mt| mt == "application/x-dtbncx+xml").unwrap_or(false) {
+                ncx_path = Some(item.href.clone());
+                break;
+            }
+        }
+        
+        if let Some(ncx_href) = ncx_path {
+            // Try to read NCX file
+            let base_path = if opf_path.contains("/") {
+                opf_path.rfind("/").map(|pos| &opf_path[..pos + 1]).unwrap_or("")
+            } else {
+                ""
+            };
+            
+            let ncx_paths = vec![
+                ncx_href.clone(),
+                format!("{}{}", base_path, ncx_href),
+                format!("{}{}", base_path, "toc.ncx"),
+                "toc.ncx".to_string(),
+            ];
+            
+            let mut ordered_hrefs = None;
+            for path in ncx_paths {
+                let mut archive = ZipArchive::new(Cursor::new(&epub_data))
+                    .map_err(|e| format!("Failed to open EPUB: {}", e))?;
+                if let Ok(mut ncx_file) = archive.by_name(&path) {
+                    let mut ncx_content = String::new();
+                    if ncx_file.read_to_string(&mut ncx_content).is_ok() {
+                        if let Ok(hrefs) = parse_ncx_ordered_hrefs(&ncx_content) {
+                            log::info!("Parsed {} ordered hrefs from NCX file '{}'", hrefs.len(), path);
+                            ordered_hrefs = Some(hrefs);
+                            break;
+                        }
+                    }
+                }
+            }
+            ordered_hrefs
+        } else {
+            None
+        }
+    };
+    
+    // Sort chapters by NCX order if available
+    if let Some(ref ordered_hrefs) = ncx_ordered_hrefs {
+        use std::collections::HashMap;
+        
+        log::info!("Sorting {} chapters by NCX order (NCX has {} hrefs)", chapters.len(), ordered_hrefs.len());
+        
+        // Create a map of href -> chapter for quick lookup
+        let mut chapter_map: HashMap<String, Vec<Chapter>> = HashMap::new();
+        for chapter in chapters {
+            // Normalize href for matching
+            let normalized_href = if chapter.href.starts_with("/") {
+                chapter.href[1..].to_string()
+            } else {
+                chapter.href.clone()
+            };
+            chapter_map.entry(normalized_href.clone()).or_insert_with(Vec::new).push(chapter);
+        }
+        
+        // Rebuild chapters in NCX order
+        let mut sorted_chapters = Vec::new();
+        let mut order = 0;
+        
+        // Determine base path from OPF to handle path differences
+        let base_path = if opf_path.contains("/") {
+            opf_path.rfind("/").map(|pos| &opf_path[..pos + 1]).unwrap_or("")
+        } else {
+            ""
+        };
+        
+        for ncx_href in ordered_hrefs {
+            // Try to find matching chapter - try multiple path variations
+            let normalized_ncx_href = if ncx_href.starts_with("/") {
+                ncx_href[1..].to_string()
+            } else {
+                ncx_href.clone()
+            };
+            
+            // Try multiple matching strategies
+            let mut matched_key: Option<String> = None;
+            
+            // Strategy 1: Exact match
+            if chapter_map.contains_key(&normalized_ncx_href) {
+                matched_key = Some(normalized_ncx_href.clone());
+            }
+            
+            // Strategy 2: Try with base path (if NCX href doesn't have it)
+            if matched_key.is_none() && !base_path.is_empty() && !normalized_ncx_href.starts_with(&base_path) {
+                let href_with_base = format!("{}{}", base_path, normalized_ncx_href);
+                if chapter_map.contains_key(&href_with_base) {
+                    matched_key = Some(href_with_base);
+                }
+            }
+            
+            // Strategy 3: Try without base path (if chapter has base path)
+            if matched_key.is_none() && !base_path.is_empty() && normalized_ncx_href.starts_with(&base_path) {
+                let href_without_base = normalized_ncx_href[base_path.len()..].to_string();
+                if chapter_map.contains_key(&href_without_base) {
+                    matched_key = Some(href_without_base);
+                }
+            }
+            
+            // Strategy 4: Filename match (last resort)
+            if matched_key.is_none() {
+                let ncx_filename = normalized_ncx_href.split("/").last().unwrap_or(&normalized_ncx_href);
+                for (href, _) in chapter_map.iter() {
+                    let href_filename = href.split("/").last().unwrap_or(href);
+                    if href_filename == ncx_filename {
+                        matched_key = Some(href.clone());
+                        break;
+                    }
+                }
+            }
+            
+            // Process matched chapter
+            if let Some(key) = matched_key {
+                if let Some(mut chapter_vec) = chapter_map.remove(&key) {
+                    for mut chapter in chapter_vec.drain(..) {
+                        chapter.order = order;
+                        sorted_chapters.push(chapter);
+                        order += 1;
+                    }
+                }
+            }
+        }
+        
+        // Add any remaining chapters that weren't in NCX
+        for (_href, mut chapter_vec) in chapter_map {
+            for mut chapter in chapter_vec.drain(..) {
+                chapter.order = order;
+                sorted_chapters.push(chapter);
+                order += 1;
+            }
+        }
+        
+        chapters = sorted_chapters;
+        log::info!("Sorted {} chapters by NCX order", chapters.len());
+    } else {
+        log::debug!("No NCX file found, using chapters in spine order");
+    }
+    
     // Extract audio tracks from manifest
     let mut audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
     
-    // Order audio tracks to match chapter order (chapters are already in correct spine order)
+    // Order audio tracks to match chapter order (chapters are now in correct NCX/spine order)
     // This function also sets each track's order to match its corresponding chapter's order
     use crate::epub::order_audio_tracks_by_chapters;
     audio_tracks = order_audio_tracks_by_chapters(&audio_tracks, &chapters, &manifest_items);

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 use crate::utils::errors::{AppError, AppResult};
+use percent_encoding::percent_decode_str;
 
 /// Resolves paths for TTS model and voice files.
 ///
@@ -117,6 +118,59 @@ impl ResourcePathResolver {
         }
     }
 
+    /// Normalize a file path by removing URL scheme prefix and decoding URL-encoded characters.
+    ///
+    /// On iOS, file pickers return paths with `file://` prefix and URL-encoded characters.
+    /// This function handles:
+    /// - Removing `file://` or `file:///` prefix (iOS uses `file:///` for local files)
+    /// - Decoding all percent-encoded characters:
+    ///   - Spaces: `%20` → ` ` (space)
+    ///   - Other whitespace: `%09` → `\t` (tab), `%0A` → `\n` (newline)
+    ///   - Unicode characters: `%E2%80%93` → `–` (en dash)
+    ///   - Emoji: `%F0%9F%98%80` → `😀` (grinning face)
+    ///   - All other URL-encoded sequences
+    ///
+    /// # Arguments
+    /// * `path` - The file path to normalize (may include `file://` prefix and URL encoding)
+    ///
+    /// # Returns
+    /// A normalized path string with URL scheme removed and all characters decoded.
+    ///
+    /// # Examples
+    /// ```rust
+    /// // Space in filename
+    /// let normalized = ResourcePathResolver::normalize_file_path("file:///path/to/file%20with%20spaces.epub");
+    /// // Returns: "/path/to/file with spaces.epub"
+    ///
+    /// // Emoji in filename
+    /// let normalized = ResourcePathResolver::normalize_file_path("file:///path/to/book%F0%9F%93%9A.epub");
+    /// // Returns: "/path/to/book📚.epub"
+    ///
+    /// // Unicode characters
+    /// let normalized = ResourcePathResolver::normalize_file_path("file:///path/to/caf%C3%A9.epub");
+    /// // Returns: "/path/to/café.epub"
+    /// ```
+    pub fn normalize_file_path(path: &str) -> String {
+        // Remove file:// or file:/// prefix if present
+        // iOS file picker returns file:/// (three slashes) for local files
+        let without_scheme = if path.starts_with("file:///") {
+            // file:///path -> /path (keep the leading slash)
+            path.replacen("file:///", "", 1)
+        } else if path.starts_with("file://") {
+            // file://path -> path (no leading slash, less common on iOS)
+            path.replacen("file://", "", 1)
+        } else {
+            path.to_string()
+        };
+
+        // Decode all URL-encoded characters
+        // percent_decode_str decodes all percent-encoded sequences (e.g., %20, %E2%80%93, %F0%9F%98%80)
+        // decode_utf8_lossy converts the decoded bytes to UTF-8 string, handling Unicode and emoji
+        percent_decode_str(&without_scheme)
+            .decode_utf8_lossy()
+            .to_string()
+    }
+
     /// Validate and canonicalize a file path.
     ///
     /// This function validates that a path exists, resolves symlinks and
@@ -141,12 +195,8 @@ impl ResourcePathResolver {
     /// let path = ResourcePathResolver::validate_path("file.txt", Some(base))?;
     /// ```
     pub fn validate_path(path: &str, allowed_base: Option<&Path>) -> AppResult<PathBuf> {
-        // Remove file:// prefix if present
-        let clean_path = if path.starts_with("file://") {
-            path.replacen("file://", "", 1)
-        } else {
-            path.to_string()
-        };
+        // Normalize the path (remove file:// prefix and decode URL encoding)
+        let clean_path = Self::normalize_file_path(path);
 
         let path_buf = PathBuf::from(&clean_path);
         

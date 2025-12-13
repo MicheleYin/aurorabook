@@ -159,16 +159,17 @@ async fn load_epub_with_fallback(
 
 /// Load EPUB file from file system using source_path
 fn load_epub_from_file_system(source_path: &str) -> AppResult<Vec<u8>> {
-    // Handle file:// URL prefix
-    let actual_path = if source_path.starts_with("file://") {
-        source_path.replacen("file://", "", 1)
-    } else if source_path.starts_with("web://") {
+    // Handle web:// prefix (not supported)
+    if source_path.starts_with("web://") {
         return Err(AppError::EpubParse(
             format!("Cannot load EPUB from web source: {}", source_path)
         ));
-    } else {
-        source_path.to_string()
-    };
+    }
+    
+    // Normalize path (remove file:// prefix and decode URL-encoded characters)
+    // This is important on iOS where file picker returns URL-encoded paths
+    use crate::utils::path_resolver::ResourcePathResolver;
+    let actual_path = ResourcePathResolver::normalize_file_path(source_path);
     
     log::info!("Loading EPUB from file system: {}", actual_path);
     let epub_data = fs::read(&actual_path)
