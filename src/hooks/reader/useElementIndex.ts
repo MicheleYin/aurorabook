@@ -83,10 +83,24 @@ export function useElementIndex(contentHtml: string | undefined) {
     };
   }, []);
   
+  const getScrollPositionEstimate = useMemo(() => {
+    return (elementId: string): number | undefined => {
+      return indexRef.current?.get(elementId)?.approximateScrollTop;
+    };
+  }, []);
+  
+  const getSegmentIndex = useMemo(() => {
+    return (elementId: string): number | undefined => {
+      return indexRef.current?.get(elementId)?.segmentIndex;
+    };
+  }, []);
+  
   return {
     getIndex,
     getElementInfo,
     hasElement,
+    getScrollPositionEstimate,
+    getSegmentIndex,
   };
 }
 

@@ -9,6 +9,13 @@ import type { Book, Chapter } from "../../types/reader";
 import { findCurrentAudioSegment, chapterHrefsMatch, normalizeChapterHref } from "../../lib/epub";
 import { scrollToElement } from "../../lib/scroll-utils";
 
+type ElementIndexHook = {
+  hasElement: (elementId: string) => boolean;
+  getElementInfo: (elementId: string) => { elementId: string; approximateScrollTop: number; segmentIndex?: number } | undefined;
+  getScrollPositionEstimate: (elementId: string) => number | undefined;
+  getSegmentIndex: (elementId: string) => number | undefined;
+};
+
 export function useAudioTextSync(
   contentRef: React.RefObject<HTMLDivElement | null>,
   autoScrollEnabled: boolean,
@@ -17,7 +24,8 @@ export function useAudioTextSync(
   onChapterChange?: (chapterId: string, elementId?: string) => void,
   onChapterReload?: (chapterId: string) => void,
   audioPlayerVisible: boolean = false,
-  activeChapterId?: string
+  activeChapterId?: string,
+  elementIndex?: ElementIndexHook
 ) {
   const [highlightedElementId, setHighlightedElementId] = useState<string | null>(null);
   const lastScrolledElementRef = useRef<string | null>(null);
@@ -418,6 +426,15 @@ export function useAudioTextSync(
       currentChapterHrefNormalized: chapterHref,
     });
 
+    // Phase 1: Check element index first to avoid expensive DOM queries
+    if (elementIndex && !elementIndex.hasElement(segment.textElementId)) {
+      logger.debug("[Audio Sync] Element not in index, skipping DOM query", {
+        elementId: segment.textElementId,
+      });
+      setHighlightedElementId(null);
+      return;
+    }
+
     // Check if the element exists in the DOM
     // If not, and we have audio sync, the chapter might need to be reloaded with spans
     // Use getElementById for better performance (O(1) vs O(n) for querySelector)
@@ -499,7 +516,7 @@ export function useAudioTextSync(
           hasContentRef: !!contentRef.current,
         });
         
-        const scrolled = scrollToElement(contentRef.current, segment.textElementId, "smooth", headerOffset, playerOffset);
+        const scrolled = scrollToElement(contentRef.current, segment.textElementId, "smooth", headerOffset, playerOffset, elementIndex);
         
         logger.log("[Audio Sync] Scroll result", {
           scrolled,
@@ -523,7 +540,7 @@ export function useAudioTextSync(
         hasContentRef: !!contentRef.current,
       });
     }
-  }, [autoScrollEnabled, isRestoringScroll, contentRef, getHeaderOffset, getPlayerOffset, onChapterChange, onChapterReload]);
+  }, [autoScrollEnabled, isRestoringScroll, contentRef, getHeaderOffset, getPlayerOffset, onChapterChange, onChapterReload, elementIndex]);
 
   const clearHighlight = useCallback(() => {
     setHighlightedElementId(null);

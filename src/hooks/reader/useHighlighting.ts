@@ -13,9 +13,15 @@ type QueuedAction =
   | { type: 'clear' }
   | { type: 'highlight'; elementId: string };
 
+type ElementIndexHook = {
+  hasElement: (elementId: string) => boolean;
+  getElementInfo: (elementId: string) => { elementId: string; approximateScrollTop: number; segmentIndex?: number } | undefined;
+};
+
 export function useHighlighting(
   contentRef: React.RefObject<HTMLDivElement | null>,
-  activeChapterId?: string
+  activeChapterId?: string,
+  elementIndex?: ElementIndexHook
 ) {
   const highlightRef = useRef({
     queue: [] as QueuedAction[],
@@ -146,6 +152,16 @@ export function useHighlighting(
       }, ANIMATION_DURATION_MS);
       
       ref.exitTimeouts.set(previousElement, timeoutId);
+    }
+
+    // Phase 1: Check element index first to avoid expensive DOM queries
+    if (elementIndex && !elementIndex.hasElement(elementId)) {
+      // Element not in index, skip DOM query
+      ref.processing = false;
+      ref.currentElement = null;
+      ref.currentElementId = null;
+      processQueue();
+      return;
     }
 
     // Find and apply new highlight

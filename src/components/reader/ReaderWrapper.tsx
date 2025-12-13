@@ -12,6 +12,7 @@ import { findCurrentAudioSegment } from "../../lib/epub";
 import { useReaderManager } from "../../hooks/reader/useReaderManager";
 import { useAudioPlayerProgress } from "../../hooks/reader/useAudioPlayerProgress";
 import { useLibraryContext } from "../../hooks/library/LibraryContext";
+import { useElementIndex } from "../../hooks/reader/useElementIndex";
 
 type ReaderWrapperProps = {
   activeBookId?: string;
@@ -76,6 +77,11 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
 
   // Get restore state from reader manager
   const restoreState = readerManager.getRestoreState();
+
+  // Build element index for fast lookups (Phase 1: Element index integration)
+  // Use loadedChapter if available, otherwise use activeChapter
+  const chapterForIndex = readerManager.loadedChapter || activeChapter;
+  const elementIndex = useElementIndex(chapterForIndex?.contentHtml);
 
   // Save progress - now uses reader manager
   const saveProgress = useCallback(async (chapterId: string) => {
@@ -556,6 +562,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     onChapterReload: handleChapterReload,
     audioPlayerVisible,
     onTrackChangeChapterChange: handleChapterChange,
+    elementIndex, // Pass element index for fast lookups
   });
 
   // Expose handleAudioTrackChange to parent (App.tsx) via callback
@@ -632,6 +639,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
           isScrolling: readerManager.isScrolling,
         }}
         contentRef={contentRef}
+        elementIndex={elementIndex}
       />
     </>
   );

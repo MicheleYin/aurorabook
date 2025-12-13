@@ -62,11 +62,19 @@ type ReaderViewportCallbacks = {
   isScrolling?: boolean; // Scroll state from scroll management
 };
 
+type ElementIndexHook = {
+  hasElement: (elementId: string) => boolean;
+  getElementInfo: (elementId: string) => { elementId: string; approximateScrollTop: number; segmentIndex?: number } | undefined;
+  getScrollPositionEstimate: (elementId: string) => number | undefined;
+  getSegmentIndex: (elementId: string) => number | undefined;
+};
+
 type ReaderViewportProps = {
   config: ReaderViewportConfig;
   state: ReaderViewportState;
   callbacks: ReaderViewportCallbacks;
   contentRef?: React.RefObject<HTMLDivElement | null>;
+  elementIndex?: ElementIndexHook;
 };
 
 export function ReaderViewport({
@@ -74,6 +82,7 @@ export function ReaderViewport({
   state,
   callbacks,
   contentRef: externalContentRef,
+  elementIndex,
 }: ReaderViewportProps) {
   // Guard against missing required props before destructuring
   if (!config || !state || !callbacks) {
@@ -121,7 +130,7 @@ export function ReaderViewport({
   // Custom hooks (no useEffects)
   const fragmentNav = useFragmentNavigation(contentRef, onFragmentConsumed);
   const transitions = useChapterTransitions();
-  const highlighting = useHighlighting(contentRef, activeChapter?.id);
+  const highlighting = useHighlighting(contentRef, activeChapter?.id, elementIndex);
   const linkHandling = useLinkHandling(contentRef, activeBook, onSelectChapter);
   
   // Use the chapter from state (which is loadedChapter || activeChapter) for the callback

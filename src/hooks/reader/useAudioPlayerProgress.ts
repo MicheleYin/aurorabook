@@ -12,6 +12,13 @@ import { findChaptersForAudioTrack, chapterHrefsMatch } from "../../lib/epub";
 import { logger } from "../../lib/logger";
 import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
 
+type ElementIndexHook = {
+  hasElement: (elementId: string) => boolean;
+  getElementInfo: (elementId: string) => { elementId: string; approximateScrollTop: number; segmentIndex?: number } | undefined;
+  getScrollPositionEstimate: (elementId: string) => number | undefined;
+  getSegmentIndex: (elementId: string) => number | undefined;
+};
+
 type UseAudioPlayerProgressParams = {
   activeBook?: Book;
   activeChapter?: Chapter;
@@ -25,6 +32,7 @@ type UseAudioPlayerProgressParams = {
   onChapterReload?: (chapterId: string) => void;
   audioPlayerVisible?: boolean;
   onTrackChangeChapterChange?: (chapterId: string, options?: { scrollPosition?: "top" | "bottom" | "maintain"; isManualSelection?: boolean }) => Promise<void>;
+  elementIndex?: ElementIndexHook;
 };
 
 export function useAudioPlayerProgress({
@@ -40,13 +48,15 @@ export function useAudioPlayerProgress({
   onChapterReload,
   audioPlayerVisible = false,
   onTrackChangeChapterChange,
+  elementIndex,
 }: UseAudioPlayerProgressParams) {
   const coordinator = useReaderCoordinator();
   const audioLoader = useAudioTrackLoader();
   
   // Calculate header offset - will be computed dynamically in useAudioTextSync
   // Pass chromeVisible and audioPlayerVisible so it can calculate the offsets when needed
-  const audioSync = useAudioTextSync(contentRef, autoScrollEnabled, isRestoringScroll, chromeVisible, onChapterChange, onChapterReload, audioPlayerVisible, activeChapter?.id);
+  // Pass elementIndex for fast lookups (Phase 1: Element index integration)
+  const audioSync = useAudioTextSync(contentRef, autoScrollEnabled, isRestoringScroll, chromeVisible, onChapterChange, onChapterReload, audioPlayerVisible, activeChapter?.id, elementIndex);
 
   // Get cached audio tracks
   const cachedAudioTracks = useMemo(() => {

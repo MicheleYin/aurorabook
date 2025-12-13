@@ -302,12 +302,18 @@ function findScrollableContainer(element: HTMLElement): HTMLElement | null {
   return null;
 }
 
+type ElementIndexHook = {
+  hasElement: (elementId: string) => boolean;
+  getScrollPositionEstimate: (elementId: string) => number | undefined;
+};
+
 export function scrollToElement(
   root: HTMLElement,
   elementId: string,
   behavior: ScrollBehavior = "smooth",
   headerOffset: number = 0,
   playerOffset: number = 0,
+  elementIndex?: ElementIndexHook,
 ): boolean {
   console.log("[Scroll] scrollToElement called", {
     elementId,
@@ -340,6 +346,20 @@ export function scrollToElement(
   if (!element) {
     console.log("[Scroll] Element not found", { elementId });
     return false;
+  }
+
+  // Phase 1: Use element index for scroll position estimation if available
+  if (elementIndex) {
+    const estimatedScrollTop = elementIndex.getScrollPositionEstimate(elementId);
+    if (estimatedScrollTop !== undefined) {
+      console.log("[Scroll] Using estimated scroll position from index", {
+        elementId,
+        estimatedScrollTop,
+        actualScrollTop: root.scrollTop,
+      });
+      // Could use this for faster scrolling, but for now we'll still use the actual element
+      // This is useful for virtual scrolling where elements might not be rendered yet
+    }
   }
 
   console.log("[Scroll] Element found", {
