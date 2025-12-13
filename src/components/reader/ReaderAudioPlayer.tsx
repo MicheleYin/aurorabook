@@ -19,6 +19,7 @@ import { cn } from "../../lib/utils";
 import { useLibrary } from "../../hooks/useLibrary";
 import { animPatterns, enterExit } from "../../lib/animations";
 import { ensureAudioTrackLoaded } from "../../lib/lazy-chapter-loader";
+import { usePersistentSettings } from "../../hooks/usePersistentSettings";
 
 import { formatTime } from "../../lib/format-time";
 
@@ -87,6 +88,9 @@ export function ReaderAudioPlayer({
   
   const flushAudioStateUpdate = libraryHook.flushAudioStateUpdate;
 
+  // Get settings for playback speed
+  const { settings, updateSettings, isHydrated: settingsHydrated } = usePersistentSettings();
+
   // Notify parent of restoration state changes
   useEffect(() => {
     isRestoringRef.current = isRestoring;
@@ -108,7 +112,15 @@ export function ReaderAudioPlayer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [playbackRate, setPlaybackRate] = useState<number>(1);
+  // Initialize playback rate from settings, default to 1.0 if not available
+  const [playbackRate, setPlaybackRate] = useState<number>(settings.audioPlaybackSpeed ?? 1.0);
+
+  // Update playback rate when settings are hydrated or change
+  useEffect(() => {
+    if (settingsHydrated && settings.audioPlaybackSpeed !== undefined) {
+      setPlaybackRate(settings.audioPlaybackSpeed);
+    }
+  }, [settings.audioPlaybackSpeed, settingsHydrated]);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubTime, setScrubTime] = useState<number | null>(null);
   const [isDismissing, setIsDismissing] = useState(false);
@@ -1272,7 +1284,9 @@ export function ReaderAudioPlayer({
       return;
     }
     setPlaybackRate(nextRate);
-  }, []);
+    // Persist to settings
+    updateSettings({ audioPlaybackSpeed: nextRate });
+  }, [updateSettings]);
 
   const handleTrackSelect = useCallback((trackIndex: number) => {
     logger.log("[Audio Player] handleTrackSelect called", {

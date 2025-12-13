@@ -1,24 +1,62 @@
+import { useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { DEFAULT_KOKORO_VOICE_ID } from "../constants/kokoro";
 import type { AppSettings } from "../types/settings";
-import { usePersistentState } from "./usePersistentState";
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
   ttsVoiceId: DEFAULT_KOKORO_VOICE_ID,
   autoScrollEnabled: true,
+  audioPlaybackSpeed: 1.0,
 };
 
 /**
- * Hook for persisting app settings to Tauri store
+ * Hook for persisting app settings to backend database
  */
 export function usePersistentSettings() {
-  const { state: settings, updateState: updateSettings, isHydrated } = usePersistentState<AppSettings>({
-    storePath: "settings.store.json",
-    storeKey: "settings",
-    version: 1,
-    defaultValue: DEFAULT_SETTINGS,
-    logPrefix: "[SettingsPersistence]",
-  });
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  // Load settings from backend on mount
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSettings = async () => {
+      try {
+        const loadedSettings = await invoke<AppSettings>("get_app_settings");
+        if (!cancelled) {
+          // Merge with defaults to ensure all fields are present
+          setSettings({ ...DEFAULT_SETTINGS, ...loadedSettings });
+          setIsHydrated(true);
+        }
+      } catch (error) {
+        console.warn("[SettingsPersistence]: failed to load settings from backend, using defaults:", error);
+        if (!cancelled) {
+          setIsHydrated(true);
+        }
+      }
+    };
+
+    void loadSettings();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Update settings function
+  const updateSettings = useCallback((update: Partial<AppSettings>) => {
+    setSettings((prev) => {
+      const newSettings = { ...prev, ...update };
+      
+      // Persist to backend asynchronously
+      invoke("update_app_settings", { settings: newSettings }).catch((error) => {
+        console.warn("[SettingsPersistence]: failed to persist settings:", error);
+      });
+      
+      return newSettings;
+    });
+  }, []);
 
   return {
     settings,

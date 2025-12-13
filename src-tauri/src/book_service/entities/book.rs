@@ -38,6 +38,7 @@ pub struct Model {
     pub voice_id: Option<String>,
     pub total_words: Option<i64>,
     pub words_processed: Option<i64>,
+    pub last_opened_time: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

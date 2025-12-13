@@ -5,6 +5,7 @@ export type AppSettings = {
   theme: UITheme;
   ttsVoiceId: VoiceId;
   autoScrollEnabled?: boolean;
+  audioPlaybackSpeed?: number;
 };
 
 

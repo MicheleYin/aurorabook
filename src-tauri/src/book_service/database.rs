@@ -136,7 +136,8 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
             completed_chapters TEXT,
             voice_id TEXT,
             total_words INTEGER,
-            words_processed INTEGER
+            words_processed INTEGER,
+            last_opened_time TEXT
         )
         "#.to_string(),
     );
@@ -219,6 +220,40 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
     );
     db.execute_unprepared(&stmt.to_string()).await
         .map_err(|e| format!("Failed to create epub_data table: {}", e))?;
+    
+    // Create app_settings table (singleton - only one row)
+    let stmt = Statement::from_string(
+        sea_orm::DatabaseBackend::Sqlite,
+        r#"
+        CREATE TABLE IF NOT EXISTS app_settings (
+            id TEXT PRIMARY KEY DEFAULT 'default',
+            theme TEXT NOT NULL DEFAULT 'system',
+            tts_voice_id TEXT NOT NULL,
+            auto_scroll_enabled INTEGER NOT NULL DEFAULT 1,
+            audio_playback_speed REAL NOT NULL DEFAULT 1.0,
+            updated_at TEXT NOT NULL
+        )
+        "#.to_string(),
+    );
+    db.execute_unprepared(&stmt.to_string()).await
+        .map_err(|e| format!("Failed to create app_settings table: {}", e))?;
+    
+    // Create reader_preferences table (singleton - only one row)
+    let stmt = Statement::from_string(
+        sea_orm::DatabaseBackend::Sqlite,
+        r#"
+        CREATE TABLE IF NOT EXISTS reader_preferences (
+            id TEXT PRIMARY KEY DEFAULT 'default',
+            theme TEXT NOT NULL DEFAULT 'system',
+            font_family TEXT NOT NULL DEFAULT 'merriweather',
+            content_padding TEXT NOT NULL DEFAULT 'comfortable',
+            font_size TEXT NOT NULL DEFAULT 'medium',
+            updated_at TEXT NOT NULL
+        )
+        "#.to_string(),
+    );
+    db.execute_unprepared(&stmt.to_string()).await
+        .map_err(|e| format!("Failed to create reader_preferences table: {}", e))?;
     
     // Create indexes
     let indexes = vec![

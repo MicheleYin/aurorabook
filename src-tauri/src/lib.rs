@@ -104,6 +104,11 @@ pub fn run() {
             book_service::update_book_progress,
             book_service::update_book_audio_state,
             book_service::ingest_epub,
+            book_service::get_app_settings,
+            book_service::update_app_settings,
+            book_service::get_reader_preferences,
+            book_service::update_reader_preferences,
+            book_service::update_book_last_opened_time,
         ])
         .manage(epub::CancellationTokens::new())
         .run(tauri::generate_context!())

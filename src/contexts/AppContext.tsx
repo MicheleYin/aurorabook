@@ -222,6 +222,22 @@ export function AppContextProvider({
       
       setActiveChapterId(nextChapterId);
       
+      // Update last opened time when book is selected
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("update_book_last_opened_time", { bookId });
+        // Update local state to reflect the change
+        setLibrary((prevLibrary) =>
+          prevLibrary.map((book) =>
+            book.id === bookId
+              ? { ...book, lastOpenedTime: new Date().toISOString() }
+              : book
+          )
+        );
+      } catch (error) {
+        logger.warn("[AppContext] Failed to update last opened time:", error);
+      }
+      
       // Only update progress if chapter is different from existing progress
       // This prevents overwriting saved scroll position when just selecting the same book/chapter
       if (nextChapterId) {
@@ -257,12 +273,18 @@ export function AppContextProvider({
       if (manualSelectionRef.current) {
         return;
       }
-      const firstBook = library[0];
-      setActiveBookId(firstBook.id);
-      const fallbackChapterId = getValidChapterId(firstBook);
+      // Sort books by last opened time (most recent first), then fallback to first book
+      const sortedBooks = [...library].sort((a, b) => {
+        const aTime = a.lastOpenedTime ? new Date(a.lastOpenedTime).getTime() : 0;
+        const bTime = b.lastOpenedTime ? new Date(b.lastOpenedTime).getTime() : 0;
+        return bTime - aTime; // Descending order (most recent first)
+      });
+      const selectedBook = sortedBooks[0] || library[0]; // Fallback to first if no last opened time
+      setActiveBookId(selectedBook.id);
+      const fallbackChapterId = getValidChapterId(selectedBook);
       setActiveChapterId(fallbackChapterId);
       if (fallbackChapterId) {
-        updateBookProgress(firstBook.id, { chapterId: fallbackChapterId });
+        updateBookProgress(selectedBook.id, { chapterId: fallbackChapterId });
       }
     } else {
       // Validate existing selection when library changes

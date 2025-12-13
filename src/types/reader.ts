@@ -84,6 +84,7 @@ export type Book = {
   voiceId?: VoiceId;
   totalWords?: number;
   wordsProcessed?: number;
+  lastOpenedTime?: string;
 };
 
 export type NavItem = {

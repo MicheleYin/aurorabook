@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use moka::future::Cache;
-use crate::book_service::models::{Book, Chapter, AudioTrack};
+use crate::book_service::models::{Book, Chapter, AudioTrack, AppSettings, ReaderPreferences};
 
 /// Cache for books by ID
 pub type BookCache = Cache<String, Arc<Book>>;
@@ -21,6 +21,12 @@ pub type ImageCache = Cache<(String, String), Arc<(String, Vec<u8>)>>;
 /// Cache for audio data by (book_id, href) -> data
 pub type AudioDataCache = Cache<(String, String), Arc<Vec<u8>>>;
 
+/// Cache for app settings (singleton)
+pub type AppSettingsCache = Cache<String, Arc<AppSettings>>;
+
+/// Cache for reader preferences (singleton)
+pub type ReaderPreferencesCache = Cache<String, Arc<ReaderPreferences>>;
+
 /// Database cache manager
 /// Provides caching for frequently accessed database queries to reduce disk I/O
 pub struct DbCache {
@@ -36,6 +42,10 @@ pub struct DbCache {
     pub images: ImageCache,
     /// Cache for audio data
     pub audio_data: AudioDataCache,
+    /// Cache for app settings
+    pub app_settings: AppSettingsCache,
+    /// Cache for reader preferences
+    pub reader_preferences: ReaderPreferencesCache,
 }
 
 impl DbCache {
@@ -77,6 +87,18 @@ impl DbCache {
             .time_to_live(Duration::from_secs(1800))
             .build();
 
+        // App settings cache: 1 hour TTL, max 1 entry (singleton)
+        let app_settings = Cache::builder()
+            .max_capacity(1)
+            .time_to_live(Duration::from_secs(3600))
+            .build();
+
+        // Reader preferences cache: 1 hour TTL, max 1 entry (singleton)
+        let reader_preferences = Cache::builder()
+            .max_capacity(1)
+            .time_to_live(Duration::from_secs(3600))
+            .build();
+
         Self {
             books,
             chapters,
@@ -84,6 +106,8 @@ impl DbCache {
             audio_tracks_list,
             images,
             audio_data,
+            app_settings,
+            reader_preferences,
         }
     }
 
@@ -128,6 +152,8 @@ impl DbCache {
         self.audio_tracks_list.invalidate_all();
         self.images.invalidate_all();
         self.audio_data.invalidate_all();
+        self.app_settings.invalidate_all();
+        self.reader_preferences.invalidate_all();
     }
 }
 

@@ -83,6 +83,7 @@ impl BookRepository {
             voice_id: entity.voice_id,
             total_words: entity.total_words.map(|v| v as usize),
             words_processed: entity.words_processed.map(|v| v as usize),
+            last_opened_time: entity.last_opened_time,
         }
     }
     
@@ -144,6 +145,7 @@ impl BookRepository {
             voice_id: Set(model.voice_id.clone()),
             total_words: Set(model.total_words.map(|v| v as i64)),
             words_processed: Set(model.words_processed.map(|v| v as i64)),
+            last_opened_time: Set(model.last_opened_time.clone()),
         }
     }
     

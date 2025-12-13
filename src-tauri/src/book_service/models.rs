@@ -143,6 +143,9 @@ pub struct Book {
     /// Number of words that have been converted so far
     #[serde(skip_serializing_if = "Option::is_none")]
     pub words_processed: Option<usize>,
+    /// Timestamp when the book was last opened (RFC3339 format)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_opened_time: Option<String>,
 }
 
 /// Library filter options
@@ -153,5 +156,27 @@ pub struct LibraryFilter {
     pub filter: Option<String>, // "all", "new", "resume", "finished", "recent", "author"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search: Option<String>,
+}
+
+/// App settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettings {
+    pub theme: String, // "light", "dark", "system"
+    pub tts_voice_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_scroll_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_playback_speed: Option<f64>,
+}
+
+/// Reader preferences
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaderPreferences {
+    pub theme: String, // "light", "dark", "system"
+    pub font_family: String,
+    pub content_padding: String,
+    pub font_size: String,
 }
 

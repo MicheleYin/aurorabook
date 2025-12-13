@@ -1391,6 +1391,7 @@ pub async fn ingest_epub(
         voice_id: None,
         total_words: None,
         words_processed: None,
+        last_opened_time: None,
     };
     
     let db = get_db_connection(&app).await
@@ -1459,5 +1460,95 @@ pub async fn ingest_epub(
         .ok_or_else(|| AppError::Store("Book not found after ingestion".to_string()))?;
     
     Ok(result_book)
+}
+
+/// Get app settings
+#[tauri::command]
+pub async fn get_app_settings(
+    app: tauri::AppHandle,
+) -> AppResult<AppSettings> {
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
+    SettingsRepository::get(db.as_ref()).await
+        .map_err(|e| AppError::Store(e))
+}
+
+/// Update app settings
+#[tauri::command]
+pub async fn update_app_settings(
+    settings: AppSettings,
+    app: tauri::AppHandle,
+) -> AppResult<AppSettings> {
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
+    SettingsRepository::save(db.as_ref(), &settings).await
+        .map_err(|e| AppError::Store(e))?;
+    Ok(settings)
+}
+
+/// Get reader preferences
+#[tauri::command]
+pub async fn get_reader_preferences(
+    app: tauri::AppHandle,
+) -> AppResult<ReaderPreferences> {
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
+    ReaderPreferencesRepository::get(db.as_ref()).await
+        .map_err(|e| AppError::Store(e))
+}
+
+/// Update reader preferences
+#[tauri::command]
+pub async fn update_reader_preferences(
+    preferences: ReaderPreferences,
+    app: tauri::AppHandle,
+) -> AppResult<ReaderPreferences> {
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
+    ReaderPreferencesRepository::save(db.as_ref(), &preferences).await
+        .map_err(|e| AppError::Store(e))?;
+    Ok(preferences)
+}
+
+/// Update book last opened time
+#[tauri::command]
+pub async fn update_book_last_opened_time(
+    book_id: String,
+    app: tauri::AppHandle,
+) -> AppResult<()> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
+    
+    // Get current timestamp as RFC3339 string
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .to_string();
+    
+    // Update only the last_opened_time field
+    use crate::book_service::entities::book;
+    use sea_orm::EntityTrait;
+    let mut book_entity = book::Entity::find_by_id(&book_id)
+        .one(db.as_ref())
+        .await
+        .map_err(|e| AppError::Store(format!("Failed to find book: {}", e)))?
+        .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
+    
+    book_entity.last_opened_time = Some(timestamp);
+    
+    let active_model: book::ActiveModel = book_entity.into();
+    book::Entity::update(active_model)
+        .exec(db.as_ref())
+        .await
+        .map_err(|e| AppError::Store(format!("Failed to update last_opened_time: {}", e)))?;
+    
+    // Invalidate cache for this book
+    if let Ok(cache) = crate::book_service::database::get_db_cache() {
+        cache.books.invalidate(&book_id).await;
+    }
+    
+    Ok(())
 }
 
