@@ -3,8 +3,8 @@ import type { ReaderPreferences } from "../../types/reader";
 type ResolvedReaderTheme = Exclude<ReaderPreferences["theme"], "system">;
 
 export const themeClasses: Record<ResolvedReaderTheme, string> = {
-  light: "bg-white text-slate-900",
-  dark: "bg-zinc-950 text-zinc-100",
+  light: "bg-background text-foreground",
+  dark: "bg-background text-foreground",
 };
 
 export const fontClassMap: Record<ReaderPreferences["fontFamily"], string> = {
