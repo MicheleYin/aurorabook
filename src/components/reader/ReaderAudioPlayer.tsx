@@ -95,6 +95,11 @@ export function ReaderAudioPlayer({
   useEffect(() => {
     isRestoringRef.current = isRestoring;
     onRestorationStateChange?.(isRestoring);
+    
+    // Clear restoration lock when restoration completes
+    if (!isRestoring && restorationInProgressRef.current) {
+      restorationInProgressRef.current = null;
+    }
   }, [isRestoring, onRestorationStateChange]);
 
   // Store stable refs for callbacks to avoid effect re-runs
@@ -252,6 +257,11 @@ export function ReaderAudioPlayer({
       // Single source of truth: always read from audio element
       const seconds = audio.currentTime || 0;
       
+      // Don't sync state during restoration to prevent conflicts
+      if (isRestoringRef.current || restorationInProgressRef.current) {
+        return;
+      }
+      
       // Sync play state with audio element to handle external pause/play
       // BUT: Don't sync if we're auto-advancing (track ended and moving to next)
       const audioIsPlaying = !audio.paused;
@@ -309,14 +319,38 @@ export function ReaderAudioPlayer({
       const audioTime = audio.currentTime || 0;
       setCurrentTime(audioTime);
       
-      // Handle restoration if needed
+      // Handle restoration if needed - use lock to prevent concurrent attempts
       if (trackLoadedForRestorationRef.current) {
-        onTrackLoadedRef.current(audio);
-        trackLoadedForRestorationRef.current = false;
+        const currentTrackId = currentTrack?.id;
+        // Only restore if not already in progress for this track
+        if (currentTrackId && restorationInProgressRef.current !== currentTrackId) {
+          restorationInProgressRef.current = currentTrackId;
+          // Set a timeout to clear the lock if restoration doesn't complete (safety measure)
+          const lockTimeout = setTimeout(() => {
+            if (restorationInProgressRef.current === currentTrackId) {
+              logger.warn("[Audio Player] Restoration lock timeout - clearing lock", {
+                trackId: currentTrackId,
+              });
+              restorationInProgressRef.current = null;
+            }
+          }, 5000); // 5 second timeout
+          
+          try {
+            onTrackLoadedRef.current(audio);
+          } finally {
+            // Clear flag after restoration attempt (even if it fails)
+            trackLoadedForRestorationRef.current = false;
+            // Clear timeout since restoration attempt completed
+            clearTimeout(lockTimeout);
+            // Keep lock until restoration completes to prevent race conditions
+            // The lock will be cleared when isRestoring becomes false
+          }
+        }
       }
       
       // Emit progress if needed (for paused audio where timeupdate might not fire)
-      if (!isRestoringRef.current && audioTime > 0) {
+      // But only if restoration is not in progress
+      if (!isRestoringRef.current && !restorationInProgressRef.current && audioTime > 0) {
         setTimeout(() => {
           emitProgressRef.current(audioTime);
         }, 50);
@@ -330,12 +364,37 @@ export function ReaderAudioPlayer({
         currentTime: audio.currentTime,
       });
       
-      // Handle restoration if needed
+      // Handle restoration if needed - use lock to prevent concurrent attempts
+      // Only handle if loadedmetadata didn't already handle it
       if (trackLoadedForRestorationRef.current) {
-        onTrackLoadedRef.current(audio);
-        trackLoadedForRestorationRef.current = false;
-      } else {
+        const currentTrackId = currentTrack?.id;
+        // Only restore if not already in progress for this track
+        if (currentTrackId && restorationInProgressRef.current !== currentTrackId) {
+          restorationInProgressRef.current = currentTrackId;
+          // Set a timeout to clear the lock if restoration doesn't complete (safety measure)
+          const lockTimeout = setTimeout(() => {
+            if (restorationInProgressRef.current === currentTrackId) {
+              logger.warn("[Audio Player] Restoration lock timeout - clearing lock", {
+                trackId: currentTrackId,
+              });
+              restorationInProgressRef.current = null;
+            }
+          }, 5000); // 5 second timeout
+          
+          try {
+            onTrackLoadedRef.current(audio);
+          } finally {
+            // Clear flag after restoration attempt (even if it fails)
+            trackLoadedForRestorationRef.current = false;
+            // Clear timeout since restoration attempt completed
+            clearTimeout(lockTimeout);
+            // Keep lock until restoration completes to prevent race conditions
+            // The lock will be cleared when isRestoring becomes false
+          }
+        }
+      } else if (!restorationInProgressRef.current) {
         // Normal playback - emit progress if needed
+        // Only if restoration is not in progress
         const audioTime = audio.currentTime || 0;
         if (audioTime > 0) {
           emitProgressRef.current(audioTime);
@@ -363,6 +422,9 @@ export function ReaderAudioPlayer({
           nextTrackId: nextTrack?.id,
           nextTrackTitle: nextTrack?.title,
         });
+        
+        // Mark track change as in progress to prevent audio from starting prematurely
+        trackChangeInProgressRef.current = true;
         
         // Set flag to prevent timeupdate from resetting playing state
         // This flag will be cleared in setupAudioSource once the new track is set up
@@ -411,6 +473,10 @@ export function ReaderAudioPlayer({
       if (isAutoAdvancingRef.current) {
         return;
       }
+      // Don't sync state during restoration to prevent conflicts
+      if (isRestoringRef.current || restorationInProgressRef.current) {
+        return;
+      }
       logger.log("[Audio Player] play event fired", {
         audioPaused: audio.paused,
         isPlayingRef: isPlayingRef.current,
@@ -422,6 +488,10 @@ export function ReaderAudioPlayer({
     const handlePause = () => {
       // Don't sync state if we're auto-advancing (track ended and moving to next)
       if (isAutoAdvancingRef.current) {
+        return;
+      }
+      // Don't sync state during restoration to prevent conflicts
+      if (isRestoringRef.current || restorationInProgressRef.current) {
         return;
       }
       logger.log("[Audio Player] pause event fired", {
@@ -489,6 +559,10 @@ export function ReaderAudioPlayer({
       if (isAutoAdvancingRef.current) {
         return;
       }
+      // Don't sync state during restoration to prevent conflicts
+      if (isRestoringRef.current || restorationInProgressRef.current) {
+        return;
+      }
       
       const audioIsPlaying = !audio.paused;
       if (audioIsPlaying !== isPlayingRef.current) {
@@ -522,6 +596,10 @@ export function ReaderAudioPlayer({
   const trackLoadedForRestorationRef = useRef(false);
   // Track which tracks we're currently loading to prevent duplicate loads
   const loadingTracksRef = useRef<Set<string>>(new Set());
+  // Lock to prevent concurrent restoration attempts
+  const restorationInProgressRef = useRef<string | null>(null);
+  // Track when a track change is in progress to prevent audio from starting
+  const trackChangeInProgressRef = useRef(false);
 
   // Simplified: Pre-load track URL only when needed
   useEffect(() => {
@@ -673,6 +751,16 @@ export function ReaderAudioPlayer({
     audio: HTMLAudioElement,
     shouldPlay: boolean
   ): Promise<boolean> => {
+    // Prevent autoplay during restoration or track changes
+    if (isRestoringRef.current || restorationInProgressRef.current || trackChangeInProgressRef.current) {
+      logger.log("[Audio Player] Autoplay blocked - restoration or track change in progress", {
+        isRestoring: isRestoringRef.current,
+        restorationInProgress: restorationInProgressRef.current,
+        trackChangeInProgress: trackChangeInProgressRef.current,
+      });
+      return false;
+    }
+    
     if (!shouldPlay || !audio.paused) {
       return false;
     }
@@ -695,6 +783,11 @@ export function ReaderAudioPlayer({
     audio: HTMLAudioElement,
     shouldAutoplay: boolean
   ): boolean => {
+    // Prevent play if restoration or track change is in progress
+    if (isRestoringRef.current || restorationInProgressRef.current || trackChangeInProgressRef.current) {
+      return false;
+    }
+    
     if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA && audio.paused) {
       attemptAutoplay(audio, shouldAutoplay);
       return true;
@@ -723,7 +816,8 @@ export function ReaderAudioPlayer({
     // Determine if we should autoplay after loading
     // Check isPlayingRef first (most reliable) - this is set before track changes
     // Also check if we're auto-advancing (track ended and moving to next) or manually changing tracks
-    const shouldAutoplay = isPlayingRef.current || isAutoAdvancingRef.current;
+    // IMPORTANT: Don't autoplay during restoration to prevent conflicts
+    const shouldAutoplay = !isRestoringRef.current && (isPlayingRef.current || isAutoAdvancingRef.current);
     
     // Don't clear auto-advancing flag yet - keep it until audio actually starts playing
     // This prevents the timeupdate handler from resetting the playing state
@@ -749,8 +843,11 @@ export function ReaderAudioPlayer({
       onTrackChange(track.href);
     }
     
-    // Reset restoration flag
-    trackLoadedForRestorationRef.current = isRestoringRef.current;
+    // Reset restoration flag - but only if restoration is not already in progress
+    // This prevents clearing the flag if restoration is happening concurrently
+    if (!restorationInProgressRef.current) {
+      trackLoadedForRestorationRef.current = isRestoringRef.current;
+    }
     
     // Update playing state to match shouldAutoplay
     // Only update if state doesn't match (avoid unnecessary re-renders)
@@ -782,6 +879,7 @@ export function ReaderAudioPlayer({
       // Clear auto-advancing flag once playback actually starts
       if (shouldAutoplay && !audio.paused) {
         isAutoAdvancingRef.current = false;
+        trackChangeInProgressRef.current = false;
       }
       return; // Already playing, no need for event listener
     }
@@ -789,6 +887,21 @@ export function ReaderAudioPlayer({
     // Set up event listeners for when audio becomes ready
     // Use multiple events to ensure we catch when audio is ready
     let cleanupCalled = false;
+    
+    // Clear track change flag when audio is ready (even if not playing yet)
+    // This allows autoplay to proceed once audio is ready
+    const handleAudioReadyForTrackChange = () => {
+      if (!cleanupCalled && trackChangeInProgressRef.current) {
+        logger.log("[Audio Player] Audio ready - clearing track change flag", {
+          trackId: track.id,
+        });
+        trackChangeInProgressRef.current = false;
+      }
+    };
+    
+    // Listen for when audio becomes ready to clear track change flag
+    audio.addEventListener("canplay", handleAudioReadyForTrackChange, { once: true });
+    audio.addEventListener("canplaythrough", handleAudioReadyForTrackChange, { once: true });
     
     const handleCanPlay = () => {
       if (cleanupCalled) return;
@@ -802,6 +915,8 @@ export function ReaderAudioPlayer({
           if (success) {
             // Clear auto-advancing flag once playback actually starts
             isAutoAdvancingRef.current = false;
+            // Clear track change flag when playback starts
+            trackChangeInProgressRef.current = false;
           }
         });
       }
@@ -819,6 +934,8 @@ export function ReaderAudioPlayer({
           if (success) {
             // Clear auto-advancing flag once playback actually starts
             isAutoAdvancingRef.current = false;
+            // Clear track change flag when playback starts
+            trackChangeInProgressRef.current = false;
           }
         });
       }
@@ -839,6 +956,8 @@ export function ReaderAudioPlayer({
           if (success) {
             // Clear auto-advancing flag once playback actually starts
             isAutoAdvancingRef.current = false;
+            // Clear track change flag when playback starts
+            trackChangeInProgressRef.current = false;
           }
         });
       }
@@ -851,6 +970,13 @@ export function ReaderAudioPlayer({
           trackId: track.id,
         });
         isAutoAdvancingRef.current = false;
+      }
+      // Clear track change flag when playback actually starts
+      if (trackChangeInProgressRef.current) {
+        logger.log("[Audio Player] Playback started - clearing track change flag", {
+          trackId: track.id,
+        });
+        trackChangeInProgressRef.current = false;
       }
     };
     
@@ -873,6 +999,8 @@ export function ReaderAudioPlayer({
           if (success) {
             // Clear auto-advancing flag once playback actually starts
             isAutoAdvancingRef.current = false;
+            // Clear track change flag when playback starts
+            trackChangeInProgressRef.current = false;
           }
         });
       }
@@ -886,6 +1014,9 @@ export function ReaderAudioPlayer({
       audio.removeEventListener("canplaythrough", handleCanPlayThrough);
       audio.removeEventListener("loadeddata", handleLoadedData);
       audio.removeEventListener("playing", handlePlaying);
+      // Note: handleAudioReadyForTrackChange uses { once: true }, so it auto-removes
+      // Clear track change flag on cleanup as a safety measure
+      trackChangeInProgressRef.current = false;
     };
   }, [playbackRate, onTrackChanged, onTrackChange, tryPlayIfReady, attemptAutoplay]);
 
@@ -944,6 +1075,16 @@ export function ReaderAudioPlayer({
   const togglePlayback = useCallback(async () => {
     const audio = audioRef.current;
     if (!audio || !currentTrack || !bookId) {
+      return;
+    }
+
+    // Prevent playback changes during restoration or track changes to avoid conflicts
+    if (isRestoringRef.current || restorationInProgressRef.current || trackChangeInProgressRef.current) {
+      logger.log("[Audio Player] Deferring playback toggle - restoration or track change in progress", {
+        isRestoring: isRestoringRef.current,
+        restorationInProgress: restorationInProgressRef.current,
+        trackChangeInProgress: trackChangeInProgressRef.current,
+      });
       return;
     }
 
@@ -1032,6 +1173,16 @@ export function ReaderAudioPlayer({
       });
     }
 
+    // Final safety check before starting playback
+    if (isRestoringRef.current || restorationInProgressRef.current || trackChangeInProgressRef.current) {
+      logger.log("[Audio Player] Playback blocked - restoration or track change in progress", {
+        isRestoring: isRestoringRef.current,
+        restorationInProgress: restorationInProgressRef.current,
+        trackChangeInProgress: trackChangeInProgressRef.current,
+      });
+      return;
+    }
+    
     logger.log("[Audio Player] Starting playback");
     try {
       await audio.play();
@@ -1048,6 +1199,25 @@ export function ReaderAudioPlayer({
   const playTrackAt = useCallback(
     (nextIndex: number) => {
       if (!tracks[nextIndex]) return;
+      
+      // Prevent track changes during restoration to avoid conflicts
+      if (isRestoringRef.current || restorationInProgressRef.current) {
+        logger.log("[Audio Player] Deferring track change - restoration in progress", {
+          nextIndex,
+          isRestoring: isRestoringRef.current,
+          restorationInProgress: restorationInProgressRef.current,
+        });
+        // Wait a bit and retry if restoration is still in progress
+        setTimeout(() => {
+          if (!isRestoringRef.current && !restorationInProgressRef.current) {
+            playTrackAt(nextIndex);
+          }
+        }, 100);
+        return;
+      }
+      
+      // Mark track change as in progress to prevent audio from starting
+      trackChangeInProgressRef.current = true;
       
       const audio = audioRef.current;
       // IMPORTANT: Preserve playing state before changing tracks
