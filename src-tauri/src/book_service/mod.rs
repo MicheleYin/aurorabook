@@ -12,7 +12,6 @@ use repositories::*;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::path_validation::validate_file_size;
-use crate::epub::parser::extract_audio_tracks_from_spine;
 
 /// Normalize an EPUB href by removing leading slash.
 /// The base path should already be correctly derived from the OPF file.
@@ -1023,12 +1022,36 @@ pub async fn ingest_epub(
         return Err(AppError::EpubParse("No readable chapters found in EPUB".to_string()));
     }
     
-    // Extract metadata using epub crate in a separate blocking task
+    // Extract metadata and parse OPF to get media-overlay attributes
+    // We need to parse the OPF directly to get media-overlay attributes which are required
+    // for matching audio tracks to chapters via the media-overlay chain
     let epub_data_for_metadata = epub_data.clone();
     let (metadata, manifest_items, spine_items, opf_path) = tokio::task::spawn_blocking(move || {
-        use crate::epub::parser::extract_metadata_with_epub_crate;
-        extract_metadata_with_epub_crate(&epub_data_for_metadata)
-            .map_err(|e| format!("Failed to extract metadata: {}", e))
+        use std::io::{Cursor, Read};
+        use zip::ZipArchive;
+        use crate::epub::parser::{find_opf_path, parse_opf_content};
+        
+        // Open EPUB as ZIP to read OPF
+        let epub_slice: &[u8] = &epub_data_for_metadata;
+        let mut archive = ZipArchive::new(Cursor::new(epub_slice))
+            .map_err(|e| format!("Failed to open EPUB archive: {}", e))?;
+        
+        // Find OPF path
+        let opf_path = find_opf_path(&mut archive)
+            .map_err(|e| format!("Failed to find OPF path: {}", e))?;
+        
+        // Read OPF content
+        let mut opf_file = archive.by_name(&opf_path)
+            .map_err(|e| format!("Failed to open OPF file: {}", e))?;
+        let mut opf_content = String::new();
+        opf_file.read_to_string(&mut opf_content)
+            .map_err(|e| format!("Failed to read OPF content: {}", e))?;
+        
+        // Parse OPF to get metadata, manifest (with media-overlay), and spine
+        let (metadata, manifest_items, spine_items) = parse_opf_content(&opf_content)
+            .map_err(|e| format!("Failed to parse OPF content: {}", e))?;
+        
+        Ok((metadata, manifest_items, spine_items, opf_path))
     })
     .await
     .map_err(|e| AppError::EpubParse(format!("Failed to extract metadata: {}", e)))?
@@ -1062,39 +1085,28 @@ pub async fn ingest_epub(
     
     // Extract audio tracks from spine in order (ensures tracks match chapter order)
     use crate::epub::parser::extract_audio_tracks_from_spine;
+    
+    // Log spine items to verify order
+    log::info!("🔍 DEBUG: Spine items order ({} items):", spine_items.len());
+    for (idx, (idref, href)) in spine_items.iter().enumerate() {
+        log::info!("  Spine #{}: idref='{}', href='{}'", idx, idref, href);
+    }
+    
     let mut audio_tracks = extract_audio_tracks_from_spine(&spine_items, &manifest_items);
     
-    // Build a map of actual file paths in the EPUB archive for path normalization
-    let epub_data_for_paths = epub_data.clone();
-    let archive_file_paths = tokio::task::spawn_blocking(move || {
-        use std::io::Cursor;
-        use zip::ZipArchive;
-        use std::collections::HashSet;
-        
-        let mut archive = match ZipArchive::new(Cursor::new(&epub_data_for_paths)) {
-            Ok(archive) => archive,
-            Err(_) => return HashSet::new(),
-        };
-        
-        let mut file_paths = HashSet::new();
-        for i in 0..archive.len() {
-            if let Ok(file) = archive.by_index(i) {
-                let name = file.name().to_string();
-                file_paths.insert(name.clone());
-                // Also add normalized versions (without leading slash, etc.)
-                file_paths.insert(name.trim_start_matches('/').to_string());
-            }
-        }
-        file_paths
-    })
-    .await
-    .unwrap_or_else(|_| std::collections::HashSet::new());
+    // Log extracted tracks to verify order
+    log::info!("🔍 DEBUG: Extracted audio tracks from spine ({} tracks):", audio_tracks.len());
+    for (idx, track) in audio_tracks.iter().enumerate() {
+        log::info!("  Track #{}: href='{}', order={}", idx, track.href, track.order);
+    }
     
-    // Audio tracks are already in spine order, but we still need to match them to chapters
-    // for building the audio sync map. Use order_audio_tracks_by_chapters to ensure
-    // proper matching while preserving spine order.
-    use crate::epub::order_audio_tracks_by_chapters;
-    audio_tracks = order_audio_tracks_by_chapters(&audio_tracks, &chapters, &manifest_items, &archive_file_paths);
+    // Audio tracks are already in spine order with correct sequential ordering (0, 1, 2, ...)
+    // from extract_audio_tracks_from_spine. We don't need to reorder them since they're
+    // already in the correct order. The order_audio_tracks_by_chapters function would
+    // reorder them based on chapter order (which might be NCX order, not spine order),
+    // so we skip it to preserve the spine order.
+    // Note: Tracks are already matched to chapters via the media-overlay chain in extract_audio_tracks_from_spine
+    log::info!("Audio tracks already in spine order ({} tracks)", audio_tracks.len());
     
     // Compute durations for audio tracks
     if !audio_tracks.is_empty() {
@@ -1397,6 +1409,12 @@ pub async fn ingest_epub(
     
     // Ensure audio tracks are sorted by order before creating Book
     audio_tracks.sort_by_key(|t| t.order);
+    
+    // Log track order before creating Book to verify correct ordering
+    log::info!("Audio tracks before creating Book (sorted by order):");
+    for (idx, track) in audio_tracks.iter().enumerate() {
+        log::info!("  Track #{}: href='{}', order={}", idx, track.href, track.order);
+    }
     
     // Create Book object with chapters that have content
     let book = Book {

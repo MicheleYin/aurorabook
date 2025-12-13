@@ -257,47 +257,29 @@ async fn test_audiobook_ingestion_with_audio_tracks() {
         }
     }
     
-    // Verify order values match chapter order
-    // Note: Order values match the chapter positions in the full chapter list
-    // (e.g., if p001 is at position 3, its audio track will have order 3)
-    println!("\n🔍 Verifying order values match chapter order...");
+    // Verify order values are sequential (0, 1, 2, ...)
+    // Tracks should have sequential order values starting from 0, regardless of chapter order
+    println!("\n🔍 Verifying order values are sequential...");
     let mut order_correct = true;
-    let mut expected_order = None;
     
-    // Find the first chapter with media-overlay to determine the starting order
-    for chapter in &chapters {
-        // Check if this chapter has a corresponding audio track
-        let chapter_filename = chapter.href.split("/").last().unwrap_or(&chapter.href);
-        if chapter_filename.starts_with("p") && chapter_filename.ends_with(".xhtml") {
-            if let Some(track) = ordered_tracks.iter().find(|t| {
-                let track_num = t.href.split("/").last()
-                    .and_then(|f| f.strip_suffix(".mp3"))
-                    .and_then(|f| f.parse::<u32>().ok());
-                let chapter_num = chapter_filename
-                    .strip_prefix("p")
-                    .and_then(|f| f.strip_suffix(".xhtml"))
-                    .and_then(|f| f.parse::<u32>().ok());
-                track_num == chapter_num
-            }) {
-                if expected_order.is_none() {
-                    expected_order = Some(chapter.order);
-                }
-                if track.order == chapter.order {
-                    println!("   ✅ Track {} (order: {}) matches chapter '{}' (order: {})", 
-                        track.href.split("/").last().unwrap_or(&track.href), 
-                        track.order, chapter.title, chapter.order);
-                } else {
-                    println!("   ❌ Track {} (order: {}) doesn't match chapter '{}' (order: {})", 
-                        track.href.split("/").last().unwrap_or(&track.href), 
-                        track.order, chapter.title, chapter.order);
-                    order_correct = false;
-                }
-            }
+    for (i, track) in ordered_tracks.iter().enumerate() {
+        let expected_order = i;
+        if track.order == expected_order {
+            println!("   ✅ Track {} (order: {}) has correct sequential order", 
+                track.href.split("/").last().unwrap_or(&track.href), 
+                track.order);
+        } else {
+            println!("   ❌ Track {} (order: {}) should have order {}, but got {}", 
+                track.href.split("/").last().unwrap_or(&track.href), 
+                track.order, expected_order, track.order);
+            order_correct = false;
         }
     }
     
     if order_correct {
-        println!("   ✅ All track order values match their corresponding chapter order");
+        println!("   ✅ All track order values are sequential (0, 1, 2, ...)");
+    } else {
+        println!("   ❌ Some track order values are not sequential");
     }
     
     // Check that tracks are ordered by media-overlay chain, not alphabetically
@@ -320,16 +302,19 @@ async fn test_audiobook_ingestion_with_audio_tracks() {
         println!("      Alphabetical would be: {:?}", sorted_filenames);
     }
     
-    if all_correct {
+    if all_correct && order_correct {
         println!("\n✅✅✅ Audiobook ingestion test PASSED!");
         println!("   All {} audio tracks are in the correct order (01-07)", ordered_tracks.len());
         println!("   Tracks are ordered by media-overlay chain based on chapter order");
-        if !order_correct {
-            println!("   ⚠️  Note: Order values match chapter positions in full chapter list");
-        }
+        println!("   Track order values are sequential (0, 1, 2, ...)");
     } else {
         println!("\n❌❌❌ Audiobook ingestion test FAILED!");
-        println!("   Audio tracks are not in the correct order");
+        if !all_correct {
+            println!("   Audio tracks are not in the correct sequence");
+        }
+        if !order_correct {
+            println!("   Track order values are not sequential");
+        }
         panic!("Audio track ordering failed");
     }
 }

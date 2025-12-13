@@ -291,6 +291,11 @@ impl BookRepository {
         }
         
         // Save audio tracks (metadata only, data is stored separately)
+        // Log track order before saving to verify correct ordering
+        log::debug!("Saving {} audio tracks with orders:", model.audio_tracks.len());
+        for (idx, track) in model.audio_tracks.iter().enumerate() {
+            log::debug!("  Track #{}: href='{}', order={}", idx, track.href, track.order);
+        }
         for track in &model.audio_tracks {
             AudioRepository::save_metadata(&txn, &model.id, track).await?;
         }

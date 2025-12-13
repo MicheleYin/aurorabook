@@ -53,6 +53,12 @@ impl AudioRepository {
         
         let tracks: Vec<AudioTrack> = entities.into_iter().map(Self::entity_to_model).collect();
         
+        // Log track order for debugging
+        log::debug!("Retrieved {} audio tracks from database with orders:", tracks.len());
+        for (idx, track) in tracks.iter().enumerate() {
+            log::debug!("  Track #{}: href='{}', order={}", idx, track.href, track.order);
+        }
+        
         // Store in cache
         if let Ok(cache) = crate::book_service::database::get_db_cache() {
             cache.audio_tracks_list.insert(book_id.to_string(), Arc::new(tracks.clone())).await;
@@ -63,6 +69,7 @@ impl AudioRepository {
     
     /// Save audio track metadata
     pub async fn save_metadata<C: ConnectionTrait>(db: &C, book_id: &str, model: &AudioTrack) -> Result<(), String> {
+        log::debug!("Saving audio track metadata: id={}, href={}, order={}", model.id, model.href, model.order);
         let active_model = Self::model_to_active_model(book_id, model);
         audio_track::Entity::insert(active_model)
             .on_conflict(
@@ -80,11 +87,17 @@ impl AudioRepository {
             .await
             .map_err(|e| format!("Failed to save audio track: {}", e))?;
         
+        // Invalidate audio tracks list cache to ensure fresh data is loaded
+        if let Ok(cache) = crate::book_service::database::get_db_cache() {
+            cache.audio_tracks_list.invalidate(book_id).await;
+        }
+        
         Ok(())
     }
     
     /// Save audio track data
     /// If the audio track doesn't exist, creates it with minimal metadata
+    /// The track_order is preserved from the existing track metadata (which should already be saved)
     pub async fn save_data(db: &DatabaseConnection, book_id: &str, href: &str, data: &[u8]) -> Result<(), String> {
         // Try to find existing track
         let existing_track = audio_track::Entity::find()
@@ -95,13 +108,16 @@ impl AudioRepository {
             .map_err(|e| format!("Failed to find audio track: {}", e))?;
         
         if let Some(existing) = existing_track {
-            // Update existing track
+            // Update existing track - preserve track_order from metadata
+            // Only update the data field, not the order (order should already be correct from metadata save)
             let mut track: audio_track::ActiveModel = existing.into();
             track.data = Set(Some(data.to_vec()));
+            // Explicitly preserve track_order - don't update it
             track.update(db).await
                 .map_err(|e| format!("Failed to update audio track data: {}", e))?;
         } else {
             // Create new track with data (metadata will be minimal)
+            // This should rarely happen since metadata should be saved first
             // Try to find the highest order to assign a new order
             let max_order = audio_track::Entity::find()
                 .filter(audio_track::Column::BookId.eq(book_id))

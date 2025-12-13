@@ -107,13 +107,19 @@ pub fn extract_audio_tracks_from_spine(
         if suffix.is_empty() { None } else { Some(suffix) }
     };
     
+    // Log spine items for debugging
+    log::info!("🔍 DEBUG: Processing {} spine items in order:", spine_items.len());
+    for (idx, (idref, href)) in spine_items.iter().enumerate() {
+        log::info!("  Spine #{}: idref='{}', href='{}'", idx, idref, href);
+    }
+    
     // Iterate through spine items in order
     for (spine_index, (idref, _href)) in spine_items.iter().enumerate() {
         // Get the manifest item for this spine item
         if let Some(chapter_item) = manifest_items.get(idref) {
             // Check if this chapter has a media-overlay (SMIL file)
             if let Some(ref smil_id) = chapter_item.media_overlay {
-                debug!("Spine item #{} (idref: '{}') has media-overlay '{}'", spine_index, idref, smil_id);
+                log::info!("🔍 DEBUG: Spine item #{} (idref: '{}', href: '{}') has media-overlay '{}'", spine_index, idref, chapter_item.href, smil_id);
                 
                 // Find SMIL file in manifest
                 if let Some(_smil_item) = manifest_items.get(smil_id) {
@@ -135,7 +141,7 @@ pub fn extract_audio_tracks_from_spine(
                                             let track_order = audio_tracks.len(); // Sequential order starting from 0
                                             let title = generate_audio_track_title(filename, track_order);
                                             
-                                            debug!("Matched audio track '{}' (id: {}, href: '{}') to spine position {} (track order: {})", 
+                                            log::info!("🔍 DEBUG: Matched audio track '{}' (id: {}, href: '{}') to spine position {} (track order: {})", 
                                                 title, audio_id, audio_item.href, spine_index, track_order);
                                             
                                             audio_tracks.push(AudioTrack {

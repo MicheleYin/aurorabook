@@ -330,15 +330,18 @@ fn extract_audio_data_from_epub(
         }
     }
     
-    // Order audio tracks to match chapter order using manifest relationships
-    log::info!("🔍 DEBUG: Starting to order {} audio tracks to match {} chapters", audio_tracks.len(), chapters.len());
-    let ordered_audio_tracks = order_audio_tracks_by_chapters(&audio_tracks, &chapters, &manifest_items, &archive_file_paths);
-    log::info!("🔍 DEBUG: Ordered {} audio tracks to match {} chapters", ordered_audio_tracks.len(), chapters.len());
-    for (idx, track) in ordered_audio_tracks.iter().enumerate() {
+    // Audio tracks are already in spine order with correct sequential ordering (0, 1, 2, ...)
+    // from extract_audio_tracks_from_spine. We don't need to reorder them since they're
+    // already in the correct order. The order_audio_tracks_by_chapters function would
+    // reorder them based on chapter order (which might be NCX order, not spine order),
+    // so we skip it to preserve the spine order.
+    // Note: Tracks are already matched to chapters via the media-overlay chain in extract_audio_tracks_from_spine
+    log::info!("🔍 DEBUG: Audio tracks already in spine order, preserving order");
+    for (idx, track) in audio_tracks.iter().enumerate() {
         log::info!("🔍 DEBUG: Audio Track #{}: order={}, href='{}', title='{}'", idx, track.order, track.href, track.title);
     }
     
-    Ok((ordered_audio_tracks, chapters))
+    Ok((audio_tracks, chapters))
 }
 
 /// Normalize an EPUB href path to match the actual structure in the EPUB archive
