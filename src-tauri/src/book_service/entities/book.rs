@@ -8,7 +8,6 @@ pub struct Model {
     pub id: String,
     pub title: String,
     pub author: String,
-    #[sea_orm(unique)]
     pub source_path: String,
     pub cover_url: Option<String>,
     pub publisher: Option<String>,

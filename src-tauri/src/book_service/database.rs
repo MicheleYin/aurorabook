@@ -108,7 +108,7 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
             author TEXT NOT NULL,
-            source_path TEXT NOT NULL UNIQUE,
+            source_path TEXT NOT NULL,
             cover_url TEXT,
             publisher TEXT,
             published_year TEXT,
