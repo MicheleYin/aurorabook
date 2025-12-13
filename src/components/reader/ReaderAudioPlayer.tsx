@@ -1269,6 +1269,14 @@ export function ReaderAudioPlayer({
       // This updates synchronously before any async operations
       setIsLocalTrackChanging(true);
       
+      // Set timestamp to 0 IMMEDIATELY for clean UI
+      // This ensures the UI shows 0:00 right away instead of the old track's time
+      setCurrentTime(0);
+      const audio = audioRef.current;
+      if (audio) {
+        audio.currentTime = 0;
+      }
+      
       // Notify parent about track change IMMEDIATELY (synchronously) to trigger coordinator
       // This ensures buttons are disabled before the track change happens
       if (onTrackChange && !isRestoringRef.current && lastNotifiedTrackHrefRef.current !== nextTrack.href) {
@@ -1284,8 +1292,6 @@ export function ReaderAudioPlayer({
       
       // Mark track change as in progress to prevent audio from starting
       trackChangeInProgressRef.current = true;
-      
-      const audio = audioRef.current;
       // IMPORTANT: Preserve playing state before changing tracks
       // Check both the ref and the actual audio element state
       const wasPlaying = isPlayingRef.current || (audio && !audio.paused);
