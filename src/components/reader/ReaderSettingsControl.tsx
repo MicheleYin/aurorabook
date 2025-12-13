@@ -284,7 +284,7 @@ export function ReaderSettingsControl({
           </span>
         </Button>
       </DrawerTrigger>
-      <DrawerContent backdropBlur={false}>
+      <DrawerContent backdropBlur={true}>
         <DrawerHandle />
         <DrawerModalHeader className="flex flex-row items-start justify-between text-left">
           <div>

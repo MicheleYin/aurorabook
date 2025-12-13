@@ -1,7 +1,7 @@
 import * as React from "react";
 
-import { cn } from "../../lib/utils";
-import { animPatterns } from "../../lib/animations";
+import { cn } from "@/lib/utils";
+import { animPatterns } from "@/lib/animations";
 
 type ProgressProps = React.HTMLAttributes<HTMLDivElement> & {
   value?: number;
