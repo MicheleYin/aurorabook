@@ -1,6 +1,9 @@
 use leptos::*;
 use leptos_meta::*;
 use crate::components::app::*;
+use crate::hooks::settings::use_persistent_settings;
+use crate::hooks::use_resolved_theme;
+use crate::types::settings::UITheme;
 
 #[derive(Clone, Copy, PartialEq)]
 enum ActiveView {
@@ -12,6 +15,26 @@ enum ActiveView {
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
+    
+    // Load settings and apply theme
+    let (settings, _is_hydrated, update_settings) = use_persistent_settings();
+    
+    // Provide settings context to all child components
+    provide_context(settings);
+    provide_context(update_settings);
+    
+    let theme_signal = create_memo(move |_| settings.get().theme);
+    let resolved_theme = use_resolved_theme(theme_signal);
+    
+    // Apply theme to document
+    create_effect(move |_| {
+        let window = web_sys::window().unwrap();
+        let document = window.document().unwrap();
+        let root = document.document_element().unwrap();
+        
+        let is_dark = resolved_theme.get() == UITheme::Dark;
+        root.class_list().toggle_with_force("dark", is_dark).unwrap();
+    });
     
     let (active_view, set_active_view) = create_signal(ActiveView::Library);
     
@@ -25,9 +48,9 @@ pub fn App() -> impl IntoView {
     // Determine current view content
     let current_view = move || {
         match active_view.get() {
-            ActiveView::Library => view! { <LibraryPanel /> }.into_view(),
-            ActiveView::Reader => view! { <ReaderPanel /> }.into_view(),
-            ActiveView::Settings => view! { <SettingsPanel /> }.into_view(),
+            ActiveView::Library => view! { <LibraryPanel /> },
+            ActiveView::Reader => view! { <ReaderPanel /> },
+            ActiveView::Settings => view! { <SettingsPanel /> },
         }
     };
     

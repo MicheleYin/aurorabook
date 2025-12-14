@@ -6,6 +6,8 @@ pub mod separator;
 pub mod card;
 pub mod slider;
 pub mod select;
+
+pub use select::*;
 pub mod dialog;
 pub mod drawer;
 pub mod progress;

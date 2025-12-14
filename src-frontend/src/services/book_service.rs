@@ -13,8 +13,8 @@ pub struct LibraryFilter {
     pub search: Option<String>,
 }
 
-/// Invoke a Tauri command from WASM
-async fn invoke_tauri_command<T>(command: &str, args: JsValue) -> Result<T, String>
+/// Invoke a Tauri command from WASM (shared utility)
+pub async fn invoke_tauri_command<T>(command: &str, args: JsValue) -> Result<T, String>
 where
     T: for<'de> Deserialize<'de>,
 {

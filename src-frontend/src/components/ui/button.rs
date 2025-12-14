@@ -60,7 +60,7 @@ pub fn Button(
     let size_classes = button_size_classes(size);
     let hover_class = "transition-colors";
     let ripple_class = move || {
-        if ripple_active.get() {
+        if ripple_active.get_untracked() {
             "button-ripple ripple-active"
         } else {
             ""
