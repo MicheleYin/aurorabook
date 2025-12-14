@@ -325,7 +325,32 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
     }
   }, [activeBookId, library, ensureChapterLoaded, setLibrary, readerManager]);
 
+  // Use refs to access current values without causing re-renders
+  // Declare refs that will be reused later in the file
+  const libraryRef = useRef(library);
+  const handleChapterReloadRef = useRef(handleChapterReload);
+  const activeBookIdRefForEvent = useRef(activeBookId);
+  const activeChapterIdRefForEvent = useRef(activeChapterId);
+  
+  // Update refs when values change
+  useEffect(() => {
+    libraryRef.current = library;
+  }, [library]);
+  
+  useEffect(() => {
+    handleChapterReloadRef.current = handleChapterReload;
+  }, [handleChapterReload]);
+  
+  useEffect(() => {
+    activeBookIdRefForEvent.current = activeBookId;
+  }, [activeBookId]);
+  
+  useEffect(() => {
+    activeChapterIdRefForEvent.current = activeChapterId;
+  }, [activeChapterId]);
+
   // Listen for chapter-updated events to reload chapter if user is viewing it
+  // Only depend on activeBookId and activeChapterId to avoid unnecessary cleanup/setup
   useEffect(() => {
     const handleChapterUpdated = async (event: Event) => {
       const customEvent = event as CustomEvent<{
@@ -338,10 +363,12 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
       
       const { bookId, chapterId, chapterHref, chapterIndex } = customEvent.detail;
       
-      // Get fresh book and chapter from library state (not from closure)
-      const currentBook = activeBookId ? library.find(b => b.id === activeBookId) : undefined;
-      const currentChapter = currentBook && activeChapterId 
-        ? currentBook.chapters.find(ch => ch.id === activeChapterId)
+      // Get fresh book and chapter from library state using refs (not from closure)
+      const currentBook = activeBookIdRefForEvent.current 
+        ? libraryRef.current.find(b => b.id === activeBookIdRefForEvent.current) 
+        : undefined;
+      const currentChapter = currentBook && activeChapterIdRefForEvent.current 
+        ? currentBook.chapters.find(ch => ch.id === activeChapterIdRefForEvent.current)
         : undefined;
       
       logger.log("[ReaderWrapper] 📥 Received chapter-updated event", {
@@ -365,7 +392,7 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
         });
         
         // Reload the chapter to get the updated HTML with spans
-        await handleChapterReload(chapterId);
+        await handleChapterReloadRef.current(chapterId);
       } else {
         logger.debug("[ReaderWrapper] Chapter updated but not active, skipping reload", {
           bookId,
@@ -384,7 +411,7 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
       logger.debug("[ReaderWrapper] Cleaning up chapter-updated event listener");
       window.removeEventListener("chapter-updated", handleChapterUpdated);
     };
-  }, [activeBookId, activeChapterId, library, handleChapterReload]);
+  }, [activeBookId, activeChapterId]); // Only depend on IDs, not objects
 
   // Track which chapter we've already called onChapterLoaded for to prevent duplicate calls
   const chapterLoadedRef = useRef<string | null>(null);
@@ -658,16 +685,23 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
   // Expose handleAudioTrackChange to parent (App.tsx) via callback
   // Use useEffect for side effect (calling callback when handler is ready)
   const trackHandlerRef = useRef(audioPlayerProgress.handleAudioTrackChange);
+  const onTrackChangeHandlerReadyRef = useRef(onTrackChangeHandlerReady);
+  
+  // Update refs when values change
+  useEffect(() => {
+    trackHandlerRef.current = audioPlayerProgress.handleAudioTrackChange;
+  }, [audioPlayerProgress.handleAudioTrackChange]);
   
   useEffect(() => {
-    // Update ref when handler changes (just storage - no cleanup needed)
-    trackHandlerRef.current = audioPlayerProgress.handleAudioTrackChange;
-    
-    // Expose handler to parent if callback is provided
-    if (onTrackChangeHandlerReady) {
-      onTrackChangeHandlerReady(trackHandlerRef.current);
+    onTrackChangeHandlerReadyRef.current = onTrackChangeHandlerReady;
+  }, [onTrackChangeHandlerReady]);
+  
+  // Expose handler to parent - only call when handler actually changes
+  useEffect(() => {
+    if (onTrackChangeHandlerReadyRef.current) {
+      onTrackChangeHandlerReadyRef.current(trackHandlerRef.current);
     }
-  }, [audioPlayerProgress.handleAudioTrackChange, onTrackChangeHandlerReady]);
+  }, [audioPlayerProgress.handleAudioTrackChange]); // Only depend on the handler, not the callback
 
   // Handle audio progress updates from App.tsx
   // This ensures highlighting and scrolling are updated when audio plays

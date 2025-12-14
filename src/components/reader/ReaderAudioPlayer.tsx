@@ -20,6 +20,7 @@ import { cn } from "../../lib/utils";
 import { useLibrary } from "../../hooks/useLibrary";
 import { animPatterns, enterExit } from "../../lib/animations";
 import { ensureAudioTrackLoaded } from "../../lib/lazy-chapter-loader";
+import { resourceCacheManager } from "../../lib/resource-cache-manager";
 import { usePersistentSettings } from "../../hooks/settings/usePersistentSettings";
 import { useContext } from "react";
 import { ReaderCoordinatorContext } from "../../contexts/ReaderCoordinatorContext";
@@ -215,6 +216,7 @@ function ReaderAudioPlayerComponent({
   // Use refs for storage (no cleanup needed) - update in useEffect to avoid render-time side effects
   const onTrackLoadedRef = useRef(onTrackLoaded);
   const emitProgressRef = useRef(emitProgress);
+  const restorationTimeoutRef = useRef<number | null>(null);
   
   useEffect(() => {
     // Update refs when callbacks change (just storage - no cleanup needed)
@@ -458,32 +460,36 @@ function ReaderAudioPlayerComponent({
       // Single source of truth: always read from audio element
       const seconds = audio.currentTime || 0;
       
-      // Don't sync state during restoration to prevent conflicts
-      if (isRestoring || restorationInProgressRef.current) {
-        return;
-      }
-      
-      // Sync play state with audio element to handle external pause/play
-      // BUT: Don't sync if we're auto-advancing (track ended and moving to next)
+      // Check if restoration is blocking - but allow progress updates if audio is playing
+      // This prevents restoration from blocking timestamp updates
+      const isRestorationBlocking = isRestoring || restorationInProgressRef.current;
       const audioIsPlaying = !audio.paused;
-      if (audioIsPlaying !== isPlayingRef.current && !isAutoAdvancingRef.current) {
-        logger.log("[Audio Player] Play state mismatch detected in timeupdate", {
-          audioIsPlaying,
-          isPlayingRef: isPlayingRef.current,
-          isPlayingState: isPlaying,
-          currentTime: seconds,
-        });
-        setIsPlaying(audioIsPlaying);
-        isPlayingRef.current = audioIsPlaying;
-        // If paused externally, emit progress to save state
-        if (!audioIsPlaying) {
-          emitProgressRef.current(seconds);
+      
+      // Don't sync play state during restoration to prevent conflicts
+      // BUT: Always allow progress updates to keep timestamp current
+      if (!isRestorationBlocking) {
+        // Sync play state with audio element to handle external pause/play
+        // BUT: Don't sync if we're auto-advancing (track ended and moving to next)
+        if (audioIsPlaying !== isPlayingRef.current && !isAutoAdvancingRef.current) {
+          logger.log("[Audio Player] Play state mismatch detected in timeupdate", {
+            audioIsPlaying,
+            isPlayingRef: isPlayingRef.current,
+            isPlayingState: isPlaying,
+            currentTime: seconds,
+          });
+          setIsPlaying(audioIsPlaying);
+          isPlayingRef.current = audioIsPlaying;
+          // If paused externally, emit progress to save state
+          if (!audioIsPlaying) {
+            emitProgressRef.current(seconds);
+          }
         }
       }
       
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
       
-      // Don't update UI state if component is dismissing (reduces re-renders during animation)
+      // Always update UI state (even during restoration) to keep timestamp current
+      // Don't update if component is dismissing (reduces re-renders during animation)
       if (!hasBeenDismissedRef.current && !isDismissing) {
         // Throttle setCurrentTime state updates to at most once per second
         const timeSinceLastUpdate = now - lastCurrentTimeUpdateRef.current;
@@ -493,6 +499,7 @@ function ReaderAudioPlayerComponent({
         }
       }
       
+      // Always emit progress updates (even during restoration) to keep timestamp current
       // Throttle progress emissions to at most once per second
       const timeSinceLastEmit = now - lastEmitTimestampRef.current;
       if (timeSinceLastEmit >= 1000) {
@@ -543,8 +550,12 @@ function ReaderAudioPlayerComponent({
             trackLoadedForRestorationRef.current = false;
             // Clear timeout since restoration attempt completed
             clearTimeout(lockTimeout);
-            // Keep lock until restoration completes to prevent race conditions
-            // The lock will be cleared when isRestoring becomes false
+            // Clear lock immediately after restoration attempt completes
+            // The onTrackLoaded callback will set isRestoring to false, but we clear the lock now
+            // to prevent blocking autoplay
+            if (restorationInProgressRef.current === currentTrackId) {
+              restorationInProgressRef.current = null;
+            }
           }
         }
       }
@@ -593,8 +604,12 @@ function ReaderAudioPlayerComponent({
             trackLoadedForRestorationRef.current = false;
             // Clear timeout since restoration attempt completed
             clearTimeout(lockTimeout);
-            // Keep lock until restoration completes to prevent race conditions
-            // The lock will be cleared when isRestoring becomes false
+            // Clear lock immediately after restoration attempt completes
+            // The onTrackLoaded callback will set isRestoring to false, but we clear the lock now
+            // to prevent blocking autoplay
+            if (restorationInProgressRef.current === currentTrackId) {
+              restorationInProgressRef.current = null;
+            }
           }
         }
       } else if (!restorationInProgressRef.current) {
@@ -778,12 +793,93 @@ function ReaderAudioPlayerComponent({
   const currentTrack = useMemo(() => {
     const track = tracks[currentIndex];
     if (!track) return undefined;
-    // Track.url is set by ensureAudioTrackLoaded which uses centralized audioTrackCache
+    
+    // If track already has URL, return as-is
+    if (track.url) {
+      return track;
+    }
+    
+    // Check resourceCacheManager for URL (loaded by ensureAudioTrackLoaded)
+    // NOTE: The cache uses track.href as the key (not track.id)
+    // This matches how loadAudioTrackUrl caches it: setAudioTrack(bookId, track.href, blobUrl)
+    if (bookId) {
+      const cached = resourceCacheManager.getAudioTrack(bookId, track.href);
+      if (cached?.url) {
+        logger.log("[Audio Player] Found track URL in resourceCacheManager", {
+          trackId: track.id,
+          trackHref: track.href,
+          hasUrl: !!cached.url,
+        });
+        return { ...track, url: cached.url };
+      }
+    }
+    
     return track;
-  }, [tracks, currentIndex]);
+  }, [tracks, currentIndex, bookId, loadedCount]);
 
   // Memoize current track ID to avoid repeated property access
   const currentTrackId = useMemo(() => currentTrack?.id, [currentTrack]);
+
+  // If isRestoring is true, ensure onTrackLoaded is called even if audio is already loaded
+  // This handles the case where audio loads before restoration flag is set
+  useEffect(() => {
+    if (isRestoring && currentTrack) {
+      const audio = audioRef.current;
+      if (audio && audio.readyState >= HTMLMediaElement.HAVE_METADATA && audio.src === currentTrack.url) {
+        // Audio is already loaded - call onTrackLoaded to clear the restoration flag
+        const trackId = currentTrack.id;
+        if (restorationInProgressRef.current !== trackId) {
+          restorationInProgressRef.current = trackId;
+          try {
+            onTrackLoadedRef.current(audio);
+          } finally {
+            // Always clear lock after attempt to prevent blocking autoplay
+            if (restorationInProgressRef.current === trackId) {
+              restorationInProgressRef.current = null;
+            }
+          }
+        }
+      }
+    }
+  }, [isRestoring, currentTrack]);
+
+  // Add timeout to clear isRestoring if it stays true too long (safety measure)
+  useEffect(() => {
+    if (isRestoring) {
+      // Clear any existing timeout
+      if (restorationTimeoutRef.current) {
+        clearTimeout(restorationTimeoutRef.current);
+      }
+      
+      // Set timeout to force clear restoration flag after 3 seconds
+      // This prevents the flag from getting stuck
+      restorationTimeoutRef.current = window.setTimeout(() => {
+        logger.warn("[Audio Player] Restoration flag timeout - forcing clear", {
+          isRestoring,
+          currentTrackId: currentTrack?.id,
+        });
+        // Force call onTrackLoaded to clear the flag
+        const audio = audioRef.current;
+        if (audio && currentTrack && audio.src === currentTrack.url) {
+          onTrackLoadedRef.current(audio);
+        }
+        restorationTimeoutRef.current = null;
+      }, 3000);
+    } else {
+      // Clear timeout if restoration completes
+      if (restorationTimeoutRef.current) {
+        clearTimeout(restorationTimeoutRef.current);
+        restorationTimeoutRef.current = null;
+      }
+    }
+    
+    return () => {
+      if (restorationTimeoutRef.current) {
+        clearTimeout(restorationTimeoutRef.current);
+        restorationTimeoutRef.current = null;
+      }
+    };
+  }, [isRestoring, currentTrack]);
 
   // Periodically check audio state to detect external pause/play
   // Use memoized currentTrackId to avoid re-runs
@@ -917,7 +1013,9 @@ function ReaderAudioPlayerComponent({
     shouldPlay: boolean
   ): Promise<boolean> => {
     // Prevent autoplay during restoration or track changes
-    if (isRestoring || restorationInProgressRef.current || trackChangeInProgressRef.current) {
+    // Only block if isRestoring is true (actual restoration state) or track change is in progress
+    // Don't block just because restorationInProgressRef is set - it's cleared immediately after restoration completes
+    if (isRestoring || trackChangeInProgressRef.current) {
       logger.log("[Audio Player] Autoplay blocked - restoration or track change in progress", {
         isRestoring: isRestoring,
         restorationInProgress: restorationInProgressRef.current,
@@ -1049,15 +1147,36 @@ function ReaderAudioPlayerComponent({
       });
     }
     
-    // Set audio source
-    audio.src = track.url!;
-    audio.load();
-    audio.playbackRate = playbackRate;
+    // Check if audio is already loaded and playing the same track
+    // If so, don't reload to avoid resetting playback
+    const isSameTrack = audio.src === track.url;
+    const isAlreadyLoaded = isSameTrack && 
+                            audio.readyState >= HTMLMediaElement.HAVE_METADATA &&
+                            !audio.paused;
     
-    // Reset time if not restoring
-    if (!isRestoring) {
-      audio.currentTime = 0;
-      setCurrentTime(0);
+    // Only set source and load if it's a different track or not already loaded
+    if (!isSameTrack) {
+      // Set audio source for new track
+      audio.src = track.url!;
+      audio.load();
+      audio.playbackRate = playbackRate;
+      
+      // Reset time if not restoring
+      if (!isRestoring) {
+        audio.currentTime = 0;
+        setCurrentTime(0);
+      }
+    } else if (!isAlreadyLoaded) {
+      // Same source but not loaded yet - just load it
+      audio.load();
+      audio.playbackRate = playbackRate;
+    } else {
+      // Already loaded and playing - just update playback rate if needed
+      logger.log("[Audio Player] Audio already loaded and playing, skipping reload", {
+        trackId: track.id,
+        currentTime: audio.currentTime,
+      });
+      audio.playbackRate = playbackRate;
     }
     
     // Try immediate play if audio is already ready (cached)
@@ -1221,12 +1340,6 @@ function ReaderAudioPlayerComponent({
       return;
     }
 
-    // Reset setup tracking when track changes
-    lastSetupTrackIdRef.current = null;
-    
-    // Reset scrubbing state when track changes
-    resetScrubbingState();
-
     // Get URL from track (set by ensureAudioTrackLoaded which uses centralized cache)
     if (!currentTrack.url) {
       // URL not loaded yet - will be handled by pre-load effect
@@ -1237,7 +1350,17 @@ function ReaderAudioPlayerComponent({
     const trackWithUrl = currentTrack;
     const trackUrl = currentTrack.url;
 
-    // Prevent duplicate setup
+    // Check if track actually changed before resetting
+    const trackChanged = lastSetupTrackIdRef.current !== trackWithUrl.id;
+    
+    // Only reset setup tracking when track actually changes
+    if (trackChanged) {
+      lastSetupTrackIdRef.current = null;
+      // Reset scrubbing state when track changes
+      resetScrubbingState();
+    }
+
+    // Prevent duplicate setup - check if already set up for this track
     if (lastSetupTrackIdRef.current === trackWithUrl.id && audio.src === trackUrl) {
       // Already set up, but check if we need to autoplay (e.g., track just loaded)
       if (isPlayingRef.current && audio.paused) {
@@ -1251,7 +1374,7 @@ function ReaderAudioPlayerComponent({
     const cleanup = setupAudioSource(audio, trackWithUrl);
     
     return cleanup;
-  }, [currentIndex, currentTrack?.id, bookId, setupAudioSource, loadedCount, attemptAutoplay, resetScrubbingState]);
+  }, [currentIndex, currentTrack?.id, bookId, setupAudioSource, attemptAutoplay, resetScrubbingState]);
 
 
   const handleTogglePlayback = useCallback(async () => {
@@ -1261,13 +1384,30 @@ function ReaderAudioPlayerComponent({
     }
 
     // Prevent playback changes during restoration or track changes to avoid conflicts
-    if (isRestoring || restorationInProgressRef.current || trackChangeInProgressRef.current) {
+    // BUT: Allow playback if audio is already loaded and ready (restoration might be stuck)
+    const audioIsReady = audio.readyState >= HTMLMediaElement.HAVE_METADATA && audio.src === currentTrack.url;
+    const shouldBlock = (isRestoring || restorationInProgressRef.current || trackChangeInProgressRef.current) && !audioIsReady;
+    
+    if (shouldBlock) {
       logger.log("[Audio Player] Deferring playback toggle - restoration or track change in progress", {
         isRestoring: isRestoring,
         restorationInProgress: restorationInProgressRef.current,
         trackChangeInProgress: trackChangeInProgressRef.current,
+        audioIsReady,
       });
       return;
+    }
+    
+    // If audio is ready but restoration flag is still set, try to clear it
+    if (audioIsReady && isRestoring) {
+      logger.log("[Audio Player] Audio ready but restoration flag still set - attempting to clear", {
+        currentTrackId: currentTrack.id,
+      });
+      try {
+        onTrackLoadedRef.current(audio);
+      } catch (error) {
+        logger.warn("[Audio Player] Failed to clear restoration flag", error);
+      }
     }
 
     logger.log("[Audio Player] togglePlayback called", {
@@ -1551,6 +1691,9 @@ function ReaderAudioPlayerComponent({
     [handleTogglePlayback, handlePrevious, handleNext, handleSkipBack, handleSkipForward]
   );
 
+  // Track previous metadata to avoid unnecessary updates
+  const previousMetadataRef = useRef<{ title: string; artist: string; album: string } | null>(null);
+  
   // Update MediaSession metadata for macOS Control Center
   useEffect(() => {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) {
@@ -1561,30 +1704,49 @@ function ReaderAudioPlayerComponent({
     
     // Only set metadata if we have a current track
     if (!mediaSessionMetadata) {
-      // Clear metadata if no track
-      try {
-        mediaSession.metadata = null;
-      } catch {
-        // Ignore errors when clearing metadata
+      // Clear metadata if no track (only if it was previously set)
+      if (previousMetadataRef.current) {
+        try {
+          mediaSession.metadata = null;
+          previousMetadataRef.current = null;
+        } catch {
+          // Ignore errors when clearing metadata
+        }
       }
       return;
     }
 
-    // Set metadata
-    try {
-      mediaSession.metadata = new MediaMetadata(mediaSessionMetadata);
+    // Check if metadata actually changed to avoid unnecessary updates
+    const currentMetadata = {
+      title: mediaSessionMetadata.title,
+      artist: mediaSessionMetadata.artist,
+      album: mediaSessionMetadata.album,
+    };
+    
+    const previousMetadata = previousMetadataRef.current;
+    const metadataChanged = !previousMetadata ||
+      previousMetadata.title !== currentMetadata.title ||
+      previousMetadata.artist !== currentMetadata.artist ||
+      previousMetadata.album !== currentMetadata.album;
 
-      logger.log("[Audio Player] MediaSession metadata updated", {
-        title: mediaSessionMetadata.title,
-        artist: mediaSessionMetadata.artist,
-        album: mediaSessionMetadata.album,
-        hasArtwork: mediaSessionMetadata.artwork.length > 0,
-      });
-    } catch (error) {
-      logger.warn("[Audio Player] Failed to set MediaSession metadata", error);
+    // Only update if metadata actually changed
+    if (metadataChanged) {
+      try {
+        mediaSession.metadata = new MediaMetadata(mediaSessionMetadata);
+        previousMetadataRef.current = currentMetadata;
+
+        logger.log("[Audio Player] MediaSession metadata updated", {
+          title: mediaSessionMetadata.title,
+          artist: mediaSessionMetadata.artist,
+          album: mediaSessionMetadata.album,
+          hasArtwork: mediaSessionMetadata.artwork.length > 0,
+        });
+      } catch (error) {
+        logger.warn("[Audio Player] Failed to set MediaSession metadata", error);
+      }
     }
 
-    // Set action handlers
+    // Set action handlers (these should be stable, but set them anyway to ensure they're current)
     mediaSession.setActionHandler("play", mediaSessionHandlers.handlePlay);
     mediaSession.setActionHandler("pause", mediaSessionHandlers.handlePause);
     mediaSession.setActionHandler("previoustrack", mediaSessionHandlers.handlePreviousTrack);
