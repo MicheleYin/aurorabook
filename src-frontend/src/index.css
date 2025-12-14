@@ -1,0 +1,871 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 97%;
+    --foreground: 208 54% 28%;
+
+    --card: 0 0% 97%;
+    --card-foreground: 208 54% 28%;
+
+    --popover: 0 0% 97%;
+    --popover-foreground: 208 54% 28%;
+
+    --primary: 208 54% 28%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 94%;
+    --secondary-foreground: 208 54% 28%;
+
+    --muted: 210 40% 94%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 210 40% 94%;
+    --accent-foreground: 208 54% 28%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 89%;
+    --input: 214.3 31.8% 89%;
+    --ring: 208 54% 28%;
+
+    --radius: 0.75rem;
+    --font-sans: "Inter", sans-serif;
+
+    /* Animation durations */
+    --anim-duration-fast: 150ms;
+    --anim-duration-normal: 200ms;
+    --anim-duration-medium: 300ms;
+    --anim-duration-slow: 400ms;
+    --anim-duration-slower: 500ms;
+
+    /* Animation easings */
+    --anim-easing-linear: linear;
+    --anim-easing-ease-in: cubic-bezier(0.4, 0, 1, 1);
+    --anim-easing-ease-out: cubic-bezier(0, 0, 0.2, 1);
+    --anim-easing-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+    --anim-easing-spring: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  }
+
+  .dark {
+    --background: 220 15% 9%;
+    --foreground: 210 40% 98%;
+
+    --card: 220 15% 9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 220 15% 9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 210 40% 98%;
+    --primary-foreground: 208 54% 28%;
+
+    --secondary: 220 15% 18%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 220 15% 18%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 220 15% 18%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 220 15% 23%;
+    --input: 220 15% 18%;
+    --ring: 212.7 26.8% 83.9%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-size: 16px;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Prevent text selection on all elements except input text elements */
+  * {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+  }
+
+  /* Allow text selection for input and textarea elements */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="search"],
+  input[type="tel"],
+  input[type="url"],
+  input[type="number"],
+  textarea,
+  [contenteditable="true"] {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+  }
+
+}
+
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-semibold text-foreground;
+  }
+}
+
+@layer components {
+  .font-readable {
+    font-family: "Atkinson Hyperlegible", "OpenDyslexic", Arial, sans-serif;
+  }
+
+  .font-merriweather {
+    font-family: "Merriweather", Georgia, serif;
+  }
+
+  .font-inter {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  .font-lora {
+    font-family: "Lora", "Times New Roman", serif;
+  }
+
+  .font-fira-mono {
+    font-family: "Fira Mono", "Source Code Pro", Menlo, monospace;
+  }
+
+  .reader-size-small {
+    --reader-font-size: 16px;
+    --reader-line-height: 1.6;
+  }
+
+  .reader-size-medium {
+    --reader-font-size: 18px;
+    --reader-line-height: 1.6;
+  }
+
+  .reader-size-large {
+    --reader-font-size: 20px;
+    --reader-line-height: 1.65;
+  }
+
+  .reader-size-xlarge {
+    --reader-font-size: 22px;
+    --reader-line-height: 1.7;
+  }
+
+  .reader-prose {
+    font-size: var(--reader-font-size, 18px) !important;
+    line-height: var(--reader-line-height, 1.6) !important;
+  }
+
+  .reader-prose :where(p, span, li, blockquote, div, a, figcaption) {
+    font-size: inherit !important;
+    line-height: inherit !important;
+  }
+
+  .reader-prose :where(td, th) {
+    font-size: inherit !important;
+    line-height: inherit !important;
+  }
+
+  /* Remove underline from anchor tags in reader content */
+  .reader-prose a,
+  [data-reader-chapter-content="true"] a {
+    text-decoration: none !important;
+  }
+
+  .reader-prose a:hover,
+  .reader-prose a:focus,
+  .reader-prose a:visited,
+  [data-reader-chapter-content="true"] a:hover,
+  [data-reader-chapter-content="true"] a:focus,
+  [data-reader-chapter-content="true"] a:visited {
+    text-decoration: none !important;
+  }
+
+  /* Audio highlight animations - animate background color alpha, text opacity stays 1 */
+  @keyframes audio-highlight-fade-in {
+    0% {
+      background-color: transparent;
+      box-shadow: none;
+    }
+    100% {
+      /* Light mode */
+      background-color: rgba(254, 240, 138, 0.6); /* yellow-200/60 */
+      box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
+    }
+  }
+
+  @keyframes audio-highlight-fade-out {
+    0% {
+      /* Light mode */
+      background-color: rgba(254, 240, 138, 0.6); /* yellow-200/60 */
+      box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
+    }
+    100% {
+      background-color: transparent;
+      box-shadow: none;
+    }
+  }
+
+  /* Dark mode animations */
+  .dark .audio-highlight.audio-highlight-enter {
+    animation: 
+      audio-highlight-fade-in-dark var(--anim-duration-slow) var(--anim-easing-ease-out) forwards;
+  }
+
+  .dark .audio-highlight.audio-highlight-exit {
+    animation: 
+      audio-highlight-fade-out-dark var(--anim-duration-slow) var(--anim-easing-ease-in) forwards;
+  }
+
+  @keyframes audio-highlight-fade-in-dark {
+    0% {
+      background-color: transparent;
+      box-shadow: none;
+    }
+    100% {
+      /* Dark mode */
+      background-color: rgba(133, 77, 14, 0.4); /* yellow-700/40 */
+      box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
+    }
+  }
+
+  @keyframes audio-highlight-fade-out-dark {
+    0% {
+      /* Dark mode */
+      background-color: rgba(133, 77, 14, 0.4); /* yellow-700/40 */
+      box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
+    }
+    100% {
+      background-color: transparent;
+      box-shadow: none;
+    }
+  }
+
+  @keyframes audio-highlight-glow {
+    0%, 100% {
+      box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
+    }
+    50% {
+      box-shadow: 0 0 8px 2px rgba(234, 179, 8, 0.5);
+    }
+  }
+
+  @keyframes audio-highlight-pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.85;
+    }
+  }
+
+  @keyframes audio-highlight-ripple {
+    0% {
+      transform: scale(0.8);
+      opacity: 0.8;
+    }
+    50% {
+      transform: scale(1.05);
+      opacity: 0.6;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+
+  /* Base audio highlight styling - text opacity never changes */
+  .audio-highlight {
+    display: inline;
+    /* Text always remains fully opaque */
+    opacity: 1;
+    /* No padding to prevent layout shifts */
+    padding: 0;
+    margin: 0;
+    /* Make background repeat on each line for multiline support */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    border-radius: 2px;
+    /* Background starts transparent - will be animated */
+    background-color: transparent;
+    box-shadow: none;
+  }
+
+  /* Fade-in effect when highlight first appears - only affects background */
+  .audio-highlight.audio-highlight-enter {
+    animation: 
+      audio-highlight-fade-in var(--anim-duration-slow) var(--anim-easing-ease-out) forwards;
+  }
+
+  /* Active state - background fully visible */
+  .audio-highlight.audio-highlight-active {
+    @apply bg-yellow-200/60 dark:bg-yellow-700/40;
+    box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
+  }
+
+  /* Fade out animation when removing highlight - only affects background */
+  .audio-highlight.audio-highlight-exit {
+    animation: 
+      audio-highlight-fade-out var(--anim-duration-slow) var(--anim-easing-ease-in) forwards;
+  }
+
+  /* Auto-scroll visual indicator - subtle background tint without borders */
+  @keyframes auto-scroll-pulse {
+    0%, 100% {
+      opacity: 0;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  .auto-scroll-active {
+    /* Use pseudo-element overlay to preserve base background color */
+    position: relative;
+  }
+
+  .auto-scroll-active::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: 0;
+    /* Light blue tint for light theme, subtle blue for dark theme */
+    background-color: rgba(59, 130, 246, 0.02);
+    animation: auto-scroll-pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  /* Ensure content wrapper and all content is above the overlay */
+  .auto-scroll-active > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Smooth transition for auto-scroll toggle button */
+  .auto-scroll-button-transition {
+    transition: 
+      background-color var(--anim-duration-normal) var(--anim-easing-ease-in-out),
+      color var(--anim-duration-normal) var(--anim-easing-ease-in-out),
+      transform var(--anim-duration-normal) var(--anim-easing-ease-in-out);
+  }
+
+  .auto-scroll-button-transition:active {
+    transform: scale(0.95);
+  }
+
+  /* Button ripple effect */
+  @keyframes button-ripple {
+    0% {
+      transform: scale(0);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(4);
+      opacity: 0;
+    }
+  }
+
+  .button-ripple {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .button-ripple::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.5);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+
+  .button-ripple.ripple-active::after {
+    animation: button-ripple 0.6s ease-out;
+    width: 100px;
+    height: 100px;
+  }
+
+  /* Navigation bar animations */
+  @keyframes nav-bar-enter {
+    0% {
+      opacity: 0;
+      transform: translateY(16px) scale(0.95);
+    }
+    60% {
+      opacity: 1;
+      transform: translateY(-2px) scale(1.01);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes nav-bar-exit {
+    0% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(16px) scale(0.95);
+    }
+  }
+
+  .nav-bar-enter {
+    animation: nav-bar-enter var(--anim-duration-medium) var(--anim-easing-spring) forwards;
+  }
+
+  .nav-bar-exit {
+    animation: nav-bar-exit var(--anim-duration-normal) var(--anim-easing-ease-in) forwards;
+  }
+
+  /* Shared animation utilities */
+  .anim-fast {
+    transition-duration: var(--anim-duration-fast);
+  }
+
+  .anim-normal {
+    transition-duration: var(--anim-duration-normal);
+  }
+
+  .anim-medium {
+    transition-duration: var(--anim-duration-medium);
+  }
+
+  .anim-slow {
+    transition-duration: var(--anim-duration-slow);
+  }
+
+  .anim-slower {
+    transition-duration: var(--anim-duration-slower);
+  }
+
+  .anim-ease-in-out {
+    transition-timing-function: var(--anim-easing-ease-in-out);
+  }
+
+  .anim-ease-out {
+    transition-timing-function: var(--anim-easing-ease-out);
+  }
+
+  .anim-ease-in {
+    transition-timing-function: var(--anim-easing-ease-in);
+  }
+
+  .anim-spring {
+    transition-timing-function: var(--anim-easing-spring);
+  }
+
+  /* Grid layout transitions */
+  .library-grid-transition {
+    transition: grid-template-columns var(--anim-duration-medium) var(--anim-easing-ease-in-out);
+  }
+
+  /* Stagger animation for library items */
+  @keyframes library-item-enter {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes library-item-exit {
+    from {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(-8px) scale(0.95);
+    }
+  }
+
+  .library-item-enter {
+    animation: library-item-enter var(--anim-duration-medium) var(--anim-easing-ease-out) both;
+  }
+
+  .library-item-exit {
+    animation: library-item-exit var(--anim-duration-normal) var(--anim-easing-ease-in) forwards;
+  }
+
+  /* Shimmer animation for loading covers */
+  @keyframes shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+
+  .animate-shimmer {
+    animation: shimmer 2s linear infinite;
+  }
+
+  /* Book cover loading animations */
+  @keyframes cover-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes cover-zoom-in {
+    from {
+      opacity: 0;
+      transform: scale(1.05);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .cover-loading {
+    opacity: 0;
+  }
+
+  .cover-loaded {
+    animation: 
+      cover-fade-in var(--anim-duration-medium) var(--anim-easing-ease-out) forwards,
+      cover-zoom-in var(--anim-duration-medium) var(--anim-easing-ease-out) forwards;
+  }
+
+  /* Subtle pulse for active cards */
+  @keyframes pulse-subtle {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.95;
+    }
+  }
+
+  .animate-pulse-subtle {
+    animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  /* Chapter transition animations */
+  @keyframes chapter-slide-out-left {
+    from {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateX(-32px);
+    }
+  }
+
+  @keyframes chapter-slide-out-right {
+    from {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateX(32px);
+    }
+  }
+
+  .chapter-exit-left {
+    animation: chapter-slide-out-left var(--anim-duration-medium) var(--anim-easing-ease-in-out) forwards;
+  }
+
+  .chapter-exit-right {
+    animation: chapter-slide-out-right var(--anim-duration-medium) var(--anim-easing-ease-in-out) forwards;
+  }
+
+  /* Smooth height transitions for text containers */
+  .animate-height {
+    transition: height var(--anim-duration-medium) var(--anim-easing-ease-in-out),
+                max-height var(--anim-duration-medium) var(--anim-easing-ease-in-out),
+                opacity var(--anim-duration-normal) var(--anim-easing-ease-in-out);
+  }
+
+  /* Grid-based height animation for smoother transitions */
+  .animate-grid-rows {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows var(--anim-duration-medium) var(--anim-easing-ease-in-out);
+  }
+
+  /* Max height utilities for text containers */
+  .max-h-title {
+    max-height: 200px; /* Large enough for multi-line chapter titles */
+  }
+
+  .max-h-subtitle {
+    max-height: 100px; /* Large enough for book title + author */
+  }
+
+  /* Dialog backdrop fade-in animation */
+  @keyframes dialog-backdrop-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .dialog-backdrop-enter {
+    animation: dialog-backdrop-fade-in var(--anim-duration-medium) var(--anim-easing-ease-out) forwards;
+  }
+
+  /* Dialog content scale + fade animation (0.95 to 1.0) */
+  @keyframes dialog-content-enter {
+    from {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+  }
+
+  @keyframes dialog-content-exit {
+    from {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.95);
+    }
+  }
+
+  .dialog-content-enter {
+    animation: dialog-content-enter var(--anim-duration-medium) var(--anim-easing-ease-out) forwards;
+  }
+
+  .dialog-content-exit {
+    animation: dialog-content-exit var(--anim-duration-normal) var(--anim-easing-ease-in) forwards;
+  }
+
+  /* Drawer slide with smooth easing (no bounce) */
+  @keyframes drawer-slide-in-bottom {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes drawer-slide-out-bottom {
+    from {
+      transform: translateY(0);
+    }
+    to {
+      transform: translateY(100%);
+    }
+  }
+
+  @keyframes drawer-slide-in-left {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes drawer-slide-out-left {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-100%);
+    }
+  }
+
+  .drawer-slide-in-bottom {
+    animation: drawer-slide-in-bottom var(--anim-duration-medium) var(--anim-easing-ease-out) forwards;
+  }
+
+  .drawer-slide-out-bottom {
+    animation: drawer-slide-out-bottom var(--anim-duration-normal) var(--anim-easing-ease-in) forwards;
+  }
+
+  .drawer-slide-in-left {
+    animation: drawer-slide-in-left var(--anim-duration-medium) var(--anim-easing-ease-out) forwards;
+  }
+
+  .drawer-slide-out-left {
+    animation: drawer-slide-out-left var(--anim-duration-normal) var(--anim-easing-ease-in) forwards;
+  }
+
+  /* Drawer handle hit area for better touch interaction */
+  [vaul-handle-hitarea] {
+    min-height: 44px;
+    min-width: 100%;
+    cursor: grab;
+  }
+
+  [vaul-handle-hitarea]:active {
+    cursor: grabbing;
+  }
+
+  /* Stagger animation for dialog content sections */
+  @keyframes dialog-section-enter {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .dialog-section-enter {
+    animation: dialog-section-enter var(--anim-duration-medium) var(--anim-easing-ease-out) both;
+  }
+
+  /* Progress bar animations */
+  @keyframes progress-pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.8;
+    }
+  }
+
+  @keyframes progress-shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+
+  @keyframes progress-wave {
+    0% {
+      transform: translateX(-100%);
+    }
+    50% {
+      transform: translateX(100%);
+    }
+    100% {
+      transform: translateX(-100%);
+    }
+  }
+
+  .progress-bar-pulse {
+    animation: progress-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  .progress-bar-shimmer {
+    background: linear-gradient(
+      90deg,
+      var(--primary) 0%,
+      var(--primary) 40%,
+      rgba(255, 255, 255, 0.3) 50%,
+      var(--primary) 60%,
+      var(--primary) 100%
+    );
+    background-size: 200% 100%;
+    animation: progress-shimmer 2s linear infinite;
+  }
+
+  .progress-bar-wave::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.2) 50%,
+      transparent 100%
+    );
+    animation: progress-wave 1.5s ease-in-out infinite;
+  }
+
+  /* Safe area inset utilities */
+  .safe-area-top {
+padding-top: calc(max(1rem, env(safe-area-inset-top))) !important;
+  }
+
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom) !important;
+  }
+
+  .safe-area-left {
+    padding-left: env(safe-area-inset-left) !important;
+  }
+
+  .safe-area-right {
+    padding-right: env(safe-area-inset-right) !important;
+  }
+
+  .safe-area-x {
+    padding-left: env(safe-area-inset-left) !important;
+    padding-right: env(safe-area-inset-right) !important;
+  }
+
+  .safe-area-y {
+    padding-top: env(safe-area-inset-top) !important;
+    padding-bottom: env(safe-area-inset-bottom) !important;
+  }
+
+  .safe-area {
+    padding-top: env(safe-area-inset-top) !important    ;
+    padding-right: env(safe-area-inset-right) !important;
+    padding-bottom: env(safe-area-inset-bottom) !important;
+    padding-left: env(safe-area-inset-left) !important;
+  }
+
+
+
+
+
+  /* Respect reduced motion preference */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+

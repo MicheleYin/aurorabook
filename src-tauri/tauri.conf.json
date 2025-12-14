@@ -4,12 +4,13 @@
   "version": "0.1.0",
   "identifier": "com.bigemperor26.tauri",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "cd src-frontend && ./dev.sh",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "cd src-frontend && bun run build:css && trunk build --release",
     "frontendDist": "../dist"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [],
     "security": {
       "csp": null

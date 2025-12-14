@@ -1,0 +1,5 @@
+/target
+/dist
+/.trunk
+/src/index.processed.css
+node_modules
