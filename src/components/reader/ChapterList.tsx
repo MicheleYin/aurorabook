@@ -68,9 +68,9 @@ export function ChapterList({
             }}
             onClick={() => {
               onSelectChapter(chapter.id, { 
-                fragment: chapter.id, 
+                scrollPosition: "top",
                 isManualSelection: true,
-                scrollPosition: "top"
+                preserveChrome: true,
               });
               onAfterSelect?.();
             }}

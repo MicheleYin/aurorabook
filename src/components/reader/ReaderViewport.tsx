@@ -25,10 +25,9 @@ import type {
 import type { Book, Chapter, ReaderPreferences, ReaderTheme } from "../../types/reader";
 import { Button } from "../ui/button";
 import { useFragmentNavigation } from "../../hooks/reader/useFragmentNavigation";
-import { useChapterTransitions } from "../../hooks/reader/useChapterTransitions";
+import { useChapterTransitions } from "../../hooks/chapter/useChapterTransitions";
 import { useHighlighting } from "../../hooks/reader/useHighlighting";
 import { useLinkHandling } from "../../hooks/reader/useLinkHandling";
-import { useChapterLoadedCallback } from "../../hooks/reader/useChapterLoadedCallback";
 import { VirtualizedChapterContent, type VirtualizedChapterContentHandle } from "./VirtualizedChapterContent";
 
 type ResolvedReaderTheme = Exclude<ReaderTheme, "system">;
@@ -137,9 +136,7 @@ export function ReaderViewport({
   const highlighting = useHighlighting(contentRef, activeChapter?.id, elementIndex);
   const linkHandling = useLinkHandling(contentRef, activeBook, onSelectChapter);
   
-  // Use the chapter from state (which is loadedChapter || activeChapter) for the callback
-  // This ensures we detect when the loaded chapter is rendered
-  useChapterLoadedCallback(activeChapter, onChapterLoaded);
+  // Chapter loaded callback is now handled directly via onContentRendered from VirtualizedChapterContent
 
   // Handle fragment navigation (explicit call)
   if (pendingFragment) {
@@ -419,7 +416,6 @@ export function ReaderViewport({
                 ref={virtualizedContentRef}
                 contentHtml={activeChapter.contentHtml}
                 chapterId={activeChapter.id}
-                highlightedElementId={highlightedElementId}
                 onContentRendered={onChapterLoaded}
                 contentRef={contentRef}
                 scrollerRef={contentRef}

@@ -46,7 +46,7 @@ export function useAudioStatePersistence(
       } finally {
         pendingAudioUpdateRef.current = null;
       }
-    }, 150)
+    }, 500)
   );
 
   const updateBookAudioState = useCallback(

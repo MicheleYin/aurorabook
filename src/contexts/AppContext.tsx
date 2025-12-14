@@ -2,7 +2,7 @@ import { createContext, useContext, useMemo, useState, useCallback, useEffect, u
 import { logger } from "../lib/logger";
 import type { Book } from "../types/reader";
 import type { ReaderPreferences } from "../types/reader";
-import { usePersistentReaderPreferences } from "../hooks/usePersistentReaderPreferences";
+import { usePersistentReaderPreferences } from "../hooks/settings/usePersistentReaderPreferences";
 
 type AppContextType = {
   // Active book and chapter

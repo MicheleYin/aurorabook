@@ -12,20 +12,19 @@
  * All operations go through ReaderCoordinator for proper coordination.
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { logger } from "../../lib/logger";
 import type { AudioSyncMap, ReaderPreferences } from "../../types/reader";
 import type { ChapterProgressSnapshot, ChapterSelectionOptions } from "../../components/reader/types";
 import { findCurrentAudioSegment } from "../../lib/epub";
 import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
 import { useLibraryContext } from "../../hooks/library/LibraryContext";
-import { useChapterLoader } from "./useChapterLoader";
-import { useScrollManagement } from "./useScrollManagement";
+import { useChapterLoader } from "../chapter/useChapterLoader";
+import { useChapterProgress } from "../chapter/useChapterProgress";
+import { useChapterState } from "../chapter/useChapterState";
 import { useFragmentNavigation } from "./useFragmentNavigation";
 import { useLinkHandling } from "./useLinkHandling";
-import { useChapterTransitions } from "./useChapterTransitions";
-import { createProgressSnapshot } from "../../lib/progress-utils";
-import { computeScrollMetrics, computeWindowScrollMetrics, type ScrollMetrics } from "../../lib/scroll-utils";
+import { useChapterTransitions } from "../chapter/useChapterTransitions";
 
 type UseReaderManagerParams = {
   activeBookId?: string;
@@ -44,7 +43,6 @@ export function useReaderManager(params: UseReaderManagerParams) {
     activeChapterId,
     contentRef,
     onSelectChapter,
-    onChapterProgress,
   } = params;
 
   const coordinator = useReaderCoordinator();
@@ -60,32 +58,49 @@ export function useReaderManager(params: UseReaderManagerParams) {
   const previousChapterIdRef = useRef<string | undefined>(undefined);
   const pendingScrollToElementIdRef = useRef<string | null>(null);
   const isRestoringRef = useRef(false);
+  const progressRef = useRef<ReturnType<typeof useChapterProgress> | null>(null);
 
-  // Sub-hooks (these will eventually be merged into this hook)
+  // Sub-hooks
   const chapterLoader = useChapterLoader();
   
-  // Progress tracking state
-  const scrollStateRef = useRef<{
-    chapterId: string | null;
-    metrics: ScrollMetrics | null;
-  }>({
-    chapterId: null,
-    metrics: null,
+  // Memoize chapters array to prevent re-initialization loops
+  // Use activeBook reference directly - if activeBook changes, chapters will update
+  // This prevents creating new arrays on every render
+  const chapters = useMemo(() => {
+    return activeBook?.chapters ?? [];
+  }, [activeBook]);
+  
+  // Chapter state (for restoration management)
+  const chapterState = useChapterState({
+    bookId: activeBookId,
+    chapters,
+    library,
+    onProgress: undefined, // Progress is handled by useChapterProgress
   });
-
-  // Scroll management
-  const scrollManagement = useScrollManagement(
+  
+  // Unified progress management (replaces useScrollManagement and useReaderProgress)
+  // NOTE: onChapterProgress is NOT passed here to prevent automatic saves on scroll
+  // Progress is only saved explicitly on chapter change or quit
+  const progress = useChapterProgress({
+    activeBook,
+    activeChapter,
     contentRef,
-    (chapterId, metrics) => {
-      if (chapterId === activeChapter?.id) {
-        scrollStateRef.current.chapterId = chapterId;
-        scrollStateRef.current.metrics = metrics;
+    onSaveProgress: async (chapterId: string) => {
+      // Save progress via coordinator
+      if (activeBook && progressRef.current) {
+        const snapshot = progressRef.current.getCurrentProgressSnapshot();
+        if (snapshot) {
+          await coordinator.saveChapterProgress(activeBook.id, chapterId, snapshot);
+        }
       }
-    }
-  );
+    },
+  });
+  
+  // Store progress in ref for use in callbacks
+  progressRef.current = progress;
 
   // Update isRestoringRef
-  const restoreState = scrollManagement.getRestoreState();
+  const restoreState = progress.getRestoreState();
   isRestoringRef.current = restoreState.isRestoring;
 
   // Fragment navigation
@@ -101,79 +116,10 @@ export function useReaderManager(params: UseReaderManagerParams) {
   // Note: This callback is handled by ReaderWrapper's onChapterLoaded
   // We don't need to set it up here since ReaderWrapper manages it
 
-  // Get current scroll metrics
-  const getCurrentScrollMetrics = useCallback((): ScrollMetrics => {
-    const containerElement = contentRef?.current ?? null;
-    
-    if (containerElement) {
-      const containerMetrics = computeScrollMetrics(containerElement);
-      if (containerMetrics && containerMetrics.maxScroll > 0) {
-        return containerMetrics;
-      }
-    }
-    
-    return computeWindowScrollMetrics();
-  }, [contentRef]);
-
-  // Update scroll metrics on scroll
-  const updateMetricsOnScroll = useCallback(() => {
-    if (isRestoringRef.current) {
-      return;
-    }
-
-    const metrics = getCurrentScrollMetrics();
-    if (metrics && (metrics.maxScroll > 0 || metrics.scrollTop > 0)) {
-      scrollStateRef.current.chapterId = activeChapter?.id || null;
-      scrollStateRef.current.metrics = metrics;
-    }
-  }, [getCurrentScrollMetrics, activeChapter]);
-
-  // Emit chapter progress
-  const emitChapterProgress = useCallback(() => {
-    if (!activeChapter || !onChapterProgress || isRestoringRef.current) {
-      return;
-    }
-
-    let metrics: ScrollMetrics;
-    if (
-      scrollStateRef.current.chapterId === activeChapter.id &&
-      scrollStateRef.current.metrics &&
-      (scrollStateRef.current.metrics.maxScroll > 0 || scrollStateRef.current.metrics.scrollTop > 0)
-    ) {
-      metrics = scrollStateRef.current.metrics;
-    } else {
-      metrics = getCurrentScrollMetrics();
-      if (metrics.maxScroll > 0 || metrics.scrollTop > 0) {
-        scrollStateRef.current.metrics = metrics;
-      }
-    }
-
-    const snapshot = createProgressSnapshot(activeChapter.id, metrics);
-    if (activeBook) {
-      onChapterProgress(activeBook.id, snapshot);
-    }
-  }, [activeChapter, activeBook, onChapterProgress, getCurrentScrollMetrics]);
-
-  // Save progress
-  const saveProgress = useCallback(async (chapterId: string) => {
-    if (!activeBook || !activeChapter) return;
-    
-    if (chapterId !== activeChapter.id) {
-      // Saving different chapter - compute metrics manually
-      const metrics = getCurrentScrollMetrics();
-      if (metrics && (metrics.maxScroll > 0 || metrics.scrollTop > 0)) {
-        const snapshot = createProgressSnapshot(chapterId, metrics);
-        await coordinator.saveChapterProgress(activeBook.id, chapterId, snapshot);
-      }
-    } else {
-      // Saving current chapter - use tracked state
-      const metrics = scrollStateRef.current.metrics || getCurrentScrollMetrics();
-      if (metrics && (metrics.maxScroll > 0 || metrics.scrollTop > 0)) {
-        const snapshot = createProgressSnapshot(chapterId, metrics);
-        await coordinator.saveChapterProgress(activeBook.id, chapterId, snapshot);
-      }
-    }
-  }, [activeBook, activeChapter, coordinator, getCurrentScrollMetrics]);
+  // Progress operations are now handled by useChapterProgress
+  const saveProgress = progress.saveProgressAsync; // Async function that takes chapterId
+  const emitChapterProgress = progress.emitProgress;
+  const updateMetricsOnScroll = progress.updateMetricsOnScroll;
 
   // Change chapter
   const changeChapter = useCallback(async (
@@ -198,10 +144,8 @@ export function useReaderManager(params: UseReaderManagerParams) {
       return;
     }
 
-    // Save progress for previous chapter
-    if (activeChapter && activeChapter.id !== chapterId) {
-      await saveProgress(activeChapter.id);
-    }
+    // NOTE: Progress is NOT saved on chapter change - only saved when quitting reader
+    // This prevents progress from being saved during navigation
 
     // Call parent's onSelectChapter
     onSelectChapter(chapterId, options);
@@ -224,13 +168,18 @@ export function useReaderManager(params: UseReaderManagerParams) {
       }, 50);
 
       // Handle scroll position
+      // Use a small delay to ensure virtualized content is rendered
       if (options?.scrollPosition === "top" || options?.isManualSelection) {
-        scrollManagement.scrollToTop();
+        setTimeout(() => {
+          progress.scrollToTop();
+        }, 100);
       } else if (options?.scrollPosition === "bottom") {
-        scrollManagement.scrollToBottom();
+        setTimeout(() => {
+          progress.scrollToBottom();
+        }, 100);
       }
     }
-  }, [activeBook, activeChapter, coordinator, chapterLoader, scrollManagement, onSelectChapter, saveProgress]);
+  }, [activeBook, coordinator, chapterLoader, progress, onSelectChapter]);
 
   // Restore chapter progress
   const restoreChapterProgress = useCallback(async (
@@ -240,29 +189,22 @@ export function useReaderManager(params: UseReaderManagerParams) {
   ) => {
     await coordinator.restoreChapterProgress(bookId, chapterId, withAutoScroll);
     
-    // The actual restoration is handled by scrollManagement
-    scrollManagement.restoreProgress(bookId, chapterId, () => {
+    // The actual restoration is handled by progress hook
+    progress.restoreProgress(bookId, chapterId, () => {
       // Handle pending scroll target after restoration
       if (pendingScrollToElementIdRef.current) {
         const elementId = pendingScrollToElementIdRef.current;
         pendingScrollToElementIdRef.current = null;
         requestAnimationFrame(() => {
-          scrollManagement.scrollToElementId(elementId, "smooth");
+          progress.scrollToElementId(elementId, "smooth");
         });
       }
     });
-  }, [coordinator, scrollManagement]);
+  }, [coordinator, progress]);
 
-  // Handle scroll events
-  const handleScroll = useCallback(() => {
-    scrollManagement.scrollHandler();
-    updateMetricsOnScroll();
-  }, [scrollManagement, updateMetricsOnScroll]);
-
-  // Handle scroll end
-  const handleScrollEnd = useCallback(() => {
-    emitChapterProgress();
-  }, [emitChapterProgress]);
+  // Handle scroll events (delegated to progress hook)
+  const handleScroll = progress.handleScroll;
+  const handleScrollEnd = progress.handleScrollEnd;
 
   // Sync to audio (for audio-text sync)
   const syncToAudio = useCallback((
@@ -291,21 +233,21 @@ export function useReaderManager(params: UseReaderManagerParams) {
 
     // If already in this chapter, just scroll to the element
     if (activeChapter?.id === chapter.id) {
-      scrollManagement.scrollToElementId(segment.textElementId, "smooth");
+      progress.scrollToElementId(segment.textElementId, "smooth");
       return;
     }
 
     // Navigate to chapter
     pendingScrollToElementIdRef.current = segment.textElementId;
     changeChapter(chapter.id, { scrollPosition: "top" });
-  }, [activeBook, activeChapter, scrollManagement, changeChapter]);
+  }, [activeBook, activeChapter, progress, changeChapter]);
 
   return {
     // State
     loadedChapter: chapterLoader.loadedChapter,
     isLoading: chapterLoader.isLoading,
     animationState: chapterAnimationState,
-    isScrolling: scrollManagement.isScrolling,
+    isScrolling: progress.isScrolling,
     transitionDirection: chapterTransitions.direction,
     
     // Operations
@@ -315,9 +257,9 @@ export function useReaderManager(params: UseReaderManagerParams) {
     syncToAudio,
     
     // Scroll operations
-    scrollToTop: scrollManagement.scrollToTop,
-    scrollToBottom: scrollManagement.scrollToBottom,
-    scrollToElementId: scrollManagement.scrollToElementId,
+    scrollToTop: progress.scrollToTop,
+    scrollToBottom: progress.scrollToBottom,
+    scrollToElementId: progress.scrollToElementId,
     
     // Event handlers
     handleScroll,
@@ -334,9 +276,13 @@ export function useReaderManager(params: UseReaderManagerParams) {
     triggerTransition: chapterTransitions.triggerTransition,
     
     // Progress restoration
-    restoreProgress: scrollManagement.restoreProgress,
-    getRestoreState: scrollManagement.getRestoreState,
-    resetRestoration: scrollManagement.resetRestoration,
+    restoreProgress: progress.restoreProgress,
+    getRestoreState: progress.getRestoreState,
+    resetRestoration: progress.resetRestoration,
+    
+    // Chapter state (for restoration)
+    onChapterLoaded: chapterState.onChapterLoaded,
+    isRestoringChapter: chapterState.isRestoring,
     
     // Coordinator access
     coordinator,

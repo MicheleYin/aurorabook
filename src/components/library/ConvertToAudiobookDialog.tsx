@@ -11,7 +11,7 @@ import {
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "../ui/select";
 import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
 import type { VoiceId } from "../../types/reader";
-import { usePersistentSettings } from "../../hooks/usePersistentSettings";
+import { usePersistentSettings } from "../../hooks/settings/usePersistentSettings";
 
 type ConvertToAudiobookDialogProps = {
   open: boolean;

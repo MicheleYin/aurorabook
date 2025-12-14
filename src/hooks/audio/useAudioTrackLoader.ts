@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import type { AudioTrack } from "../../types/reader";
 import { loadEpubAudioBlob } from "../../lib/book-service";
-import { useResourceLoader } from "./useResourceLoader";
+import { useResourceLoader } from "../useResourceLoader";
 import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
 
 export function useAudioTrackLoader() {

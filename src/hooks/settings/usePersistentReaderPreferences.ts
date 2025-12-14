@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { ReaderPreferences } from "../types/reader";
+import type { ReaderPreferences } from "../../types/reader";
 
 const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   theme: "system",

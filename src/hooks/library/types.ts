@@ -82,7 +82,7 @@ export type LibraryContextValue = {
   // Chapter progress tracking hook
   useChapterProgress: (params: UseChapterProgressParams) => {
     emitChapterProgress: () => void;
-    saveProgress: () => void;
+    saveProgress: () => void; // No-param version for library-level usage
     updateMetricsOnScroll: () => void;
     updateScrollState: (chapterId: string, metrics: ScrollMetrics) => void;
   };

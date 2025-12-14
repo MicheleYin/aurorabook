@@ -33,11 +33,29 @@ export function selectBestMetrics(
 
 /**
  * Creates a progress snapshot from metrics
+ * For virtualized content, can also accept segment index directly
  */
 export function createProgressSnapshot(
   chapterId: string,
   metrics: ScrollMetrics,
+  segmentIndex?: number,
+  totalSegments?: number,
 ): ChapterProgressSnapshot {
+  // If segment index is provided (virtualized content), calculate percent from segments
+  if (segmentIndex !== undefined && totalSegments !== undefined && totalSegments > 0) {
+    const percent = segmentIndex / totalSegments;
+    return {
+      chapterId,
+      scrollTop: metrics.scrollTop, // Keep for backward compatibility
+      scrollHeight: metrics.scrollHeight,
+      clientHeight: metrics.clientHeight,
+      percent: Number(percent.toFixed(4)),
+      activeElementId: null,
+      activeElementIndex: segmentIndex, // Store segment index for restoration
+    };
+  }
+  
+  // Otherwise use scroll-based progress (non-virtualized or fallback)
   const percent = calculateProgress(metrics);
   return {
     chapterId,

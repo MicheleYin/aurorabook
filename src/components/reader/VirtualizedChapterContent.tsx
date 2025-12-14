@@ -1,25 +1,25 @@
 /**
  * VirtualizedChapterContent
  * 
- * Renders chapter content using react-virtuoso for memory efficiency.
- * Only renders visible segments, reducing DOM nodes and memory usage.
+ * Renders chapter content directly (virtualization disabled).
+ * All content is rendered at once for simpler DOM structure.
  */
 
 import { useMemo, useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from "react";
-import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { parseChapterIntoSegments, type ParsedChapter } from "../../lib/segment-parser";
 import { logger } from "../../lib/logger";
-import { scrollToElement } from "../../lib/scroll-utils";
 
 export type VirtualizedChapterContentHandle = {
   findSegmentIndex: (elementId: string) => number | undefined;
   ensureSegmentRendered: (elementId: string) => Promise<boolean>;
+  getCurrentVisibleSegmentIndex: () => number | undefined;
+  getTotalSegments: () => number;
+  scrollToSegmentIndex: (segmentIndex: number, behavior?: "smooth" | "auto") => void;
 };
 
 type VirtualizedChapterContentProps = {
   contentHtml: string;
   chapterId: string;
-  highlightedElementId?: string | null;
   onContentRendered?: () => void;
   contentRef?: React.RefObject<HTMLDivElement | null>;
   className?: string;
@@ -27,25 +27,19 @@ type VirtualizedChapterContentProps = {
   scrollerRef?: React.RefObject<HTMLElement | null>;
 };
 
-// Estimate height per segment (in pixels)
-// This is approximate and will be adjusted by react-virtuoso
-const ESTIMATED_SEGMENT_HEIGHT = 50;
-
 export const VirtualizedChapterContent = forwardRef<VirtualizedChapterContentHandle, VirtualizedChapterContentProps>(({
   contentHtml,
   chapterId,
-  highlightedElementId,
   onContentRendered,
   contentRef,
   className,
   style,
   scrollerRef,
 }, ref) => {
-  const virtuosoRef = useRef<VirtuosoHandle>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const parsedChapterRef = useRef<ParsedChapter | null>(null);
 
-  // Parse chapter into segments
+  // Parse chapter into segments (for ref methods compatibility)
   const parsedChapter = useMemo(() => {
     const parsed = parseChapterIntoSegments(contentHtml);
     parsedChapterRef.current = parsed;
@@ -59,6 +53,7 @@ export const VirtualizedChapterContent = forwardRef<VirtualizedChapterContentHan
   }, [contentHtml, chapterId]);
 
   // Expose methods via ref for integration with scroll utils
+  // These methods work with the full DOM since virtualization is disabled
   useImperativeHandle(ref, () => ({
     findSegmentIndex: (elementId: string): number | undefined => {
       if (!parsedChapterRef.current) {
@@ -70,31 +65,17 @@ export const VirtualizedChapterContent = forwardRef<VirtualizedChapterContentHan
       return segmentIndex >= 0 ? segmentIndex : undefined;
     },
     ensureSegmentRendered: async (elementId: string): Promise<boolean> => {
-      if (!parsedChapterRef.current || !virtuosoRef.current) {
-        return false;
+      // Since all content is rendered, just check if element exists
+      const element = document.getElementById(elementId);
+      if (element) {
+        logger.debug("[VirtualizedChapterContent] Element already rendered", { elementId });
+        return true;
       }
-
-      // Find the segment that contains this element ID
-      const segmentIndex = parsedChapterRef.current.segments.findIndex(
-        (s) => s.id === elementId || s.html.includes(`id="${elementId}"`)
-      );
-
-      if (segmentIndex < 0) {
-        logger.debug("[VirtualizedChapterContent] Segment not found for element", { elementId });
-        return false;
-      }
-
-      // Use Virtuoso to ensure the segment is rendered
-      virtuosoRef.current.scrollToIndex({
-        index: segmentIndex,
-        align: "start",
-        behavior: "auto", // Use auto for quick rendering
-      });
       
-      // Wait for the element to be rendered
+      // Wait a bit for DOM to be ready
       return new Promise((resolve) => {
         let attempts = 0;
-        const maxAttempts = 15;
+        const maxAttempts = 10;
         const checkInterval = 50;
         
         const checkElement = () => {
@@ -102,34 +83,100 @@ export const VirtualizedChapterContent = forwardRef<VirtualizedChapterContentHan
           const element = document.getElementById(elementId);
           
           if (element) {
-            logger.debug("[VirtualizedChapterContent] Element rendered", { elementId, segmentIndex, attempts });
+            logger.debug("[VirtualizedChapterContent] Element found", { elementId, attempts });
             resolve(true);
           } else if (attempts < maxAttempts) {
             setTimeout(checkElement, checkInterval);
           } else {
-            logger.warn("[VirtualizedChapterContent] Element not found after rendering", { 
-              elementId,
-              segmentIndex,
-              attempts 
-            });
+            logger.warn("[VirtualizedChapterContent] Element not found", { elementId, attempts });
             resolve(false);
           }
         };
         
-        setTimeout(checkElement, 100);
+        setTimeout(checkElement, 50);
       });
     },
-  }), []);
-
-  // Store handle reference for scroll utils integration
-  const handleRef = useRef<VirtualizedChapterContentHandle | null>(null);
-  
-  // Update handle ref when ref changes
-  useEffect(() => {
-    if (ref && "current" in ref) {
-      handleRef.current = ref.current;
-    }
-  }, [ref]);
+    getCurrentVisibleSegmentIndex: (): number | undefined => {
+      // Calculate visible segment index from scroll position
+      if (!parsedChapterRef.current || !containerRef.current) {
+        return undefined;
+      }
+      
+      const scrollContainer = scrollerRef?.current || containerRef.current.parentElement;
+      if (!scrollContainer) {
+        return undefined;
+      }
+      
+      const scrollTop = (scrollContainer as HTMLElement).scrollTop || window.scrollY;
+      const scrollHeight = (scrollContainer as HTMLElement).scrollHeight || document.documentElement.scrollHeight;
+      const clientHeight = (scrollContainer as HTMLElement).clientHeight || window.innerHeight;
+      
+      if (scrollHeight <= clientHeight) {
+        return 0;
+      }
+      
+      const scrollPercent = scrollTop / (scrollHeight - clientHeight);
+      const totalSegments = parsedChapterRef.current.totalSegments;
+      const segmentIndex = Math.floor(scrollPercent * totalSegments);
+      
+      logger.debug("[VirtualizedChapterContent] getCurrentVisibleSegmentIndex", {
+        chapterId,
+        segmentIndex: Math.max(0, Math.min(segmentIndex, totalSegments - 1)),
+        scrollTop,
+        scrollHeight,
+        totalSegments,
+      });
+      
+      return Math.max(0, Math.min(segmentIndex, totalSegments - 1));
+    },
+    getTotalSegments: (): number => {
+      return parsedChapterRef.current?.totalSegments || 0;
+    },
+    scrollToSegmentIndex: (segmentIndex: number, behavior: "smooth" | "auto" = "smooth"): void => {
+      if (!parsedChapterRef.current) {
+        logger.warn("[VirtualizedChapterContent] Cannot scroll to segment - missing parsed chapter", {
+          chapterId,
+          segmentIndex,
+        });
+        return;
+      }
+      
+      const clampedIndex = Math.max(0, Math.min(segmentIndex, parsedChapterRef.current.totalSegments - 1));
+      const totalSegments = parsedChapterRef.current.totalSegments;
+      
+      // Calculate scroll position based on segment index
+      const scrollContainer = scrollerRef?.current || containerRef.current?.parentElement;
+      if (!scrollContainer) {
+        logger.warn("[VirtualizedChapterContent] Cannot scroll - no scroll container", { chapterId, segmentIndex });
+        return;
+      }
+      
+      const scrollHeight = (scrollContainer as HTMLElement).scrollHeight || document.documentElement.scrollHeight;
+      const clientHeight = (scrollContainer as HTMLElement).clientHeight || window.innerHeight;
+      const maxScroll = scrollHeight - clientHeight;
+      
+      if (maxScroll <= 0) {
+        return;
+      }
+      
+      const scrollPercent = totalSegments > 0 ? clampedIndex / totalSegments : 0;
+      const targetScrollTop = scrollPercent * maxScroll;
+      
+      logger.log("[VirtualizedChapterContent] Scrolling to segment index", {
+        chapterId,
+        requestedIndex: segmentIndex,
+        clampedIndex,
+        totalSegments,
+        targetScrollTop,
+        behavior,
+      });
+      
+      (scrollContainer as HTMLElement).scrollTo({
+        top: targetScrollTop,
+        behavior: behavior === "smooth" ? "smooth" : "auto",
+      });
+    },
+  }), [chapterId, scrollerRef]);
 
   // Combine refs: use external contentRef if provided, otherwise use internal
   const setContainerRef = useCallback(
@@ -137,79 +184,78 @@ export const VirtualizedChapterContent = forwardRef<VirtualizedChapterContentHan
       containerRef.current = node;
       if (contentRef && "current" in contentRef) {
         (contentRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
-      }
-      
-      // Store virtualized handle on the element for scroll utils to find
-      if (node && handleRef.current) {
-        (node as HTMLElement & { __virtualizedHandle?: VirtualizedChapterContentHandle }).__virtualizedHandle = handleRef.current;
+        logger.log("[VirtualizedChapterContent] Set contentRef", {
+          chapterId,
+          hasNode: !!node,
+          nodeTagName: node?.tagName,
+        });
       }
     },
-    [contentRef]
+    [contentRef, chapterId]
   );
+
+  // Store virtualized handle on the container element when both are available
+  // This needs to be in a useEffect because ref.current is set by useImperativeHandle
+  useEffect(() => {
+    const node = containerRef.current;
+    const handle = ref && "current" in ref ? ref.current : null;
+    
+    if (node && handle) {
+      (node as HTMLElement & { __virtualizedHandle?: VirtualizedChapterContentHandle }).__virtualizedHandle = handle;
+      logger.log("[VirtualizedChapterContent] Stored virtualized handle on container", {
+        chapterId,
+        hasHandle: !!handle,
+        hasFindSegmentIndex: !!handle.findSegmentIndex,
+        hasGetCurrentVisibleSegmentIndex: !!handle.getCurrentVisibleSegmentIndex,
+        hasGetTotalSegments: !!handle.getTotalSegments,
+        hasScrollToSegmentIndex: !!handle.scrollToSegmentIndex,
+      });
+    } else {
+      if (node && !handle) {
+        logger.debug("[VirtualizedChapterContent] Container node available but handle not ready", {
+          chapterId,
+          hasNode: !!node,
+          hasHandle: !!handle,
+        });
+      } else if (!node && handle) {
+        logger.debug("[VirtualizedChapterContent] Handle available but container node not ready", {
+          chapterId,
+          hasNode: !!node,
+          hasHandle: !!handle,
+        });
+      }
+    }
+  }, [ref, chapterId]);
 
 
   // Notify parent when content is rendered
+  // Use ref to track if we've already notified for this chapter to prevent duplicate calls
+  const notifiedForChapterRef = useRef<string | null>(null);
   useEffect(() => {
-    if (onContentRendered && parsedChapter.totalSegments > 0) {
+    if (onContentRendered && contentHtml) {
+      // Only notify once per chapter
+      if (notifiedForChapterRef.current === chapterId) {
+        return;
+      }
+      
       // Small delay to ensure DOM is ready
       const timer = setTimeout(() => {
+        notifiedForChapterRef.current = chapterId;
         onContentRendered();
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [onContentRendered, parsedChapter.totalSegments]);
+  }, [onContentRendered, contentHtml, chapterId]);
+  
+  // Reset notification ref when chapter changes
+  useEffect(() => {
+    if (notifiedForChapterRef.current !== chapterId) {
+      notifiedForChapterRef.current = null;
+    }
+  }, [chapterId]);
 
-  // Render a single segment
-  const renderSegment = useCallback(
-    (index: number) => {
-      const segment = parsedChapter.segments[index];
-      if (!segment) {
-        return null;
-      }
-
-      return (
-        <>
-          {/* Render HTML that appears before this segment (preserves structure between segments) */}
-          {segment.htmlBefore && (
-            <div
-              dangerouslySetInnerHTML={{ __html: segment.htmlBefore }}
-              data-segment-gap="true"
-            />
-          )}
-          {/* Render the segment itself - wrapper div uses display:contents to be layout-transparent */}
-          {/* This preserves the original HTML structure exactly while allowing React/Virtuoso to work */}
-          <div
-            key={segment.id}
-            id={segment.id}
-            data-segment-index={segment.segmentIndex}
-            data-element-id={segment.id}
-            style={{
-              // Use display:contents to make wrapper "transparent" to CSS layout
-              // The wrapper div doesn't affect the visual structure at all
-              display: "contents",
-            }}
-            dangerouslySetInnerHTML={{ __html: segment.html }}
-          />
-        </>
-      );
-    },
-    [parsedChapter.segments]
-  );
-
-  // If no segments, render the full HTML (fallback)
-  if (parsedChapter.totalSegments === 0) {
-    return (
-      <div
-        ref={setContainerRef}
-        className={className}
-        style={style}
-        data-reader-chapter-content="true"
-        data-chapter-id={chapterId}
-        dangerouslySetInnerHTML={{ __html: contentHtml }}
-      />
-    );
-  }
-
+  // Render all content directly (virtualization disabled)
+  // Render the full HTML content
   return (
     <div
       ref={setContainerRef}
@@ -217,43 +263,8 @@ export const VirtualizedChapterContent = forwardRef<VirtualizedChapterContentHan
       style={style}
       data-reader-chapter-content="true"
       data-chapter-id={chapterId}
-    >
-      {/* Render prefix HTML before first segment (only if not included in first segment's htmlBefore) */}
-      {parsedChapter.prefix && parsedChapter.segments.length > 0 && !parsedChapter.segments[0]?.htmlBefore && (
-        <div
-          dangerouslySetInnerHTML={{ __html: parsedChapter.prefix }}
-        />
-      )}
-
-      {/* Virtualized list of segments */}
-      <Virtuoso
-        ref={virtuosoRef}
-        totalCount={parsedChapter.totalSegments}
-        itemContent={renderSegment}
-        defaultItemHeight={ESTIMATED_SEGMENT_HEIGHT}
-        // Increase viewport to pre-render items above/below visible area
-        increaseViewportBy={{ top: 400, bottom: 400 }}
-        // Use custom scroll parent if provided (to use parent's scroll container)
-        // This tells Virtuoso to delegate scrolling to the parent
-        customScrollParent={scrollerRef?.current || undefined}
-        // Calculate total height based on estimated segment height
-        // This allows Virtuoso to properly calculate scroll positions
-        style={{ 
-          width: "100%",
-          height: parsedChapter.totalSegments * ESTIMATED_SEGMENT_HEIGHT,
-          minHeight: "100%",
-        }}
-        // Initial topmost item index
-        initialTopMostItemIndex={0}
-      />
-
-      {/* Render suffix HTML after last segment */}
-      {parsedChapter.suffix && (
-        <div
-          dangerouslySetInnerHTML={{ __html: parsedChapter.suffix }}
-        />
-      )}
-    </div>
+      dangerouslySetInnerHTML={{ __html: contentHtml }}
+    />
   );
 });
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { DEFAULT_KOKORO_VOICE_ID } from "../constants/kokoro";
-import type { AppSettings } from "../types/settings";
+import { DEFAULT_KOKORO_VOICE_ID } from "../../constants/kokoro";
+import type { AppSettings } from "../../types/settings";
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",

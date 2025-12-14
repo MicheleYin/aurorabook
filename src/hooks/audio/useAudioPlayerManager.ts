@@ -17,7 +17,7 @@ import type { Book, Chapter, AudioTrack } from "../../types/reader";
 import type { AudioProgressSnapshot } from "../../components/reader/types";
 import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
 import { useLibraryContext } from "../../hooks/library/LibraryContext";
-import { useAudioPlayerState } from "../../hooks/library/useAudioPlayerState";
+import { useAudioPlayerState } from "./useAudioPlayerState";
 import { useAudioTrackLoader } from "./useAudioTrackLoader";
 import { useAudioTextSync } from "./useAudioTextSync";
 import { findChaptersForAudioTrack, chapterHrefsMatch } from "../../lib/epub";

@@ -10,6 +10,12 @@ export type ScrollMetrics = {
   maxScroll: number;
 };
 
+// Extended ScrollMetrics type that includes virtualized segment information
+export type ScrollMetricsWithSegments = ScrollMetrics & {
+  segmentIndex?: number;
+  totalSegments?: number;
+};
+
 export function computeScrollMetrics(node: HTMLElement | null): ScrollMetrics | null {
   if (!node) return null;
 

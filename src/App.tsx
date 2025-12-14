@@ -14,7 +14,7 @@ import { LoadingScreen } from "./components/app/LoadingScreen";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { useLibrary } from "./hooks/useLibrary";
 import { LibraryProvider } from "./hooks/library/LibraryContext";
-import { usePersistentSettings } from "./hooks/usePersistentSettings";
+import { usePersistentSettings } from "./hooks/settings/usePersistentSettings";
 import { useBookConversion } from "./hooks/useBookConversion";
 import { useAppNavigation } from "./hooks/useAppNavigation";
 import { AppContextProvider, useAppContext } from "./contexts/AppContext";
@@ -179,11 +179,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   const handleSelectChapter = useCallback(async (chapterId: string, options?: ChapterSelectionOptions) => {
     if (!activeBookId) return;
 
-    // Save progress before changing chapters
-    await saveProgress({
-      toChapterId: chapterId,
-      source: options?.isManualSelection ? "manual" : "navigation",
-    });
+    // NOTE: Progress is NOT saved on chapter change - only saved when quitting reader
+    // Progress will be saved automatically when ReaderWrapper unmounts (on navigation away)
     
     if (!saveProgressRef.current) {
       logger.debug("[App] No saveProgress function available", {
@@ -251,8 +248,12 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
 
     updateBookProgress(activeBookId, progressUpdate);
 
-    const fragment = options?.fragment;
-    setPendingFragment(fragment && fragment.length > 0 ? fragment.replace(/^#/, "") : null);
+    // Only set fragment if scrollPosition is not "top" (fragment navigation should respect scrollPosition)
+    // When scrollPosition is "top", we want to scroll to top, not to a fragment
+    const fragment = (options?.fragment && requestedScrollPosition !== "top") 
+      ? options.fragment.replace(/^#/, "") 
+      : null;
+    setPendingFragment(fragment && fragment.length > 0 ? fragment : null);
     setActiveView("reader");
   }, [activeBookId, activeChapterId, autoScrollEnabled, setAutoScrollEnabled, updateSettings, setActiveChapterId, updateBookProgress, setPendingFragment, setActiveView, saveProgress]);
 
@@ -448,12 +449,10 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
 
   // Memoize callbacks for reader view
   const handleNavigateLibrary = useCallback(async () => {
-    // Save progress before navigating away
-    await saveProgress({
-      source: "navigation",
-    });
+    // NOTE: Progress is NOT saved here - it will be saved automatically when ReaderWrapper unmounts
+    // The unmount cleanup in ReaderWrapper will handle saving progress when navigating away
     setActiveView("library");
-  }, [saveProgress, setActiveView]);
+  }, [setActiveView]);
 
   const handleOpenAudioPlayer = useCallback(() => {
     setIsAudioPlayerOpen(true);

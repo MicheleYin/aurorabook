@@ -6,7 +6,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { logger } from "../../lib/logger";
-import type { UseAudioPlayerStateParams } from "./types";
+import type { UseAudioPlayerStateParams } from "../library/types";
 import { useContext } from "react";
 import { ReaderCoordinatorContext } from "../../contexts/ReaderCoordinatorContext";
 

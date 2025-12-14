@@ -19,7 +19,7 @@ import { cn } from "../../lib/utils";
 import { useLibrary } from "../../hooks/useLibrary";
 import { animPatterns, enterExit } from "../../lib/animations";
 import { ensureAudioTrackLoaded } from "../../lib/lazy-chapter-loader";
-import { usePersistentSettings } from "../../hooks/usePersistentSettings";
+import { usePersistentSettings } from "../../hooks/settings/usePersistentSettings";
 import { useContext } from "react";
 import { ReaderCoordinatorContext } from "../../contexts/ReaderCoordinatorContext";
 
