@@ -9,7 +9,7 @@ import type { ChapterProgressSnapshot } from "../../components/reader/types";
 import { useChapterLoader } from "./useChapterLoader";
 import { logger } from "../../lib/logger";
 import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
-import { computeScrollMetrics, computeWindowScrollMetrics, scrollToElement, type ScrollMetrics, type ScrollMetricsWithSegments } from "../../lib/scroll-utils";
+import { computeScrollMetrics, computeWindowScrollMetrics, scrollToElement, findScrollableContainer, type ScrollMetrics, type ScrollMetricsWithSegments } from "../../lib/scroll-utils";
 import { createProgressSnapshot } from "../../lib/progress-utils";
 
 type ElementIndexHook = {
@@ -133,8 +133,24 @@ export function useChapterProgress({
       if (containerMetrics && containerMetrics.maxScroll > 0) {
         return containerMetrics;
       }
+      
+      // Container element isn't scrollable, but content might be scrollable via document
+      // Use findScrollableContainer to find the actual scrollable container
+      const scrollableContainer = findScrollableContainer(containerElement);
+      if (scrollableContainer && scrollableContainer !== containerElement) {
+        // If the scrollable container is document.documentElement, use window metrics
+        if (scrollableContainer === document.documentElement) {
+          return computeWindowScrollMetrics();
+        }
+        // Otherwise, use the found scrollable container's metrics
+        const scrollableMetrics = computeScrollMetrics(scrollableContainer);
+        if (scrollableMetrics && scrollableMetrics.maxScroll > 0) {
+          return scrollableMetrics;
+        }
+      }
     }
     
+    // Final fallback: use window metrics
     return computeWindowScrollMetrics();
   }, [contentRef]);
 

@@ -264,10 +264,36 @@ export function useChapterState(params: UseChapterStateParams) {
       willRestore: restoredScrollTop !== null || restoredElementIndex !== null,
     });
 
-    setRestoreScrollTop(restoredScrollTop);
-    setRestoreElementIndex(restoredElementIndex);
-    setIsRestoring(restoredScrollTop !== null || restoredElementIndex !== null);
-    restorationAppliedRef.current = null;
+    // Check if restoration has already been applied for this chapter
+    // This prevents re-setting isRestoring to true after restoration completes
+    const currentChapterId = nextIndex < chapters.length ? chapters[nextIndex]?.id : undefined;
+    const alreadyAppliedByRef = currentChapterId && restorationAppliedRef.current === currentChapterId;
+    // Also check isRestoringRef - if it's false, restoration has completed (ref is updated synchronously)
+    const restorationCompleted = !isRestoringRef.current && alreadyAppliedByRef;
+    
+    // Only set restoration state if restoration hasn't been applied yet
+    if (!alreadyAppliedByRef && !restorationCompleted) {
+      setRestoreScrollTop(restoredScrollTop);
+      setRestoreElementIndex(restoredElementIndex);
+      setIsRestoring(restoredScrollTop !== null || restoredElementIndex !== null);
+      // Don't reset restorationAppliedRef here - it will be set when restoration is applied
+      // If it's already set for a different chapter, that's fine - it will be updated when restoration completes
+    } else {
+      // Restoration already applied or completed - clear restoration state
+      logger.log("[useChapterState] Restoration already applied/completed for this chapter, clearing restoration state", {
+        bookId,
+        chapterId: currentChapterId,
+        chapterIndex: nextIndex,
+        alreadyAppliedByRef,
+        restorationCompleted,
+        isRestoringRef: isRestoringRef.current,
+      });
+      setRestoreScrollTop(null);
+      setRestoreElementIndex(null);
+      setIsRestoring(false);
+      // Keep restorationAppliedRef.current set to currentChapterId to prevent re-initialization
+    }
+    
     lastProgressSnapshotRef.current = { timestamp: 0 };
     initializedRef.current = signature;
     
@@ -455,16 +481,6 @@ export function useChapterState(params: UseChapterStateParams) {
     const restoreOperation = coordinator?.getCurrentOperation("restoreChapterProgress");
     const isOperationCancelled = restoreOperation?.cancelled === true;
     
-    // If coordinator exists and we should restore, ensure operation is in progress
-    if (coordinator && shouldRestore && !hasRestoreOperation) {
-      logger.log("[useChapterState] Restoration needed but no coordinator operation, waiting", {
-        chapterId: currentChapterId,
-        shouldRestore,
-      });
-      // Don't proceed - wait for coordinator to trigger restoration
-      return;
-    }
-    
     // Only proceed with restoration if coordinator allows it (or if no coordinator)
     if (hasRestoreOperation && isOperationCancelled) {
       logger.log("[useChapterState] Restoration operation was cancelled, skipping", {
@@ -472,6 +488,39 @@ export function useChapterState(params: UseChapterStateParams) {
         operationId: restoreOperation?.id,
       });
       return;
+    }
+    
+    // If coordinator exists and we should restore, trigger restoration through coordinator
+    // This ensures proper coordination and prevents race conditions
+    // But don't block - proceed with restoration even if coordinator operation isn't set up yet
+    if (coordinator && shouldRestore && !hasRestoreOperation && bookId) {
+      logger.log("[useChapterState] Restoration needed, triggering through coordinator (non-blocking)", {
+        chapterId: currentChapterId,
+        shouldRestore,
+        bookId,
+      });
+      
+      // Trigger restoration through coordinator (async, non-blocking)
+      // This sets the lock for coordination, but we proceed with restoration anyway
+      if (bookId) {
+        coordinator.restoreChapterProgress(bookId, currentChapterId, false)
+          .catch((error) => {
+            logger.warn("[useChapterState] Failed to trigger restoration through coordinator (non-fatal)", {
+              chapterId: currentChapterId,
+              error,
+            });
+          });
+      }
+      
+      // Continue with restoration - don't wait for coordinator
+      // The coordinator lock will be checked by progress updates to prevent conflicts
+    }
+    
+    // Mark restoration as in progress immediately to prevent initialize() from re-setting isRestoring
+    // This fixes timing issues where initialize() runs before restoration completes
+    // Only set if we're actually going to proceed with restoration
+    if (shouldRestore && !alreadyApplied) {
+      restorationAppliedRef.current = currentChapterId;
     }
 
     // Find the actual scrollable container (might be a parent of contentElement)
@@ -786,7 +835,7 @@ export function useChapterState(params: UseChapterStateParams) {
     
     // Start waiting for content to be ready
     waitForContentReady();
-  }, []);
+  }, [bookId, coordinator]);
 
   const setCurrentIndex = useCallback((index: number) => {
     // Validate index before setting
