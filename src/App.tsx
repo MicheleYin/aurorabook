@@ -1,6 +1,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { listen } from "@tauri-apps/api/event";
 
 import { logger } from "./lib/logger";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -33,6 +34,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     isHydrated,
     isImporting,
     importFromDialog,
+    ingestEpub,
     refreshLibrary,
     updateBookProgress,
     updateBookAudioState,
@@ -357,6 +359,99 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       setIsAudioPlayerOpen(true);
     }
   }, [activeView, hasAudioTracks]);
+
+  // Listen for file-opened events (when app is opened with an EPUB file)
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const setupFileOpenListener = async () => {
+      try {
+        unlisten = await listen<string>("file-opened", async (event) => {
+          const filePath = event.payload;
+          logger.log("[App] File opened event received", { filePath });
+
+          if (!filePath || !filePath.toLowerCase().endsWith(".epub")) {
+            logger.warn("[App] Invalid file path in file-opened event", { filePath });
+            return;
+          }
+
+          // Wait for library to be hydrated before ingesting
+          if (!isHydrated) {
+            logger.log("[App] Library not hydrated yet, waiting...");
+            // Retry after a short delay
+            setTimeout(() => {
+              setupFileOpenListener();
+            }, 500);
+            return;
+          }
+
+          if (isImporting) {
+            logger.log("[App] Already importing, skipping file-opened event");
+            return;
+          }
+
+          try {
+            logger.log("[App] Ingesting EPUB from file-opened event", { filePath });
+            const book = await ingestEpub({
+              filePath,
+              sourcePath: filePath,
+            });
+
+            if (!book) {
+              toast.error("Failed to import EPUB file");
+              return;
+            }
+
+            // Update library
+            setLibrary((prevLibrary) => {
+              const existingIndex = prevLibrary.findIndex(
+                (b) => b.id === book.id 
+                  || b.sourcePath === book.sourcePath
+                  || (book.contentHash && b.contentHash && b.contentHash === book.contentHash),
+              );
+              if (existingIndex !== -1) {
+                const updated = [...prevLibrary];
+                updated[existingIndex] = book;
+                return updated;
+              }
+              return [...prevLibrary, book];
+            });
+
+            // Refresh library to ensure consistency
+            await refreshLibrary();
+
+            toast.success("EPUB imported successfully", {
+              description: `"${book.title}" has been added to your library.`,
+            });
+
+            // Check if book needs conversion (no audio tracks)
+            if (book.audioTracks.length === 0 && !isConverting) {
+              // Get EPUB buffer for conversion
+              const { getEpubBuffer } = await import("./lib/book-service");
+              const buffer = (await getEpubBuffer(filePath)) ?? new ArrayBuffer(0);
+              setPendingBookForConversion({ book, buffer });
+              setShowConvertDialog(true);
+            }
+          } catch (error) {
+            logger.error("[App] Failed to ingest EPUB from file-opened event", error);
+            toast.error("Failed to import EPUB file", {
+              description: error instanceof Error ? error.message : String(error),
+            });
+          }
+        });
+      } catch (error) {
+        logger.warn("[App] Failed to set up file-opened listener", error);
+      }
+    };
+
+    void setupFileOpenListener();
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [isHydrated, isImporting, ingestEpub, setLibrary, refreshLibrary, isConverting, setPendingBookForConversion, setShowConvertDialog]);
 
   const handleSelectBook = async (bookId: string) => {
     await handleSelectBookContext(bookId);

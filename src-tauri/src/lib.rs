@@ -2,6 +2,8 @@
 // ONNX Runtime with CoreML EP support (macOS/iOS only)
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 
+use tauri::{Manager, Emitter};
+
 pub mod book_service;  // Made public for testing
 pub mod resources;  // Made public for testing
 pub mod tts_commands;  // Made public for testing
@@ -111,6 +113,40 @@ pub fn run() {
             book_service::update_book_last_opened_time,
         ])
         .manage(epub::CancellationTokens::new())
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Handle file open events (when app is opened with a file)
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            if let tauri::RunEvent::Opened { urls } = event {
+                for url in urls {
+                    // Convert URL to string and normalize the file path
+                    // (remove file:// prefix and decode URL encoding)
+                    let url_string = url.to_string();
+                    let normalized_path = utils::path_resolver::ResourcePathResolver::normalize_file_path(&url_string);
+                    
+                    // Only process EPUB files
+                    if normalized_path.to_lowercase().ends_with(".epub") {
+                        log::info!("File opened from OS: {}", normalized_path);
+                        
+                        // Emit event to frontend to trigger ingestion
+                        let app_handle_clone = app_handle.clone();
+                        let path_clone = normalized_path.clone();
+                        
+                        // Try to emit immediately
+                        if let Some(window) = app_handle_clone.get_webview_window("main") {
+                            if let Err(e) = window.emit("file-opened", &path_clone) {
+                                log::warn!("Failed to emit file-opened event: {}", e);
+                            }
+                        } else {
+                            // If window doesn't exist yet, store the path for later
+                            // The frontend will check for pending files on mount
+                            log::warn!("Main window not available yet, file will be processed when window is ready: {}", path_clone);
+                        }
+                    } else {
+                        log::warn!("Opened file is not an EPUB: {}", normalized_path);
+                    }
+                }
+            }
+        });
 }
