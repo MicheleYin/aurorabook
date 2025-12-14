@@ -5,7 +5,7 @@
  * No useEffects - all side effects handled via hooks and callbacks
  */
 
-import { useCallback, useMemo, useRef, useEffect } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "../../lib/utils";
