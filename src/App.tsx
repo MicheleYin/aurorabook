@@ -449,10 +449,32 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
 
   // Memoize callbacks for reader view
   const handleNavigateLibrary = useCallback(async () => {
-    // NOTE: Progress is NOT saved here - it will be saved automatically when ReaderWrapper unmounts
-    // The unmount cleanup in ReaderWrapper will handle saving progress when navigating away
+    // Save progress before navigating away
+    // This ensures progress is saved even if unmount cleanup doesn't run reliably
+    if (saveProgressRef.current && activeChapterId && activeBookId) {
+      logger.log("[App] Saving progress before navigating to library", {
+        bookId: activeBookId,
+        chapterId: activeChapterId,
+      });
+      try {
+        await saveProgress({
+          source: "navigateToLibrary",
+        });
+        logger.log("[App] Progress saved before navigating to library", {
+          bookId: activeBookId,
+          chapterId: activeChapterId,
+        });
+      } catch (error) {
+        logger.error("[App] Failed to save progress before navigating to library", {
+          bookId: activeBookId,
+          chapterId: activeChapterId,
+          error,
+        });
+        // Continue navigation even if save fails
+      }
+    }
     setActiveView("library");
-  }, [setActiveView]);
+  }, [setActiveView, saveProgress, activeChapterId, activeBookId]);
 
   const handleOpenAudioPlayer = useCallback(() => {
     setIsAudioPlayerOpen(true);

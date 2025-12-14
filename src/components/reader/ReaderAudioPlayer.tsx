@@ -115,13 +115,9 @@ export function ReaderAudioPlayer({
   const onTrackLoadedRef = useRef(onTrackLoaded);
   const emitProgressRef = useRef(emitProgress);
   
-  useEffect(() => {
-    onTrackLoadedRef.current = onTrackLoaded;
-  }, [onTrackLoaded]);
-  
-  useEffect(() => {
-    emitProgressRef.current = emitProgress;
-  }, [emitProgress]);
+  // Update refs directly (no useEffect needed - these are just ref assignments)
+  onTrackLoadedRef.current = onTrackLoaded;
+  emitProgressRef.current = emitProgress;
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -129,12 +125,31 @@ export function ReaderAudioPlayer({
   // Initialize playback rate from settings, default to 1.0 if not available
   const [playbackRate, setPlaybackRate] = useState<number>(settings.audioPlaybackSpeed ?? 1.0);
 
-  // Update playback rate when settings are hydrated or change
+  // Update playback rate on audio element (explicit callback instead of useEffect)
+  const updatePlaybackRate = useCallback((audio: HTMLAudioElement, rate: number) => {
+    if (audio) {
+      audio.playbackRate = rate;
+    }
+  }, []);
+
+  // Reset scrubbing state when track changes (explicit callback)
+  const resetScrubbingState = useCallback(() => {
+    setIsScrubbing(false);
+    setScrubTime(null);
+  }, []);
+
+  // Update playback rate when settings are hydrated or change (use useEffect but call explicit callback)
   useEffect(() => {
     if (settingsHydrated && settings.audioPlaybackSpeed !== undefined) {
-      setPlaybackRate(settings.audioPlaybackSpeed);
+      const newRate = settings.audioPlaybackSpeed;
+      setPlaybackRate(newRate);
+      // Update audio element immediately if it exists (explicit callback)
+      const audio = audioRef.current;
+      if (audio) {
+        updatePlaybackRate(audio, newRate);
+      }
     }
-  }, [settings.audioPlaybackSpeed, settingsHydrated]);
+  }, [settings.audioPlaybackSpeed, settingsHydrated, updatePlaybackRate]);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubTime, setScrubTime] = useState<number | null>(null);
   const [isDismissing, setIsDismissing] = useState(false);
@@ -339,9 +354,8 @@ export function ReaderAudioPlayer({
     }
   }, [tracks.length]);
 
-  useEffect(() => {
-    isPlayingRef.current = isPlaying;
-  }, [isPlaying]);
+  // Update ref directly (no useEffect needed - this is just a ref assignment)
+  isPlayingRef.current = isPlaying;
 
   useEffect(() => {
     const audio = audioRef.current ?? new Audio();
@@ -1085,11 +1099,16 @@ export function ReaderAudioPlayer({
       return;
     }
 
+    // Reset setup tracking when track changes
+    lastSetupTrackIdRef.current = null;
+    
+    // Reset scrubbing state when track changes
+    resetScrubbingState();
+
     // Get URL from ref
     const trackUrl = loadedTrackUrlsRef.current.get(currentTrack.id);
     if (!trackUrl) {
       // URL not loaded yet - will be handled by pre-load effect
-      lastSetupTrackIdRef.current = null;
       return;
     }
 
@@ -1110,24 +1129,7 @@ export function ReaderAudioPlayer({
     const cleanup = setupAudioSource(audio, trackWithUrl);
     
     return cleanup;
-  }, [currentIndex, currentTrack?.id, bookId, setupAudioSource, loadedCount, attemptAutoplay]);
-
-  // Reset setup tracking when track index changes
-  useEffect(() => {
-    lastSetupTrackIdRef.current = null;
-  }, [currentIndex]);
-
-  useEffect(() => {
-    setIsScrubbing(false);
-    setScrubTime(null);
-  }, [currentTrack?.id]);
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) {
-      return;
-    }
-    audio.playbackRate = playbackRate;
-  }, [playbackRate]);
+  }, [currentIndex, currentTrack?.id, bookId, setupAudioSource, loadedCount, attemptAutoplay, resetScrubbingState]);
 
 
   const togglePlayback = useCallback(async () => {
@@ -1569,9 +1571,14 @@ export function ReaderAudioPlayer({
       return;
     }
     setPlaybackRate(nextRate);
+    // Update audio element immediately
+    const audio = audioRef.current;
+    if (audio) {
+      updatePlaybackRate(audio, nextRate);
+    }
     // Persist to settings
     updateSettings({ audioPlaybackSpeed: nextRate });
-  }, [updateSettings]);
+  }, [updateSettings, updatePlaybackRate]);
 
   const handleTrackSelect = useCallback((trackIndex: number) => {
     logger.log("[Audio Player] handleTrackSelect called", {

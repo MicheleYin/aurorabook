@@ -96,21 +96,63 @@ export function useChapterStatePersistence(
       // The coordinator is used for coordination, but actual saving happens via updateBookProgress
       // which updates local state and triggers debounced backend sync
 
-      if (!snapshot?.chapterId) return;
+      logger.log("[useChapterStatePersistence] updateBookProgress called", {
+        bookId,
+        chapterId: snapshot?.chapterId,
+        scrollTop: snapshot?.scrollTop,
+        scrollHeight: snapshot?.scrollHeight,
+        clientHeight: snapshot?.clientHeight,
+        percent: snapshot?.percent,
+        elementId: snapshot?.elementId,
+        elementIndex: snapshot?.elementIndex,
+        updatedAt: snapshot?.updatedAt,
+      });
+
+      if (!snapshot?.chapterId) {
+        logger.warn("[useChapterStatePersistence] updateBookProgress: missing chapterId", {
+          bookId,
+          snapshot,
+        });
+        return;
+      }
 
       const book = library.find((b) => b.id === bookId);
-      if (!book) return;
+      if (!book) {
+        logger.warn("[useChapterStatePersistence] updateBookProgress: book not found", {
+          bookId,
+        });
+        return;
+      }
 
       const chapterIndex = book.chapters.findIndex(
         (chapter) => chapter.id === snapshot.chapterId,
       );
-      if (chapterIndex === -1) return;
+      if (chapterIndex === -1) {
+        logger.warn("[useChapterStatePersistence] updateBookProgress: chapter not found", {
+          bookId,
+          chapterId: snapshot.chapterId,
+          availableChapterIds: book.chapters.map(ch => ch.id),
+        });
+        return;
+      }
 
       const chapter = book.chapters[chapterIndex];
       const existingProgress = book.progress;
       const chapterMatchesExisting =
         existingProgress?.currentChapterId === chapter.id &&
         existingProgress.currentChapterIndex === chapterIndex;
+
+      logger.log("[useChapterStatePersistence] Existing progress state", {
+        bookId,
+        chapterId: snapshot.chapterId,
+        chapterIndex,
+        existingChapterId: existingProgress?.currentChapterId,
+        existingChapterIndex: existingProgress?.currentChapterIndex,
+        existingScrollTop: existingProgress?.currentChapterScrollTop,
+        existingPercent: existingProgress?.chapterProgressPercent,
+        existingElementIndex: existingProgress?.currentChapterElementIndex,
+        chapterMatchesExisting,
+      });
 
       let chapterProgressPercent = getPercentValue(
         snapshot.percent,
@@ -186,7 +228,32 @@ export function useChapterStatePersistence(
         updatedAt: snapshot.updatedAt ?? new Date().toISOString(),
       };
 
+      logger.log("[useChapterStatePersistence] Comparing progress for changes", {
+        bookId,
+        chapterId: nextProgress.currentChapterId,
+        existingProgress: existingProgress ? {
+          currentChapterId: existingProgress.currentChapterId,
+          currentChapterIndex: existingProgress.currentChapterIndex,
+          chapterProgressPercent: existingProgress.chapterProgressPercent,
+          bookProgressPercent: existingProgress.bookProgressPercent,
+          scrollTop: existingProgress.currentChapterScrollTop,
+          elementIndex: existingProgress.currentChapterElementIndex,
+        } : null,
+        nextProgress: {
+          currentChapterId: nextProgress.currentChapterId,
+          currentChapterIndex: nextProgress.currentChapterIndex,
+          chapterProgressPercent: nextProgress.chapterProgressPercent,
+          bookProgressPercent: nextProgress.bookProgressPercent,
+          scrollTop: nextProgress.currentChapterScrollTop,
+          elementIndex: nextProgress.currentChapterElementIndex,
+        },
+      });
+
       if (isProgressUnchanged(existingProgress, nextProgress)) {
+        logger.log("[useChapterStatePersistence] Progress unchanged, skipping update", {
+          bookId,
+          chapterId: nextProgress.currentChapterId,
+        });
         return;
       }
 
@@ -194,20 +261,39 @@ export function useChapterStatePersistence(
       // This prevents losing progress when changing chapters rapidly
       const pending = pendingProgressUpdateRef.current;
       if (pending && pending.bookId === bookId && pending.progress.currentChapterId !== chapter.id) {
+        logger.log("[useChapterStatePersistence] Flushing pending update for different chapter", {
+          bookId,
+          pendingChapterId: pending.progress.currentChapterId,
+          newChapterId: chapter.id,
+        });
+        
         // Different chapter - flush the pending update immediately before setting new one
         const debouncer = progressUpdateDebouncerRef.current;
         debouncer.cancel();
         
         try {
+          logger.log("[useChapterStatePersistence] Flushing previous chapter progress to backend", {
+            bookId: pending.bookId,
+            chapterId: pending.progress.currentChapterId,
+            progress: pending.progress,
+          });
+          
           const updatedBook = await updateBookProgressBackend(
             pending.bookId,
             pending.progress,
           );
+          
+          logger.log("[useChapterStatePersistence] Previous chapter progress flushed successfully", {
+            bookId: pending.bookId,
+            chapterId: pending.progress.currentChapterId,
+            returnedProgress: updatedBook.progress,
+          });
+          
           setLibrary((prev) =>
             prev.map((b) => (b.id === pending.bookId ? updatedBook : b)),
           );
         } catch (error) {
-          console.error("Failed to flush previous chapter progress", {
+          logger.error("[useChapterStatePersistence] Failed to flush previous chapter progress", {
             bookId: pending.bookId,
             chapterId: pending.progress.currentChapterId,
             error,
@@ -222,12 +308,28 @@ export function useChapterStatePersistence(
       // Use functional update to avoid unnecessary re-renders
       setLibrary((prev) => {
         const book = prev.find((b) => b.id === bookId);
-        if (!book) return prev;
+        if (!book) {
+          logger.warn("[useChapterStatePersistence] Book not found in library when updating state", {
+            bookId,
+          });
+          return prev;
+        }
         
         // Check if progress actually changed to avoid unnecessary updates
         if (isProgressUnchanged(book.progress, nextProgress)) {
+          logger.log("[useChapterStatePersistence] Progress unchanged in library state, skipping update", {
+            bookId,
+            chapterId: nextProgress.currentChapterId,
+          });
           return prev; // No change, return same reference
         }
+        
+        logger.log("[useChapterStatePersistence] Updating library state with new progress", {
+          bookId,
+          chapterId: nextProgress.currentChapterId,
+          oldProgress: book.progress,
+          newProgress: nextProgress,
+        });
         
         return prev.map((b) => (b.id === bookId ? { ...b, progress: nextProgress } : b));
       });
@@ -235,10 +337,15 @@ export function useChapterStatePersistence(
       logger.log("[useChapterStatePersistence] Prepared progress update", {
         bookId,
         chapterId: nextProgress.currentChapterId,
+        chapterIndex: nextProgress.currentChapterIndex,
         chapterProgressPercent: nextProgress.chapterProgressPercent,
         bookProgressPercent: nextProgress.bookProgressPercent,
         scrollTop: nextProgress.currentChapterScrollTop,
+        scrollHeight: nextProgress.currentChapterScrollHeight,
+        clientHeight: nextProgress.currentChapterClientHeight,
+        elementId: nextProgress.currentChapterElementId,
         elementIndex: nextProgress.currentChapterElementIndex,
+        updatedAt: nextProgress.updatedAt,
       });
 
       // NOTE: Do NOT call coordinator.saveChapterProgress here to avoid circular calls
@@ -246,6 +353,13 @@ export function useChapterStatePersistence(
       // This prevents: updateBookProgress -> coordinator.saveChapterProgress -> onChapterProgressSave -> handleChapterProgress -> updateBookProgress (loop!)
       
       // Store pending update and trigger debounced backend sync
+      logger.log("[useChapterStatePersistence] Storing pending progress update and triggering debounced sync", {
+        bookId,
+        chapterId: nextProgress.currentChapterId,
+        hasPendingUpdate: !!pendingProgressUpdateRef.current,
+        pendingChapterId: pendingProgressUpdateRef.current?.progress.currentChapterId,
+      });
+      
       pendingProgressUpdateRef.current = {
         bookId,
         progress: nextProgress,
@@ -253,6 +367,11 @@ export function useChapterStatePersistence(
       };
       
       progressUpdateDebouncerRef.current.call();
+      
+      logger.log("[useChapterStatePersistence] Debounced sync triggered", {
+        bookId,
+        chapterId: nextProgress.currentChapterId,
+      });
     },
     [library, setLibrary, coordinator],
   );
@@ -260,7 +379,16 @@ export function useChapterStatePersistence(
   // Flush pending progress updates immediately (for navigation)
   const flushProgressUpdate = useCallback(async () => {
     const pending = pendingProgressUpdateRef.current;
-    if (!pending) return;
+    if (!pending) {
+      logger.log("[useChapterStatePersistence] flushProgressUpdate: no pending update", {});
+      return;
+    }
+
+    logger.log("[useChapterStatePersistence] flushProgressUpdate: starting flush", {
+      bookId: pending.bookId,
+      chapterId: pending.progress.currentChapterId,
+      fullProgress: pending.progress,
+    });
 
     const debouncer = progressUpdateDebouncerRef.current;
     debouncer.cancel();
@@ -269,10 +397,15 @@ export function useChapterStatePersistence(
       logger.log("[useChapterStatePersistence] Flushing progress to backend", {
         bookId: pending.bookId,
         chapterId: pending.progress.currentChapterId,
+        chapterIndex: pending.progress.currentChapterIndex,
         chapterProgressPercent: pending.progress.chapterProgressPercent,
         bookProgressPercent: pending.progress.bookProgressPercent,
         scrollTop: pending.progress.currentChapterScrollTop,
+        scrollHeight: pending.progress.currentChapterScrollHeight,
+        clientHeight: pending.progress.currentChapterClientHeight,
+        elementId: pending.progress.currentChapterElementId,
         elementIndex: pending.progress.currentChapterElementIndex,
+        updatedAt: pending.progress.updatedAt,
       });
       
       const updatedBook = await updateBookProgressBackend(
@@ -282,25 +415,44 @@ export function useChapterStatePersistence(
       
       logger.log("[useChapterStatePersistence] Backend flush completed", {
         bookId: pending.bookId,
+        chapterId: pending.progress.currentChapterId,
+        sentProgress: pending.progress,
+        returnedProgress: updatedBook.progress,
         returnedChapterProgressPercent: updatedBook.progress?.chapterProgressPercent,
         returnedBookProgressPercent: updatedBook.progress?.bookProgressPercent,
+        returnedScrollTop: updatedBook.progress?.currentChapterScrollTop,
+        returnedElementIndex: updatedBook.progress?.currentChapterElementIndex,
       });
       
       setLibrary((prev) =>
         prev.map((b) => (b.id === pending.bookId ? updatedBook : b)),
       );
+      
+      logger.log("[useChapterStatePersistence] Library state updated after flush", {
+        bookId: pending.bookId,
+        chapterId: pending.progress.currentChapterId,
+      });
     } catch (error) {
       logger.error("[useChapterStatePersistence] Failed to flush progress to backend", {
         bookId: pending.bookId,
         chapterId: pending.progress.currentChapterId,
         chapterProgressPercent: pending.progress.chapterProgressPercent,
+        bookProgressPercent: pending.progress.bookProgressPercent,
+        scrollTop: pending.progress.currentChapterScrollTop,
+        elementIndex: pending.progress.currentChapterElementIndex,
         error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
       });
       setLibrary((prev) =>
         prev.map((b) => (b.id === pending.bookId ? pending.book : b)),
       );
     } finally {
       pendingProgressUpdateRef.current = null;
+      logger.log("[useChapterStatePersistence] flushProgressUpdate: completed", {
+        bookId: pending.bookId,
+        chapterId: pending.progress.currentChapterId,
+      });
     }
   }, [setLibrary]);
 

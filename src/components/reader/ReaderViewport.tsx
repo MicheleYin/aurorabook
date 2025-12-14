@@ -5,7 +5,7 @@
  * No useEffects - all side effects handled via hooks and callbacks
  */
 
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useEffect } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "../../lib/utils";
@@ -28,7 +28,7 @@ import { useFragmentNavigation } from "../../hooks/reader/useFragmentNavigation"
 import { useChapterTransitions } from "../../hooks/chapter/useChapterTransitions";
 import { useHighlighting } from "../../hooks/reader/useHighlighting";
 import { useLinkHandling } from "../../hooks/reader/useLinkHandling";
-import { VirtualizedChapterContent, type VirtualizedChapterContentHandle } from "./VirtualizedChapterContent";
+// Virtualization disabled - using direct HTML rendering
 
 type ResolvedReaderTheme = Exclude<ReaderTheme, "system">;
 
@@ -45,7 +45,6 @@ type ReaderViewportState = {
   chapter?: Chapter;
   isLoading?: boolean;
   animationState?: "entering" | "entered" | null;
-  highlightedElementId?: string | null;
   pendingFragment?: string | null;
 };
 
@@ -110,7 +109,6 @@ export function ReaderViewport({
     chapter: activeChapter,
     isLoading: isLoadingChapter = false,
     animationState: chapterAnimationState,
-    highlightedElementId,
     pendingFragment,
   } = state;
 
@@ -127,16 +125,21 @@ export function ReaderViewport({
   const internalContentRef = useRef<HTMLDivElement | null>(null);
   const contentRef = externalContentRef || internalContentRef;
   
-  // Ref for virtualized content handle (for scroll integration)
-  const virtualizedContentRef = useRef<VirtualizedChapterContentHandle | null>(null);
-
+  // Track if content rendered callback has been called for current chapter
+  const contentRenderedRef = useRef<string | null>(null);
+  
   // Custom hooks (no useEffects)
   const fragmentNav = useFragmentNavigation(contentRef, onFragmentConsumed);
   const transitions = useChapterTransitions();
-  const highlighting = useHighlighting(contentRef, activeChapter?.id, elementIndex);
+  // useHighlighting now processes the queue internally - no need to call it explicitly
+  useHighlighting(contentRef, activeChapter?.id, elementIndex);
   const linkHandling = useLinkHandling(contentRef, activeBook, onSelectChapter);
   
-  // Chapter loaded callback is now handled directly via onContentRendered from VirtualizedChapterContent
+  // Chapter loaded callback is handled when content div is rendered
+  // Reset content rendered ref when chapter changes
+  if (contentRenderedRef.current && contentRenderedRef.current !== activeChapter?.id) {
+    contentRenderedRef.current = null;
+  }
 
   // Handle fragment navigation (explicit call)
   if (pendingFragment) {
@@ -145,11 +148,6 @@ export function ReaderViewport({
 
   // Handle chapter transitions (explicit call)
   transitions.triggerTransition(activeChapter, activeBook);
-
-  // Handle highlighting (explicit call)
-  if (highlightedElementId !== undefined) {
-    highlighting.applyHighlight(highlightedElementId);
-  }
 
   // Setup link handler when contentRef changes (explicit check)
   const lastBookIdRef = useRef<string | undefined>(undefined);
@@ -412,18 +410,25 @@ export function ReaderViewport({
                 <div className="text-muted-foreground">Loading chapter content...</div>
               </div>
             ) : activeChapter.contentHtml ? (
-              <VirtualizedChapterContent
-                ref={virtualizedContentRef}
-                contentHtml={activeChapter.contentHtml}
-                chapterId={activeChapter.id}
-                onContentRendered={onChapterLoaded}
-                contentRef={contentRef}
-                scrollerRef={contentRef}
+              <div
+                ref={(node) => {
+                  // Call onContentRendered when content is rendered (only once per chapter)
+                  if (node && onChapterLoaded && contentRenderedRef.current !== activeChapter.id) {
+                    contentRenderedRef.current = activeChapter.id;
+                    // Use requestAnimationFrame to ensure DOM is ready
+                    requestAnimationFrame(() => {
+                      onChapterLoaded();
+                    });
+                  }
+                }}
+                data-reader-chapter-content="true"
+                data-chapter-id={activeChapter.id}
                 className="animate-in fade-in duration-300"
                 style={{
                   // CSS containment to limit layout calculations for off-screen content
                   contain: "layout style paint",
                 }}
+                dangerouslySetInnerHTML={{ __html: activeChapter.contentHtml }}
               />
             ) : (
               <div className="flex items-center justify-center py-12">

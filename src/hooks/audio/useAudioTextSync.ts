@@ -3,11 +3,12 @@
  * No useEffects - all operations are explicit via callbacks
  */
 
-import { useCallback, useRef, useState, useEffect } from "react";
+import { useCallback, useRef, useEffect } from "react";
 import { logger } from "../../lib/logger";
 import type { Book, Chapter } from "../../types/reader";
 import { findCurrentAudioSegment, chapterHrefsMatch, normalizeChapterHref } from "../../lib/epub";
 import { scrollToElement } from "../../lib/scroll-utils";
+import { useHighlightQueue } from "../../contexts/HighlightQueueContext";
 
 type ElementIndexHook = {
   hasElement: (elementId: string) => boolean;
@@ -27,7 +28,7 @@ export function useAudioTextSync(
   activeChapterId?: string,
   elementIndex?: ElementIndexHook
 ) {
-  const [highlightedElementId, setHighlightedElementId] = useState<string | null>(null);
+  const { pushHighlight } = useHighlightQueue();
   const lastScrolledElementRef = useRef<string | null>(null);
   const lastScrollTimeRef = useRef<number>(0);
   const scrollThrottleMs = 100; // Throttle scrolling to at most once per 100ms
@@ -206,7 +207,7 @@ export function useAudioTextSync(
 
     if (!book.audioSyncMap || !trackHref || !chapter) {
       logger.log("[Audio Sync] Missing required data, clearing highlight");
-      setHighlightedElementId(null);
+      pushHighlight(null);
       return;
     }
 
@@ -218,7 +219,7 @@ export function useAudioTextSync(
 
     if (!segment) {
       logger.log("[Audio Sync] No segment found");
-      setHighlightedElementId(null);
+      pushHighlight(null);
       return;
     }
 
@@ -302,7 +303,7 @@ export function useAudioTextSync(
           trackHref,
           timeSinceTrackChange: trackChange ? Date.now() - trackChange.timestamp : 0,
         });
-        setHighlightedElementId(null);
+        pushHighlight(null);
         return;
       }
       
@@ -312,7 +313,7 @@ export function useAudioTextSync(
           chapterId: matchingChapter.id,
           trackHref,
         });
-        setHighlightedElementId(null);
+        pushHighlight(null);
         return;
       }
       
@@ -332,7 +333,7 @@ export function useAudioTextSync(
                   chapterId: matchingChapter.id,
                   trackHref,
                 });
-                setHighlightedElementId(null);
+                pushHighlight(null);
                 return;
               }
               
@@ -377,7 +378,7 @@ export function useAudioTextSync(
                 }
               }, 3000); // Clear after 3 seconds (enough time for chapter to load)
               
-              setHighlightedElementId(null);
+              pushHighlight(null);
               return;
             } else {
               // This can happen if the chapter object reference is stale but the ID matches
@@ -414,7 +415,7 @@ export function useAudioTextSync(
         });
       }
       
-      setHighlightedElementId(null);
+      pushHighlight(null);
       return;
     }
 
@@ -431,7 +432,7 @@ export function useAudioTextSync(
       logger.debug("[Audio Sync] Element not in index, skipping DOM query", {
         elementId: segment.textElementId,
       });
-      setHighlightedElementId(null);
+      pushHighlight(null);
       return;
     }
 
@@ -484,9 +485,12 @@ export function useAudioTextSync(
       }
     }
 
-    // Always update highlighting, even if element hasn't changed
-    // This ensures highlighting is applied when audio sync updates
-    setHighlightedElementId(segment.textElementId);
+    // Push highlight to queue - the highlighting hook will process it
+    const newElementId = segment.textElementId;
+    logger.log("[Audio Sync] Pushing highlight to queue", {
+      textElementId: newElementId,
+    });
+    pushHighlight(newElementId);
 
     // Auto-scroll if enabled and not currently restoring scroll position
     // Skip scrolling during restoration to avoid overwriting restored position
@@ -543,10 +547,10 @@ export function useAudioTextSync(
   }, [autoScrollEnabled, isRestoringScroll, contentRef, getHeaderOffset, getPlayerOffset, onChapterChange, onChapterReload, elementIndex]);
 
   const clearHighlight = useCallback(() => {
-    setHighlightedElementId(null);
+    pushHighlight(null);
     lastScrolledElementRef.current = null;
     lastScrollTimeRef.current = 0;
-  }, []);
+  }, [pushHighlight]);
 
   // Mark that a track change is in progress (called from useAudioPlayerProgress)
   const markTrackChange = useCallback((trackHref: string) => {
@@ -580,25 +584,49 @@ export function useAudioTextSync(
   }, []);
 
   // Cleanup when chapter changes
+  // Use a ref to track the previous activeChapterId to avoid clearing on initial mount
+  const previousActiveChapterIdRef = useRef<string | undefined>(activeChapterId);
+  
   useEffect(() => {
-    // Clear all refs and state when chapter changes
-    setHighlightedElementId(null);
-    lastScrolledElementRef.current = null;
-    lastScrollTimeRef.current = 0;
-    lastChapterChangeTimeRef.current = 0;
-    lastReloadAttemptRef.current = null;
-    trackChangeInProgressRef.current = null;
-    chapterChangeInProgressRef.current = null;
-    lastChapterIdRef.current = undefined;
+    const previousChapterId = previousActiveChapterIdRef.current;
+    const currentChapterId = activeChapterId;
     
-    // Clear cached DOM queries
-    headerCacheRef.current = { element: null, offset: 0, lastCheck: 0 };
-    playerCacheRef.current = { element: null, offset: 0, lastCheck: 0 };
-    safeAreaCacheRef.current = { top: 0, lastCheck: 0 };
-  }, [activeChapterId]);
+    // Only clear if chapter actually changed (and we have a current chapter ID)
+    // AND the previous chapter ID was actually set (not initial mount)
+    const chapterActuallyChanged = 
+      previousChapterId !== undefined && 
+      currentChapterId !== undefined &&
+      currentChapterId !== previousChapterId;
+    
+    if (chapterActuallyChanged) {
+      logger.log("[Audio Sync] Chapter changed, clearing highlight", {
+        oldChapterId: previousChapterId,
+        newChapterId: currentChapterId,
+      });
+      // Clear all refs and push clear to queue when chapter changes
+      pushHighlight(null);
+      lastScrolledElementRef.current = null;
+      lastScrollTimeRef.current = 0;
+      lastChapterChangeTimeRef.current = 0;
+      lastReloadAttemptRef.current = null;
+      trackChangeInProgressRef.current = null;
+      chapterChangeInProgressRef.current = null;
+      lastChapterIdRef.current = currentChapterId;
+      previousActiveChapterIdRef.current = currentChapterId;
+      
+      // Clear cached DOM queries
+      headerCacheRef.current = { element: null, offset: 0, lastCheck: 0 };
+      playerCacheRef.current = { element: null, offset: 0, lastCheck: 0 };
+      safeAreaCacheRef.current = { top: 0, lastCheck: 0 };
+    } else {
+      // Update ref to track the current chapter (even on initial mount)
+      if (currentChapterId !== undefined) {
+        previousActiveChapterIdRef.current = currentChapterId;
+      }
+    }
+  }, [activeChapterId, pushHighlight]);
 
   return {
-    highlightedElementId,
     updateHighlight,
     clearHighlight,
     markTrackChange,

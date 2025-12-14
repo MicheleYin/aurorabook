@@ -235,7 +235,6 @@ export function useAudioPlayerManager(params: UseAudioPlayerManagerParams) {
     },
 
     // Audio-text sync
-    highlightedElementId: audioTextSync.highlightedElementId,
     updateHighlight: audioTextSync.updateHighlight,
     clearHighlight: audioTextSync.clearHighlight,
     markTrackChange: audioTextSync.markTrackChange,

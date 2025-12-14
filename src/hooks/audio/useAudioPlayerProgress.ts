@@ -178,7 +178,6 @@ export function useAudioPlayerProgress({
     handleAudioProgress,
     handleAudioTrackChange,
     handleAudioPlayerClose,
-    highlightedElementId: audioSync.highlightedElementId,
   };
 }
 

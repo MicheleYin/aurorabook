@@ -13,6 +13,7 @@ import { useReaderManager } from "../../hooks/reader/useReaderManager";
 import { useAudioPlayerProgress } from "../../hooks/audio/useAudioPlayerProgress";
 import { useLibraryContext } from "../../hooks/library/LibraryContext";
 import { useElementIndex } from "../../hooks/reader/useElementIndex";
+import { HighlightQueueProvider } from "../../contexts/HighlightQueueContext";
 
 type ReaderWrapperProps = {
   activeBookId?: string;
@@ -32,7 +33,8 @@ type ReaderWrapperProps = {
   onTrackChangeHandlerReady?: (handler: (trackHref: string) => Promise<void>) => void;
 };
 
-export function ReaderWrapper(props: ReaderWrapperProps) {
+// Inner component that uses hooks that require HighlightQueueContext
+function ReaderWrapperContent(props: ReaderWrapperProps) {
   const {
     activeBookId,
     activeChapterId,
@@ -52,7 +54,7 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
   } = props;
 
   // Get book and chapter from library context (single source of truth)
-  const { library, setLibrary } = useLibraryContext();
+  const { library, setLibrary, flushProgressUpdate } = useLibraryContext();
   const activeBook = activeBookId ? library.find(b => b.id === activeBookId) : undefined;
   const activeChapter = activeBook && activeChapterId 
     ? activeBook.chapters.find(ch => ch.id === activeChapterId)
@@ -89,10 +91,32 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
   readerManagerRef.current = readerManager;
   
   const saveProgress = useCallback(async (chapterId: string) => {
-    if (!activeBook) return;
+    if (!activeBook) {
+      logger.warn("[ReaderWrapper] saveProgress: no active book", { chapterId });
+      return;
+    }
+    
+    logger.log("[ReaderWrapper] saveProgress called", {
+      bookId: activeBook.id,
+      chapterId,
+    });
     
     // Use readerManager to save progress (handles coordinator internally)
-    await readerManagerRef.current.saveProgress(chapterId);
+    try {
+      await readerManagerRef.current.saveProgress(chapterId);
+      logger.log("[ReaderWrapper] saveProgress completed", {
+        bookId: activeBook.id,
+        chapterId,
+      });
+    } catch (error) {
+      logger.error("[ReaderWrapper] saveProgress failed", {
+        bookId: activeBook.id,
+        chapterId,
+        error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }, [activeBook]);
 
   // Helper to determine if progress should be restored for a chapter
@@ -390,15 +414,40 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     }
     
     // Check if chapter change operation was cancelled
+    // Note: If operation is null/undefined, it means it completed successfully
+    // Only skip restoration if the operation was explicitly cancelled
     const coordinator = readerManager.coordinator;
     const currentOp = coordinator.getCurrentOperation("changeChapter");
-    if (currentOp?.cancelled || currentOp?.chapterId !== activeChapter.id) {
+    
+    logger.log("[ReaderWrapper] Checking chapter change operation state", {
+      chapterId: activeChapter.id,
+      hasOperation: !!currentOp,
+      operationId: currentOp?.id,
+      operationCancelled: currentOp?.cancelled,
+      operationChapterId: currentOp?.chapterId,
+      operationMatches: currentOp?.chapterId === activeChapter.id,
+    });
+    
+    // Only skip if operation was explicitly cancelled
+    // If operation is null/undefined, it completed successfully, so proceed with restoration
+    // If operation exists but chapterId doesn't match, it might be a different operation, so proceed
+    if (currentOp?.cancelled) {
       logger.log("[ReaderWrapper] Chapter change was cancelled, skipping restoration", {
         chapterId: activeChapter.id,
         operationId: currentOp?.id,
       });
       handlePendingScrollTarget();
       return;
+    }
+    
+    // If operation exists and chapterId matches, or operation is null (completed), proceed
+    if (currentOp && currentOp.chapterId !== activeChapter.id) {
+      logger.debug("[ReaderWrapper] Chapter change operation for different chapter, but proceeding with restoration", {
+        currentChapterId: activeChapter.id,
+        operationChapterId: currentOp.chapterId,
+        operationId: currentOp.id,
+      });
+      // Continue anyway - might be a stale operation
     }
     
     // Mark this chapter as loaded
@@ -425,12 +474,11 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     handlePendingScrollTarget();
   }, [activeBook, activeChapter, contentRef, handlePendingScrollTarget]);
   
-  // Reset chapterLoadedRef when chapter changes (use useEffect to avoid render-time updates)
-  useEffect(() => {
-    if (chapterLoadedRef.current !== activeChapter?.id && chapterLoadedRef.current !== null) {
-      chapterLoadedRef.current = null;
-    }
-  }, [activeChapter?.id]);
+  // Reset chapterLoadedRef when chapter changes (explicit check instead of useEffect)
+  // Check in render to avoid render-time state updates
+  if (chapterLoadedRef.current !== activeChapter?.id && chapterLoadedRef.current !== null) {
+    chapterLoadedRef.current = null;
+  }
 
   // Handle chapter change - progress is NOT saved here, only on quit
   const handleChapterChange = useCallback(async (
@@ -452,10 +500,10 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     await readerManagerRef.current.changeChapter(chapterId, options);
   }, [activeBook]);
 
-  // Load current chapter when activeChapter changes (use useEffect to avoid render-time async operations)
+  // Load current chapter when activeChapter changes (explicit callback instead of useEffect)
   // This handles cases where activeChapter changes from outside (e.g., book selection)
   const loadInitiatedRef = useRef<string | undefined>(undefined);
-  useEffect(() => {
+  const loadChapterIfNeeded = useCallback(async () => {
     const currentActiveChapterId = activeChapter?.id;
     
     if (previousChapterIdRef.current !== currentActiveChapterId && activeChapter && activeBook) {
@@ -477,22 +525,22 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
           savedChapterId: activeBook.progress?.currentChapterId,
         });
         
-      // Reset restore state (if needed)
-      if (!shouldRestore) {
-        readerManagerRef.current.resetRestoration();
-      }
-      
-      // Check if chapter is already loaded
-      const wasAlreadyLoaded = isChapterAlreadyLoaded(activeBook.id, activeChapter);
-      
-      // Determine options based on restore state
-      // If not restoring, don't specify scroll position (will default to top)
-      const changeOptions = shouldRestore 
-        ? { scrollPosition: "maintain" as const }
-        : undefined;
-      
-      // Load chapter asynchronously - use readerManager to handle loading
-      readerManagerRef.current.changeChapter(chapterId, changeOptions).then(() => {
+        // Reset restore state (if needed)
+        if (!shouldRestore) {
+          readerManagerRef.current.resetRestoration();
+        }
+        
+        // Check if chapter is already loaded
+        const wasAlreadyLoaded = isChapterAlreadyLoaded(activeBook.id, activeChapter);
+        
+        // Determine options based on restore state
+        // If not restoring, don't specify scroll position (will default to top)
+        const changeOptions = shouldRestore 
+          ? { scrollPosition: "maintain" as const }
+          : undefined;
+        
+        // Load chapter asynchronously - use readerManager to handle loading
+        readerManagerRef.current.changeChapter(chapterId, changeOptions).then(() => {
           setChapterAnimationState("entering");
           setTimeout(() => {
             setChapterAnimationState("entered");
@@ -511,7 +559,14 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
         });
       }
     }
-  }, [activeChapter?.id, activeBook?.id, shouldRestoreProgress, isChapterAlreadyLoaded]);
+  }, [activeChapter, activeBook, shouldRestoreProgress, isChapterAlreadyLoaded]);
+  
+  // Call loadChapterIfNeeded when chapter changes (useEffect for async operations triggered by prop changes)
+  // Note: This useEffect is necessary because we need to trigger async operations when props change
+  // However, the actual logic is now in an explicit callback
+  useEffect(() => {
+    loadChapterIfNeeded();
+  }, [loadChapterIfNeeded]);
 
   // Sync button: go to current audio chapter
   const handleSyncToAudio = useCallback(() => {
@@ -590,118 +645,262 @@ export function ReaderWrapper(props: ReaderWrapperProps) {
     elementIndex, // Pass element index for fast lookups
   });
 
-  // Expose handleAudioTrackChange to parent (App.tsx) via callback
-  useEffect(() => {
-    if (onTrackChangeHandlerReady) {
-      onTrackChangeHandlerReady(audioPlayerProgress.handleAudioTrackChange);
-    }
-  }, [onTrackChangeHandlerReady, audioPlayerProgress.handleAudioTrackChange]);
+  // Expose handleAudioTrackChange to parent (App.tsx) via callback - explicit check instead of useEffect
+  // Use ref to track if we've already exposed to avoid calling on every render
+  const trackHandlerExposedRef = useRef(false);
+  const trackHandlerRef = useRef(audioPlayerProgress.handleAudioTrackChange);
+  trackHandlerRef.current = audioPlayerProgress.handleAudioTrackChange;
+  
+  if (onTrackChangeHandlerReady && !trackHandlerExposedRef.current) {
+    trackHandlerExposedRef.current = true;
+    onTrackChangeHandlerReady(trackHandlerRef.current);
+  }
+  
+  // Reset when callback changes
+  if (!onTrackChangeHandlerReady && trackHandlerExposedRef.current) {
+    trackHandlerExposedRef.current = false;
+  }
 
   // Handle audio progress updates from App.tsx
   // This ensures highlighting and scrolling are updated when audio plays
-  // Use refs to avoid recreating the effect callback on every render
+  // Use explicit check instead of useEffect
   const lastProgressRef = useRef<AudioProgressSnapshot | undefined>(undefined);
   const handleAudioProgressRef = useRef(audioPlayerProgress.handleAudioProgress);
   
-  // Update ref when handler changes (but don't recreate effect)
+  // Update ref when handler changes
   handleAudioProgressRef.current = audioPlayerProgress.handleAudioProgress;
   
-  // Use a more efficient check - only update if values actually changed
-  useEffect(() => {
-    if (!currentAudioProgress) return;
-    
+  // Explicit check - only update if values actually changed
+  if (currentAudioProgress) {
     const lastProgress = lastProgressRef.current;
     // Quick reference check first (most common case - same object)
-    if (lastProgress === currentAudioProgress) return;
-    
-    // Compare by value only if reference changed
-    const isNewProgress = 
-      !lastProgress ||
-      lastProgress.trackHref !== currentAudioProgress.trackHref ||
-      Math.abs(lastProgress.currentTimeSeconds - currentAudioProgress.currentTimeSeconds) > 0.1 || // Only update if time changed significantly (>100ms)
-      lastProgress.updatedAt !== currentAudioProgress.updatedAt;
-    
-    if (isNewProgress) {
-      lastProgressRef.current = currentAudioProgress;
-      handleAudioProgressRef.current(currentAudioProgress);
+    if (lastProgress !== currentAudioProgress) {
+      // Compare by value only if reference changed
+      const isNewProgress = 
+        !lastProgress ||
+        lastProgress.trackHref !== currentAudioProgress.trackHref ||
+        Math.abs(lastProgress.currentTimeSeconds - currentAudioProgress.currentTimeSeconds) > 0.1 || // Only update if time changed significantly (>100ms)
+        lastProgress.updatedAt !== currentAudioProgress.updatedAt;
+      
+      if (isNewProgress) {
+        lastProgressRef.current = currentAudioProgress;
+        handleAudioProgressRef.current(currentAudioProgress);
+      }
     }
-  }, [currentAudioProgress]);
+  }
 
   const loadedChapter = readerManager.loadedChapter;
 
   // Save progress when component unmounts or when leaving reader view
   // Use refs to track state and prevent duplicate saves
-  const savedOnUnmountRef = useRef(false);
+  const savePromiseRef = useRef<Promise<void> | null>(null);
   const activeChapterIdRef = useRef<string | undefined>(activeChapter?.id);
   const activeBookIdRef = useRef<string | undefined>(activeBook?.id);
+  const flushProgressUpdateRef = useRef(flushProgressUpdate);
+  flushProgressUpdateRef.current = flushProgressUpdate;
   
-  // Update refs when chapter/book changes (reset save flag)
-  useEffect(() => {
-    if (activeChapterIdRef.current !== activeChapter?.id || activeBookIdRef.current !== activeBook?.id) {
-      activeChapterIdRef.current = activeChapter?.id;
-      activeBookIdRef.current = activeBook?.id;
-      savedOnUnmountRef.current = false; // Reset save flag when chapter/book changes
+  // Update refs when chapter/book changes (reset save promise) - explicit check instead of useEffect
+  if (activeChapterIdRef.current !== activeChapter?.id || activeBookIdRef.current !== activeBook?.id) {
+    logger.log("[ReaderWrapper] Chapter or book changed, resetting save state", {
+      previousChapterId: activeChapterIdRef.current,
+      newChapterId: activeChapter?.id,
+      previousBookId: activeBookIdRef.current,
+      newBookId: activeBook?.id,
+    });
+    activeChapterIdRef.current = activeChapter?.id;
+    activeBookIdRef.current = activeBook?.id;
+    savePromiseRef.current = null; // Reset save promise when chapter/book changes
+  }
+  
+  // Function to save progress (can be called before unmount or during unmount)
+  const performSave = useCallback(async (bookId: string, chapterId: string) => {
+    // Check if save is already in progress
+    if (savePromiseRef.current) {
+      logger.log("[ReaderWrapper] Save already in progress, waiting for completion", {
+        bookId,
+        chapterId,
+      });
+      try {
+        await savePromiseRef.current;
+        logger.log("[ReaderWrapper] Previous save completed", {
+          bookId,
+          chapterId,
+        });
+      } catch (error) {
+        logger.warn("[ReaderWrapper] Previous save failed, continuing with new save", {
+          bookId,
+          chapterId,
+          error,
+        });
+      }
     }
-  }, [activeChapter?.id, activeBook?.id]);
+    
+    logger.log("[ReaderWrapper] Starting progress save", {
+      bookId,
+      chapterId,
+    });
+    
+    // First, emit current progress to ensure it's captured
+    try {
+      readerManagerRef.current.emitChapterProgress();
+      logger.log("[ReaderWrapper] Emitted current progress before save", {
+        bookId,
+        chapterId,
+      });
+    } catch (error) {
+      logger.warn("[ReaderWrapper] Failed to emit progress before save", {
+        bookId,
+        chapterId,
+        error,
+      });
+    }
+    
+    // Create save promise
+    const savePromise = readerManagerRef.current.saveProgress(chapterId)
+      .then(() => {
+        logger.log("[ReaderWrapper] Progress saved via readerManager, flushing debounced updates", {
+          bookId,
+          chapterId,
+        });
+        // Flush any pending debounced progress updates
+        return flushProgressUpdateRef.current();
+      })
+      .then(() => {
+        logger.log("[ReaderWrapper] Progress save and flush completed", {
+          bookId,
+          chapterId,
+        });
+        savePromiseRef.current = null;
+      })
+      .catch((error) => {
+        logger.error("[ReaderWrapper] Failed to save or flush progress", {
+          bookId,
+          chapterId,
+          error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorStack: error instanceof Error ? error.stack : undefined,
+        });
+        savePromiseRef.current = null;
+        throw error;
+      });
+    
+    savePromiseRef.current = savePromise;
+    return savePromise;
+  }, []);
+  
+  // Expose save function to parent via onSaveProgress callback - explicit check instead of useEffect
+  // Use ref to track if we've already exposed to avoid calling on every render
+  const saveExposedRef = useRef<string | null>(null);
+  const saveKey = activeBook?.id && activeChapter?.id ? `${activeBook.id}-${activeChapter.id}` : null;
+  
+  if (onSaveProgress && activeBook && activeChapter && saveExposedRef.current !== saveKey) {
+    saveExposedRef.current = saveKey;
+    onSaveProgress(async () => {
+      await performSave(activeBook.id, activeChapter.id);
+    });
+  }
+  
+  // Reset when chapter/book changes
+  if (saveExposedRef.current && !saveKey) {
+    saveExposedRef.current = null;
+  }
   
   // Save progress only on actual unmount (not on every render)
   useEffect(() => {
     return () => {
-      // Only save if we haven't already saved for this chapter/book
-      if (!savedOnUnmountRef.current && activeChapterIdRef.current && activeBookIdRef.current) {
-        savedOnUnmountRef.current = true;
-        logger.log("[ReaderWrapper] Saving progress on quit/unmount", {
-          bookId: activeBookIdRef.current,
-          chapterId: activeChapterIdRef.current,
-        });
-        // Save synchronously if possible, or use a microtask
-        // This ensures progress is saved before component unmounts
-        readerManagerRef.current.saveProgress(activeChapterIdRef.current).catch((error) => {
-          logger.error("[ReaderWrapper] Failed to save progress on unmount", { error });
+      const bookId = activeBookIdRef.current;
+      const chapterId = activeChapterIdRef.current;
+      
+      logger.log("[ReaderWrapper] Unmount cleanup triggered", {
+        bookId,
+        chapterId,
+        hasSaveInProgress: !!savePromiseRef.current,
+      });
+      
+      // Only save if we have valid IDs
+      if (chapterId && bookId) {
+        // If save is already in progress, wait for it (but don't block unmount)
+        if (savePromiseRef.current) {
+          logger.log("[ReaderWrapper] Save already in progress, will complete asynchronously", {
+            bookId,
+            chapterId,
+          });
+          // Don't await - let it complete in background
+          savePromiseRef.current.catch((error) => {
+            logger.error("[ReaderWrapper] Background save failed", {
+              bookId,
+              chapterId,
+              error,
+            });
+          });
+        } else {
+          // Start new save (fire and forget - can't await in cleanup)
+          logger.log("[ReaderWrapper] Starting progress save on unmount", {
+            bookId,
+            chapterId,
+          });
+          performSave(bookId, chapterId).catch((error) => {
+            logger.error("[ReaderWrapper] Unmount save failed", {
+              bookId,
+              chapterId,
+              error,
+            });
+          });
+        }
+      } else {
+        logger.log("[ReaderWrapper] Skipping progress save on unmount - missing IDs", {
+          hasChapterId: !!chapterId,
+          hasBookId: !!bookId,
         });
       }
     };
     // Empty dependency array - this effect only runs on mount/unmount
     // We use refs to access current values, so we don't need dependencies
-  }, []);
+  }, [performSave]);
 
   return (
-    <>
-      <ReaderViewport
-        config={{
-          preferences,
-          theme: resolvedTheme,
-          chromeVisible,
-          audioPlayerVisible,
-          autoScrollEnabled,
-        }}
-        state={{
-          book: activeBook,
-          chapter: loadedChapter || activeChapter,
-          isLoading: readerManager.isLoading,
-          animationState: readerManager.animationState || chapterAnimationState,
-          highlightedElementId: audioPlayerProgress.highlightedElementId,
-          pendingFragment: null,
-        }}
-        callbacks={{
-          onSelectChapter: handleChapterChange,
-          onChapterLoaded,
-          onToggleChrome,
-          onSyncToAudio: handleSyncToAudio,
-          // NOTE: onChapterProgress is NOT passed to ReaderViewport
-          // Progress is ONLY saved when quitting/leaving the reader (on unmount)
-          // Progress is NOT saved on chapter change or scroll
-          // This prevents automatic saves during navigation
-          onChapterProgress: undefined,
-          onFragmentConsumed: () => {},
-          onPreferencesChange,
-          onScroll: readerManager.handleScroll,
-          onScrollEnd: readerManager.handleScrollEnd,
-          isScrolling: readerManager.isScrolling,
-        }}
-        contentRef={contentRef}
-        elementIndex={elementIndex}
-      />
-    </>
+    <ReaderViewport
+      config={{
+        preferences,
+        theme: resolvedTheme,
+        chromeVisible,
+        audioPlayerVisible,
+        autoScrollEnabled,
+      }}
+      state={{
+        book: activeBook,
+        chapter: loadedChapter || activeChapter,
+        isLoading: readerManager.isLoading,
+        animationState: readerManager.animationState || chapterAnimationState,
+        pendingFragment: null,
+      }}
+      callbacks={{
+        onSelectChapter: handleChapterChange,
+        onChapterLoaded,
+        onToggleChrome,
+        onSyncToAudio: handleSyncToAudio,
+        // NOTE: onChapterProgress is NOT passed to ReaderViewport
+        // Progress is ONLY saved when quitting/leaving the reader (on unmount)
+        // Progress is NOT saved on chapter change or scroll
+        // This prevents automatic saves during navigation
+        onChapterProgress: undefined,
+        onFragmentConsumed: () => {},
+        onPreferencesChange,
+        onScroll: readerManager.handleScroll,
+        onScrollEnd: readerManager.handleScrollEnd,
+        isScrolling: readerManager.isScrolling,
+      }}
+      contentRef={contentRef}
+      elementIndex={elementIndex}
+    />
+  );
+}
+
+// Outer component that provides the context
+export function ReaderWrapper(props: ReaderWrapperProps) {
+  return (
+    <HighlightQueueProvider>
+      <ReaderWrapperContent {...props} />
+    </HighlightQueueProvider>
   );
 }

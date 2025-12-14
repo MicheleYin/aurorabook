@@ -64,29 +64,26 @@ export function ReaderPanel({
     setIsImmersive(false);
   }, []);
 
-  // Reset immersive state when book or chapter changes
-  useEffect(() => {
-    const bookChanged = previousBookIdRef.current !== activeBook?.id;
-    const chapterChanged = previousChapterIdRef.current !== activeChapter?.id;
-    
-    if (bookChanged || chapterChanged) {
-      handleBookOrChapterChange();
-    }
-    
+  // Reset immersive state when book or chapter changes (explicit check instead of useEffect)
+  const bookChanged = previousBookIdRef.current !== activeBook?.id;
+  const chapterChanged = previousChapterIdRef.current !== activeChapter?.id;
+  
+  if (bookChanged || chapterChanged) {
+    handleBookOrChapterChange();
     previousBookIdRef.current = activeBook?.id;
     previousChapterIdRef.current = activeChapter?.id;
-  }, [activeBook?.id, activeChapter?.id, handleBookOrChapterChange]);
+  }
 
   // Derived state for chrome visibility
   const chromeVisible = !isImmersive;
 
-  // Notify parent of chrome visibility changes
-  useEffect(() => {
+  // Notify parent of chrome visibility changes (explicit check instead of useEffect)
+  // Use ref to track previous value to avoid calling on every render
+  const previousChromeVisibleRef = useRef<boolean | undefined>(undefined);
+  if (previousChromeVisibleRef.current !== chromeVisible) {
+    previousChromeVisibleRef.current = chromeVisible;
     onChromeVisibilityChange?.(chromeVisible);
-    return () => {
-      onChromeVisibilityChange?.(true);
-    };
-  }, [chromeVisible, onChromeVisibilityChange]);
+  }
 
   // Handle immersive toggle - close drawers when entering immersive mode
   const handleToggleImmersive = useCallback(() => {

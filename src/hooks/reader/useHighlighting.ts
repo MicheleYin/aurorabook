@@ -1,17 +1,14 @@
 /**
  * Hook for managing audio highlighting animations
- * Uses an animation queue to ensure animations play in correct order
- * No useEffects - highlighting applied explicitly via callback
+ * Pops from the highlight queue and processes animations
+ * No useEffects - queue processing happens via explicit polling/effect
  */
 
-import { useCallback, useRef, useEffect } from "react";
+import { useRef, useEffect } from "react";
+import { useHighlightQueue } from "../../contexts/HighlightQueueContext";
 
 // Match CSS animation duration (--anim-duration-slow = 400ms)
 const ANIMATION_DURATION_MS = 400;
-
-type QueuedAction = 
-  | { type: 'clear' }
-  | { type: 'highlight'; elementId: string };
 
 type ElementIndexHook = {
   hasElement: (elementId: string) => boolean;
@@ -23,8 +20,9 @@ export function useHighlighting(
   activeChapterId?: string,
   elementIndex?: ElementIndexHook
 ) {
+  const { queue, popQueue, clearQueue } = useHighlightQueue();
+  
   const highlightRef = useRef({
-    queue: [] as QueuedAction[],
     processing: false,
     currentElement: null as HTMLElement | null,
     currentElementId: null as string | null,
@@ -32,16 +30,22 @@ export function useHighlighting(
     exitTimeouts: new Map<HTMLElement, number>(),
   });
 
-  const processQueue = useCallback(() => {
+  // Process queue when it changes
+  useEffect(() => {
     const ref = highlightRef.current;
     const root = contentRef.current;
     
-    if (ref.processing || ref.queue.length === 0 || !root) {
+    if (ref.processing || queue.length === 0 || !root) {
       return;
     }
 
     ref.processing = true;
-    const action = ref.queue.shift()!;
+    const action = queue[0];
+    
+    // Function to remove processed action from queue and continue processing
+    const completeProcessing = () => {
+      popQueue();
+    };
 
     if (action.type === 'clear') {
       // Cancel any pending enter timeout
@@ -51,22 +55,19 @@ export function useHighlighting(
       }
 
       // Clear all highlights with fade-out
-      // Use a snapshot to avoid issues if DOM changes during iteration
       const allHighlighted = Array.from(root.querySelectorAll(".audio-highlight, .audio-highlight-enter, .audio-highlight-active"));
       
       if (allHighlighted.length === 0) {
         ref.processing = false;
         ref.currentElement = null;
         ref.currentElementId = null;
-        processQueue();
+        completeProcessing();
         return;
       }
 
       allHighlighted.forEach((el) => {
         const element = el as HTMLElement;
-        // Skip if element is no longer in the DOM
         if (!root.contains(element)) {
-          // Clean up any pending timeout for this element
           const exitTimeout = ref.exitTimeouts.get(element);
           if (exitTimeout !== undefined) {
             clearTimeout(exitTimeout);
@@ -75,7 +76,6 @@ export function useHighlighting(
           return;
         }
         
-        // Cancel any pending exit timeouts
         const exitTimeout = ref.exitTimeouts.get(element);
         if (exitTimeout !== undefined) {
           clearTimeout(exitTimeout);
@@ -91,7 +91,6 @@ export function useHighlighting(
         
         // Clean up after exit animation
         const timeoutId = window.setTimeout(() => {
-          // Check if element still exists before manipulating
           if (element.isConnected && root.contains(element)) {
             element.classList.remove("audio-highlight", "audio-highlight-exit");
           }
@@ -108,7 +107,7 @@ export function useHighlighting(
       // Wait for exit animations to complete before processing next item
       window.setTimeout(() => {
         ref.processing = false;
-        processQueue();
+        completeProcessing();
       }, ANIMATION_DURATION_MS);
       return;
     }
@@ -128,7 +127,6 @@ export function useHighlighting(
     if (ref.currentElement && isNewHighlight) {
       const previousElement = ref.currentElement;
       
-      // Cancel any pending exit timeout
       const exitTimeout = ref.exitTimeouts.get(previousElement);
       if (exitTimeout !== undefined) {
         clearTimeout(exitTimeout);
@@ -144,7 +142,6 @@ export function useHighlighting(
       
       // Clean up after exit animation
       const timeoutId = window.setTimeout(() => {
-        // Check if element still exists before manipulating
         if (previousElement.isConnected && root.contains(previousElement)) {
           previousElement.classList.remove("audio-highlight", "audio-highlight-exit");
         }
@@ -154,25 +151,22 @@ export function useHighlighting(
       ref.exitTimeouts.set(previousElement, timeoutId);
     }
 
-    // Phase 1: Check element index first to avoid expensive DOM queries
+    // Check element index first to avoid expensive DOM queries
     if (elementIndex && !elementIndex.hasElement(elementId)) {
-      // Element not in index, skip DOM query
       ref.processing = false;
       ref.currentElement = null;
       ref.currentElementId = null;
-      processQueue();
+      completeProcessing();
       return;
     }
 
     // Find and apply new highlight
-    // Use getElementById for better performance (O(1) vs O(n) for querySelector)
     let element: HTMLElement | null = null;
     const docElement = document.getElementById(elementId);
     if (docElement && root.contains(docElement)) {
       element = docElement;
     }
     
-    // Fallback to querySelector only if getElementById didn't find it in our container
     if (!element) {
       const selector =
         typeof CSS !== "undefined" && CSS.escape
@@ -195,28 +189,38 @@ export function useHighlighting(
         element.classList.remove("audio-highlight-enter");
         element.classList.add("audio-highlight", "audio-highlight-active");
         ref.processing = false;
-        processQueue();
+        completeProcessing();
         return;
       }
 
       // Apply new highlight
-      element.classList.remove("audio-highlight-enter", "audio-highlight-active");
+      element.classList.remove("audio-highlight-exit", "audio-highlight-enter");
+      
+      // If there's a previous element fading out, wait for it
+      const waitTime = isNewHighlight && ref.currentElement ? ANIMATION_DURATION_MS : 0;
+      
+      if (waitTime === 0) {
+        // No wait needed - apply highlight immediately
+        element.classList.add("audio-highlight", "audio-highlight-active");
+        ref.currentElement = element;
+        ref.currentElementId = elementId;
+        ref.processing = false;
+        completeProcessing();
+        return;
+      }
+      
+      // Need to wait for previous element to fade out
       element.classList.add("audio-highlight");
 
-      // Wait for previous exit animation if needed
-      const waitTime = isNewHighlight && ref.currentElement ? ANIMATION_DURATION_MS : 0;
-
       window.setTimeout(() => {
-        // Double-check element still exists and is still the target
-        if (element.id === elementId && element.classList.contains("audio-highlight")) {
-          // Start fade-in animation
+        if (element && element.id === elementId && element.classList.contains("audio-highlight")) {
           requestAnimationFrame(() => {
-            if (element.id === elementId && element.classList.contains("audio-highlight")) {
+            if (element && element.id === elementId && element.classList.contains("audio-highlight")) {
               element.classList.add("audio-highlight-enter");
               
               // Transition to active state after fade-in completes
               ref.enterTimeout = window.setTimeout(() => {
-                if (element.id === elementId && element.classList.contains("audio-highlight-enter")) {
+                if (element && element.id === elementId && element.classList.contains("audio-highlight-enter")) {
                   element.classList.remove("audio-highlight-enter");
                   element.classList.add("audio-highlight-active");
                 }
@@ -224,16 +228,14 @@ export function useHighlighting(
                 ref.processing = false;
                 ref.currentElement = element;
                 ref.currentElementId = elementId;
-                processQueue();
+                completeProcessing();
               }, ANIMATION_DURATION_MS);
             } else {
               ref.processing = false;
-              processQueue();
             }
           });
         } else {
           ref.processing = false;
-          processQueue();
         }
       }, waitTime);
     } else {
@@ -241,24 +243,9 @@ export function useHighlighting(
       ref.processing = false;
       ref.currentElement = null;
       ref.currentElementId = null;
-      processQueue();
+      completeProcessing();
     }
-  }, [contentRef]);
-
-  const applyHighlight = useCallback((elementId: string | null) => {
-    const root = contentRef.current;
-    if (!root) return;
-
-    // Add action to queue
-    if (!elementId) {
-      highlightRef.current.queue.push({ type: 'clear' });
-    } else {
-      highlightRef.current.queue.push({ type: 'highlight', elementId });
-    }
-
-    // Process queue
-    processQueue();
-  }, [processQueue]);
+  }, [queue, contentRef, elementIndex, popQueue]);
 
   // Cleanup when chapter changes or on unmount
   useEffect(() => {
@@ -269,13 +256,11 @@ export function useHighlighting(
       clearTimeout(ref.enterTimeout);
       ref.enterTimeout = null;
     }
-    // Clear all exit timeouts
     ref.exitTimeouts.forEach((timeoutId) => {
       clearTimeout(timeoutId);
     });
     ref.exitTimeouts.clear();
-    // Clear queue
-    ref.queue.length = 0;
+    clearQueue();
     ref.processing = false;
     ref.currentElement = null;
     ref.currentElementId = null;
@@ -287,10 +272,8 @@ export function useHighlighting(
         el.classList.remove("audio-highlight", "audio-highlight-enter", "audio-highlight-active", "audio-highlight-exit");
       });
     }
-  }, [activeChapterId, contentRef]);
+  }, [activeChapterId, contentRef, clearQueue]);
 
-  return {
-    applyHighlight,
-  };
+  // Return nothing - this hook only processes the queue
+  return {};
 }
-
