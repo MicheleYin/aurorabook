@@ -26,6 +26,7 @@ export class MemoryMonitor {
     
     // @ts-ignore - performance.memory is Chrome-specific, not available in WebKit/Safari
     const available = typeof performance !== 'undefined' && 
+                      // @ts-ignore
                       performance.memory && 
                       typeof (performance as any).memory.usedJSHeapSize === 'number';
     

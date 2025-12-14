@@ -4,7 +4,7 @@
  * No useEffects - all loading is explicit via callbacks
  */
 
-import { useCallback, useEffect, useRef, useMemo } from "react";
+import { useCallback, useRef, useMemo } from "react";
 import type { AudioTrack } from "../../types/reader";
 import { loadEpubAudioBlob } from "../../lib/book-service";
 import { useResourceLoader } from "../useResourceLoader";

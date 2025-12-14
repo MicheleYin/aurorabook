@@ -138,10 +138,7 @@ export function clearExpiredCaches(): void {
 // Store interval ID for cleanup
 let cleanupIntervalId: number | null = null;
 
-// Periodically clean up expired caches
-if (typeof window !== 'undefined') {
-  cleanupIntervalId = setInterval(clearExpiredCaches, 10000); // Every 10 seconds
-}
+
 
 /**
  * Cleanup function to stop the interval and clear all caches
