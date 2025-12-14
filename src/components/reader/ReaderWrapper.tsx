@@ -463,6 +463,7 @@ function ReaderWrapperContent(props: ReaderWrapperProps) {
     
     // Call useChapterState.onChapterLoaded to restore progress
     // This applies restoration similar to how audio uses onTrackLoaded
+    // The coordinator lock will be checked inside onChapterLoaded to ensure proper coordination
     logger.log("[ReaderWrapper] Calling useChapterState.onChapterLoaded for restoration", {
       chapterId: activeChapter.id,
       hasContentElement: !!contentElement,
@@ -472,7 +473,7 @@ function ReaderWrapperContent(props: ReaderWrapperProps) {
     
     // Handle pending scroll target after restoration
     handlePendingScrollTarget();
-  }, [activeBook, activeChapter, contentRef, handlePendingScrollTarget]);
+  }, [activeBook, activeChapter, contentRef, handlePendingScrollTarget, shouldRestoreProgress]);
   
   // Reset chapterLoadedRef when chapter changes (explicit check instead of useEffect)
   // Check in render to avoid render-time state updates

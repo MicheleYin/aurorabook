@@ -70,6 +70,7 @@ export function useChapterProgress({
   elementIndex: _elementIndex,
   isRestoringScroll: _isRestoringScroll = false,
 }: UseChapterProgressParams) {
+  // Get coordinator to check for restoration operations
   const coordinator = useReaderCoordinator();
   const chapterLoader = useChapterLoader();
   
@@ -140,6 +141,24 @@ export function useChapterProgress({
   // Get current progress snapshot
   const getCurrentProgressSnapshot = useCallback((): ChapterProgressSnapshot | null => {
     if (!activeChapter) return null;
+    
+    // Don't capture progress during restoration
+    if (_isRestoringScroll) {
+      logger.log("[Chapter Progress] Skipping progress snapshot during restoration", {
+        chapterId: activeChapter.id,
+      });
+      return null;
+    }
+    
+    // Also check coordinator to ensure no restoration operation is in progress
+    const hasRestoreOperation = coordinator.isOperationInProgress("restoreChapterProgress");
+    if (hasRestoreOperation) {
+      logger.log("[Chapter Progress] Skipping progress snapshot - restoration operation in progress", {
+        chapterId: activeChapter.id,
+        operationId: coordinator.getCurrentOperation("restoreChapterProgress")?.id,
+      });
+      return null;
+    }
 
     const metrics = getCurrentScrollMetrics();
     
@@ -153,10 +172,31 @@ export function useChapterProgress({
       segmentIndex,
       totalSegments
     );
-  }, [activeChapter, getCurrentScrollMetrics]);
+  }, [activeChapter, getCurrentScrollMetrics, _isRestoringScroll, coordinator]);
 
   // Handle chapter progress updates
   const handleChapterProgress = useCallback((snapshot: ChapterProgressSnapshot) => {
+    // Don't handle progress updates during restoration
+    if (_isRestoringScroll) {
+      logger.log("[Chapter Progress] Skipping progress update during restoration", {
+        chapterId: snapshot.chapterId,
+        scrollTop: snapshot.scrollTop,
+      });
+      return;
+    }
+    
+    // Also check coordinator to ensure no restoration operation is in progress
+    // This provides an additional safety check beyond the local isRestoringScroll flag
+    const hasRestoreOperation = coordinator.isOperationInProgress("restoreChapterProgress");
+    if (hasRestoreOperation) {
+      logger.log("[Chapter Progress] Skipping progress update - restoration operation in progress", {
+        chapterId: snapshot.chapterId,
+        scrollTop: snapshot.scrollTop,
+        operationId: coordinator.getCurrentOperation("restoreChapterProgress")?.id,
+      });
+      return;
+    }
+    
     logger.log("[Chapter Progress] handleChapterProgress called", {
       hasActiveBook: !!activeBook,
       chapterId: snapshot.chapterId,
@@ -174,7 +214,7 @@ export function useChapterProgress({
         percent: snapshot.percent,
       });
     }
-  }, [activeBook, activeChapter]);
+  }, [activeBook, activeChapter, _isRestoringScroll, coordinator]);
 
   // Handle chapter change - SINGLE HANDLER that coordinates everything
   // NOTE: Progress is NOT saved on chapter change - only saved when quitting reader

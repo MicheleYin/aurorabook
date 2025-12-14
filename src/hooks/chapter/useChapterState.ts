@@ -448,6 +448,31 @@ export function useChapterState(params: UseChapterStateParams) {
     const elementIndexToRestore = restoreElementIndexRef.current;
     const currentChapterId = currentChapter.id;
     const alreadyApplied = restorationAppliedRef.current === currentChapterId;
+    
+    // Check coordinator lock to ensure restoration is coordinated
+    // If coordinator is available, restoration must be triggered through it
+    const hasRestoreOperation = coordinator?.isOperationInProgress("restoreChapterProgress");
+    const restoreOperation = coordinator?.getCurrentOperation("restoreChapterProgress");
+    const isOperationCancelled = restoreOperation?.cancelled === true;
+    
+    // If coordinator exists and we should restore, ensure operation is in progress
+    if (coordinator && shouldRestore && !hasRestoreOperation) {
+      logger.log("[useChapterState] Restoration needed but no coordinator operation, waiting", {
+        chapterId: currentChapterId,
+        shouldRestore,
+      });
+      // Don't proceed - wait for coordinator to trigger restoration
+      return;
+    }
+    
+    // Only proceed with restoration if coordinator allows it (or if no coordinator)
+    if (hasRestoreOperation && isOperationCancelled) {
+      logger.log("[useChapterState] Restoration operation was cancelled, skipping", {
+        chapterId: currentChapterId,
+        operationId: restoreOperation?.id,
+      });
+      return;
+    }
 
     // Find the actual scrollable container (might be a parent of contentElement)
     // Do this once outside the retry loop since the container structure won't change
@@ -631,6 +656,48 @@ export function useChapterState(params: UseChapterStateParams) {
                     actualScrollTop: isDocumentElement ? window.scrollY : scrollContainer.scrollTop,
                   });
                 }
+                
+                // Wait for scroll to complete before clearing restoration state
+                // Use multiple requestAnimationFrame calls to ensure scroll has settled
+                requestAnimationFrame(() => {
+                  requestAnimationFrame(() => {
+                    const finalScrollTop = isDocumentElement 
+                      ? window.scrollY 
+                      : scrollContainer.scrollTop;
+                    const finalDiff = Math.abs(finalScrollTop - targetScroll);
+                    
+                    // Only clear restoration if scroll is close to target (within 50px tolerance)
+                    if (finalDiff <= 50) {
+                      restorationAppliedRef.current = currentChapterId;
+                      setIsRestoring(false);
+                      setRestoreScrollTop(null);
+                      setRestoreElementIndex(null);
+                      
+                      logger.log("[useChapterState] Restoration applied successfully", {
+                        chapterId: currentChapterId,
+                        finalScrollTop,
+                        targetScroll,
+                        diff: finalDiff,
+                        scrollContainerTag: scrollContainer.tagName,
+                        isDocumentElement: scrollContainer === document.documentElement,
+                      });
+                    } else {
+                      // Scroll didn't reach target, but clear restoration anyway after a delay
+                      logger.warn("[useChapterState] Scroll didn't reach target, clearing restoration after delay", {
+                        chapterId: currentChapterId,
+                        finalScrollTop,
+                        targetScroll,
+                        diff: finalDiff,
+                      });
+                      setTimeout(() => {
+                        restorationAppliedRef.current = currentChapterId;
+                        setIsRestoring(false);
+                        setRestoreScrollTop(null);
+                        setRestoreElementIndex(null);
+                      }, 200);
+                    }
+                  });
+                });
               });
             } else {
               if (isDocumentElement) {
@@ -644,23 +711,49 @@ export function useChapterState(params: UseChapterStateParams) {
                 actualScrollTop: isDocumentElement ? window.scrollY : scrollContainer.scrollTop,
                 maxScroll,
               });
+              
+              // Wait for scroll to complete before clearing restoration state
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                  const finalScrollTop = isDocumentElement 
+                    ? window.scrollY 
+                    : scrollContainer.scrollTop;
+                  const finalDiff = Math.abs(finalScrollTop - targetScroll);
+                  
+                  // Only clear restoration if scroll is close to target (within 50px tolerance)
+                  if (finalDiff <= 50) {
+                    restorationAppliedRef.current = currentChapterId;
+                    setIsRestoring(false);
+                    setRestoreScrollTop(null);
+                    setRestoreElementIndex(null);
+                    
+                    logger.log("[useChapterState] Restoration applied successfully", {
+                      chapterId: currentChapterId,
+                      finalScrollTop,
+                      targetScroll,
+                      diff: finalDiff,
+                      scrollContainerTag: scrollContainer.tagName,
+                      isDocumentElement: scrollContainer === document.documentElement,
+                    });
+                  } else {
+                    // Scroll didn't reach target, but clear restoration anyway after a delay
+                    logger.warn("[useChapterState] Scroll didn't reach target, clearing restoration after delay", {
+                      chapterId: currentChapterId,
+                      finalScrollTop,
+                      targetScroll,
+                      diff: finalDiff,
+                    });
+                    setTimeout(() => {
+                      restorationAppliedRef.current = currentChapterId;
+                      setIsRestoring(false);
+                      setRestoreScrollTop(null);
+                      setRestoreElementIndex(null);
+                    }, 200);
+                  }
+                });
+              });
             }
           }
-          
-          restorationAppliedRef.current = currentChapterId;
-          setIsRestoring(false);
-          setRestoreScrollTop(null);
-          setRestoreElementIndex(null);
-          
-          const finalScrollTop = scrollContainer === document.documentElement 
-            ? window.scrollY 
-            : scrollContainer.scrollTop;
-          logger.log("[useChapterState] Restoration applied successfully", {
-            chapterId: currentChapterId,
-            finalScrollTop,
-            scrollContainerTag: scrollContainer.tagName,
-            isDocumentElement: scrollContainer === document.documentElement,
-          });
         } catch (error) {
           logger.warn("Failed to apply restore state:", error);
           setIsRestoring(false);

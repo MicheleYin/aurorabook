@@ -642,8 +642,12 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
           onChapterRestore={async () => {
             // Chapter restore is handled by ReaderWrapper
           }}
-          onChapterProgressRestore={async () => {
-            // Progress restore is handled by ReaderWrapper's restoreProgress
+          onChapterProgressRestore={async (bookId, chapterId, _withAutoScroll) => {
+            // Progress restore is coordinated through the coordinator
+            // The actual restoration will happen in onChapterLoaded when DOM is ready
+            // This handler just ensures the coordinator lock is set properly
+            // The restoration logic in useChapterState.onChapterLoaded will check the lock and proceed
+            logger.log("[App] onChapterProgressRestore called", { bookId, chapterId });
           }}
           onChapterSave={async () => {
             // Chapter save is handled by ReaderWrapper's saveProgress

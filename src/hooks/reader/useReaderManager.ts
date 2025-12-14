@@ -81,10 +81,12 @@ export function useReaderManager(params: UseReaderManagerParams) {
   // Unified progress management (replaces useScrollManagement and useReaderProgress)
   // NOTE: onChapterProgress is NOT passed here to prevent automatic saves on scroll
   // Progress is only saved explicitly on chapter change or quit
+  // Pass isRestoring from chapterState to prevent progress updates during restoration
   const progress = useChapterProgress({
     activeBook,
     activeChapter,
     contentRef,
+    isRestoringScroll: chapterState.isRestoring,
     onSaveProgress: async (chapterId: string) => {
       // Save progress via coordinator
       if (activeBook && progressRef.current) {
@@ -99,9 +101,8 @@ export function useReaderManager(params: UseReaderManagerParams) {
   // Store progress in ref for use in callbacks
   progressRef.current = progress;
 
-  // Update isRestoringRef
-  const restoreState = progress.getRestoreState();
-  isRestoringRef.current = restoreState.isRestoring;
+  // Update isRestoringRef from chapterState (not from progress which always returns false)
+  isRestoringRef.current = chapterState.isRestoring;
 
   // Fragment navigation
   const fragmentNavigation = useFragmentNavigation(contentRef);
@@ -277,7 +278,11 @@ export function useReaderManager(params: UseReaderManagerParams) {
     
     // Progress restoration
     restoreProgress: progress.restoreProgress,
-    getRestoreState: progress.getRestoreState,
+    getRestoreState: () => ({
+      isRestoring: chapterState.isRestoring,
+      restoreScrollTop: chapterState.restoreScrollTop,
+      restoreElementIndex: chapterState.restoreElementIndex,
+    }),
     resetRestoration: progress.resetRestoration,
     
     // Chapter state (for restoration)
