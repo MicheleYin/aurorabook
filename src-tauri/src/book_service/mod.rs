@@ -907,6 +907,45 @@ pub async fn get_epub_buffer(
         .map_err(|e| AppError::Store(e))
 }
 
+/// Export EPUB file directly to disk (optimized for large files)
+/// This avoids the overhead of serializing large binary data through Tauri IPC
+#[tauri::command]
+pub async fn export_epub_to_file(
+    book_id: String,
+    output_path: String,
+    app: tauri::AppHandle,
+) -> AppResult<()> {
+    use repositories::EpubRepository;
+    use std::fs::File;
+    use std::io::Write;
+    
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
+    
+    // Get EPUB data from database by book_id
+    let epub_data = EpubRepository::find_by_book_id(db.as_ref(), &book_id).await
+        .map_err(|e| AppError::Store(e))?
+        .ok_or_else(|| AppError::Store("EPUB not found in store".to_string()))?;
+    
+    // Write directly to file in chunks to avoid loading entire file into memory
+    // For very large files, we still need to load from DB, but we can write in chunks
+    const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
+    
+    let mut file = File::create(&output_path)
+        .map_err(|e| AppError::Store(format!("Failed to create output file: {}", e)))?;
+    
+    // Write in chunks to avoid blocking
+    for chunk in epub_data.chunks(CHUNK_SIZE) {
+        file.write_all(chunk)
+            .map_err(|e| AppError::Store(format!("Failed to write to file: {}", e)))?;
+    }
+    
+    file.sync_all()
+        .map_err(|e| AppError::Store(format!("Failed to sync file: {}", e)))?;
+    
+    Ok(())
+}
+
 
 /// Update book progress
 /// Uses lightweight update_progress_only instead of full save to avoid expensive

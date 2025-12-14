@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type KeyboardEvent } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, type KeyboardEvent } from "react";
 import { ImageOff, Loader2 } from "lucide-react";
 
 import type { Book } from "../../types/reader";
@@ -61,17 +61,20 @@ export function LibraryGrid({
     }
   }, [books]);
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>, bookId: string) => {
+  // Memoize keyboard handler to avoid recreating on every render
+  const handleKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>, bookId: string) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       onOpenBook(bookId);
     }
-  };
+  }, [onOpenBook]);
 
-  // Merge displayed books with exiting books to show exit animations
-  const allBooks = displayedBooks.filter(b => !exitingBookIds.has(b.id));
-  const exitingBooks = previousBooksRef.current.filter(b => exitingBookIds.has(b.id));
-  const booksToRender = [...allBooks, ...exitingBooks];
+  // Memoize books to render to avoid recalculating on every render
+  const booksToRender = useMemo(() => {
+    const allBooks = displayedBooks.filter(b => !exitingBookIds.has(b.id));
+    const exitingBooks = previousBooksRef.current.filter(b => exitingBookIds.has(b.id));
+    return [...allBooks, ...exitingBooks];
+  }, [displayedBooks, exitingBookIds]);
 
   return (
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:flex 2xl:flex-wrap library-grid-transition">

@@ -129,47 +129,28 @@ export function BookDetailDialog({
 
     try {
       // Check if we're in Tauri environment
-      // Use save dialog and write file
       const { save } = await import("@tauri-apps/plugin-dialog");
-      const { writeFile } = await import("@tauri-apps/plugin-fs");
+      const { exportEpubToFile } = await import("../../lib/book-service");
 
-        // Get EPUB buffer from Rust backend
-        const { getEpubBuffer: getEpubBufferService } = await import("../../lib/book-service");
-        const arrayBuffer = await getEpubBufferService(book.sourcePath);
-        
-        if (!arrayBuffer) {
-          logger.error("EPUB not found in store", {
-            sourcePath: book.sourcePath,
-          });
-          toast.error("Cannot export EPUB", {
-            description: "The EPUB is not available in store. Please re-import the book.",
-          });
-          return;
-        }
-        
-        logger.debug("Retrieved EPUB from store for export", {
-          sizeBytes: arrayBuffer.byteLength,
-        });
-        
-        if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-          toast.error("Cannot export EPUB", {
-            description: "The EPUB buffer is empty or invalid.",
-          });
-          return;
-        }
+      // Show save dialog first
+      const filePath = await save({
+        defaultPath: `${book.title.replace(/[^a-z0-9]/gi, "_")}.epub`,
+        filters: [{ name: "EPUB files", extensions: ["epub"] }],
+      });
 
-        // Show save dialog
-        const filePath = await save({
-          defaultPath: `${book.title.replace(/[^a-z0-9]/gi, "_")}.epub`,
-          filters: [{ name: "EPUB files", extensions: ["epub"] }],
-        });
-
-      if (filePath) {
-        await writeFile(filePath, new Uint8Array(arrayBuffer));
-        toast.success("EPUB exported!", {
-          description: `Saved to ${filePath.split("/").pop()}`,
-        });
+      if (!filePath) {
+        return; // User cancelled
       }
+
+      // Use toast.promise for better UX with loading/success/error states
+      await toast.promise(
+        exportEpubToFile(book.id, filePath),
+        {
+          loading: "Exporting EPUB...",
+          success: `EPUB exported! Saved to ${filePath.split("/").pop()}`,
+          error: (err) => err instanceof Error ? err.message : "Could not export the EPUB file.",
+        }
+      );
     } catch (error) {
       logger.error("Export error:", error);
       toast.error("Export failed", {

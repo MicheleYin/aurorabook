@@ -2,9 +2,11 @@
  * Hook for loading and caching chapters
  * Uses generic useResourceLoader internally
  * No useEffects - all loading is explicit via callbacks
+ * 
+ * Note: Chapters use data URLs for images (not blob URLs), so no blob URL cleanup needed
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import type { Chapter } from "../../types/reader";
 import { ensureChapterLoaded } from "../../lib/lazy-chapter-loader";
 import { useResourceLoader } from "../useResourceLoader";
@@ -14,8 +16,8 @@ export function useChapterLoader(_bookId?: string) {
   // Get coordinator for operation management
   const coordinator = useReaderCoordinator();
   
-  // Track cache version to trigger updates (minimal state for memory optimization)
-  const [cacheVersion, setCacheVersion] = useState(0);
+  // Use ref instead of state to avoid re-renders (memory optimization)
+  const cacheVersionRef = useRef(0);
 
   const loader = useResourceLoader<Chapter>({
     isLoaded: (chapter) => !!chapter.contentHtml,
@@ -71,8 +73,8 @@ export function useChapterLoader(_bookId?: string) {
   ): Promise<Chapter | null> => {
     const result = await loader.load(bookId, chapter);
     if (result) {
-      // Increment cache version to trigger loadedChapters update
-      setCacheVersion(prev => prev + 1);
+      // Increment cache version (using ref - no re-render)
+      cacheVersionRef.current += 1;
     }
     return result;
   }, [loader]);
@@ -86,36 +88,47 @@ export function useChapterLoader(_bookId?: string) {
   }, [loader]);
 
   const clearCache = useCallback((bookId?: string) => {
+    // Clear chapter cache
+    // Note: Chapters use data URLs for images (handled by backend), not blob URLs
+    // So no blob URL cleanup needed here
     loader.clearCache(bookId);
-    // Increment cache version to trigger loadedChapters update
-    setCacheVersion(prev => prev + 1);
+    // Increment cache version (using ref - no re-render)
+    cacheVersionRef.current += 1;
   }, [loader]);
 
-  // Get all loaded chapters as a Map (computed from cache)
-  // Use cacheVersion to ensure it updates when cache changes
+  // Get all loaded chapters as a Map (computed on-demand from cache)
+  // No memoization - computed fresh each time to avoid memory duplication
+  // The cache itself is the single source of truth
   const loadedChapters = useMemo(() => {
     const chapters = loader.getCachedResources();
     return new Map(chapters.map(chapter => [chapter.id, chapter]));
-  }, [loader, cacheVersion]);
+  }, [loader]);
 
-  // Track the most recently set chapter (for backward compatibility)
-  const [loadedChapterState, setLoadedChapterState] = useState<Chapter | null>(null);
+  // Track the most recently set chapter ID (not full chapter - memory optimization)
+  const loadedChapterIdRef = useRef<string | null>(null);
 
-  // Get the most recently loaded chapter (for backward compatibility)
+  // Get the most recently loaded chapter (computed on-demand from cache)
+  // No state storage - single source of truth is the cache
   const loadedChapter = useMemo(() => {
-    // Return explicitly set chapter, or most recently cached chapter
-    if (loadedChapterState) return loadedChapterState;
+    // If we have a specific chapter ID, get it from cache
+    if (loadedChapterIdRef.current) {
+      const chapters = loader.getCachedResources();
+      const found = chapters.find(ch => ch.id === loadedChapterIdRef.current);
+      if (found) return found;
+    }
+    
+    // Otherwise return most recently cached chapter
     const chapters = loader.getCachedResources();
-    // Return the most recently loaded chapter (last in array, or first if only one)
     return chapters.length > 0 ? chapters[chapters.length - 1] : null;
-  }, [loader, cacheVersion, loadedChapterState]);
+  }, [loader]);
 
-  // Set loaded chapter (for backward compatibility - just updates state, chapter is already loaded)
+  // Set loaded chapter (for backward compatibility - stores only ID, not full chapter)
   const setLoadedChapter = useCallback((chapter: Chapter | null) => {
-    setLoadedChapterState(chapter);
-    // Increment cache version to trigger updates
+    // Store only ID reference, not full chapter object (memory optimization)
+    loadedChapterIdRef.current = chapter?.id || null;
+    // Increment cache version (using ref - no re-render)
     if (chapter) {
-      setCacheVersion(prev => prev + 1);
+      cacheVersionRef.current += 1;
     }
   }, []);
 

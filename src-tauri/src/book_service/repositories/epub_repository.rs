@@ -59,6 +59,24 @@ impl EpubRepository {
         }
     }
     
+    /// Get EPUB data by book_id
+    pub async fn find_by_book_id(
+        db: &DatabaseConnection,
+        book_id: &str,
+    ) -> Result<Option<Vec<u8>>, String> {
+        let entity = epub_data::Entity::find()
+            .filter(epub_data::Column::BookId.eq(book_id))
+            .one(db)
+            .await
+            .map_err(|e| format!("Failed to query EPUB data: {}", e))?;
+        
+        if let Some(entity) = entity {
+            Ok(Some(entity.data))
+        } else {
+            Ok(None)
+        }
+    }
+    
     /// Delete EPUB data by source_path
     pub async fn delete_by_source_path<C: ConnectionTrait>(
         db: &C,

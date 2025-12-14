@@ -13,6 +13,7 @@ import {
 } from "./epub";
 import { countWords, estimatePagesFromWords } from "./utils";
 import { LRUCache } from "lru-cache";
+import { blobURLManager } from "./blob-url-manager";
 
 const LOADER_LOG_PREFIX = "[LazyChapterLoader]";
 
@@ -78,14 +79,12 @@ export function clearBookCache(sourcePath: string): void {
   });
   keysToDelete.forEach((key) => chapterCache.delete(key));
   
-  // Clear all audio tracks for this book and revoke Blob URLs
+  // Clear all audio tracks for this book and revoke Blob URLs using centralized manager
+  blobURLManager.revokeForBook(bookId);
+  
   const audioKeysToDelete: string[] = [];
   for (const key of audioTrackCache.keys()) {
     if (key.startsWith(`${bookId}:`)) {
-      const blobUrl = audioTrackCache.get(key);
-      if (blobUrl && blobUrl.startsWith("blob:")) {
-        URL.revokeObjectURL(blobUrl);
-      }
       audioKeysToDelete.push(key);
     }
   }
@@ -117,6 +116,18 @@ export function clearAllCachesExcept(sourcePath: string): void {
   keysToDelete.forEach((key) => chapterCache.delete(key));
   
   // Clear all audio track URLs except those for the specified book
+  // First, revoke blob URLs for all books except the one to keep
+  for (const key of audioTrackCache.keys()) {
+    if (!key.startsWith(`${keepBookId}:`)) {
+      const blobUrl = audioTrackCache.get(key);
+      if (blobUrl && blobUrl.startsWith("blob:")) {
+        // Extract bookId from cache key (format: "bookId:href")
+        const bookId = key.split(":")[0];
+        blobURLManager.revokeForBook(bookId);
+      }
+    }
+  }
+  
   const audioKeysToDelete: string[] = [];
   for (const key of audioTrackCache.keys()) {
     if (!key.startsWith(`${keepBookId}:`)) {
@@ -278,13 +289,26 @@ export async function loadAudioTrackUrl(
   // Check cache first
   if (audioTrackCache.has(cacheKey)) {
     const cachedUrl = audioTrackCache.get(cacheKey)!;
-    console.log(`${LOADER_LOG_PREFIX} using cached audio track URL`, {
-      bookId,
-      trackId: track.id,
-      href: track.href,
-      urlLength: cachedUrl.length,
-    });
-    return cachedUrl;
+    // Verify the cached URL is still valid (not revoked)
+    // Check if it's still registered in blobURLManager
+    const { blobURLManager } = await import("./blob-url-manager");
+    if (blobURLManager.has(cachedUrl)) {
+      console.log(`${LOADER_LOG_PREFIX} using cached audio track URL`, {
+        bookId,
+        trackId: track.id,
+        href: track.href,
+        urlLength: cachedUrl.length,
+      });
+      return cachedUrl;
+    } else {
+      // Cached URL was revoked, remove from cache
+      console.log(`${LOADER_LOG_PREFIX} cached audio track URL was revoked, removing from cache`, {
+        bookId,
+        trackId: track.id,
+        href: track.href,
+      });
+      audioTrackCache.delete(cacheKey);
+    }
   }
 
   console.log(`${LOADER_LOG_PREFIX} Loading audio track URL from backend`, {
@@ -336,6 +360,9 @@ export async function loadAudioTrackUrl(
     if (!blobUrl) {
       throw new Error(`Failed to load audio track: ${track.href} (tried ${alternatives.length} alternatives)`);
     }
+    
+    // NOTE: blobUrl is already registered by loadEpubAudioBlob
+    // No need to register again - that would cause duplicates
     
     // Cache the result
     audioTrackCache.set(cacheKey, blobUrl);

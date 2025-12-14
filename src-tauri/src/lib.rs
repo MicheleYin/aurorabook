@@ -103,6 +103,7 @@ pub fn run() {
             book_service::delete_book,
             book_service::add_book,
             book_service::get_epub_buffer,
+            book_service::export_epub_to_file,
             book_service::update_book_progress,
             book_service::update_book_audio_state,
             book_service::ingest_epub,

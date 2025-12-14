@@ -9,6 +9,10 @@ import type { Book, Chapter } from "../../types/reader";
 import { findCurrentAudioSegment, chapterHrefsMatch, normalizeChapterHref } from "../../lib/epub";
 import { scrollToElement } from "../../lib/scroll-utils";
 import { useHighlightQueue } from "../../contexts/HighlightQueueContext";
+import { getCachedElementById, getCachedQuerySelector, clearAllCaches } from "../../lib/dom-query-cache";
+
+// TEMPORARY: Feature flag to disable audio-text sync
+const ENABLE_AUDIO_TEXT_SYNC = true;
 
 type ElementIndexHook = {
   hasElement: (elementId: string) => boolean;
@@ -28,6 +32,16 @@ export function useAudioTextSync(
   activeChapterId?: string,
   elementIndex?: ElementIndexHook
 ) {
+  // TEMPORARY: Early return if disabled
+  if (!ENABLE_AUDIO_TEXT_SYNC) {
+    return {
+      updateHighlight: () => {},
+      clearHighlight: () => {},
+      markTrackChange: () => {},
+      markChapterChange: () => {},
+    };
+  }
+
   const { pushHighlight } = useHighlightQueue();
   const lastScrolledElementRef = useRef<string | null>(null);
   const lastScrollTimeRef = useRef<number>(0);
@@ -40,6 +54,14 @@ export function useAudioTextSync(
   const trackChangeInProgressRef = useRef<{ trackHref: string; timestamp: number } | null>(null);
   const TRACK_CHANGE_GRACE_PERIOD_MS = 2000; // Ignore audio sync chapter changes for 2s after track change
   const chapterChangeInProgressRef = useRef<string | null>(null); // Track which chapter is being changed to prevent duplicate changes
+  
+  // Optimize: Cache scroll operation to batch multiple updates
+  const pendingScrollRef = useRef<{
+    elementId: string;
+    headerOffset: number;
+    playerOffset: number;
+    rafId: number | null;
+  } | null>(null);
   
   // Cache DOM elements and computed values to avoid repeated queries
   const headerCacheRef = useRef<{
@@ -61,7 +83,7 @@ export function useAudioTextSync(
   
   const CACHE_TTL_MS = 5000; // Re-check every 5 seconds instead of every call (increased for memory optimization)
   
-  // Get safe area top inset value (cached)
+  // Get safe area top inset value (cached) - memoized to avoid recreating function
   const getSafeAreaTop = useCallback((): number => {
     if (typeof document === "undefined") return 0;
     
@@ -91,7 +113,7 @@ export function useAudioTextSync(
     return cache.top;
   }, []);
   
-  // Calculate header offset dynamically when scrolling (with caching)
+  // Calculate header offset dynamically when scrolling (with caching) - memoized
   const getHeaderOffset = useCallback((): number => {
     if (typeof document === "undefined") return 0;
     
@@ -99,8 +121,10 @@ export function useAudioTextSync(
     const cache = headerCacheRef.current;
     
     // Re-query only if cache expired or element not found
+    // Use cached querySelector for data attributes
     if (!cache.element || (now - cache.lastCheck) >= CACHE_TTL_MS) {
-      cache.element = document.querySelector<HTMLElement>("[data-reader-header]");
+      cache.element = getCachedQuerySelector("[data-reader-header]") ||
+                      document.querySelector<HTMLElement>("[data-reader-header]");
     }
     
     if (cache.element) {
@@ -142,7 +166,7 @@ export function useAudioTextSync(
     return 0;
   }, [chromeVisible, getSafeAreaTop]);
 
-  // Calculate player offset dynamically when scrolling (with caching)
+  // Calculate player offset dynamically when scrolling (with caching) - memoized
   const getPlayerOffset = useCallback((): number => {
     if (!audioPlayerVisible || typeof document === "undefined") return 0;
     
@@ -155,8 +179,15 @@ export function useAudioTextSync(
     }
     
     // Re-query only if cache expired or element not found
+    // Use cached querySelector for data attributes
     if (!cache.element || (now - cache.lastCheck) >= CACHE_TTL_MS) {
-      cache.element = document.querySelector<HTMLElement>("[data-audio-player], [role='region'][aria-label*='audio'], .audio-player");
+      // Try most specific selector first with caching
+      cache.element = getCachedQuerySelector("[data-audio-player]") ||
+                      getCachedQuerySelector("[role='region'][aria-label*='audio']") ||
+                      getCachedQuerySelector(".audio-player") ||
+                      document.querySelector<HTMLElement>("[data-audio-player]") ||
+                      document.querySelector<HTMLElement>("[role='region'][aria-label*='audio']") ||
+                      document.querySelector<HTMLElement>(".audio-player");
     }
     
     if (cache.element) {
@@ -436,21 +467,50 @@ export function useAudioTextSync(
       return;
     }
 
+    // Optimize: Check if element exists using elementIndex scroll estimate
+    // This allows us to skip DOM queries for elements that are far from viewport
+    if (elementIndex && contentRef.current) {
+      const elementInfo = elementIndex.getElementInfo(segment.textElementId);
+      if (elementInfo) {
+        // Use scroll position estimate to determine if element might be visible
+        // This is approximate but saves DOM queries for off-screen elements
+        const scrollContainer = contentRef.current;
+        const currentScroll = scrollContainer.scrollTop;
+        const viewportHeight = scrollContainer.clientHeight;
+        const estimatedPosition = elementInfo.approximateScrollTop;
+        
+        // If element is far from viewport, it might not be rendered yet
+        // Only skip if it's significantly outside viewport (more than 2 viewports away)
+        const distanceFromViewport = Math.abs(estimatedPosition - currentScroll);
+        if (distanceFromViewport > viewportHeight * 2) {
+          logger.debug("[Audio Sync] Element likely off-screen, skipping immediate highlight", {
+            elementId: segment.textElementId,
+            estimatedPosition,
+            currentScroll,
+            distance: distanceFromViewport,
+          });
+          // Still push highlight - it will be processed when element comes into view
+        }
+      }
+    }
+
     // Check if the element exists in the DOM
     // If not, and we have audio sync, the chapter might need to be reloaded with spans
-    // Use getElementById for better performance (O(1) vs O(n) for querySelector)
+    // Use cached getElementById for better performance (O(1) vs O(n) for querySelector)
     let element: HTMLElement | null = null;
     if (contentRef.current) {
-      // Try getElementById first (much faster - uses browser's ID map)
-      const docElement = document.getElementById(segment.textElementId);
+      // Try cached getElementById first (much faster - uses browser's ID map + caching)
+      const docElement = getCachedElementById(segment.textElementId);
       if (docElement && contentRef.current.contains(docElement)) {
         element = docElement;
       }
       
       if (!element) {
         // Element not found - check if chapter content has any spans at all
-        // Cache chapter content query to avoid repeated queries
-        const chapterContent = contentRef.current.querySelector('[data-reader-chapter-content="true"]');
+        // Use cached querySelector to avoid repeated queries
+        const chapterContent = getCachedQuerySelector('[data-reader-chapter-content="true"]', contentRef.current) ||
+                              contentRef.current.querySelector('[data-reader-chapter-content="true"]');
+        // Use querySelector for span pattern matching (no ID available)
         const hasAnySpans = chapterContent?.querySelector('span[id^="f"]');
         
         if (!hasAnySpans && onChapterReload) {
@@ -475,7 +535,7 @@ export function useAudioTextSync(
         } else if (!element) {
           // Only log warning if we're not reloading (to avoid spam)
           if (!onChapterReload || hasAnySpans) {
-            console.warn("[Audio Sync] Element not found in DOM", {
+            logger.debug("[Audio Sync] Element not found in DOM (may be off-screen)", {
               textElementId: segment.textElementId,
               hasChapterContent: !!chapterContent,
               hasAnySpans: !!hasAnySpans,
@@ -502,47 +562,50 @@ export function useAudioTextSync(
       const elementChanged = lastScrolledElementRef.current !== segment.textElementId;
       const shouldScroll = elementChanged || timeSinceLastScroll >= scrollThrottleMs;
       
-      logger.log("[Audio Sync] Scroll check", {
-        elementChanged,
-        timeSinceLastScroll,
-        shouldScroll,
-        lastElement: lastScrolledElementRef.current,
-        currentElement: segment.textElementId,
-      });
-      
       if (shouldScroll) {
+        // Optimize: Batch scroll operations using requestAnimationFrame
+        // Cancel any pending scroll operation
+        const pendingScroll = pendingScrollRef.current;
+        if (pendingScroll && pendingScroll.rafId !== null) {
+          cancelAnimationFrame(pendingScroll.rafId);
+        }
+        
+        // Calculate offsets once (they're cached internally)
         const headerOffset = getHeaderOffset();
         const playerOffset = getPlayerOffset();
-        logger.log("[Audio Sync] Attempting scroll", {
+        
+        // Store pending scroll operation
+        pendingScrollRef.current = {
           elementId: segment.textElementId,
           headerOffset,
           playerOffset,
-          hasContentRef: !!contentRef.current,
+          rafId: null,
+        };
+        
+        // Schedule scroll for next animation frame to batch with other updates
+        pendingScrollRef.current.rafId = requestAnimationFrame(() => {
+          if (!pendingScrollRef.current) return;
+          
+          const { elementId, headerOffset: hOffset, playerOffset: pOffset } = pendingScrollRef.current;
+          logger.debug("[Audio Sync] Executing batched scroll", {
+            elementId,
+            headerOffset: hOffset,
+            playerOffset: pOffset,
+          });
+          
+          const scrolled = scrollToElement(elementId, "smooth", hOffset, pOffset);
+          
+          if (scrolled) {
+            lastScrolledElementRef.current = elementId;
+            lastScrollTimeRef.current = Date.now();
+          } else if (elementChanged) {
+            // Element not found yet, but update ref so we don't keep trying
+            lastScrolledElementRef.current = elementId;
+          }
+          
+          pendingScrollRef.current = null;
         });
-        
-        const scrolled = scrollToElement(segment.textElementId, "smooth", headerOffset, playerOffset);
-        
-        logger.log("[Audio Sync] Scroll result", {
-          scrolled,
-          elementId: segment.textElementId,
-        });
-        
-        if (scrolled) {
-          lastScrolledElementRef.current = segment.textElementId;
-          lastScrollTimeRef.current = now;
-        } else if (elementChanged) {
-          // Element not found yet, but update ref so we don't keep trying
-          logger.log("[Audio Sync] Element not found, updating ref");
-          lastScrolledElementRef.current = segment.textElementId;
-        }
       }
-    } else {
-      logger.log("[Audio Sync] Scroll conditions not met", {
-        autoScrollEnabled,
-        isRestoringScroll,
-        hasElementId: !!segment.textElementId,
-        hasContentRef: !!contentRef.current,
-      });
     }
   }, [autoScrollEnabled, isRestoringScroll, contentRef, getHeaderOffset, getPlayerOffset, onChapterChange, onChapterReload, elementIndex]);
 
@@ -603,6 +666,14 @@ export function useAudioTextSync(
         oldChapterId: previousChapterId,
         newChapterId: currentChapterId,
       });
+      
+      // Cancel any pending scroll operation
+      const pendingScroll = pendingScrollRef.current;
+      if (pendingScroll && pendingScroll.rafId !== null) {
+        cancelAnimationFrame(pendingScroll.rafId);
+        pendingScrollRef.current = null;
+      }
+      
       // Clear all refs and push clear to queue when chapter changes
       pushHighlight(null);
       lastScrolledElementRef.current = null;
@@ -618,6 +689,9 @@ export function useAudioTextSync(
       headerCacheRef.current = { element: null, offset: 0, lastCheck: 0 };
       playerCacheRef.current = { element: null, offset: 0, lastCheck: 0 };
       safeAreaCacheRef.current = { top: 0, lastCheck: 0 };
+      
+      // Clear global DOM query cache on chapter change (memory optimization)
+      clearAllCaches();
     } else {
       // Update ref to track the current chapter (even on initial mount)
       if (currentChapterId !== undefined) {

@@ -47,6 +47,9 @@ export function useResourceLoader<T>(
   
   const cacheRef = useRef<Map<string, ResourceCacheEntry<T>>>(new Map());
   const [isLoading, setIsLoading] = useState(false);
+  
+  // Limit cache size per book to prevent unbounded growth
+  const MAX_RESOURCES_PER_BOOK = 20;
 
   const getResourceIdInternal = useCallback((resource: T): string => {
     if (getResourceId) {
@@ -85,6 +88,17 @@ export function useResourceLoader<T>(
       if (loaded && isLoaded(loaded)) {
         // Transform if needed
         const finalResource = transformLoaded ? transformLoaded(resource, loaded) : loaded;
+        
+        // Evict oldest resources for this book if over limit
+        const bookResources = Array.from(cacheRef.current.entries())
+          .filter(([key]) => key.startsWith(`${bookId}:`))
+          .sort((a, b) => a[1].loadedAt - b[1].loadedAt); // Sort by load time
+        
+        if (bookResources.length >= MAX_RESOURCES_PER_BOOK) {
+          // Remove oldest entry (first in sorted array)
+          const oldestKey = bookResources[0][0];
+          cacheRef.current.delete(oldestKey);
+        }
         
         // Cache it
         cacheRef.current.set(cacheKey, {

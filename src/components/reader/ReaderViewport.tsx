@@ -181,24 +181,46 @@ export function ReaderViewport({
     };
   }, [activeBook, activeChapter]);
 
-  // Theme and style classes
-  const proseColorClass = resolvedTheme === "dark" ? "prose-invert" : "prose-neutral";
-  const navButtonClass =
-    resolvedTheme === "dark"
-      ? "border-zinc-700 text-zinc-100 hover:text-zinc-100 hover:bg-zinc-900"
-      : "";
-  const fontSizeClass =
-    fontSizeClassMap[preferences.fontSize] ?? fontSizeClassMap.medium;
-  const lineHeightClass =
-    lineHeightClassMap[preferences.fontSize] ?? lineHeightClassMap.medium;
-  const fontSizeTokenClass =
-    fontSizeTokenClassMap[preferences.fontSize] ?? fontSizeTokenClassMap.medium;
-  const paddingConfig =
-    contentPaddingConfigMap[preferences.contentPadding] ??
-    contentPaddingConfigMap.comfortable;
-  const innerVerticalPaddingClass = chromeVisible
-    ? paddingConfig.innerChrome
-    : paddingConfig.innerImmersive;
+  // Theme and style classes - memoized to avoid recalculation
+  const styleClasses = useMemo(() => {
+    const proseColorClass = resolvedTheme === "dark" ? "prose-invert" : "prose-neutral";
+    const navButtonClass =
+      resolvedTheme === "dark"
+        ? "border-zinc-700 text-zinc-100 hover:text-zinc-100 hover:bg-zinc-900"
+        : "";
+    const fontSizeClass =
+      fontSizeClassMap[preferences.fontSize] ?? fontSizeClassMap.medium;
+    const lineHeightClass =
+      lineHeightClassMap[preferences.fontSize] ?? lineHeightClassMap.medium;
+    const fontSizeTokenClass =
+      fontSizeTokenClassMap[preferences.fontSize] ?? fontSizeTokenClassMap.medium;
+    const paddingConfig =
+      contentPaddingConfigMap[preferences.contentPadding] ??
+      contentPaddingConfigMap.comfortable;
+    const innerVerticalPaddingClass = chromeVisible
+      ? paddingConfig.innerChrome
+      : paddingConfig.innerImmersive;
+    
+    return {
+      proseColorClass,
+      navButtonClass,
+      fontSizeClass,
+      lineHeightClass,
+      fontSizeTokenClass,
+      paddingConfig,
+      innerVerticalPaddingClass,
+    };
+  }, [resolvedTheme, preferences.fontSize, preferences.contentPadding, chromeVisible]);
+
+  const {
+    proseColorClass,
+    navButtonClass,
+    fontSizeClass,
+    lineHeightClass,
+    fontSizeTokenClass,
+    paddingConfig,
+    innerVerticalPaddingClass,
+  } = styleClasses;
 
   // Navigation handlers (always go to top, no restore)
   const handlePrevious = useCallback(() => {
@@ -219,7 +241,8 @@ export function ReaderViewport({
     });
   }, [nextChapter, onSelectChapter]);
 
-  const renderNavigation = () => (
+  // Memoize navigation component to avoid recreating on every render
+  const renderNavigation = useMemo(() => (
     <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
       {previousChapter ? (
         <Button
@@ -252,7 +275,7 @@ export function ReaderViewport({
         <span className="text-muted-foreground">End of book</span>
       )}
     </div>
-  );
+  ), [previousChapter, nextChapter, navButtonClass, handlePrevious, handleNext]);
 
   if (!activeBook || !activeChapter) {
     return (
@@ -276,15 +299,16 @@ export function ReaderViewport({
     );
   }
 
-  // Determine chapter animation class
-  const chapterAnimationClass = 
-    chapterAnimationState === "entering" || chapterAnimationState === "entered"
+  // Determine chapter animation class - memoized to avoid recalculation
+  const chapterAnimationClass = useMemo(() => {
+    return chapterAnimationState === "entering" || chapterAnimationState === "entered"
       ? (transitions.direction === "left" 
           ? animPatterns.chapterSlideLeft 
           : transitions.direction === "right"
           ? animPatterns.chapterSlideRight
           : animPatterns.chapterCrossFade)
       : null;
+  }, [chapterAnimationState, transitions.direction]);
 
   // Set content ref callback with proper cleanup
   const scrollHandlerRef = useRef<(() => void) | null>(null);
@@ -383,7 +407,7 @@ export function ReaderViewport({
             audioPlayerVisible && "pb-32",
           )}
         >
-          {renderNavigation()}
+          {renderNavigation}
           <article
             id={activeChapter.id}
             data-chapter-id={activeChapter.id}
@@ -436,7 +460,7 @@ export function ReaderViewport({
               </div>
             )}
           </article>
-          {renderNavigation()}
+          {renderNavigation}
         </div>
       </div>
     </div>

@@ -166,7 +166,11 @@ export async function loadEpubAudio(
 /**
  * Load an audio track from EPUB file and return as a Blob URL
  * This is more efficient for large files as it avoids base64 encoding overhead
- * Returns a Blob URL that should be revoked with URL.revokeObjectURL when done
+ * 
+ * CENTRALIZED: Automatically registers blob URL with blobURLManager.
+ * Callers should NOT register it again - this function handles it.
+ * 
+ * Returns a Blob URL that is already registered and managed centrally.
  */
 export async function loadEpubAudioBlob(
   bookId: string,
@@ -199,11 +203,20 @@ export async function loadEpubAudioBlob(
     const blob = new Blob([uint8Array], { type: mimeType });
     const blobUrl = URL.createObjectURL(blob);
     
+    // CENTRALIZED: Register blob URL immediately when created
+    // This ensures all blob URLs are tracked in one place
+    // Auto-revokes previous audio track for this book
+    if (blobUrl.startsWith("blob:")) {
+      const { blobURLManager } = await import("./blob-url-manager");
+      blobURLManager.register(bookId, blobUrl, "audio", true);
+    }
+    
     console.log("[BookService] loadEpubAudioBlob result: success", {
       bookId,
       audioHref,
       bytesLength: bytes.length,
       mimeType,
+      isBlobUrl: blobUrl.startsWith("blob:"),
     });
     
     return blobUrl;
@@ -287,6 +300,25 @@ export async function getEpubBuffer(
     return new Uint8Array(bytes).buffer;
   } catch (error) {
     console.error("Failed to get EPUB buffer:", error);
+    throw error;
+  }
+}
+
+/**
+ * Export EPUB file directly to disk (optimized for large files)
+ * This avoids the overhead of serializing large binary data through Tauri IPC
+ */
+export async function exportEpubToFile(
+  bookId: string,
+  outputPath: string
+): Promise<void> {
+  try {
+    await invoke<void>("export_epub_to_file", {
+      bookId,
+      outputPath,
+    });
+  } catch (error) {
+    console.error("Failed to export EPUB:", error);
     throw error;
   }
 }

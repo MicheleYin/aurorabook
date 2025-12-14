@@ -36,4 +36,91 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+
+  // Memory optimization and aggressive bundling settings
+  build: {
+    // Target modern browsers to reduce polyfills and bundle size
+    target: "esnext",
+    
+    // Use esbuild for minification (more memory efficient than terser)
+    minify: "esbuild",
+    
+    // Aggressive minification options
+    esbuild: {
+      legalComments: "none",
+      minifyIdentifiers: true,
+      minifySyntax: true,
+      minifyWhitespace: true,
+      treeShaking: true,
+    },
+
+    // Optimize chunk splitting to reduce memory usage
+    rollupOptions: {
+      output: {
+        // Manual chunk splitting to control memory usage
+        manualChunks: (id) => {
+          // Split vendor chunks for better memory management
+          if (id.includes("node_modules")) {
+            // Large libraries get their own chunks
+            if (id.includes("react") || id.includes("react-dom")) {
+              return "react-vendor";
+            }
+            if (id.includes("@radix-ui")) {
+              return "radix-vendor";
+            }
+            if (id.includes("epubjs")) {
+              return "epub-vendor";
+            }
+            if (id.includes("lucide-react")) {
+              return "lucide-vendor";
+            }
+            // Other node_modules
+            return "vendor";
+          }
+        },
+        
+        // Limit chunk size to prevent memory issues
+        chunkFileNames: "assets/js/[name]-[hash].js",
+        entryFileNames: "assets/js/[name]-[hash].js",
+        assetFileNames: "assets/[ext]/[name]-[hash].[ext]",
+        
+        // Compact output to reduce memory usage
+        compact: true,
+      },
+      
+      // Limit concurrent chunk processing to reduce memory pressure
+      maxParallelFileOps: 2,
+    },
+
+    // Reduce memory usage during build
+    chunkSizeWarningLimit: 1000,
+    
+    // Enable CSS code splitting
+    cssCodeSplit: true,
+    
+    // Optimize source maps (use "hidden" for production to save memory)
+    sourcemap: false,
+    
+    // Report compressed size
+    reportCompressedSize: true,
+    
+    // Reduce memory usage by writing files incrementally
+    write: true,
+  },
+
+  // Optimize dependency pre-bundling for development
+  optimizeDeps: {
+    // Limit concurrent pre-bundling to reduce memory usage
+    maxParallelFileOps: 2,
+    
+    // Exclude large dependencies that don't need pre-bundling
+    exclude: [],
+    
+    // Include only essential dependencies
+    include: [
+      "react",
+      "react-dom",
+      "react/jsx-runtime",
+    ],
+  },
 }));

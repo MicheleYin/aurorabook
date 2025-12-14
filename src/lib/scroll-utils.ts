@@ -406,6 +406,7 @@ export function scrollToElement(
   };
   
   // Look for virtualized handle in the document
+  // Use querySelector for data attributes (no ID available)
   const virtualizedContainer = document.querySelector('[data-reader-chapter-content]')?.parentElement as ElementWithVirtualizedHandle | null;
   const virtualizedHandle = virtualizedContainer?.__virtualizedHandle;
   
@@ -486,9 +487,14 @@ export function scrollToElement(
   }
 
   // Fallback: try to find element directly (non-virtualized case)
-  const element = document.getElementById(elementId) ||
-    document.querySelector<HTMLElement>(`#${CSS.escape(elementId)}`) ||
-    document.querySelector<HTMLElement>(`a[name="${elementId}"]`);
+  // Use getElementById first (O(1) - fastest)
+  let element = document.getElementById(elementId);
+  
+  // If not found by ID, try anchor name (for legacy support)
+  if (!element) {
+    // Only use querySelector as last resort
+    element = document.querySelector<HTMLElement>(`a[name="${elementId}"]`);
+  }
   
   if (!element) {
     console.log("[Scroll] Element not found", { elementId });

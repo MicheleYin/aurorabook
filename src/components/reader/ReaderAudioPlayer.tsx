@@ -35,6 +35,101 @@ const formatPlaybackRate = (rate: number) => {
   return `${rate.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}x`;
 };
 
+// Utility functions extracted outside component for better memory usage
+const updateAudioPlaybackRate = (audio: HTMLAudioElement | null, rate: number): void => {
+  if (audio) {
+    audio.playbackRate = rate;
+  }
+};
+
+const getMediaSessionMetadata = (
+  currentTrack: AudioTrack | undefined,
+  bookTitle?: string,
+  bookAuthor?: string,
+  coverUrl?: string,
+  audioSyncMap?: AudioSyncMap,
+  chapters?: Chapter[]
+): { title: string; artist: string; album: string; artwork: MediaImage[] } | null => {
+  if (!currentTrack || !bookTitle) {
+    return null;
+  }
+
+  // Find related chapters for the current track
+  const chapterHrefs = audioSyncMap
+    ? findChaptersForAudioTrack(audioSyncMap, currentTrack.href)
+    : [];
+  const relatedChapters = chapters
+    ? chapters.filter((chapter) => {
+        return chapterHrefs.some((chapterHref) =>
+          chapterHrefsMatch(chapter.href, chapterHref)
+        );
+      })
+    : [];
+  
+  // Build title with chapter information
+  const trackTitle = currentTrack.title || bookTitle;
+  let title = trackTitle;
+  if (relatedChapters.length > 0) {
+    const chapterTitle = relatedChapters[0].title;
+    title = `${chapterTitle} - ${trackTitle}`;
+  }
+
+  // Build artist with app name
+  const artist = bookAuthor 
+    ? `${bookAuthor} - AuroraBook`
+    : "AuroraBook";
+
+  // Build album with book title and app name
+  const album = `${bookTitle} - AuroraBook`;
+
+  // Prepare artwork array
+  const artwork: MediaImage[] = [];
+  if (coverUrl) {
+    artwork.push({
+      src: coverUrl,
+      sizes: "512x512",
+      type: "image/jpeg",
+    });
+  }
+
+  return { title, artist, album, artwork };
+};
+
+const createMediaSessionHandlers = (
+  togglePlayback: () => void,
+  handlePrevious: () => void,
+  handleNext: () => void,
+  handleSkipBack: () => void,
+  handleSkipForward: () => void
+) => {
+  return {
+    handlePlay: () => {
+      logger.log("[Audio Player] MediaSession play action triggered");
+      togglePlayback();
+    },
+    handlePause: () => {
+      logger.log("[Audio Player] MediaSession pause action triggered");
+      togglePlayback();
+    },
+    handlePreviousTrack: () => {
+      logger.log("[Audio Player] MediaSession previoustrack action triggered");
+      handlePrevious();
+    },
+    handleNextTrack: () => {
+      logger.log("[Audio Player] MediaSession nexttrack action triggered");
+      handleNext();
+    },
+    handleSeekBackward: () => {
+      logger.log("[Audio Player] MediaSession seekbackward action triggered");
+      handleSkipBack();
+    },
+    handleSeekForward: () => {
+      logger.log("[Audio Player] MediaSession seekforward action triggered");
+      handleSkipForward();
+    },
+  };
+};
+
 type ReaderAudioPlayerProps = {
   bookId?: string;
   tracks: AudioTrack[];
@@ -130,13 +225,6 @@ export function ReaderAudioPlayer({
   // Initialize playback rate from settings, default to 1.0 if not available
   const [playbackRate, setPlaybackRate] = useState<number>(settings.audioPlaybackSpeed ?? 1.0);
 
-  // Update playback rate on audio element (explicit callback instead of useEffect)
-  const updatePlaybackRate = useCallback((audio: HTMLAudioElement, rate: number) => {
-    if (audio) {
-      audio.playbackRate = rate;
-    }
-  }, []);
-
   // Reset scrubbing state when track changes (explicit callback)
   const resetScrubbingState = useCallback(() => {
     setIsScrubbing(false);
@@ -149,12 +237,9 @@ export function ReaderAudioPlayer({
       const newRate = settings.audioPlaybackSpeed;
       setPlaybackRate(newRate);
       // Update audio element immediately if it exists (explicit callback)
-      const audio = audioRef.current;
-      if (audio) {
-        updatePlaybackRate(audio, newRate);
-      }
+      updateAudioPlaybackRate(audioRef.current, newRate);
     }
-  }, [settings.audioPlaybackSpeed, settingsHydrated, updatePlaybackRate]);
+  }, [settings.audioPlaybackSpeed, settingsHydrated]);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubTime, setScrubTime] = useState<number | null>(null);
   const [isDismissing, setIsDismissing] = useState(false);
@@ -352,6 +437,12 @@ export function ReaderAudioPlayer({
     if (!tracks.length) {
       const audio = audioRef.current;
       if (audio) {
+        // Mark current URL as inactive before clearing
+        if (audio.src && audio.src.startsWith("blob:")) {
+          import("../../lib/blob-url-manager").then(({ blobURLManager }) => {
+            blobURLManager.markAudioUrlInactive(audio.src);
+          });
+        }
         audio.pause();
         audio.src = "";
       }
@@ -555,13 +646,21 @@ export function ReaderAudioPlayer({
         // Change track - setupAudioSource will detect isAutoAdvancingRef and autoplay
         setCurrentIndex(nextIndex);
       } else {
-        logger.log("[Audio Player] Last track ended, stopping playback");
-        // Last track - stop playback
+        logger.log("[Audio Player] Last track ended, setting to paused state for replay");
+        // Last track - ensure audio is paused and ready to replay
+        // Reset to beginning so user can replay from start
         audio.pause();
         audio.currentTime = 0;
         setCurrentTime(0);
+        // Ensure state is properly set to paused (not playing)
         setIsPlaying(false);
         isPlayingRef.current = false;
+        // Emit progress to save final state
+        emitProgressRef.current(0);
+        // Flush audio state update to persist the ended state
+        flushAudioStateUpdate().catch((error) => {
+          logger.warn("Failed to flush audio state on track end", error);
+        });
       }
     };
 
@@ -681,9 +780,11 @@ export function ReaderAudioPlayer({
     return loadedUrl ? { ...track, url: loadedUrl } : track;
   }, [tracks, currentIndex, loadedCount]);
 
+  // Memoize current track ID to avoid repeated property access
+  const currentTrackId = useMemo(() => currentTrack?.id, [currentTrack]);
+
   // Periodically check audio state to detect external pause/play
-  // Use currentTrack.id instead of currentTrack object to avoid re-runs
-  const currentTrackId = currentTrack?.id;
+  // Use memoized currentTrackId to avoid re-runs
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !currentTrackId) {
@@ -932,6 +1033,20 @@ export function ReaderAudioPlayer({
       }
     }
     
+    // Mark previous URL as inactive before changing (async import)
+    if (audio.src && audio.src.startsWith("blob:")) {
+      import("../../lib/blob-url-manager").then(({ blobURLManager }) => {
+        blobURLManager.markAudioUrlInactive(audio.src);
+      });
+    }
+    
+    // Mark new URL as active (async import)
+    if (track.url && track.url.startsWith("blob:")) {
+      import("../../lib/blob-url-manager").then(({ blobURLManager }) => {
+        blobURLManager.markAudioUrlActive(track.url!);
+      });
+    }
+    
     // Set audio source
     audio.src = track.url!;
     audio.load();
@@ -1172,6 +1287,13 @@ export function ReaderAudioPlayer({
       return;
     }
 
+    // If audio has ended, reset it to allow replay
+    if (audio.ended) {
+      logger.log("[Audio Player] Audio ended, resetting for replay");
+      audio.currentTime = 0;
+      setCurrentTime(0);
+    }
+
     // Check if track URL is loaded
     let trackUrl = loadedTrackUrlsRef.current.get(currentTrack.id);
     
@@ -1221,6 +1343,20 @@ export function ReaderAudioPlayer({
 
     // Ensure audio source is set
     if (audio.src !== trackUrl) {
+      // Mark previous URL as inactive before changing (async import)
+      if (audio.src && audio.src.startsWith("blob:")) {
+        import("../../lib/blob-url-manager").then(({ blobURLManager }) => {
+          blobURLManager.markAudioUrlInactive(audio.src);
+        });
+      }
+      
+      // Mark new URL as active (async import)
+      if (trackUrl && trackUrl.startsWith("blob:")) {
+        import("../../lib/blob-url-manager").then(({ blobURLManager }) => {
+          blobURLManager.markAudioUrlActive(trackUrl);
+        });
+      }
+      
       audio.src = trackUrl;
       audio.load();
       audio.playbackRate = playbackRate;
@@ -1387,6 +1523,30 @@ export function ReaderAudioPlayer({
     commitSeek(newTime);
   }, [commitSeek, duration]);
 
+  // Memoize media session metadata to avoid recalculating on every render
+  const mediaSessionMetadata = useMemo(() => {
+    return getMediaSessionMetadata(
+      currentTrack,
+      bookTitle,
+      bookAuthor,
+      coverUrl,
+      audioSyncMap,
+      chapters
+    );
+  }, [currentTrack, bookTitle, bookAuthor, coverUrl, audioSyncMap, chapters]);
+
+  // Memoize media session handlers to avoid recreating on every render
+  const mediaSessionHandlers = useMemo(
+    () => createMediaSessionHandlers(
+      togglePlayback,
+      handlePrevious,
+      handleNext,
+      handleSkipBack,
+      handleSkipForward
+    ),
+    [togglePlayback, handlePrevious, handleNext, handleSkipBack, handleSkipForward]
+  );
+
   // Update MediaSession metadata for macOS Control Center
   useEffect(() => {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) {
@@ -1396,7 +1556,7 @@ export function ReaderAudioPlayer({
     const mediaSession = navigator.mediaSession;
     
     // Only set metadata if we have a current track
-    if (!currentTrack || !bookTitle) {
+    if (!mediaSessionMetadata) {
       // Clear metadata if no track
       try {
         mediaSession.metadata = null;
@@ -1406,103 +1566,27 @@ export function ReaderAudioPlayer({
       return;
     }
 
-    // Find related chapters for the current track
-    const chapterHrefs = audioSyncMap
-      ? findChaptersForAudioTrack(audioSyncMap, currentTrack.href)
-      : [];
-    const relatedChapters = chapters
-      ? chapters.filter((chapter) => {
-          return chapterHrefs.some((chapterHref) =>
-            chapterHrefsMatch(chapter.href, chapterHref)
-          );
-        })
-      : [];
-    
-    // Build title with chapter information
-    const trackTitle = currentTrack.title || bookTitle;
-    let title = trackTitle;
-    if (relatedChapters.length > 0) {
-      const chapterTitle = relatedChapters[0].title;
-      title = `${chapterTitle} - ${trackTitle}`;
-    }
-
-    // Build artist with app name
-    const artist = bookAuthor 
-      ? `${bookAuthor} - AuroraBook`
-      : "AuroraBook";
-
-    // Build album with book title and app name
-    const album = `${bookTitle} - AuroraBook`;
-
-    // Prepare artwork array
-    const artwork: MediaImage[] = [];
-    if (coverUrl) {
-      // Handle both blob URLs and file URLs
-      artwork.push({
-        src: coverUrl,
-        sizes: "512x512", // Standard size for Control Center
-        type: "image/jpeg", // Default type, will be detected by browser
-      });
-    }
-
     // Set metadata
     try {
-      mediaSession.metadata = new MediaMetadata({
-        title,
-        artist,
-        album,
-        artwork,
-      });
+      mediaSession.metadata = new MediaMetadata(mediaSessionMetadata);
 
       logger.log("[Audio Player] MediaSession metadata updated", {
-        title,
-        artist,
-        album,
-        chapterTitle: relatedChapters.length > 0 ? relatedChapters[0].title : undefined,
-        hasArtwork: artwork.length > 0,
+        title: mediaSessionMetadata.title,
+        artist: mediaSessionMetadata.artist,
+        album: mediaSessionMetadata.album,
+        hasArtwork: mediaSessionMetadata.artwork.length > 0,
       });
     } catch (error) {
       logger.warn("[Audio Player] Failed to set MediaSession metadata", error);
     }
 
-    // Set up action handlers for Control Center controls
-    const handlePlay = () => {
-      logger.log("[Audio Player] MediaSession play action triggered");
-      togglePlayback();
-    };
-
-    const handlePause = () => {
-      logger.log("[Audio Player] MediaSession pause action triggered");
-      togglePlayback();
-    };
-
-    const handlePreviousTrack = () => {
-      logger.log("[Audio Player] MediaSession previoustrack action triggered");
-      handlePrevious();
-    };
-
-    const handleNextTrack = () => {
-      logger.log("[Audio Player] MediaSession nexttrack action triggered");
-      handleNext();
-    };
-
-    const handleSeekBackward = () => {
-      logger.log("[Audio Player] MediaSession seekbackward action triggered");
-      handleSkipBack();
-    };
-
-    const handleSeekForward = () => {
-      logger.log("[Audio Player] MediaSession seekforward action triggered");
-      handleSkipForward();
-    };
-
     // Set action handlers
-    mediaSession.setActionHandler("play", handlePlay);
-    mediaSession.setActionHandler("pause", handlePause);
-    mediaSession.setActionHandler("previoustrack", handlePreviousTrack);
-    mediaSession.setActionHandler("nexttrack", handleNextTrack);
-    mediaSession.setActionHandler("seekbackward", handleSeekBackward);
-    mediaSession.setActionHandler("seekforward", handleSeekForward);
+    mediaSession.setActionHandler("play", mediaSessionHandlers.handlePlay);
+    mediaSession.setActionHandler("pause", mediaSessionHandlers.handlePause);
+    mediaSession.setActionHandler("previoustrack", mediaSessionHandlers.handlePreviousTrack);
+    mediaSession.setActionHandler("nexttrack", mediaSessionHandlers.handleNextTrack);
+    mediaSession.setActionHandler("seekbackward", mediaSessionHandlers.handleSeekBackward);
+    mediaSession.setActionHandler("seekforward", mediaSessionHandlers.handleSeekForward);
 
     // Cleanup: remove action handlers when component unmounts or track changes
     return () => {
@@ -1517,7 +1601,7 @@ export function ReaderAudioPlayer({
         // Ignore errors when clearing handlers
       }
     };
-  }, [currentTrack, bookTitle, bookAuthor, coverUrl, isPlaying, togglePlayback, handlePrevious, handleNext, handleSkipBack, handleSkipForward, audioSyncMap, chapters]);
+  }, [mediaSessionMetadata, mediaSessionHandlers]);
 
   const displayedCurrentTime = useMemo(() => {
     if (isScrubbing && typeof scrubTime === "number") {
@@ -1577,13 +1661,10 @@ export function ReaderAudioPlayer({
     }
     setPlaybackRate(nextRate);
     // Update audio element immediately
-    const audio = audioRef.current;
-    if (audio) {
-      updatePlaybackRate(audio, nextRate);
-    }
+    updateAudioPlaybackRate(audioRef.current, nextRate);
     // Persist to settings
     updateSettings({ audioPlaybackSpeed: nextRate });
-  }, [updateSettings, updatePlaybackRate]);
+  }, [updateSettings]);
 
   const handleTrackSelect = useCallback((trackIndex: number) => {
     logger.log("[Audio Player] handleTrackSelect called", {
