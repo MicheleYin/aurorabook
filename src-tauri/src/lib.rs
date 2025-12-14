@@ -96,6 +96,7 @@ pub fn run() {
             book_service::read_one_book,
             book_service::read_single_chapter,
             book_service::load_chapter_content,
+            book_service::load_epub_chapter_bytes,
             book_service::load_epub_image,
             book_service::load_epub_audio,
             book_service::load_epub_audio_bytes,

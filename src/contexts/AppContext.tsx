@@ -61,6 +61,7 @@ export function AppContextProvider({
   const manualSelectionRef = useRef<string | null>(null);
   // Store fetched books temporarily until they're in the library
   const fetchedBooksRef = useRef<Map<string, Book>>(new Map());
+  const fetchedBooksCleanupTimeoutsRef = useRef<Map<string, number>>(new Map());
 
   const activeBook = useMemo(() => {
     if (!activeBookId) return undefined;
@@ -165,9 +166,16 @@ export function AppContextProvider({
               }
               // Add new book
               // Remove from ref once it's in library (on next render)
-              setTimeout(() => {
+              // Clear any existing timeout for this book
+              const existingTimeout = fetchedBooksCleanupTimeoutsRef.current.get(bookId);
+              if (existingTimeout) {
+                clearTimeout(existingTimeout);
+              }
+              const timeoutId = window.setTimeout(() => {
                 fetchedBooksRef.current.delete(bookId);
+                fetchedBooksCleanupTimeoutsRef.current.delete(bookId);
               }, 0);
+              fetchedBooksCleanupTimeoutsRef.current.set(bookId, timeoutId);
               return [...prevLibrary, fetchedBook];
             });
             logger.debug("[AppContext] Successfully fetched book from backend and added to library", { bookId });
@@ -311,6 +319,16 @@ export function AppContextProvider({
     setDetailBookId,
     handleSelectBook,
   };
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      fetchedBooksCleanupTimeoutsRef.current.forEach((timeoutId) => {
+        clearTimeout(timeoutId);
+      });
+      fetchedBooksCleanupTimeoutsRef.current.clear();
+    };
+  }, []);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

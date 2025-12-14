@@ -1,6 +1,6 @@
 import { Monitor, Moon, Sun } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, memo } from "react";
 
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
@@ -18,7 +18,7 @@ const options: Array<{ id: UITheme; icon: ReactNode; label: string }> = [
   { id: "system", icon: <Monitor className="h-4 w-4" aria-hidden="true" />, label: "System" },
 ];
 
-export function ThemeSwitcher({ value, onChange }: ThemeSwitcherProps) {
+function ThemeSwitcherComponent({ value, onChange }: ThemeSwitcherProps) {
   const [previousValue, setPreviousValue] = useState<UITheme>(value);
   const [isTransitioning, setIsTransitioning] = useState(false);
 
@@ -68,3 +68,7 @@ export function ThemeSwitcher({ value, onChange }: ThemeSwitcherProps) {
     </div>
   );
 }
+
+export const ThemeSwitcher = memo(ThemeSwitcherComponent, (prevProps, nextProps) => {
+  return prevProps.value === nextProps.value && prevProps.onChange === nextProps.onChange;
+});

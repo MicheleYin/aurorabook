@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, memo } from "react";
 import { X } from "lucide-react";
 import type { AudioTrack, AudioSyncMap, Chapter } from "../../types/reader";
 import { Button } from "../ui/button";
@@ -29,19 +29,18 @@ type AudioTracksDialogProps = {
   tracks: AudioTrack[];
   currentIndex: number;
   bookTitle?: string;
-  loadedTrackUrls: Map<string, string>;
+  // REMOVED: loadedTrackUrls - now using track.url directly (from centralized cache)
   onTrackSelect: (trackIndex: number) => void;
   audioSyncMap?: AudioSyncMap;
   chapters?: Chapter[];
 };
 
-export function AudioTracksDialog({
+function AudioTracksDialogComponent({
   open,
   onOpenChange,
   tracks,
   currentIndex,
   bookTitle,
-  loadedTrackUrls,
   onTrackSelect,
   audioSyncMap,
   chapters,
@@ -93,7 +92,8 @@ export function AudioTracksDialog({
     <div className="flex flex-col gap-1 w-full min-w-0">
       {tracks.map((track, index) => {
         const isCurrentTrack = index === currentIndex;
-        const trackUrl = loadedTrackUrls.get(track.id) || track.url;
+        // Use track.url directly (from centralized cache in lazy-chapter-loader)
+        const trackUrl = track.url;
         const hasUrl = !!trackUrl;
         
         // Find chapters associated with this audio track
@@ -231,4 +231,38 @@ export function AudioTracksDialog({
     </Drawer>
   );
 }
+
+export const AudioTracksDialog = memo(AudioTracksDialogComponent, (prevProps, nextProps) => {
+  // Compare primitive props
+  if (prevProps.open !== nextProps.open) return false;
+  if (prevProps.currentIndex !== nextProps.currentIndex) return false;
+  if (prevProps.bookTitle !== nextProps.bookTitle) return false;
+  
+  // Compare tracks array
+  if (prevProps.tracks.length !== nextProps.tracks.length) return false;
+  const tracksChanged = prevProps.tracks.some((track, index) => {
+    const nextTrack = nextProps.tracks[index];
+    return !nextTrack || track.id !== nextTrack.id || track !== nextTrack;
+  });
+  if (tracksChanged) return false;
+  
+  // Compare callbacks
+  if (prevProps.onOpenChange !== nextProps.onOpenChange) return false;
+  if (prevProps.onTrackSelect !== nextProps.onTrackSelect) return false;
+  
+  // Compare optional props
+  if (prevProps.audioSyncMap !== nextProps.audioSyncMap) return false;
+  
+  // Compare chapters array
+  if (prevProps.chapters?.length !== nextProps.chapters?.length) return false;
+  if (prevProps.chapters && nextProps.chapters) {
+    const chaptersChanged = prevProps.chapters.some((chapter, index) => {
+      const nextChapter = nextProps.chapters![index];
+      return !nextChapter || chapter.id !== nextChapter.id || chapter !== nextChapter;
+    });
+    if (chaptersChanged) return false;
+  }
+  
+  return true;
+});
 

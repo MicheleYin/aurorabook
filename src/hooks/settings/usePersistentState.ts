@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { logger } from "../../lib/logger";
 
 type StoreHandle = {
   set: (key: string, value: unknown) => Promise<void>;
@@ -42,7 +43,7 @@ export function usePersistentState<T>(options: UsePersistentStateOptions<T>) {
       storeRef.current = store as StoreHandle;
       return storeRef.current;
     } catch (error) {
-      console.warn(`${logPrefix}: unable to initialize store.`, error);
+      logger.warn(`${logPrefix}: unable to initialize store.`, { error });
       return null;
     }
   }, [storePath, logPrefix]);
@@ -58,10 +59,10 @@ export function usePersistentState<T>(options: UsePersistentStateOptions<T>) {
           };
           await store.set(storeKey, payload);
           await store.save();
-          console.debug(`${logPrefix} persisted via store`, payload);
+          logger.debug(`${logPrefix} persisted via store`, { payload });
         }
       } catch (error) {
-        console.warn(`${logPrefix}: failed to persist state.`, error);
+        logger.warn(`${logPrefix}: failed to persist state.`, { error });
       }
     },
     [ensureStore, storeKey, version, logPrefix],
@@ -97,7 +98,7 @@ export function usePersistentState<T>(options: UsePersistentStateOptions<T>) {
           }
         }
       } catch (error) {
-        console.warn(`${logPrefix}: failed to load store.`, error);
+        logger.warn(`${logPrefix}: failed to load store.`, { error });
       } finally {
         if (!cancelled) {
           setIsHydrated(true);

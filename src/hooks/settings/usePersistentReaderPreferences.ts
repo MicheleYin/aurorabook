@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ReaderPreferences } from "../../types/reader";
+import { logger } from "../../lib/logger";
 
 const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   theme: "system",
@@ -29,7 +30,7 @@ export function usePersistentReaderPreferences() {
           setIsHydrated(true);
         }
       } catch (error) {
-        console.warn("[ReaderPreferencesPersistence]: failed to load preferences from backend, using defaults:", error);
+        logger.warn("[ReaderPreferencesPersistence]: failed to load preferences from backend, using defaults:", { error });
         if (!cancelled) {
           setIsHydrated(true);
         }
@@ -49,7 +50,7 @@ export function usePersistentReaderPreferences() {
     
     // Persist to backend asynchronously
     invoke("update_reader_preferences", { preferences: newPreferences }).catch((error) => {
-      console.warn("[ReaderPreferencesPersistence]: failed to persist preferences:", error);
+      logger.warn("[ReaderPreferencesPersistence]: failed to persist preferences:", { error });
     });
   }, []);
 
@@ -60,7 +61,7 @@ export function usePersistentReaderPreferences() {
       
       // Persist to backend asynchronously
       invoke("update_reader_preferences", { preferences: newPreferences }).catch((error) => {
-        console.warn("[ReaderPreferencesPersistence]: failed to persist preferences:", error);
+        logger.warn("[ReaderPreferencesPersistence]: failed to persist preferences:", { error });
       });
       
       return newPreferences;

@@ -1,4 +1,4 @@
-import { ChangeEvent, ReactNode } from "react";
+import { ChangeEvent, memo, ReactNode } from "react";
 import { Search, X } from "lucide-react";
 import { anim } from "../../lib/animations";
 import { Input } from "../ui/input";
@@ -12,7 +12,7 @@ interface LibrarySearchBarProps {
   actionsSlot?: ReactNode;
 }
 
-export function LibrarySearchBar({
+function LibrarySearchBarComponent({
   value,
   placeholder = "Search by title or author",
   onChange,
@@ -59,3 +59,13 @@ export function LibrarySearchBar({
     </div>
   );
 }
+
+export const LibrarySearchBar = memo(LibrarySearchBarComponent, (prevProps, nextProps) => {
+  return (
+    prevProps.value === nextProps.value &&
+    prevProps.placeholder === nextProps.placeholder &&
+    prevProps.disabled === nextProps.disabled &&
+    prevProps.onChange === nextProps.onChange &&
+    prevProps.actionsSlot === nextProps.actionsSlot
+  );
+});

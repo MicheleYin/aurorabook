@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type KeyboardEvent } from "react";
+import { useState, useEffect, useRef, memo, type KeyboardEvent } from "react";
 import { ImageOff, Loader2 } from "lucide-react";
 
 import type { Book } from "../../types/reader";
@@ -23,7 +23,7 @@ interface LibraryListProps {
   conversionStartTimeRef?: React.MutableRefObject<number | null>;
 }
 
-export function LibraryList({
+function LibraryListComponent({
   books,
   activeBookId,
   onOpenBook,
@@ -171,7 +171,7 @@ export function LibraryList({
   );
 }
 
-function ConversionProgressWithETA({
+const ConversionProgressWithETA = memo(function ConversionProgressWithETA({
   conversionProgress,
   conversionPercent,
   conversionStartTimeRef,
@@ -209,9 +209,9 @@ function ConversionProgressWithETA({
       </div>
     </div>
   );
-}
+});
 
-function BookCoverImage({ src, alt }: { src: string; alt: string }) {
+const BookCoverImage = memo(function BookCoverImage({ src, alt }: { src: string; alt: string }) {
   const [isImageLoaded, setIsImageLoaded] = useState(false);
   const [hasImageError, setHasImageError] = useState(false);
 
@@ -241,4 +241,36 @@ function BookCoverImage({ src, alt }: { src: string; alt: string }) {
       />
     </>
   );
-}
+});
+
+export const LibraryList = memo(LibraryListComponent, (prevProps, nextProps) => {
+  // Compare primitive props
+  if (prevProps.activeBookId !== nextProps.activeBookId) return false;
+  
+  // Compare books array - check length and IDs
+  if (prevProps.books.length !== nextProps.books.length) return false;
+  const booksChanged = prevProps.books.some((book, index) => {
+    const nextBook = nextProps.books[index];
+    return !nextBook || book.id !== nextBook.id || book !== nextBook;
+  });
+  if (booksChanged) return false;
+  
+  // Compare callbacks - assume stable if same reference
+  if (prevProps.onOpenBook !== nextProps.onOpenBook) return false;
+  if (prevProps.onViewDetails !== nextProps.onViewDetails) return false;
+  
+  // Compare conversion progress - check if any book's progress changed
+  const prevProgressKeys = Object.keys(prevProps.bookConversionProgress || {});
+  const nextProgressKeys = Object.keys(nextProps.bookConversionProgress || {});
+  if (prevProgressKeys.length !== nextProgressKeys.length) return false;
+  for (const key of prevProgressKeys) {
+    const prevProgress = prevProps.bookConversionProgress?.[key];
+    const nextProgress = nextProps.bookConversionProgress?.[key];
+    if (prevProgress !== nextProgress) return false;
+  }
+  
+  // Compare ref - assume stable if same reference
+  if (prevProps.conversionStartTimeRef !== nextProps.conversionStartTimeRef) return false;
+  
+  return true; // Props are equal, skip re-render
+});

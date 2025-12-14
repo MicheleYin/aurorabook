@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState, memo } from "react";
+import { usePrevious } from "../hooks/usePrevious";
 import { ArrowLeft, Headphones } from "lucide-react";
 
 import type { ChapterSelectionOptions, ReaderPanelBaseProps, AudioProgressSnapshot } from "./reader/types";
@@ -24,7 +25,7 @@ type ReaderPanelProps = ReaderPanelBaseProps & {
   onTrackChangeHandlerReady?: (handler: (trackHref: string) => Promise<void>) => void;
 };
 
-export function ReaderPanel({
+function ReaderPanelComponent({
   activeBook,
   activeChapter,
   preferences,
@@ -48,42 +49,41 @@ export function ReaderPanel({
   const [isImmersive, setIsImmersive] = useState(false);
   const [isAudioReopenVisible, setIsAudioReopenVisible] = useState(false);
   const [shouldRenderAudioReopen, setShouldRenderAudioReopen] = useState(false);
-  const preserveChromeNextSelectionRef = useRef(false);
-  const previousBookIdRef = useRef<string | undefined>(activeBook?.id);
-  const previousChapterIdRef = useRef<string | undefined>(activeChapter?.id);
+  const [preserveChromeNextSelection, setPreserveChromeNextSelection] = useState(false);
+  
+  // Track previous values for change detection
+  const previousBookId = usePrevious(activeBook?.id);
+  const previousChapterId = usePrevious(activeChapter?.id);
 
   // Consolidated handler for book/chapter changes
   const handleBookOrChapterChange = useCallback(() => {
     setIsTocOpen(false);
     
-    if (preserveChromeNextSelectionRef.current) {
-      preserveChromeNextSelectionRef.current = false;
+    if (preserveChromeNextSelection) {
+      setPreserveChromeNextSelection(false);
       return;
     }
     
     setIsImmersive(false);
-  }, []);
+  }, [preserveChromeNextSelection]);
 
-  // Reset immersive state when book or chapter changes (explicit check instead of useEffect)
-  const bookChanged = previousBookIdRef.current !== activeBook?.id;
-  const chapterChanged = previousChapterIdRef.current !== activeChapter?.id;
-  
-  if (bookChanged || chapterChanged) {
-    handleBookOrChapterChange();
-    previousBookIdRef.current = activeBook?.id;
-    previousChapterIdRef.current = activeChapter?.id;
-  }
+  // Reset immersive state when book or chapter changes
+  useEffect(() => {
+    const bookChanged = previousBookId !== activeBook?.id;
+    const chapterChanged = previousChapterId !== activeChapter?.id;
+    
+    if (bookChanged || chapterChanged) {
+      handleBookOrChapterChange();
+    }
+  }, [activeBook?.id, activeChapter?.id, previousBookId, previousChapterId, handleBookOrChapterChange]);
 
   // Derived state for chrome visibility
   const chromeVisible = !isImmersive;
 
-  // Notify parent of chrome visibility changes (explicit check instead of useEffect)
-  // Use ref to track previous value to avoid calling on every render
-  const previousChromeVisibleRef = useRef<boolean | undefined>(undefined);
-  if (previousChromeVisibleRef.current !== chromeVisible) {
-    previousChromeVisibleRef.current = chromeVisible;
+  // Notify parent of chrome visibility changes
+  useEffect(() => {
     onChromeVisibilityChange?.(chromeVisible);
-  }
+  }, [chromeVisible, onChromeVisibilityChange]);
 
   // Handle immersive toggle - close drawers when entering immersive mode
   const handleToggleImmersive = useCallback(() => {
@@ -128,12 +128,12 @@ export function ReaderPanel({
     }
   }, [showAudioReopen, shouldRenderAudioReopen]);
 
-  const handleChapterChange = (chapterId: string, options?: ChapterSelectionOptions) => {
+  const handleChapterChange = useCallback((chapterId: string, options?: ChapterSelectionOptions) => {
     if (options?.preserveChrome) {
-      preserveChromeNextSelectionRef.current = true;
+      setPreserveChromeNextSelection(true);
     }
     onSelectChapter(chapterId, options);
-  };
+  }, [onSelectChapter]);
 
 
   return (
@@ -251,3 +251,66 @@ export function ReaderPanel({
     </section>
   );
 }
+
+export const ReaderPanel = memo(ReaderPanelComponent, (prevProps, nextProps) => {
+  // Compare activeBook - check if it's the same reference or if key properties changed
+  if (prevProps.activeBook !== nextProps.activeBook) {
+    if (prevProps.activeBook?.id !== nextProps.activeBook?.id) return false;
+    // Check if important book properties changed
+    if (
+      prevProps.activeBook?.title !== nextProps.activeBook?.title ||
+      prevProps.activeBook?.audioTracks.length !== nextProps.activeBook?.audioTracks.length
+    ) {
+      return false;
+    }
+  }
+  
+  // Compare activeChapter - check if it's the same reference or if key properties changed
+  if (prevProps.activeChapter !== nextProps.activeChapter) {
+    if (prevProps.activeChapter?.id !== nextProps.activeChapter?.id) return false;
+    if (prevProps.activeChapter?.title !== nextProps.activeChapter?.title) return false;
+  }
+  
+  // Compare preferences object
+  const prevPrefs = prevProps.preferences;
+  const nextPrefs = nextProps.preferences;
+  if (
+    prevPrefs.fontFamily !== nextPrefs.fontFamily ||
+    prevPrefs.fontSize !== nextPrefs.fontSize ||
+    prevPrefs.contentPadding !== nextPrefs.contentPadding ||
+    prevPrefs.theme !== nextPrefs.theme ||
+    prevPrefs.lineHeight !== nextPrefs.lineHeight
+  ) {
+    return false;
+  }
+  
+  // Compare primitive props
+  if (
+    prevProps.uiTheme !== nextProps.uiTheme ||
+    prevProps.audioPlayerVisible !== nextProps.audioPlayerVisible ||
+    prevProps.currentAudioTrackHref !== nextProps.currentAudioTrackHref ||
+    prevProps.autoScrollEnabled !== nextProps.autoScrollEnabled
+  ) {
+    return false;
+  }
+  
+  // Compare callbacks - assume stable if same reference
+  if (
+    prevProps.onPreferencesChange !== nextProps.onPreferencesChange ||
+    prevProps.onSelectChapter !== nextProps.onSelectChapter ||
+    prevProps.onNavigateLibrary !== nextProps.onNavigateLibrary ||
+    prevProps.onThemeChange !== nextProps.onThemeChange ||
+    prevProps.onChapterProgress !== nextProps.onChapterProgress ||
+    prevProps.onChromeVisibilityChange !== nextProps.onChromeVisibilityChange ||
+    prevProps.onOpenAudioPlayer !== nextProps.onOpenAudioPlayer ||
+    prevProps.onSaveProgress !== nextProps.onSaveProgress ||
+    prevProps.onTrackChangeHandlerReady !== nextProps.onTrackChangeHandlerReady
+  ) {
+    return false;
+  }
+  
+  // Compare currentAudioProgress - check if it's the same reference
+  if (prevProps.currentAudioProgress !== nextProps.currentAudioProgress) return false;
+  
+  return true;
+});

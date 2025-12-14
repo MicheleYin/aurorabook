@@ -4,7 +4,7 @@
  * No useEffects - initialization is explicit
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { logger } from "../../lib/logger";
 import type { UseAudioPlayerStateParams } from "../library/types";
 import { useContext } from "react";
@@ -25,10 +25,7 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
   const [restoreTime, setRestoreTime] = useState<number | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
 
-  const currentIndexRef = useRef(0);
-  const onProgressRef = useRef(onProgress);
-  const tracksRef = useRef(tracks);
-  const isRestoringRef = useRef(false);
+  // Internal tracking refs (kept for performance - don't need to trigger re-renders)
   const restorationAppliedRef = useRef<string | null>(null);
   const lastProgressSnapshotRef = useRef<{
     trackId?: string;
@@ -39,12 +36,6 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
     timestamp: number;
   }>({ timestamp: 0 });
   const initializedRef = useRef<string | undefined>(undefined);
-
-  // Update refs when props change
-  onProgressRef.current = onProgress;
-  tracksRef.current = tracks;
-  currentIndexRef.current = currentIndex;
-  isRestoringRef.current = isRestoring;
 
   // Find track index from initial audio state
   const findTrackIndex = useCallback((): number => {
@@ -130,7 +121,6 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
       setRestoreTime(null);
       setIsRestoring(false);
       setCurrentIndexState(0);
-      currentIndexRef.current = 0;
       initializedRef.current = undefined;
       return;
     }
@@ -148,7 +138,6 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
 
     const nextIndex = findTrackIndex();
     setCurrentIndexState(nextIndex);
-    currentIndexRef.current = nextIndex;
 
     const restoredTime =
       typeof initialAudioState?.currentTimeSeconds === "number" &&
@@ -163,17 +152,19 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
     initializedRef.current = signature;
   }, [bookId, initialAudioState, tracks.length, findTrackIndex, isProgressEcho]);
 
-  // Call initialize when bookId or state changes (explicit check in render)
-  const currentSignature = bookId && initialAudioState
-    ? `${bookId}|${initialAudioState.currentTrackId}|${initialAudioState.updatedAt}|${tracks.length}`
-    : undefined;
-  
-  if (initializedRef.current !== currentSignature) {
-    initialize();
-  }
+  // Initialize when bookId or state changes (moved to useEffect to avoid state updates during render)
+  useEffect(() => {
+    const currentSignature = bookId && initialAudioState
+      ? `${bookId}|${initialAudioState.currentTrackId}|${initialAudioState.updatedAt}|${tracks.length}`
+      : undefined;
+    
+    if (initializedRef.current !== currentSignature) {
+      initialize();
+    }
+  }, [bookId, initialAudioState?.currentTrackId, initialAudioState?.updatedAt, tracks.length, initialize]);
 
   const onTrackChanged = useCallback((newTrackId: string) => {
-    const currentTrack = tracksRef.current[currentIndexRef.current];
+    const currentTrack = tracks[currentIndex];
     if (!currentTrack || currentTrack.id === newTrackId) {
       return;
     }
@@ -186,18 +177,17 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
       }
     }
 
-    if (isRestoringRef.current) {
+    if (isRestoring) {
       return;
     }
 
     setRestoreTime(null);
     restorationAppliedRef.current = null;
-  }, [coordinator]);
+  }, [coordinator, tracks, currentIndex, isRestoring]);
 
   const emitProgress = useCallback((timeSeconds: number) => {
-    const track = tracksRef.current[currentIndexRef.current];
-    const listener = onProgressRef.current;
-    if (!track || !listener) return;
+    const track = tracks[currentIndex];
+    if (!track || !onProgress) return;
 
     const normalizedSeconds = Number(Math.max(timeSeconds, 0).toFixed(3));
     const updatedAt = new Date().toISOString();
@@ -205,26 +195,26 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
     lastProgressSnapshotRef.current = {
       trackId: track.id,
       trackHref: track.href,
-      trackIndex: currentIndexRef.current,
+      trackIndex: currentIndex,
       currentTimeSeconds: normalizedSeconds,
       updatedAt,
       timestamp: Date.now(),
     };
 
-    listener({
+    onProgress({
       trackId: track.id,
       trackHref: track.href,
-      trackIndex: currentIndexRef.current,
+      trackIndex: currentIndex,
       currentTimeSeconds: normalizedSeconds,
       updatedAt,
     });
-  }, []);
+  }, [tracks, currentIndex, onProgress]);
 
   const onTrackLoaded = useCallback((audioElement: HTMLAudioElement) => {
-    const currentTrack = tracksRef.current[currentIndexRef.current];
+    const currentTrack = tracks[currentIndex];
     if (!currentTrack || !audioElement) return;
 
-    const shouldRestore = isRestoringRef.current;
+    const shouldRestore = isRestoring;
     const timeToRestore = restoreTime;
     const currentTrackId = currentTrack.id;
     const alreadyApplied = restorationAppliedRef.current === currentTrackId;
@@ -255,23 +245,21 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
       audioElement.currentTime = 0;
       restorationAppliedRef.current = null;
     }
-  }, [restoreTime, emitProgress]);
+  }, [tracks, currentIndex, isRestoring, restoreTime, emitProgress]);
 
   const setCurrentIndex = useCallback((index: number) => {
-    if (index < 0 || index >= tracksRef.current.length) return;
+    if (index < 0 || index >= tracks.length) return;
     
-    const newTrack = tracksRef.current[index];
+    const newTrack = tracks[index];
     if (newTrack) {
       onTrackChanged(newTrack.id);
     }
     setCurrentIndexState(index);
-    currentIndexRef.current = index;
-  }, [onTrackChanged]);
+  }, [tracks, onTrackChanged]);
 
   // Ensure index is valid
   if (tracks.length && currentIndex >= tracks.length) {
     setCurrentIndexState(0);
-    currentIndexRef.current = 0;
   }
 
   return {

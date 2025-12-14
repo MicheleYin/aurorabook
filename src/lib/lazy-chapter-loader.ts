@@ -4,7 +4,8 @@
  */
 
 import { logger } from "./logger";
-import { loadChapterContent as loadChapterContentFromBackend, loadEpubAudioBlob } from "./book-service";
+import { toast } from "sonner";
+import { loadEpubAudioBlob, loadEpubChapterBlob } from "./book-service";
 import type { Chapter, AudioTrack } from "../types/reader";
 import {
   normalizeChapterContent,
@@ -12,22 +13,13 @@ import {
   extractPlainText,
 } from "./epub";
 import { countWords, estimatePagesFromWords } from "./utils";
-import { LRUCache } from "lru-cache";
 import { blobURLManager } from "./blob-url-manager";
+import { resourceCacheManager } from "./resource-cache-manager";
 
 const LOADER_LOG_PREFIX = "[LazyChapterLoader]";
 
-// Cache for loaded chapters to avoid reloading
-const chapterCache = new LRUCache<string, { contentHtml: string; plainText: string; wordCount: number }>({
-  max: 5, // Keep max 5 chapters in memory (reduced from 15 for memory optimization)
-  ttl: 1000 * 60 * 15, // 15 minutes TTL (reduced from 30 for memory optimization)
-});
-
-// Cache for loaded audio track URLs - using LRU cache like chapters
-const audioTrackCache = new LRUCache<string, string>({
-  max: 1, // Keep max 10 audio tracks in memory (more than chapters since they're just URLs)
-  ttl: 1000 * 60 * 30, // 30 minutes TTL
-});
+// Note: Caching is now handled by centralized resourceCacheManager
+// This eliminates duplicate cache storage and ensures proper eviction
 
 /**
  * Clear cache for a specific chapter (useful when chapter is updated during conversion)
@@ -45,14 +37,13 @@ export function clearChapterCache(sourcePath: string, chapterHref: string): void
   
   let cleared = false;
   for (const href of hrefVariations) {
-    const key = `${bookId}:${href}`;
-    if (chapterCache.has(key)) {
-      chapterCache.delete(key);
+    // Use centralized cache manager
+    if (resourceCacheManager.hasChapter(bookId, href)) {
+      resourceCacheManager.deleteChapter(bookId, href);
       cleared = true;
       logger.debug(`${LOADER_LOG_PREFIX} cleared chapter cache`, {
         sourcePath,
         chapterHref: href,
-        cacheKey: key,
       });
     }
   }
@@ -70,30 +61,10 @@ export function clearChapterCache(sourcePath: string, chapterHref: string): void
  */
 export function clearBookCache(sourcePath: string): void {
   const bookId = sourcePath;
-  // Clear all chapters for this book
-  const keysToDelete: string[] = [];
-  chapterCache.forEach((_, key) => {
-    if (key.startsWith(`${bookId}:`)) {
-      keysToDelete.push(key);
-    }
-  });
-  keysToDelete.forEach((key) => chapterCache.delete(key));
-  
-  // Clear all audio tracks for this book and revoke Blob URLs using centralized manager
-  blobURLManager.revokeForBook(bookId);
-  
-  const audioKeysToDelete: string[] = [];
-  for (const key of audioTrackCache.keys()) {
-    if (key.startsWith(`${bookId}:`)) {
-      audioKeysToDelete.push(key);
-    }
-  }
-  audioKeysToDelete.forEach((key) => audioTrackCache.delete(key));
-  
+  // Use centralized cache manager
+  resourceCacheManager.clearBook(bookId);
   logger.debug(`${LOADER_LOG_PREFIX} cleared cache for book`, {
     sourcePath,
-    clearedChapters: keysToDelete.length,
-    clearedAudioTracks: audioKeysToDelete.length,
   });
 }
 
@@ -103,43 +74,10 @@ export function clearBookCache(sourcePath: string): void {
  */
 export function clearAllCachesExcept(sourcePath: string): void {
   const keepBookId = sourcePath;
-  let clearedChapters = 0;
-  
-  // Clear all chapters except those for the specified book
-  const keysToDelete: string[] = [];
-  chapterCache.forEach((_, key) => {
-    if (!key.startsWith(`${keepBookId}:`)) {
-      keysToDelete.push(key);
-      clearedChapters++;
-    }
-  });
-  keysToDelete.forEach((key) => chapterCache.delete(key));
-  
-  // Clear all audio track URLs except those for the specified book
-  // First, revoke blob URLs for all books except the one to keep
-  for (const key of audioTrackCache.keys()) {
-    if (!key.startsWith(`${keepBookId}:`)) {
-      const blobUrl = audioTrackCache.get(key);
-      if (blobUrl && blobUrl.startsWith("blob:")) {
-        // Extract bookId from cache key (format: "bookId:href")
-        const bookId = key.split(":")[0];
-        blobURLManager.revokeForBook(bookId);
-      }
-    }
-  }
-  
-  const audioKeysToDelete: string[] = [];
-  for (const key of audioTrackCache.keys()) {
-    if (!key.startsWith(`${keepBookId}:`)) {
-      audioKeysToDelete.push(key);
-    }
-  }
-  audioKeysToDelete.forEach((key) => audioTrackCache.delete(key));
-  
+  // Use centralized cache manager
+  resourceCacheManager.clearAllExcept(keepBookId);
   logger.debug(`${LOADER_LOG_PREFIX} cleared all caches except book`, {
     keepSourcePath: sourcePath,
-    clearedChapters,
-    clearedAudioTracks: audioKeysToDelete.length,
   });
 }
 
@@ -151,15 +89,12 @@ export async function loadChapterContent(
   bookId: string,
   chapter: Chapter,
 ): Promise<{ contentHtml: string; plainText: string; wordCount: number }> {
-  const cacheKey = `${bookId}:${chapter.href}`;
-  
-  // Check cache first
-  if (chapterCache.has(cacheKey)) {
-    const cached = chapterCache.get(cacheKey)!;
+  // Check centralized cache first
+  const cached = resourceCacheManager.getChapter(bookId, chapter.href);
+  if (cached) {
     logger.debug(`${LOADER_LOG_PREFIX} using cached chapter`, { 
       bookId, 
       href: chapter.href,
-      cacheKey,
       cachedHtmlSize: cached.contentHtml.length,
       hasSpans: cached.contentHtml.includes('id="f'),
     });
@@ -169,11 +104,10 @@ export async function loadChapterContent(
   logger.debug(`${LOADER_LOG_PREFIX} cache miss, loading from backend`, {
     bookId,
     href: chapter.href,
-    cacheKey,
   });
 
   try {
-    // Load chapter content from Rust backend
+    // Load chapter content from Rust backend as blob URL
     // Try alternative href formats if primary load fails
     const alternatives = [
       chapter.href,
@@ -182,11 +116,11 @@ export async function loadChapterContent(
       `OEBPS/${chapter.href.replace(/^\/+/, "").replace(/^OEBPS\//, "")}`,
     ];
     
-    let loadedChapter: Chapter | null = null;
+    let chapterBlob: { blobUrl: string; htmlString: string } | null = null;
     for (const altHref of alternatives) {
       try {
-        loadedChapter = await loadChapterContentFromBackend(bookId, altHref);
-        if (loadedChapter && loadedChapter.contentHtml) {
+        chapterBlob = await loadEpubChapterBlob(bookId, altHref);
+        if (chapterBlob && chapterBlob.htmlString) {
           if (altHref !== chapter.href) {
             logger.debug(`${LOADER_LOG_PREFIX} loaded chapter using alternative href: ${altHref} (original: ${chapter.href})`);
           }
@@ -198,12 +132,15 @@ export async function loadChapterContent(
       }
     }
     
-    if (!loadedChapter || !loadedChapter.contentHtml) {
+    if (!chapterBlob || !chapterBlob.htmlString) {
       throw new Error(`Failed to load chapter content: ${chapter.href}`);
     }
     
+    // NOTE: blobUrl is already registered by loadEpubChapterBlob
+    // No need to register again - that would cause duplicates
+    
     // Backend now handles image resolution, so we just normalize and sanitize
-    const rawHtml = loadedChapter.contentHtml;
+    const rawHtml = chapterBlob.htmlString;
     const normalizedHtml = await normalizeChapterContent(rawHtml);
     if (!normalizedHtml) {
       throw new Error(`Failed to normalize chapter: ${chapter.href}`);
@@ -218,14 +155,13 @@ export async function loadChapterContent(
     const plainText = extractPlainText(sanitized);
     const wordCount = countWords(plainText);
 
-    // Cache the result
-    const result = { contentHtml: sanitized, plainText, wordCount };
-    chapterCache.set(cacheKey, result);
+    // Cache the result in centralized cache
+    resourceCacheManager.setChapter(bookId, chapter.href, sanitized, plainText, wordCount);
     
+    const result = { contentHtml: sanitized, plainText, wordCount };
     logger.debug(`${LOADER_LOG_PREFIX} ✓ loaded chapter from backend`, {
       bookId,
       href: chapter.href,
-      cacheKey,
       htmlSize: sanitized.length,
       wordCount,
       hasSpans: sanitized.includes('id="f'),
@@ -234,7 +170,7 @@ export async function loadChapterContent(
 
     return result;
   } catch (error) {
-    console.error(`${LOADER_LOG_PREFIX} failed to load chapter`, {
+    logger.error(`${LOADER_LOG_PREFIX} failed to load chapter`, {
       bookId,
       href: chapter.href,
       error,
@@ -267,10 +203,15 @@ export async function ensureChapterLoaded(
       _loading: false,
     };
   } catch (error) {
-    console.error(`${LOADER_LOG_PREFIX} failed to ensure chapter loaded`, {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error(`${LOADER_LOG_PREFIX} failed to ensure chapter loaded`, {
       bookId,
       href: chapter.href,
       error,
+    });
+    // Show user-friendly error toast
+    toast.error("Failed to load chapter", {
+      description: errorMessage || `Unable to load "${chapter.title || chapter.href}"`,
     });
     // Return chapter with loading flag cleared even on error
     return { ...chapter, _loading: false };
@@ -284,34 +225,30 @@ export async function loadAudioTrackUrl(
   bookId: string,
   track: AudioTrack,
 ): Promise<string> {
-  const cacheKey = `${bookId}:${track.href}`;
-  
-  // Check cache first
-  if (audioTrackCache.has(cacheKey)) {
-    const cachedUrl = audioTrackCache.get(cacheKey)!;
+  // Check centralized cache first
+  const cached = resourceCacheManager.getAudioTrack(bookId, track.href);
+  if (cached) {
     // Verify the cached URL is still valid (not revoked)
-    // Check if it's still registered in blobURLManager
-    const { blobURLManager } = await import("./blob-url-manager");
-    if (blobURLManager.has(cachedUrl)) {
-      console.log(`${LOADER_LOG_PREFIX} using cached audio track URL`, {
+    if (blobURLManager.has(cached.url)) {
+      logger.debug(`${LOADER_LOG_PREFIX} using cached audio track URL`, {
         bookId,
         trackId: track.id,
         href: track.href,
-        urlLength: cachedUrl.length,
+        urlLength: cached.url.length,
       });
-      return cachedUrl;
+      return cached.url;
     } else {
       // Cached URL was revoked, remove from cache
-      console.log(`${LOADER_LOG_PREFIX} cached audio track URL was revoked, removing from cache`, {
+      logger.debug(`${LOADER_LOG_PREFIX} cached audio track URL was revoked, removing from cache`, {
         bookId,
         trackId: track.id,
         href: track.href,
       });
-      audioTrackCache.delete(cacheKey);
+      resourceCacheManager.deleteAudioTrack(bookId, track.href);
     }
   }
 
-  console.log(`${LOADER_LOG_PREFIX} Loading audio track URL from backend`, {
+  logger.debug(`${LOADER_LOG_PREFIX} Loading audio track URL from backend`, {
     bookId,
     trackId: track.id,
     trackHref: track.href,
@@ -328,7 +265,7 @@ export async function loadAudioTrackUrl(
       `OEBPS/${track.href.replace(/^\/+/, "").replace(/^OEBPS\//, "")}`,
     ];
     
-    console.log(`${LOADER_LOG_PREFIX} Trying ${alternatives.length} href alternatives`, {
+    logger.debug(`${LOADER_LOG_PREFIX} Trying ${alternatives.length} href alternatives`, {
       bookId,
       trackHref: track.href,
       alternatives,
@@ -337,21 +274,21 @@ export async function loadAudioTrackUrl(
     let blobUrl: string | null = null;
     for (const altHref of alternatives) {
       try {
-        console.log(`${LOADER_LOG_PREFIX} Trying to load audio with href: ${altHref}`);
+        logger.debug(`${LOADER_LOG_PREFIX} Trying to load audio with href: ${altHref}`);
         blobUrl = await loadEpubAudioBlob(bookId, altHref);
         if (blobUrl) {
           if (altHref !== track.href) {
-            console.log(`${LOADER_LOG_PREFIX} ✓ Loaded audio track using alternative href: ${altHref} (original: ${track.href})`);
+            logger.debug(`${LOADER_LOG_PREFIX} ✓ Loaded audio track using alternative href: ${altHref} (original: ${track.href})`);
           } else {
-            console.log(`${LOADER_LOG_PREFIX} ✓ Loaded audio track with original href: ${track.href}`);
+            logger.debug(`${LOADER_LOG_PREFIX} ✓ Loaded audio track with original href: ${track.href}`);
           }
           break;
         } else {
-          console.warn(`${LOADER_LOG_PREFIX} Audio track returned null for href: ${altHref}`);
+          logger.warn(`${LOADER_LOG_PREFIX} Audio track returned null for href: ${altHref}`);
         }
       } catch (error) {
         // Continue to next alternative
-        console.warn(`${LOADER_LOG_PREFIX} Failed to load with href ${altHref}, trying next`, { 
+        logger.warn(`${LOADER_LOG_PREFIX} Failed to load with href ${altHref}, trying next`, { 
           error: error instanceof Error ? error.message : String(error) 
         });
       }
@@ -364,10 +301,10 @@ export async function loadAudioTrackUrl(
     // NOTE: blobUrl is already registered by loadEpubAudioBlob
     // No need to register again - that would cause duplicates
     
-    // Cache the result
-    audioTrackCache.set(cacheKey, blobUrl);
+    // Cache the result in centralized cache
+    resourceCacheManager.setAudioTrack(bookId, track.href, blobUrl);
     
-    console.log(`${LOADER_LOG_PREFIX} ✓ Successfully loaded and cached audio track URL`, {
+    logger.debug(`${LOADER_LOG_PREFIX} ✓ Successfully loaded and cached audio track URL`, {
       bookId,
       trackId: track.id,
       href: track.href,
@@ -376,7 +313,7 @@ export async function loadAudioTrackUrl(
     
     return blobUrl;
   } catch (error) {
-    console.error(`${LOADER_LOG_PREFIX} ✗ Failed to load audio track URL`, {
+    logger.error(`${LOADER_LOG_PREFIX} ✗ Failed to load audio track URL`, {
       bookId,
       trackId: track.id,
       href: track.href,
@@ -395,7 +332,7 @@ export async function ensureAudioTrackLoaded(
 ): Promise<AudioTrack> {
   // If already loaded, return as-is
   if (track.url) {
-    console.log(`${LOADER_LOG_PREFIX} Audio track already has URL`, {
+    logger.debug(`${LOADER_LOG_PREFIX} Audio track already has URL`, {
       bookId,
       trackId: track.id,
       trackHref: track.href,
@@ -404,7 +341,7 @@ export async function ensureAudioTrackLoaded(
     return track;
   }
 
-  console.log(`${LOADER_LOG_PREFIX} Ensuring audio track is loaded`, {
+  logger.debug(`${LOADER_LOG_PREFIX} Ensuring audio track is loaded`, {
     bookId,
     trackId: track.id,
     trackHref: track.href,
@@ -415,7 +352,7 @@ export async function ensureAudioTrackLoaded(
     const url = await loadAudioTrackUrl(bookId, track);
     
     if (url) {
-      console.log(`${LOADER_LOG_PREFIX} ✓ Successfully loaded audio track URL`, {
+      logger.debug(`${LOADER_LOG_PREFIX} ✓ Successfully loaded audio track URL`, {
         bookId,
         trackId: track.id,
         trackHref: track.href,
@@ -427,7 +364,7 @@ export async function ensureAudioTrackLoaded(
         _loading: false,
       };
     } else {
-      console.warn(`${LOADER_LOG_PREFIX} ✗ Audio track URL returned null`, {
+      logger.warn(`${LOADER_LOG_PREFIX} ✗ Audio track URL returned null`, {
         bookId,
         trackId: track.id,
         trackHref: track.href,
@@ -435,11 +372,16 @@ export async function ensureAudioTrackLoaded(
       return { ...track, _loading: false };
     }
   } catch (error) {
-    console.error(`${LOADER_LOG_PREFIX} ✗ Failed to ensure audio track loaded`, {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error(`${LOADER_LOG_PREFIX} ✗ Failed to ensure audio track loaded`, {
       bookId,
       trackId: track.id,
       href: track.href,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage,
+    });
+    // Show user-friendly error toast
+    toast.error("Failed to load audio track", {
+      description: errorMessage || `Unable to load "${track.title || track.href}"`,
     });
     // Return track with loading flag cleared even on error
     return { ...track, _loading: false };
@@ -471,7 +413,7 @@ export async function preloadBookContent(
       try {
         return await ensureChapterLoaded(bookId, chapter);
       } catch (error) {
-        console.error(`${LOADER_LOG_PREFIX} failed to preload chapter`, {
+        logger.error(`${LOADER_LOG_PREFIX} failed to preload chapter`, {
           bookId,
           href: chapter.href,
           error,
@@ -491,7 +433,7 @@ export async function preloadBookContent(
       try {
         return await ensureAudioTrackLoaded(bookId, track);
       } catch (error) {
-        console.error(`${LOADER_LOG_PREFIX} failed to preload audio track`, {
+        logger.error(`${LOADER_LOG_PREFIX} failed to preload audio track`, {
           bookId,
           href: track.href,
           error,

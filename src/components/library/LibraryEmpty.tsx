@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { LibraryFilterOption } from "./types";
 import { cn } from "../../lib/utils";
 
@@ -6,7 +7,7 @@ interface LibraryEmptyProps {
   activeFilter: LibraryFilterOption;
 }
 
-export function LibraryEmpty({ isSearching, activeFilter }: LibraryEmptyProps) {
+function LibraryEmptyComponent({ isSearching, activeFilter }: LibraryEmptyProps) {
   const hasFilter = activeFilter !== "all";
   let title = "Your shelf is empty.";
   let description = "Import an EPUB to start reading.";
@@ -58,3 +59,7 @@ export function LibraryEmpty({ isSearching, activeFilter }: LibraryEmptyProps) {
     </div>
   );
 }
+
+export const LibraryEmpty = memo(LibraryEmptyComponent, (prevProps, nextProps) => {
+  return prevProps.isSearching === nextProps.isSearching && prevProps.activeFilter === nextProps.activeFilter;
+});

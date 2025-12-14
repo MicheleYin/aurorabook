@@ -1,5 +1,5 @@
 import { LayoutGrid, List } from "lucide-react";
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 import { anim } from "../../lib/animations";
@@ -22,7 +22,7 @@ interface LibraryHeaderProps {
   actionSlot?: ReactNode;
 }
 
-export function LibraryHeader({
+function LibraryHeaderComponent({
   totalBooks,
   filteredCount,
   isSearching,
@@ -111,3 +111,16 @@ export function LibraryHeader({
     </div>
   );
 }
+
+export const LibraryHeader = memo(LibraryHeaderComponent, (prevProps, nextProps) => {
+  return (
+    prevProps.totalBooks === nextProps.totalBooks &&
+    prevProps.filteredCount === nextProps.filteredCount &&
+    prevProps.isSearching === nextProps.isSearching &&
+    prevProps.activeFilter === nextProps.activeFilter &&
+    prevProps.viewMode === nextProps.viewMode &&
+    prevProps.onFilterChange === nextProps.onFilterChange &&
+    prevProps.onViewModeChange === nextProps.onViewModeChange &&
+    prevProps.actionSlot === nextProps.actionSlot
+  );
+});

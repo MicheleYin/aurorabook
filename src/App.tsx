@@ -7,7 +7,10 @@ import { logger } from "./lib/logger";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LibraryPanel } from "./components/LibraryPanel";
 import { ReaderPanel } from "./components/ReaderPanel";
-import { ReaderAudioPlayer } from "./components/reader/ReaderAudioPlayer";
+import { lazy, Suspense } from "react";
+
+// Lazy load heavy components for better code splitting and initial load performance
+const ReaderAudioPlayer = lazy(() => import("./components/reader/ReaderAudioPlayer").then(module => ({ default: module.ReaderAudioPlayer })));
 import { BookDetailDialog } from "./components/library/BookDetailDialog";
 import { ConvertToAudiobookDialog } from "./components/library/ConvertToAudiobookDialog";
 import { Toaster } from "./components/ui/sonner";
@@ -108,29 +111,77 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     }
   }, [isSettingsHydrated, settings.autoScrollEnabled]);
 
+  // Refs to track pending dynamic import promises for cleanup
+  const lazyChapterLoaderPromiseRef = useRef<Promise<unknown> | null>(null);
+  const domQueryCachePromiseRef = useRef<Promise<unknown> | null>(null);
+
   // Clear chapter cache when switching books to prevent memory accumulation
   useEffect(() => {
     if (activeBookId && activeBook) {
+      let isCancelled = false;
+      
       // Clear cache for all books except the currently active one
-      import("./lib/lazy-chapter-loader").then(({ clearAllCachesExcept }) => {
-        clearAllCachesExcept(activeBook.sourcePath);
+      // This clears:
+      // - lazy-chapter-loader chapterCache (LRU, max 5 chapters)
+      // - lazy-chapter-loader audioTrackCache (LRU, max 1 track)
+      // - Blob URLs for evicted books (via blobURLManager)
+      const chapterLoaderPromise = import("./lib/lazy-chapter-loader").then(({ clearAllCachesExcept }) => {
+        if (!isCancelled) {
+          clearAllCachesExcept(activeBook.sourcePath);
+        }
       });
+      lazyChapterLoaderPromiseRef.current = chapterLoaderPromise;
       
       // Clear DOM query cache when switching books (memory optimization)
-      import("./lib/dom-query-cache").then(({ clearAllCaches }) => {
-        clearAllCaches();
+      const domCachePromise = import("./lib/dom-query-cache").then(({ clearAllCaches }) => {
+        if (!isCancelled) {
+          clearAllCaches();
+        }
       });
+      domQueryCachePromiseRef.current = domCachePromise;
+      
+      // Note: useResourceLoader caches are per-hook-instance and are cleared
+      // when hooks unmount or when clearCache is called explicitly.
+      // The hooks (useAudioTrackLoader, useChapterLoader) should clear their
+      // caches when book changes, but since they're used in ReaderWrapper which
+      // unmounts when book changes, the caches are automatically cleared.
+      
+      return () => {
+        isCancelled = true;
+        lazyChapterLoaderPromiseRef.current = null;
+        domQueryCachePromiseRef.current = null;
+      };
     }
   }, [activeBookId, activeBook?.sourcePath]);
 
   // Cleanup on app unmount (memory optimization)
   useEffect(() => {
     return () => {
-      // Cleanup DOM query cache interval and clear caches
-      import("./lib/dom-query-cache").then(({ cleanupDomQueryCache }) => {
-        cleanupDomQueryCache();
+      // Wait for any pending dynamic imports to complete before cleanup
+      Promise.all([
+        lazyChapterLoaderPromiseRef.current,
+        domQueryCachePromiseRef.current,
+      ]).then(() => {
+        // Cleanup DOM query cache interval and clear caches
+        import("./lib/dom-query-cache").then(({ cleanupDomQueryCache }) => {
+          cleanupDomQueryCache();
+        });
+      }).catch(() => {
+        // If imports fail, still try to cleanup
+        import("./lib/dom-query-cache").then(({ cleanupDomQueryCache }) => {
+          cleanupDomQueryCache();
+        }).catch(() => {
+          // Ignore errors during cleanup
+        });
       });
       
+      // Cleanup timeouts
+      if (audioPlayerCloseTimeoutRef.current) {
+        clearTimeout(audioPlayerCloseTimeoutRef.current);
+      }
+      if (fileOpenRetryTimeoutRef.current) {
+        clearTimeout(fileOpenRetryTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -158,6 +209,9 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   // Ref to save progress from ReaderViewport
   const saveProgressRef = useRef<(() => void) | null>(null);
   const trackChangeHandlerRef = useRef<((trackHref: string) => Promise<void>) | null>(null);
+  // Refs for timeout cleanup
+  const audioPlayerCloseTimeoutRef = useRef<number | null>(null);
+  const fileOpenRetryTimeoutRef = useRef<number | null>(null);
 
   // Inline progress saving logic (previously useProgressSaving hook)
   const saveProgress = useCallback(
@@ -208,9 +262,9 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     }
 
     // Disable auto-scroll on manual selection (only for audiobooks)
-    const activeBook = library.find(b => b.id === activeBookId);
-    const hasAudioTracks = (activeBook?.audioTracks?.length ?? 0) > 0;
-    if (options?.isManualSelection && autoScrollEnabled && hasAudioTracks) {
+    // Use activeBook from context instead of re-finding
+    const hasAudioTracksForChapter = (activeBook?.audioTracks?.length ?? 0) > 0;
+    if (options?.isManualSelection && autoScrollEnabled && hasAudioTracksForChapter) {
       logger.log("[App] Disabling auto-scroll due to manual chapter selection");
       setAutoScrollEnabled(false);
       updateSettings({ autoScrollEnabled: false });
@@ -239,7 +293,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       // When maintaining scroll position, check if this chapter has saved progress
       // If it does, preserve the saved scroll position values
       // This is important for restoration - we don't want to reset progress when restoring
-      const activeBook = library.find(b => b.id === activeBookId);
+      // Use activeBook from context instead of re-finding
       if (activeBook?.progress && activeBook.progress.currentChapterId === chapterId) {
         // Chapter has saved progress - preserve it
         if (activeBook.progress.currentChapterScrollTop !== undefined) {
@@ -275,25 +329,41 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       : null;
     setPendingFragment(fragment && fragment.length > 0 ? fragment : null);
     setActiveView("reader");
-  }, [activeBookId, activeChapterId, autoScrollEnabled, setAutoScrollEnabled, updateSettings, setActiveChapterId, updateBookProgress, setPendingFragment, setActiveView, saveProgress]);
+  }, [activeBookId, activeChapterId, autoScrollEnabled, setAutoScrollEnabled, updateSettings, setActiveChapterId, updateBookProgress, setPendingFragment, setActiveView, activeBook, library]);
 
   // Inline useAudioPlayer functionality (UI state management)
   const [isAudioPlayerOpen, setIsAudioPlayerOpen] = useState(false);
   const [isAudioPlayerDismissing, setIsAudioPlayerDismissing] = useState(false);
   const [currentAudioTrackHref, setCurrentAudioTrackHref] = useState<string | undefined>(undefined);
   const [currentAudioProgress, setCurrentAudioProgress] = useState<AudioProgressSnapshot | undefined>(undefined);
-  const hasAudioTracks = (activeBook?.audioTracks?.length ?? 0) > 0;
-  const showAudioPlayer = hasAudioTracks && (isAudioPlayerOpen || isAudioPlayerDismissing);
+  
+  // Memoize hasAudioTracks
+  const hasAudioTracks = useMemo(
+    () => (activeBook?.audioTracks?.length ?? 0) > 0,
+    [activeBook?.audioTracks?.length]
+  );
+  
+  // Memoize showAudioPlayer
+  const showAudioPlayer = useMemo(
+    () => hasAudioTracks && (isAudioPlayerOpen || isAudioPlayerDismissing),
+    [hasAudioTracks, isAudioPlayerOpen, isAudioPlayerDismissing]
+  );
 
   const handleAudioPlayerClose = useCallback(() => {
+    // Clear any existing timeout
+    if (audioPlayerCloseTimeoutRef.current) {
+      clearTimeout(audioPlayerCloseTimeoutRef.current);
+    }
+    
     // Start dismissal immediately for responsive UI
     setIsAudioPlayerDismissing(true);
     // Wait for exit animation to complete before unmounting
     // The audio player component also has its own timeout, but we need this
     // to update the showAudioPlayer condition after animation completes
-    setTimeout(() => {
+    audioPlayerCloseTimeoutRef.current = window.setTimeout(() => {
       setIsAudioPlayerOpen(false);
       setIsAudioPlayerDismissing(false);
+      audioPlayerCloseTimeoutRef.current = null;
     }, 500); // Match animation duration
   }, []);
 
@@ -395,7 +465,12 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
           if (!isHydrated) {
             logger.log("[App] Library not hydrated yet, waiting...");
             // Retry after a short delay
-            setTimeout(() => {
+            // Clear any existing retry timeout
+            if (fileOpenRetryTimeoutRef.current) {
+              clearTimeout(fileOpenRetryTimeoutRef.current);
+            }
+            fileOpenRetryTimeoutRef.current = window.setTimeout(() => {
+              fileOpenRetryTimeoutRef.current = null;
               setupFileOpenListener();
             }, 500);
             return;
@@ -466,15 +541,18 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       if (unlisten) {
         unlisten();
       }
+      if (fileOpenRetryTimeoutRef.current) {
+        clearTimeout(fileOpenRetryTimeoutRef.current);
+      }
     };
   }, [isHydrated, isImporting, ingestEpub, setLibrary, refreshLibrary, isConverting, setPendingBookForConversion, setShowConvertDialog]);
 
-  const handleSelectBook = async (bookId: string) => {
+  const handleSelectBook = useCallback(async (bookId: string) => {
     await handleSelectBookContext(bookId);
     setActiveView("reader");
-  };
+  }, [handleSelectBookContext, setActiveView]);
 
-  const handleAddEbook = async () => {
+  const handleAddEbook = useCallback(async () => {
     if (isImporting) return;
     
     const result = await importFromDialog();
@@ -500,11 +578,11 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
         }
       }
     }
-  };
+  }, [isImporting, importFromDialog, isConverting, setPendingBookForConversion, setShowConvertDialog]);
 
   const [deletingBookId, setDeletingBookId] = useState<string | null>(null);
 
-  const handleDeleteBook = async (bookId: string) => {
+  const handleDeleteBook = useCallback(async (bookId: string) => {
     // Set deleting state
     setDeletingBookId(bookId);
     
@@ -548,7 +626,17 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       // Clear deleting state
       setDeletingBookId(null);
     }
-  };
+  }, [
+    library,
+    cancelConversionForBook,
+    setLibrary,
+    setDetailBookId,
+    activeBookId,
+    setActiveBookId,
+    setActiveChapterId,
+    setPendingFragment,
+    setActiveView
+  ]);
 
   // Auto-scroll toast is now shown in handleAutoScrollToggle (in useAudioPlayer)
 
@@ -558,7 +646,11 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     [library, libraryFilter, librarySearchTerm],
   );
 
-  const audioPlayerChromeVisible = activeView === "reader" ? isReaderChromeVisible : true;
+  // Memoize audioPlayerChromeVisible
+  const audioPlayerChromeVisible = useMemo(
+    () => activeView === "reader" ? isReaderChromeVisible : true,
+    [activeView, isReaderChromeVisible]
+  );
 
   // Memoize callbacks for reader view
   const handleNavigateLibrary = useCallback(async () => {
@@ -658,7 +750,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
           onChapterRestore={async () => {
             // Chapter restore is handled by ReaderWrapper
           }}
-          onChapterProgressRestore={async (bookId, chapterId, _withAutoScroll) => {
+          onChapterProgressRestore={async (bookId, chapterId) => {
             // Progress restore is coordinated through the coordinator
             // The actual restoration will happen in onChapterLoaded when DOM is ready
             // This handler just ensures the coordinator lock is set properly
@@ -802,12 +894,13 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
         </div>
       </div>
       {showAudioPlayer && activeBook ? (
-        <ReaderAudioPlayer
-          key={activeBook.id}
-          bookId={activeBook.id}
-          tracks={activeBook.audioTracks}
-          bookTitle={activeBook.title}
-          bookAuthor={activeBook.author}
+        <Suspense fallback={<div className="flex items-center justify-center p-8"><div className="text-muted-foreground">Loading audio player...</div></div>}>
+          <ReaderAudioPlayer
+            key={activeBook.id}
+            bookId={activeBook.id}
+            tracks={activeBook.audioTracks}
+            bookTitle={activeBook.title}
+            bookAuthor={activeBook.author}
           coverUrl={activeBook.coverUrl}
           sourcePath={activeBook.sourcePath}
           onProgress={(snapshot) => {
@@ -821,7 +914,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
           onTrackChange={handleTrackChange}
           audioSyncMap={activeBook.audioSyncMap}
           chapters={activeBook.chapters}
-        />
+          />
+        </Suspense>
       ) : null}
       <div
         className={cn(

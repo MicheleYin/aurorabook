@@ -4,12 +4,14 @@
  * No useEffects - all loading is explicit via callbacks
  */
 
-import { useCallback, useRef, useMemo } from "react";
+import { useCallback, useRef, useMemo, useState } from "react";
+import { toast } from "sonner";
 import type { AudioTrack } from "../../types/reader";
 import { loadEpubAudioBlob } from "../../lib/book-service";
 import { useResourceLoader } from "../useResourceLoader";
 import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
 import { blobURLManager } from "../../lib/blob-url-manager";
+import { logger } from "../../lib/logger";
 
 export function useAudioTrackLoader() {
   // Get coordinator for operation management
@@ -17,89 +19,149 @@ export function useAudioTrackLoader() {
   
   // Track current book ID for cleanup
   const currentBookIdRef = useRef<string | null>(null);
-  // Use ref instead of state to avoid re-renders (memory optimization)
-  const cacheVersionRef = useRef(0);
+  // Track cache changes with state to trigger re-render when needed
+  const [cacheVersion, setCacheVersion] = useState(0);
 
-  const loader = useResourceLoader<AudioTrack>({
-    isLoaded: (track) => !!track.url,
-    loadResource: async (bookId, track) => {
-      // Check if operation is cancelled
-      const currentOp = coordinator.getCurrentOperation("loadAudioTrack");
-      if (currentOp?.cancelled) {
-        throw new Error("Audio track load cancelled");
-      }
-      
-      // Use coordinator to load track
-      const url = await coordinator.loadAudioTrack(bookId, track.id);
-      if (url) {
-        // NOTE: url is already registered by loadEpubAudioBlob (via coordinator)
-        // No need to register again - that would cause duplicates
-        currentBookIdRef.current = bookId;
-        return { ...track, url };
-      }
-      
-      // Fallback to direct loading if coordinator doesn't have handler
-      console.log("[useAudioTrackLoader] Loading audio track", {
-        bookId,
-        trackId: track.id,
-        trackHref: track.href,
-        trackTitle: track.title,
-      });
+  // Memoize loadResource callback to prevent loader recreation
+  const loadResourceCallback = useCallback(async (bookId: string, track: AudioTrack, signal?: AbortSignal) => {
+    // Check if operation is cancelled
+    if (signal?.aborted) {
+      throw new Error("Audio track load cancelled");
+    }
+    
+    const currentOp = coordinator.getCurrentOperation("loadAudioTrack");
+    if (currentOp?.cancelled) {
+      throw new Error("Audio track load cancelled");
+    }
+    
+    // Use coordinator to load track
+    const url = await coordinator.loadAudioTrack(bookId, track.id);
+    if (url) {
+      // NOTE: url is already registered by loadEpubAudioBlob (via coordinator)
+      // No need to register again - that would cause duplicates
+      currentBookIdRef.current = bookId;
+      return { ...track, url };
+    }
+    
+    // Fallback to direct loading if coordinator doesn't have handler
+    // Try alternative href formats if primary load fails (same as loadAudioTrackUrl)
+    logger.debug("[useAudioTrackLoader] Loading audio track", {
+      bookId,
+      trackId: track.id,
+      trackHref: track.href,
+      trackTitle: track.title,
+    });
+    
+    const alternatives = [
+      track.href,
+      track.href.replace(/^\/+/, ""),
+      track.href.replace(/^OEBPS\//, ""),
+      `OEBPS/${track.href.replace(/^\/+/, "").replace(/^OEBPS\//, "")}`,
+    ];
+    
+    logger.debug("[useAudioTrackLoader] Trying href alternatives", {
+      bookId,
+      trackHref: track.href,
+      alternatives,
+    });
+    
+    let blobUrl: string | null = null;
+    for (const altHref of alternatives) {
       try {
-        const blobUrl = await loadEpubAudioBlob(bookId, track.href);
+        logger.debug("[useAudioTrackLoader] Trying to load audio with href:", altHref);
+        blobUrl = await loadEpubAudioBlob(bookId, altHref);
         if (blobUrl) {
-          // NOTE: blobUrl is already registered by loadEpubAudioBlob
-          // No need to register again - that would cause duplicates
-          currentBookIdRef.current = bookId;
-          
-          const loaded: AudioTrack = { ...track, url: blobUrl };
-          console.log("[useAudioTrackLoader] ✓ Successfully loaded audio track", {
-            bookId,
-            trackId: track.id,
-            trackHref: track.href,
-            isBlobUrl: blobUrl.startsWith("blob:"),
-          });
-          return loaded;
+          if (altHref !== track.href) {
+            logger.debug("[useAudioTrackLoader] ✓ Loaded audio track using alternative href", {
+              altHref,
+              originalHref: track.href,
+            });
+          } else {
+            logger.debug("[useAudioTrackLoader] ✓ Loaded audio track with original href", {
+              trackHref: track.href,
+            });
+          }
+          break;
         } else {
-          console.warn("[useAudioTrackLoader] ✗ Audio track returned null", {
-            bookId,
-            trackId: track.id,
-            trackHref: track.href,
+          logger.warn("[useAudioTrackLoader] Audio track returned null for href", {
+            altHref,
           });
         }
       } catch (error) {
-        console.error("[useAudioTrackLoader] ✗ Error loading audio track:", {
-          bookId,
-          trackId: track.id,
-          trackHref: track.href,
-          error: error instanceof Error ? error.message : String(error),
+        // Continue to next alternative
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.warn("[useAudioTrackLoader] Failed to load with href, trying next", {
+          altHref,
+          error: errorMessage,
         });
       }
-      return null;
-    },
+    }
+    
+    if (blobUrl) {
+      // NOTE: blobUrl is already registered by loadEpubAudioBlob
+      // No need to register again - that would cause duplicates
+      currentBookIdRef.current = bookId;
+      
+      const loaded: AudioTrack = { ...track, url: blobUrl };
+      logger.debug("[useAudioTrackLoader] ✓ Successfully loaded audio track", {
+        bookId,
+        trackId: track.id,
+        trackHref: track.href,
+        isBlobUrl: blobUrl.startsWith("blob:"),
+      });
+      return loaded;
+    } else {
+      // Check for cancellation before logging
+      if (signal?.aborted) {
+        throw new Error("Audio track load cancelled");
+      }
+      const errorMessage = `Failed to load audio track: ${track.href} (tried ${alternatives.length} alternatives)`;
+      logger.error("[useAudioTrackLoader] ✗ Audio track returned null for all alternatives", {
+        bookId,
+        trackId: track.id,
+        trackHref: track.href,
+        alternatives,
+      });
+      toast.error("Failed to load audio track", {
+        description: errorMessage || `Unable to load "${track.title || track.id}"`,
+      });
+      throw new Error(errorMessage);
+    }
+  }, [coordinator]);
+
+  const loader = useResourceLoader<AudioTrack>({
+    isLoaded: (track) => !!track.url,
+    loadResource: loadResourceCallback,
     getResourceId: (track) => track.id,
     logPrefix: "[useAudioTrackLoader]",
+    retryOptions: {
+      maxRetries: 2,
+      retryDelay: 1000,
+    },
   });
+
+  // Extract stable functions from loader to avoid dependency on loader object
+  const { load: loaderLoad, getCached: loaderGetCached, isResourceLoaded: loaderIsResourceLoaded, getCachedResources: loaderGetCachedResources, clearCache: loaderClearCache } = loader;
 
   const loadTrack = useCallback(async (
     bookId: string,
     track: AudioTrack
   ): Promise<AudioTrack | null> => {
-    const result = await loader.load(bookId, track);
+    const result = await loaderLoad(bookId, track);
     if (result) {
-      // Increment cache version (using ref - no re-render)
-      cacheVersionRef.current += 1;
+      // Update cache version to trigger loadedTracks recalculation
+      setCacheVersion(prev => prev + 1);
     }
     return result;
-  }, [loader]);
+  }, [loaderLoad]);
 
   const getCachedTrack = useCallback((bookId: string, trackId: string): AudioTrack | null => {
-    return loader.getCached(bookId, trackId);
-  }, [loader]);
+    return loaderGetCached(bookId, trackId);
+  }, [loaderGetCached]);
 
   const isTrackLoaded = useCallback((bookId: string, trackId: string): boolean => {
-    return loader.isResourceLoaded(bookId, trackId);
-  }, [loader]);
+    return loaderIsResourceLoaded(bookId, trackId);
+  }, [loaderIsResourceLoaded]);
 
   const clearCache = useCallback((bookId?: string) => {
     // Revoke Blob URLs before clearing cache using centralized manager
@@ -108,25 +170,24 @@ export function useAudioTrackLoader() {
       blobURLManager.revokeForBook(bookId);
     } else {
       // Get cached resources from the loader and revoke their blob URLs
-      const cachedTracks = loader.getCachedResources();
+      const cachedTracks = loaderGetCachedResources();
       for (const track of cachedTracks) {
         if (track.url && track.url.startsWith("blob:")) {
           blobURLManager.revoke(track.url);
         }
       }
     }
-    loader.clearCache(bookId);
-    // Increment cache version (using ref - no re-render)
-    cacheVersionRef.current += 1;
-  }, [loader]);
+    loaderClearCache(bookId);
+    // Update cache version to trigger loadedTracks recalculation
+    setCacheVersion(prev => prev + 1);
+  }, [loaderGetCachedResources, loaderClearCache]);
 
   // Get all loaded tracks as a Map (computed on-demand from cache)
-  // No memoization with cacheVersion - computed fresh each time to avoid memory duplication
-  // The cache itself is the single source of truth
+  // Memoized with cacheVersion to trigger recalculation when cache changes
   const loadedTracks = useMemo(() => {
-    const tracks = loader.getCachedResources();
+    const tracks = loaderGetCachedResources();
     return new Map(tracks.map(track => [track.id, track]));
-  }, [loader]);
+  }, [loaderGetCachedResources, cacheVersion]);
 
   return {
     loadTrack,

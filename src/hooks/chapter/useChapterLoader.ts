@@ -2,22 +2,23 @@
  * Hook for loading and caching chapters
  * Uses generic useResourceLoader internally
  * No useEffects - all loading is explicit via callbacks
- * 
- * Note: Chapters use data URLs for images (not blob URLs), so no blob URL cleanup needed
  */
 
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import type { Chapter } from "../../types/reader";
 import { ensureChapterLoaded } from "../../lib/lazy-chapter-loader";
 import { useResourceLoader } from "../useResourceLoader";
 import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
+import { blobURLManager } from "../../lib/blob-url-manager";
+import { logger } from "../../lib/logger";
 
 export function useChapterLoader(_bookId?: string) {
   // Get coordinator for operation management
   const coordinator = useReaderCoordinator();
   
-  // Use ref instead of state to avoid re-renders (memory optimization)
-  const cacheVersionRef = useRef(0);
+  // Track cache changes with state to trigger re-render when needed (like useAudioTrackLoader)
+  const [cacheVersion, setCacheVersion] = useState(0);
 
   const loader = useResourceLoader<Chapter>({
     isLoaded: (chapter) => !!chapter.contentHtml,
@@ -30,7 +31,7 @@ export function useChapterLoader(_bookId?: string) {
       
       // Use coordinator to load chapter (if available)
       // For now, still use direct loading but check coordinator state
-      console.log("[useChapterLoader] Loading chapter", {
+      logger.debug("[useChapterLoader] Loading chapter", {
         bookId,
         chapterId: chapter.id,
         chapterHref: chapter.href,
@@ -38,8 +39,8 @@ export function useChapterLoader(_bookId?: string) {
       });
       try {
         const loaded = await ensureChapterLoaded(bookId, chapter);
-        if (loaded) {
-          console.log("[useChapterLoader] ✓ Successfully loaded chapter", {
+        if (loaded && loaded.contentHtml) {
+          logger.debug("[useChapterLoader] ✓ Successfully loaded chapter", {
             bookId,
             chapterId: chapter.id,
             chapterHref: chapter.href,
@@ -47,18 +48,26 @@ export function useChapterLoader(_bookId?: string) {
           });
           return loaded;
         } else {
-          console.warn("[useChapterLoader] ✗ Chapter returned null", {
+          const errorMessage = `Chapter "${chapter.title || chapter.id}" failed to load`;
+          logger.warn("[useChapterLoader] ✗ Chapter returned without content", {
             bookId,
             chapterId: chapter.id,
             chapterHref: chapter.href,
           });
+          toast.error("Failed to load chapter", {
+            description: errorMessage,
+          });
         }
       } catch (error) {
-        console.error("[useChapterLoader] ✗ Error loading chapter:", {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error("[useChapterLoader] ✗ Error loading chapter:", {
           bookId,
           chapterId: chapter.id,
           chapterHref: chapter.href,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
+        });
+        toast.error("Failed to load chapter", {
+          description: errorMessage || `Unable to load "${chapter.title || chapter.id}"`,
         });
       }
       return null;
@@ -73,8 +82,8 @@ export function useChapterLoader(_bookId?: string) {
   ): Promise<Chapter | null> => {
     const result = await loader.load(bookId, chapter);
     if (result) {
-      // Increment cache version (using ref - no re-render)
-      cacheVersionRef.current += 1;
+      // Update cache version to trigger loadedChapters recalculation
+      setCacheVersion(prev => prev + 1);
     }
     return result;
   }, [loader]);
@@ -88,21 +97,27 @@ export function useChapterLoader(_bookId?: string) {
   }, [loader]);
 
   const clearCache = useCallback((bookId?: string) => {
-    // Clear chapter cache
-    // Note: Chapters use data URLs for images (handled by backend), not blob URLs
-    // So no blob URL cleanup needed here
+    // Revoke Blob URLs before clearing cache using centralized manager
+    if (bookId) {
+      // Revoke all blob URLs for this book
+      blobURLManager.revokeForBook(bookId);
+    } else {
+      // When clearing all chapters, blob URLs are managed per-book
+      // If chapters create blob URLs in the future, they should be
+      // registered with blobURLManager and will be cleaned up via revokeForBook
+      // For now, chapters don't store blob URLs, so no per-resource cleanup needed
+    }
     loader.clearCache(bookId);
-    // Increment cache version (using ref - no re-render)
-    cacheVersionRef.current += 1;
+    // Update cache version to trigger loadedChapters recalculation
+    setCacheVersion(prev => prev + 1);
   }, [loader]);
 
   // Get all loaded chapters as a Map (computed on-demand from cache)
-  // No memoization - computed fresh each time to avoid memory duplication
-  // The cache itself is the single source of truth
+  // Memoized with cacheVersion to trigger recalculation when cache changes
   const loadedChapters = useMemo(() => {
     const chapters = loader.getCachedResources();
     return new Map(chapters.map(chapter => [chapter.id, chapter]));
-  }, [loader]);
+  }, [loader, cacheVersion]);
 
   // Track the most recently set chapter ID (not full chapter - memory optimization)
   const loadedChapterIdRef = useRef<string | null>(null);
@@ -120,15 +135,15 @@ export function useChapterLoader(_bookId?: string) {
     // Otherwise return most recently cached chapter
     const chapters = loader.getCachedResources();
     return chapters.length > 0 ? chapters[chapters.length - 1] : null;
-  }, [loader]);
+  }, [loader, cacheVersion]); // Include cacheVersion to trigger recalculation when cache changes
 
   // Set loaded chapter (for backward compatibility - stores only ID, not full chapter)
   const setLoadedChapter = useCallback((chapter: Chapter | null) => {
     // Store only ID reference, not full chapter object (memory optimization)
     loadedChapterIdRef.current = chapter?.id || null;
-    // Increment cache version (using ref - no re-render)
+    // Update cache version to trigger loadedChapters recalculation
     if (chapter) {
-      cacheVersionRef.current += 1;
+      setCacheVersion(prev => prev + 1);
     }
   }, []);
 

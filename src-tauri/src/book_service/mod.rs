@@ -683,6 +683,14 @@ pub async fn load_epub_audio(
         }
     }
     
+    // Try OEBPS variations (similar to chapter loading)
+    if !audio_href.starts_with("OEBPS/") {
+        href_variations.push(format!("OEBPS/{}", audio_href.trim_start_matches('/')));
+    }
+    if audio_href.starts_with("OEBPS/") {
+        href_variations.push(audio_href.trim_start_matches("OEBPS/").to_string());
+    }
+    
     // Remove duplicates while preserving order
     let mut seen = std::collections::HashSet::new();
     let mut unique_variations = Vec::new();
@@ -759,6 +767,14 @@ pub async fn load_epub_audio_bytes(
         }
     }
     
+    // Try OEBPS variations (similar to chapter loading)
+    if !audio_href.starts_with("OEBPS/") {
+        href_variations.push(format!("OEBPS/{}", audio_href.trim_start_matches('/')));
+    }
+    if audio_href.starts_with("OEBPS/") {
+        href_variations.push(audio_href.trim_start_matches("OEBPS/").to_string());
+    }
+    
     // Remove duplicates while preserving order
     let mut seen = std::collections::HashSet::new();
     let mut unique_variations = Vec::new();
@@ -795,6 +811,87 @@ pub async fn load_epub_audio_bytes(
     
     // Audio should already be in database from ingestion
     // If not found, return None (audio should have been extracted during ingestion)
+    Ok(None)
+}
+
+/// Load chapter content as bytes (for blob URL creation)
+/// Returns (bytes, mime_type) where bytes is the UTF-8 encoded HTML
+#[tauri::command]
+pub async fn load_epub_chapter_bytes(
+    book_id: String,
+    chapter_href: String,
+    app: tauri::AppHandle,
+) -> AppResult<Option<(Vec<u8>, String)>> {
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
+    
+    // Try multiple variations of the chapter href to find a match
+    let mut href_variations = Vec::new();
+    
+    // Add the exact href as-is
+    href_variations.push(chapter_href.clone());
+    
+    // Try with/without leading slash
+    if chapter_href.starts_with('/') {
+        href_variations.push(chapter_href[1..].to_string());
+    } else {
+        href_variations.push(format!("/{}", chapter_href));
+    }
+    
+    // Try OEBPS variations
+    if !chapter_href.starts_with("OEBPS/") {
+        href_variations.push(format!("OEBPS/{}", chapter_href.trim_start_matches('/')));
+    }
+    if chapter_href.starts_with("OEBPS/") {
+        href_variations.push(chapter_href.trim_start_matches("OEBPS/").to_string());
+    }
+    
+    // Remove duplicates while preserving order
+    let mut seen = std::collections::HashSet::new();
+    let mut unique_variations = Vec::new();
+    for href in href_variations {
+        if seen.insert(href.clone()) {
+            unique_variations.push(href);
+        }
+    }
+    
+    log::debug!("Trying to load chapter bytes '{}' for book '{}' with {} variations", 
+        chapter_href, book_id, unique_variations.len());
+    
+    // Try to get chapter from database with each variation
+    for (idx, href) in unique_variations.iter().enumerate() {
+        match ChapterRepository::find_by_href(db.as_ref(), &book_id, href).await {
+            Ok(Some(chapter)) => {
+                // Get the HTML content
+                if let Some(content_html) = chapter.content_html {
+                    // Process images in the HTML: resolve relative paths to data URLs
+                    let processed_html = process_images_in_html(db.as_ref(), &book_id, &content_html, href).await?;
+                    
+                    // Convert HTML string to bytes (UTF-8)
+                    let bytes = processed_html.into_bytes();
+                    let mime_type = "text/html".to_string();
+                    
+                    log::info!("✓ Found chapter bytes with href variation #{}: '{}' (original: '{}', {} bytes)", 
+                        idx + 1, href, chapter_href, bytes.len());
+                    return Ok(Some((bytes, mime_type)));
+                } else {
+                    log::trace!("  Variation #{} '{}' found but has no content", idx + 1, href);
+                }
+            }
+            Ok(None) => {
+                log::trace!("  Variation #{} '{}' not found", idx + 1, href);
+            }
+            Err(e) => {
+                log::warn!("Error querying chapter with href '{}': {}", href, e);
+            }
+        }
+    }
+    
+    log::warn!("✗ Chapter not found in database: '{}' for book '{}' (tried {} variations: {:?})", 
+        chapter_href, book_id, unique_variations.len(), unique_variations);
+    
+    // Chapter should already be in database from ingestion
+    // If not found, return None
     Ok(None)
 }
 

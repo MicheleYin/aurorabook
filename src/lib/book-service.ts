@@ -90,6 +90,78 @@ export async function loadChapterContent(
 }
 
 /**
+ * Load a chapter from EPUB file and return as a Blob URL
+ * This is more efficient for large files as it avoids base64 encoding overhead
+ * 
+ * CENTRALIZED: Automatically registers blob URL with blobURLManager.
+ * Callers should NOT register it again - this function handles it.
+ * 
+ * Returns a tuple of (blobUrl, htmlString) where:
+ * - blobUrl is a Blob URL that is already registered and managed centrally
+ * - htmlString is the HTML content as a string (for direct DOM insertion)
+ */
+export async function loadEpubChapterBlob(
+  bookId: string,
+  chapterHref: string
+): Promise<{ blobUrl: string; htmlString: string } | null> {
+  console.log("[BookService] loadEpubChapterBlob called", {
+    bookId,
+    chapterHref,
+  });
+  try {
+    const result = await invoke<[number[], string] | null>("load_epub_chapter_bytes", {
+      bookId,
+      chapterHref,
+    });
+    
+    if (!result) {
+      console.log("[BookService] loadEpubChapterBlob result: not found", {
+        bookId,
+        chapterHref,
+      });
+      return null;
+    }
+    
+    const [bytes, mimeType] = result;
+    
+    // Convert number array to Uint8Array
+    const uint8Array = new Uint8Array(bytes);
+    
+    // Decode bytes to get HTML string (for direct DOM insertion)
+    const htmlString = new TextDecoder("utf-8").decode(uint8Array);
+    
+    // Create Blob URL
+    const blob = new Blob([uint8Array], { type: mimeType });
+    const blobUrl = URL.createObjectURL(blob);
+    
+    // CENTRALIZED: Register blob URL immediately when created
+    // This ensures all blob URLs are tracked in one place
+    if (blobUrl.startsWith("blob:")) {
+      const { blobURLManager } = await import("./blob-url-manager");
+      blobURLManager.register(bookId, blobUrl, "other", false);
+    }
+    
+    console.log("[BookService] loadEpubChapterBlob result: success", {
+      bookId,
+      chapterHref,
+      bytesLength: bytes.length,
+      htmlLength: htmlString.length,
+      mimeType,
+      isBlobUrl: blobUrl.startsWith("blob:"),
+    });
+    
+    return { blobUrl, htmlString };
+  } catch (error) {
+    console.error("[BookService] Failed to load EPUB chapter bytes:", {
+      bookId,
+      chapterHref,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
+/**
  * Load an image from EPUB file and return as base64 data URL
  * This resolves relative image paths relative to the chapter location
  */

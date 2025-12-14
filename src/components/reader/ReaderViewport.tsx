@@ -5,7 +5,7 @@
  * No useEffects - all side effects handled via hooks and callbacks
  */
 
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, memo } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "../../lib/utils";
@@ -76,7 +76,7 @@ type ReaderViewportProps = {
   elementIndex?: ElementIndexHook;
 };
 
-export function ReaderViewport({
+function ReaderViewportComponent({
   config,
   state,
   callbacks,
@@ -466,3 +466,55 @@ export function ReaderViewport({
     </div>
   );
 }
+
+export const ReaderViewport = memo(ReaderViewportComponent, (prevProps, nextProps) => {
+  // Compare config object
+  const prevConfig = prevProps.config;
+  const nextConfig = nextProps.config;
+  if (
+    prevConfig.preferences !== nextConfig.preferences ||
+    prevConfig.theme !== nextConfig.theme ||
+    prevConfig.chromeVisible !== nextConfig.chromeVisible ||
+    prevConfig.audioPlayerVisible !== nextConfig.audioPlayerVisible ||
+    prevConfig.autoScrollEnabled !== nextConfig.autoScrollEnabled
+  ) {
+    return false;
+  }
+  
+  // Compare state object
+  const prevState = prevProps.state;
+  const nextState = nextProps.state;
+  if (
+    prevState.book !== nextState.book ||
+    prevState.chapter !== nextState.chapter ||
+    prevState.isLoading !== nextState.isLoading ||
+    prevState.animationState !== nextState.animationState ||
+    prevState.pendingFragment !== nextState.pendingFragment
+  ) {
+    return false;
+  }
+  
+  // Compare callbacks - assume stable if same reference
+  const prevCallbacks = prevProps.callbacks;
+  const nextCallbacks = nextProps.callbacks;
+  if (
+    prevCallbacks.onSelectChapter !== nextCallbacks.onSelectChapter ||
+    prevCallbacks.onChapterLoaded !== nextCallbacks.onChapterLoaded ||
+    prevCallbacks.onToggleChrome !== nextCallbacks.onToggleChrome ||
+    prevCallbacks.onSyncToAudio !== nextCallbacks.onSyncToAudio ||
+    prevCallbacks.onChapterProgress !== nextCallbacks.onChapterProgress ||
+    prevCallbacks.onFragmentConsumed !== nextCallbacks.onFragmentConsumed ||
+    prevCallbacks.onPreferencesChange !== nextCallbacks.onPreferencesChange ||
+    prevCallbacks.onScroll !== nextCallbacks.onScroll ||
+    prevCallbacks.onScrollEnd !== nextCallbacks.onScrollEnd ||
+    prevCallbacks.isScrolling !== nextCallbacks.isScrolling
+  ) {
+    return false;
+  }
+  
+  // Compare refs
+  if (prevProps.contentRef !== nextProps.contentRef) return false;
+  if (prevProps.elementIndex !== nextProps.elementIndex) return false;
+  
+  return true;
+});

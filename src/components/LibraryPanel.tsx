@@ -1,4 +1,5 @@
 import { Plus, Loader2 } from "lucide-react";
+import { memo } from "react";
 
 import type { Book } from "../types/reader";
 import type { ConversionProgress } from "../lib/audiobook-converter";
@@ -28,7 +29,7 @@ export type LibraryPanelProps = {
   conversionStartTimeRef?: React.MutableRefObject<number | null>;
 };
 
-export function LibraryPanel({
+function LibraryPanelComponent({
   library,
   totalBooks,
   searchTerm,
@@ -115,4 +116,53 @@ export function LibraryPanel({
     </div>
   );
 }
+
+export const LibraryPanel = memo(LibraryPanelComponent, (prevProps, nextProps) => {
+  // Compare primitive props
+  if (
+    prevProps.totalBooks !== nextProps.totalBooks ||
+    prevProps.searchTerm !== nextProps.searchTerm ||
+    prevProps.activeFilter !== nextProps.activeFilter ||
+    prevProps.viewMode !== nextProps.viewMode ||
+    prevProps.activeBookId !== nextProps.activeBookId ||
+    prevProps.isImporting !== nextProps.isImporting
+  ) {
+    return false;
+  }
+  
+  // Compare library array - check length and IDs
+  if (prevProps.library.length !== nextProps.library.length) return false;
+  const libraryChanged = prevProps.library.some((book, index) => {
+    const nextBook = nextProps.library[index];
+    return !nextBook || book.id !== nextBook.id || book !== nextBook;
+  });
+  if (libraryChanged) return false;
+  
+  // Compare callbacks
+  if (
+    prevProps.onSearchChange !== nextProps.onSearchChange ||
+    prevProps.onFilterChange !== nextProps.onFilterChange ||
+    prevProps.onViewModeChange !== nextProps.onViewModeChange ||
+    prevProps.onAddEbook !== nextProps.onAddEbook ||
+    prevProps.onOpenBook !== nextProps.onOpenBook ||
+    prevProps.onViewDetails !== nextProps.onViewDetails
+  ) {
+    return false;
+  }
+  
+  // Compare conversion progress - check if any book's progress changed
+  const prevProgressKeys = Object.keys(prevProps.bookConversionProgress || {});
+  const nextProgressKeys = Object.keys(nextProps.bookConversionProgress || {});
+  if (prevProgressKeys.length !== nextProgressKeys.length) return false;
+  for (const key of prevProgressKeys) {
+    const prevProgress = prevProps.bookConversionProgress?.[key];
+    const nextProgress = nextProps.bookConversionProgress?.[key];
+    if (prevProgress !== nextProgress) return false;
+  }
+  
+  // Compare ref
+  if (prevProps.conversionStartTimeRef !== nextProps.conversionStartTimeRef) return false;
+  
+  return true;
+});
 

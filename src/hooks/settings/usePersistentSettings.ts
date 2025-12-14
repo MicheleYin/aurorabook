@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { DEFAULT_KOKORO_VOICE_ID } from "../../constants/kokoro";
 import type { AppSettings } from "../../types/settings";
+import { logger } from "../../lib/logger";
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
@@ -30,7 +31,7 @@ export function usePersistentSettings() {
           setIsHydrated(true);
         }
       } catch (error) {
-        console.warn("[SettingsPersistence]: failed to load settings from backend, using defaults:", error);
+        logger.warn("[SettingsPersistence]: failed to load settings from backend, using defaults:", { error });
         if (!cancelled) {
           setIsHydrated(true);
         }
@@ -51,7 +52,7 @@ export function usePersistentSettings() {
       
       // Persist to backend asynchronously
       invoke("update_app_settings", { settings: newSettings }).catch((error) => {
-        console.warn("[SettingsPersistence]: failed to persist settings:", error);
+        logger.warn("[SettingsPersistence]: failed to persist settings:", { error });
       });
       
       return newSettings;

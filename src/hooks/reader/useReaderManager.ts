@@ -12,7 +12,7 @@
  * All operations go through ReaderCoordinator for proper coordination.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { logger } from "../../lib/logger";
 import type { AudioSyncMap, ReaderPreferences } from "../../types/reader";
 import type { ChapterProgressSnapshot, ChapterSelectionOptions } from "../../components/reader/types";
@@ -59,6 +59,9 @@ export function useReaderManager(params: UseReaderManagerParams) {
   const pendingScrollToElementIdRef = useRef<string | null>(null);
   const isRestoringRef = useRef(false);
   const progressRef = useRef<ReturnType<typeof useChapterProgress> | null>(null);
+  // Refs for timeout cleanup
+  const chapterAnimationTimeoutRef = useRef<number | null>(null);
+  const scrollTimeoutRef = useRef<number | null>(null);
 
   // Sub-hooks
   const chapterLoader = useChapterLoader();
@@ -163,20 +166,31 @@ export function useReaderManager(params: UseReaderManagerParams) {
       previousChapterIdRef.current = chapterId;
       chapterLoader.setLoadedChapter(loaded);
       
+      // Clear existing timeouts
+      if (chapterAnimationTimeoutRef.current) {
+        clearTimeout(chapterAnimationTimeoutRef.current);
+      }
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+      
       setChapterAnimationState("entering");
-      setTimeout(() => {
+      chapterAnimationTimeoutRef.current = window.setTimeout(() => {
         setChapterAnimationState("entered");
+        chapterAnimationTimeoutRef.current = null;
       }, 50);
 
       // Handle scroll position
       // Use a small delay to ensure virtualized content is rendered
       if (options?.scrollPosition === "top" || options?.isManualSelection) {
-        setTimeout(() => {
+        scrollTimeoutRef.current = window.setTimeout(() => {
           progress.scrollToTop();
+          scrollTimeoutRef.current = null;
         }, 100);
       } else if (options?.scrollPosition === "bottom") {
-        setTimeout(() => {
+        scrollTimeoutRef.current = window.setTimeout(() => {
           progress.scrollToBottom();
+          scrollTimeoutRef.current = null;
         }, 100);
       }
     }
@@ -292,5 +306,17 @@ export function useReaderManager(params: UseReaderManagerParams) {
     // Coordinator access
     coordinator,
   };
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (chapterAnimationTimeoutRef.current) {
+        clearTimeout(chapterAnimationTimeoutRef.current);
+      }
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, []);
 }
 

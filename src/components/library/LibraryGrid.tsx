@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, type KeyboardEvent } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, memo, type KeyboardEvent } from "react";
 import { ImageOff, Loader2 } from "lucide-react";
 
 import type { Book } from "../../types/reader";
@@ -23,7 +23,7 @@ interface LibraryGridProps {
   conversionStartTimeRef?: React.MutableRefObject<number | null>;
 }
 
-export function LibraryGrid({
+function LibraryGridComponent({
   books,
   activeBookId,
   onOpenBook,
@@ -265,3 +265,16 @@ function BookCoverCard({
     </div>
   );
 }
+
+// Memoize component to prevent unnecessary re-renders
+export const LibraryGrid = memo(LibraryGridComponent, (prevProps, nextProps) => {
+  // Only re-render if these critical props change
+  return (
+    prevProps.books === nextProps.books &&
+    prevProps.activeBookId === nextProps.activeBookId &&
+    prevProps.bookConversionProgress === nextProps.bookConversionProgress &&
+    prevProps.conversionStartTimeRef === nextProps.conversionStartTimeRef &&
+    prevProps.onOpenBook === nextProps.onOpenBook &&
+    prevProps.onViewDetails === nextProps.onViewDetails
+  );
+});

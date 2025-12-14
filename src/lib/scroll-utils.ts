@@ -3,6 +3,8 @@
  * Uses refs and callbacks to avoid excessive useEffects
  */
 
+import { logger } from "./logger";
+
 export type ScrollMetrics = {
   scrollTop: number;
   scrollHeight: number;
@@ -138,7 +140,7 @@ export function restoreWindowScrollPosition(savedMetrics: {
 }): boolean {
   const current = computeWindowScrollMetrics();
   if (current.maxScroll <= 0) return false;
-  console.log("[Scroll] restoreWindowScrollPosition called", {
+  logger.debug("[Scroll] restoreWindowScrollPosition called", {
     savedMetrics,
     current,
   });
@@ -304,7 +306,7 @@ export function findScrollableContainer(element: HTMLElement | null): HTMLElemen
     
     // If it has overflow styles and can actually scroll, it's the scrollable container
     if (hasOverflow && canScroll) {
-      console.log("[findScrollableContainer] Found scrollable container with overflow", {
+      logger.debug("[findScrollableContainer] Found scrollable container with overflow", {
         tag: current.tagName,
         id: current.id,
         className: current.className,
@@ -316,7 +318,7 @@ export function findScrollableContainer(element: HTMLElement | null): HTMLElemen
     
     // If it can scroll (even without explicit overflow styles), it's scrollable
     if (canScroll) {
-      console.log("[findScrollableContainer] Found scrollable container without overflow styles", {
+      logger.debug("[findScrollableContainer] Found scrollable container without overflow styles", {
         tag: current.tagName,
         id: current.id,
         className: current.className,
@@ -345,7 +347,7 @@ export function findScrollableContainer(element: HTMLElement | null): HTMLElemen
     // Re-check the candidate - content might have loaded
     const maxScroll = candidateWithOverflow.scrollHeight - candidateWithOverflow.clientHeight;
     if (maxScroll > 0) {
-      console.log("[findScrollableContainer] Candidate with overflow became scrollable", {
+      logger.debug("[findScrollableContainer] Candidate with overflow became scrollable", {
         tag: candidateWithOverflow.tagName,
         id: candidateWithOverflow.id,
         className: candidateWithOverflow.className,
@@ -359,7 +361,7 @@ export function findScrollableContainer(element: HTMLElement | null): HTMLElemen
   // Fallback: check if window/document can scroll
   const documentMaxScroll = document.documentElement.scrollHeight - window.innerHeight;
   if (documentMaxScroll > 0) {
-    console.log("[findScrollableContainer] Using document.documentElement as scrollable container", {
+    logger.debug("[findScrollableContainer] Using document.documentElement as scrollable container", {
       documentScrollHeight: document.documentElement.scrollHeight,
       windowInnerHeight: window.innerHeight,
       documentMaxScroll,
@@ -371,14 +373,14 @@ export function findScrollableContainer(element: HTMLElement | null): HTMLElemen
   // If no scrollable container found, return the candidate with overflow styles
   // (it might become scrollable once content fully loads)
   if (candidateWithOverflow) {
-    console.log("[findScrollableContainer] No scrollable container found, returning candidate with overflow", {
+    logger.debug("[findScrollableContainer] No scrollable container found, returning candidate with overflow", {
       tag: candidateWithOverflow.tagName,
       id: candidateWithOverflow.id,
       className: candidateWithOverflow.className,
       checkedContainers,
     });
   } else {
-    console.log("[findScrollableContainer] No scrollable container found", {
+    logger.debug("[findScrollableContainer] No scrollable container found", {
       checkedContainers,
     });
   }
@@ -391,7 +393,7 @@ export function scrollToElement(
   headerOffset: number = 0,
   playerOffset: number = 0,
 ): boolean {
-  console.log("[Scroll] scrollToElement called", {
+  logger.debug("[Scroll] scrollToElement called", {
     elementId,
     behavior,
     headerOffset,
@@ -412,17 +414,17 @@ export function scrollToElement(
   
   if (virtualizedHandle && typeof virtualizedHandle.ensureSegmentRendered === 'function') {
     // Ensure element is rendered, then scroll it
-    console.log("[Scroll] Ensuring virtualized element is rendered", { elementId });
+    logger.debug("[Scroll] Ensuring virtualized element is rendered", { elementId });
     virtualizedHandle.ensureSegmentRendered(elementId)
       .then((rendered: boolean) => {
         if (!rendered) {
-          console.warn("[Scroll] Failed to render virtualized element", { elementId });
+          logger.warn("[Scroll] Failed to render virtualized element", { elementId });
           return;
         }
 
         const element = document.getElementById(elementId);
         if (!element) {
-          console.warn("[Scroll] Element not found after rendering", { elementId });
+          logger.warn("[Scroll] Element not found after rendering", { elementId });
           return;
         }
 
@@ -434,7 +436,7 @@ export function scrollToElement(
         // Check if element is already visible
         const isVisible = isElementVisible(element, scrollContainer, headerOffset, 10, playerOffset);
         if (isVisible) {
-          console.log("[Scroll] Element is already visible", { elementId });
+          logger.debug("[Scroll] Element is already visible", { elementId });
           return;
         }
 
@@ -477,10 +479,10 @@ export function scrollToElement(
           }, behavior === "smooth" ? 300 : 100);
         }
 
-        console.log("[Scroll] Element scrolled", { elementId });
+        logger.debug("[Scroll] Element scrolled", { elementId });
       })
       .catch((error: Error) => {
-        console.warn("[Scroll] Virtualized render failed", { error, elementId });
+        logger.warn("[Scroll] Virtualized render failed", { error, elementId });
       });
     
     return true;
@@ -497,7 +499,7 @@ export function scrollToElement(
   }
   
   if (!element) {
-    console.log("[Scroll] Element not found", { elementId });
+    logger.debug("[Scroll] Element not found", { elementId });
     return false;
   }
 
@@ -507,7 +509,7 @@ export function scrollToElement(
   // Check if element is already visible
   const isVisible = isElementVisible(element, scrollContainer, headerOffset, 10, playerOffset);
   if (isVisible) {
-    console.log("[Scroll] Element is already visible", { elementId });
+    logger.debug("[Scroll] Element is already visible", { elementId });
     return true;
   }
 

@@ -41,12 +41,7 @@ export function useChapterState(params: UseChapterStateParams) {
   const [restoreElementIndex, setRestoreElementIndex] = useState<number | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
 
-  const currentIndexRef = useRef(0);
-  const onProgressRef = useRef(onProgress);
-  const chaptersRef = useRef(chapters);
-  const isRestoringRef = useRef(false);
-  const restoreScrollTopRef = useRef<number | null>(null);
-  const restoreElementIndexRef = useRef<number | null>(null);
+  // Internal tracking refs (kept for performance - don't need to trigger re-renders)
   const restorationAppliedRef = useRef<string | null>(null);
   const lastProgressSnapshotRef = useRef<{
     chapterId?: string;
@@ -60,22 +55,13 @@ export function useChapterState(params: UseChapterStateParams) {
   }>({ timestamp: 0 });
   const initializedRef = useRef<string | undefined>(undefined);
 
-  // Update refs when props change
-  onProgressRef.current = onProgress;
-  chaptersRef.current = chapters;
-  currentIndexRef.current = currentIndex;
-  isRestoringRef.current = isRestoring;
-  restoreScrollTopRef.current = restoreScrollTop;
-  restoreElementIndexRef.current = restoreElementIndex;
-
 
   // Initialize from progress (call explicitly when needed)
-  // Use refs to avoid recreating callback on every progress update
   const initialize = useCallback(() => {
     logger.log("[useChapterState] initialize called", {
       bookId,
       chaptersLength: chapters.length,
-      currentIndex: currentIndexRef.current,
+      currentIndex,
     });
 
     // Get fresh values from refs/closures
@@ -105,7 +91,6 @@ export function useChapterState(params: UseChapterStateParams) {
       setRestoreElementIndex(null);
       setIsRestoring(false);
       setCurrentIndexState(0);
-      currentIndexRef.current = 0;
       initializedRef.current = undefined;
       return;
     }
@@ -233,12 +218,11 @@ export function useChapterState(params: UseChapterStateParams) {
     
     logger.log("[useChapterState] Setting chapter index", {
       bookId,
-      previousIndex: currentIndexRef.current,
+      previousIndex: currentIndex,
       nextIndex,
     });
     
     setCurrentIndexState(nextIndex);
-    currentIndexRef.current = nextIndex;
 
     const restoredScrollTop =
       typeof currentProgress?.currentChapterScrollTop === "number" &&
@@ -268,8 +252,8 @@ export function useChapterState(params: UseChapterStateParams) {
     // This prevents re-setting isRestoring to true after restoration completes
     const currentChapterId = nextIndex < chapters.length ? chapters[nextIndex]?.id : undefined;
     const alreadyAppliedByRef = currentChapterId && restorationAppliedRef.current === currentChapterId;
-    // Also check isRestoringRef - if it's false, restoration has completed (ref is updated synchronously)
-    const restorationCompleted = !isRestoringRef.current && alreadyAppliedByRef;
+    // Also check isRestoring - if it's false, restoration has completed
+    const restorationCompleted = !isRestoring && alreadyAppliedByRef;
     
     // Only set restoration state if restoration hasn't been applied yet
     if (!alreadyAppliedByRef && !restorationCompleted) {
@@ -286,7 +270,7 @@ export function useChapterState(params: UseChapterStateParams) {
         chapterIndex: nextIndex,
         alreadyAppliedByRef,
         restorationCompleted,
-        isRestoringRef: isRestoringRef.current,
+        isRestoring,
       });
       setRestoreScrollTop(null);
       setRestoreElementIndex(null);
@@ -305,7 +289,7 @@ export function useChapterState(params: UseChapterStateParams) {
       isRestoring: restoredScrollTop !== null || restoredElementIndex !== null,
       signature,
     });
-  }, [bookId, library, chapters.length]);
+  }, [bookId, library, chapters, currentIndex, isRestoring]);
 
   // Track previous values to detect changes (for explicit initialization)
   const prevBookIdRef = useRef<string | undefined>(undefined);
@@ -315,7 +299,7 @@ export function useChapterState(params: UseChapterStateParams) {
   
   // Check for changes and initialize explicitly (instead of useEffect)
   // Don't re-initialize if we're currently restoring - wait for restoration to complete
-  if (!isRestoringRef.current) {
+  if (!isRestoring) {
     // Get fresh progress from library
     const currentBook = bookId ? library.find((b) => b.id === bookId) : undefined;
     const currentProgress = currentBook?.progress;
@@ -400,7 +384,7 @@ export function useChapterState(params: UseChapterStateParams) {
   }
 
   const onChapterChanged = useCallback((newChapterId: string) => {
-    const currentChapter = chaptersRef.current[currentIndexRef.current];
+    const currentChapter = chapters[currentIndex];
     if (!currentChapter || currentChapter.id === newChapterId) {
       return;
     }
@@ -413,14 +397,14 @@ export function useChapterState(params: UseChapterStateParams) {
       }
     }
 
-    if (isRestoringRef.current) {
+    if (isRestoring) {
       return;
     }
 
     setRestoreScrollTop(null);
     setRestoreElementIndex(null);
     restorationAppliedRef.current = null;
-  }, [coordinator]);
+  }, [coordinator, chapters, currentIndex, isRestoring]);
 
   const emitProgress = useCallback((
     _chapterId: string,
@@ -428,16 +412,15 @@ export function useChapterState(params: UseChapterStateParams) {
     percent?: number,
     elementIndex?: number
   ) => {
-    const chapter = chaptersRef.current[currentIndexRef.current];
-    const listener = onProgressRef.current;
-    if (!chapter || !listener) return;
+    const chapter = chapters[currentIndex];
+    if (!chapter || !onProgress) return;
 
     const updatedAt = new Date().toISOString();
 
     lastProgressSnapshotRef.current = {
       chapterId: chapter.id,
       chapterHref: chapter.href,
-      chapterIndex: currentIndexRef.current,
+      chapterIndex: currentIndex,
       scrollTop,
       percent,
       elementIndex,
@@ -445,22 +428,22 @@ export function useChapterState(params: UseChapterStateParams) {
       timestamp: Date.now(),
     };
 
-    listener({
+    onProgress({
       chapterId: chapter.id,
       chapterHref: chapter.href,
-      chapterIndex: currentIndexRef.current,
+      chapterIndex: currentIndex,
       scrollTop,
       percent,
       elementIndex,
       updatedAt,
     });
-  }, []);
+  }, [chapters, currentIndex, onProgress]);
 
   const onChapterLoaded = useCallback((
     contentElement: HTMLElement | null,
     scrollToElement?: (elementId: string) => void
   ) => {
-    const currentChapter = chaptersRef.current[currentIndexRef.current];
+    const currentChapter = chapters[currentIndex];
     if (!currentChapter || !contentElement) {
       logger.warn("[useChapterState] onChapterLoaded: missing chapter or content element", {
         hasChapter: !!currentChapter,
@@ -469,9 +452,9 @@ export function useChapterState(params: UseChapterStateParams) {
       return;
     }
 
-    const shouldRestore = isRestoringRef.current;
-    const scrollTopToRestore = restoreScrollTopRef.current;
-    const elementIndexToRestore = restoreElementIndexRef.current;
+    const shouldRestore = isRestoring;
+    const scrollTopToRestore = restoreScrollTop;
+    const elementIndexToRestore = restoreElementIndex;
     const currentChapterId = currentChapter.id;
     const alreadyApplied = restorationAppliedRef.current === currentChapterId;
     
@@ -839,28 +822,26 @@ export function useChapterState(params: UseChapterStateParams) {
 
   const setCurrentIndex = useCallback((index: number) => {
     // Validate index before setting
-    const validIndex = index < 0 || index >= chaptersRef.current.length 
+    const validIndex = index < 0 || index >= chapters.length 
       ? 0 
       : index;
     
     // Ensure index is valid (explicit validation instead of useEffect)
-    if (chaptersRef.current.length && validIndex >= chaptersRef.current.length) {
+    if (chapters.length && validIndex >= chapters.length) {
       logger.warn("[useChapterState] Index out of bounds, resetting to 0", {
         requestedIndex: index,
-        chaptersLength: chaptersRef.current.length,
+        chaptersLength: chapters.length,
       });
       setCurrentIndexState(0);
-      currentIndexRef.current = 0;
       return;
     }
     
-    const newChapter = chaptersRef.current[validIndex];
+    const newChapter = chapters[validIndex];
     if (newChapter) {
       onChapterChanged(newChapter.id);
     }
     setCurrentIndexState(validIndex);
-    currentIndexRef.current = validIndex;
-  }, [onChapterChanged]);
+  }, [chapters, onChapterChanged]);
 
   return {
     currentIndex,

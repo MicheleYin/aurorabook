@@ -3,6 +3,8 @@
  * Works with WebKit's performance.memory API
  */
 
+import { logger } from "./logger";
+
 interface MemoryInfo {
   usedJSHeapSize: number;
   totalJSHeapSize: number;
@@ -67,13 +69,13 @@ export class MemoryMonitor {
    */
   start(intervalMs: number = 5000): void {
     if (this.intervalId !== null) {
-      console.warn('[MemoryMonitor] Already monitoring');
+      logger.warn('[MemoryMonitor] Already monitoring');
       return;
     }
 
     // Check availability first
     if (!MemoryMonitor.checkAvailability()) {
-      console.info('[MemoryMonitor] Monitoring started but memory API unavailable. Other debug tools still work.');
+      logger.debug('[MemoryMonitor] Monitoring started but memory API unavailable. Other debug tools still work.');
       return;
     }
 
@@ -97,7 +99,7 @@ export class MemoryMonitor {
           const growth = curr.memory.usedJSHeapSize - prev.memory.usedJSHeapSize;
           
           if (growth > 0) {
-            console.log('[MemoryMonitor] Memory growth:', {
+            logger.debug('[MemoryMonitor] Memory growth:', {
               used: this.formatBytes(curr.memory.usedJSHeapSize),
               growth: `+${this.formatBytes(growth)}`,
               percent: ((curr.memory.usedJSHeapSize / curr.memory.jsHeapSizeLimit) * 100).toFixed(2) + '%',
@@ -107,7 +109,7 @@ export class MemoryMonitor {
       }
     }, intervalMs);
 
-    console.log('[MemoryMonitor] Started monitoring');
+    logger.debug('[MemoryMonitor] Started monitoring');
   }
 
   /**
@@ -117,7 +119,7 @@ export class MemoryMonitor {
     if (this.intervalId !== null) {
       clearInterval(this.intervalId);
       this.intervalId = null;
-      console.log('[MemoryMonitor] Stopped monitoring');
+      logger.debug('[MemoryMonitor] Stopped monitoring');
     }
   }
 
@@ -168,18 +170,18 @@ export class MemoryMonitor {
       // Don't warn - already warned once in checkAvailability()
       // Just show what we can
       if (this.samples.length > 0) {
-        console.log('[MemoryMonitor] Historical data available:', {
+        logger.debug('[MemoryMonitor] Historical data available:', {
           samples: this.samples.length,
           average: stats.average ? this.formatBytes(stats.average) : 'N/A',
           peak: stats.peak ? this.formatBytes(stats.peak) : 'N/A',
           growth: stats.growth ? (stats.growth > 0 ? '+' : '') + this.formatBytes(stats.growth) : 'N/A',
         });
-        console.log('  Note: Current memory not available. Use WebKit Inspector for real-time memory info.');
+        logger.debug('  Note: Current memory not available. Use WebKit Inspector for real-time memory info.');
       }
       return;
     }
 
-    console.log('[MemoryMonitor] Statistics:', {
+    logger.debug('[MemoryMonitor] Statistics:', {
       current: this.formatBytes(stats.current.usedJSHeapSize),
       limit: this.formatBytes(stats.current.jsHeapSizeLimit),
       percent: ((stats.current.usedJSHeapSize / stats.current.jsHeapSizeLimit) * 100).toFixed(2) + '%',
@@ -209,9 +211,9 @@ export class MemoryMonitor {
     if (typeof gc === 'function') {
       // @ts-ignore
       gc();
-      console.log('[MemoryMonitor] Forced garbage collection');
+      logger.debug('[MemoryMonitor] Forced garbage collection');
     } else {
-      console.warn('[MemoryMonitor] Garbage collection not available');
+      logger.warn('[MemoryMonitor] Garbage collection not available');
     }
   }
 }

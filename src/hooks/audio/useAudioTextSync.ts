@@ -50,10 +50,15 @@ export function useAudioTextSync(
   const chapterChangeThrottleMs = 500; // Throttle chapter changes to avoid rapid switching
   const lastReloadAttemptRef = useRef<{ chapterId: string; timestamp: number } | null>(null);
   const reloadThrottleMs = 2000; // Throttle reload attempts to avoid infinite loops
+  // Note: lastChapterIdRef is set manually in specific scenarios, not just tracking previous value
+  // This is a legitimate use case for refs (internal tracking)
   const lastChapterIdRef = useRef<string | undefined>(undefined); // Track last chapter ID to detect stale references
   const trackChangeInProgressRef = useRef<{ trackHref: string; timestamp: number } | null>(null);
   const TRACK_CHANGE_GRACE_PERIOD_MS = 2000; // Ignore audio sync chapter changes for 2s after track change
   const chapterChangeInProgressRef = useRef<string | null>(null); // Track which chapter is being changed to prevent duplicate changes
+  // Refs for timeout cleanup
+  const trackChangeTimeoutRef = useRef<number | null>(null);
+  const chapterChangeTimeoutRef = useRef<number | null>(null);
   
   // Optimize: Cache scroll operation to batch multiple updates
   const pendingScrollRef = useRef<{
@@ -80,6 +85,14 @@ export function useAudioTextSync(
     top: number;
     lastCheck: number;
   }>({ top: 0, lastCheck: 0 });
+  
+  // Cache a reference to any span element for font size calculations
+  // Since spans always have IDs, we can use getElementById instead of querySelector
+  const spanElementCacheRef = useRef<{
+    element: HTMLElement | null;
+    fontSize: number;
+    lastCheck: number;
+  }>({ element: null, fontSize: 0, lastCheck: 0 });
   
   const CACHE_TTL_MS = 5000; // Re-check every 5 seconds instead of every call (increased for memory optimization)
   
@@ -138,18 +151,48 @@ export function useAudioTextSync(
           return cache.offset;
         }
         
-        // Cache text element query - only query once per cache period
-        let textElement: HTMLElement | null = null;
-        if (cache.lastCheck === 0 || (now - cache.lastCheck) >= CACHE_TTL_MS) {
-          textElement = document.querySelector<HTMLElement>("p");
+        // Get font size from cached span element (more efficient than querying for p)
+        // Since spans always have IDs, we can use getElementById with a known span ID
+        let fontSize = 0;
+        const spanCache = spanElementCacheRef.current;
+        if (spanCache.element && spanCache.element.isConnected && (now - spanCache.lastCheck) < CACHE_TTL_MS) {
+          fontSize = spanCache.fontSize;
+        } else {
+          // Try to find any span with ID pattern f\d{6} using getElementById
+          // Start with f000001 (first span) and try a few more if needed
+          let spanElement: HTMLElement | null = null;
+          for (let i = 1; i <= 10 && !spanElement; i++) {
+            const spanId = `f${String(i).padStart(6, '0')}`;
+            spanElement = getCachedElementById(spanId);
+            if (spanElement && spanElement.isConnected) {
+              break;
+            }
+          }
+          
+          if (spanElement) {
+            // Get font size from span or its parent paragraph
+            const computedStyle = window.getComputedStyle(spanElement);
+            fontSize = parseInt(computedStyle.fontSize) || 0;
+            // If span has no font size, try parent paragraph
+            if (!fontSize) {
+              const parent = spanElement.closest('p');
+              if (parent) {
+                fontSize = parseInt(window.getComputedStyle(parent).fontSize) || 16;
+              }
+            }
+            // Cache the span element and font size
+            spanElementCacheRef.current = {
+              element: spanElement,
+              fontSize: fontSize || 16,
+              lastCheck: now,
+            };
+          } else {
+            // Fallback: use default font size
+            fontSize = 16;
+          }
         }
         
-        if (textElement) {
-          const fontSize = window.getComputedStyle(textElement).fontSize;
-          cache.offset = parseInt(fontSize) + rect.height;
-        } else {
-          cache.offset = rect.height;
-        }
+        cache.offset = fontSize + rect.height;
         cache.lastCheck = now;
         return cache.offset;
       }
@@ -197,18 +240,48 @@ export function useAudioTextSync(
         const viewportHeight = window.innerHeight;
         const distanceFromBottom = viewportHeight - rect.top;
         
-        // Cache text element query - only query once per cache period
-        let textElement: HTMLElement | null = null;
-        if (cache.lastCheck === 0 || (now - cache.lastCheck) >= CACHE_TTL_MS) {
-          textElement = document.querySelector<HTMLElement>("p");
+        // Get font size from cached span element (more efficient than querying for p)
+        // Since spans always have IDs, we can use getElementById with a known span ID
+        let fontSize = 0;
+        const spanCache = spanElementCacheRef.current;
+        if (spanCache.element && spanCache.element.isConnected && (now - spanCache.lastCheck) < CACHE_TTL_MS) {
+          fontSize = spanCache.fontSize;
+        } else {
+          // Try to find any span with ID pattern f\d{6} using getElementById
+          // Start with f000001 (first span) and try a few more if needed
+          let spanElement: HTMLElement | null = null;
+          for (let i = 1; i <= 10 && !spanElement; i++) {
+            const spanId = `f${String(i).padStart(6, '0')}`;
+            spanElement = getCachedElementById(spanId);
+            if (spanElement && spanElement.isConnected) {
+              break;
+            }
+          }
+          
+          if (spanElement) {
+            // Get font size from span or its parent paragraph
+            const computedStyle = window.getComputedStyle(spanElement);
+            fontSize = parseInt(computedStyle.fontSize) || 0;
+            // If span has no font size, try parent paragraph
+            if (!fontSize) {
+              const parent = spanElement.closest('p');
+              if (parent) {
+                fontSize = parseInt(window.getComputedStyle(parent).fontSize) || 16;
+              }
+            }
+            // Cache the span element and font size
+            spanElementCacheRef.current = {
+              element: spanElement,
+              fontSize: fontSize || 16,
+              lastCheck: now,
+            };
+          } else {
+            // Fallback: use default font size
+            fontSize = 16;
+          }
         }
         
-        if (textElement) {
-          const fontSize = window.getComputedStyle(textElement).fontSize;
-          cache.offset = Math.max(0, distanceFromBottom + parseInt(fontSize));
-        } else {
-          cache.offset = Math.max(0, distanceFromBottom);
-        }
+        cache.offset = Math.max(0, distanceFromBottom + fontSize);
         cache.lastCheck = now;
         return cache.offset;
       }
@@ -272,9 +345,9 @@ export function useAudioTextSync(
         oldChapterId: lastChapterIdRef.current,
         newChapterId: chapter.id,
       });
-      lastChapterIdRef.current = chapter.id;
+      // Chapter ID changed - will be tracked by usePrevious on next render
     } else if (lastChapterIdRef.current === undefined) {
-      lastChapterIdRef.current = chapter.id;
+      // First time - will be tracked by usePrevious on next render
     }
     
     logger.log("[Audio Sync] Chapter href comparison", {
@@ -399,14 +472,20 @@ export function useAudioTextSync(
               
               // Navigate to the chapter, passing the element ID to scroll to after load
               // Clear the flag after a delay to allow chapter change to complete
+              // Clear any existing timeout
+              if (chapterChangeTimeoutRef.current) {
+                clearTimeout(chapterChangeTimeoutRef.current);
+              }
+              
               onChapterChange(matchingChapter.id, segment.textElementId);
-              setTimeout(() => {
+              chapterChangeTimeoutRef.current = window.setTimeout(() => {
                 if (chapterChangeInProgressRef.current === matchingChapter.id) {
                   chapterChangeInProgressRef.current = null;
                   logger.log("[Audio Sync] Chapter change flag cleared", {
                     chapterId: matchingChapter.id,
                   });
                 }
+                chapterChangeTimeoutRef.current = null;
               }, 3000); // Clear after 3 seconds (enough time for chapter to load)
               
               pushHighlight(null);
@@ -503,15 +582,61 @@ export function useAudioTextSync(
       const docElement = getCachedElementById(segment.textElementId);
       if (docElement && contentRef.current.contains(docElement)) {
         element = docElement;
+        
+        // Cache this span element for font size calculations (more efficient than querying for p)
+        const now = Date.now();
+        const spanCache = spanElementCacheRef.current;
+        if (!spanCache.element || !spanCache.element.isConnected || (now - spanCache.lastCheck) >= CACHE_TTL_MS) {
+          // Get font size from span or its parent paragraph
+          const computedStyle = window.getComputedStyle(element);
+          let fontSize = parseInt(computedStyle.fontSize) || 0;
+          // If span has no font size, try parent paragraph
+          if (!fontSize) {
+            const parent = element.closest('p');
+            if (parent) {
+              fontSize = parseInt(window.getComputedStyle(parent).fontSize) || 16;
+            }
+          }
+          // Cache the span element and font size
+          spanElementCacheRef.current = {
+            element: element,
+            fontSize: fontSize || 16,
+            lastCheck: now,
+          };
+        }
       }
       
       if (!element) {
         // Element not found - check if chapter content has any spans at all
-        // Use cached querySelector to avoid repeated queries
-        const chapterContent = getCachedQuerySelector('[data-reader-chapter-content="true"]', contentRef.current) ||
-                              contentRef.current.querySelector('[data-reader-chapter-content="true"]');
-        // Use querySelector for span pattern matching (no ID available)
-        const hasAnySpans = chapterContent?.querySelector('span[id^="f"]');
+        // Since spans always have IDs, use getElementById instead of querySelector pattern matching
+        // Check if any span IDs from the audio sync map exist in the DOM
+        let hasAnySpans = false;
+        if (book.audioSyncMap && book.audioSyncMap.segments.length > 0) {
+          // Try checking a few span IDs from the sync map (more efficient than pattern matching)
+          // Check the first few segments to see if any spans exist
+          const spanIdsToCheck = book.audioSyncMap.segments
+            .slice(0, 5) // Check first 5 segments
+            .map(seg => seg.textElementId);
+          
+          for (const spanId of spanIdsToCheck) {
+            const spanElement = getCachedElementById(spanId);
+            if (spanElement && contentRef.current?.contains(spanElement)) {
+              hasAnySpans = true;
+              break;
+            }
+          }
+        } else {
+          // Fallback: if no sync map, try checking a known span ID pattern
+          // Try first few span IDs (f000001, f000002, etc.)
+          for (let i = 1; i <= 5 && !hasAnySpans; i++) {
+            const spanId = `f${String(i).padStart(6, '0')}`;
+            const spanElement = getCachedElementById(spanId);
+            if (spanElement && contentRef.current?.contains(spanElement)) {
+              hasAnySpans = true;
+              break;
+            }
+          }
+        }
         
         if (!hasAnySpans && onChapterReload) {
           // Chapter content doesn't have the required spans - need to reload
@@ -525,7 +650,6 @@ export function useAudioTextSync(
             console.warn("[Audio Sync] Chapter content missing spans, triggering reload", {
               chapterId: chapter.id,
               textElementId: segment.textElementId,
-              hasChapterContent: !!chapterContent,
             });
             lastReloadAttemptRef.current = { chapterId: chapter.id, timestamp: now };
             onChapterReload(chapter.id);
@@ -537,7 +661,6 @@ export function useAudioTextSync(
           if (!onChapterReload || hasAnySpans) {
             logger.debug("[Audio Sync] Element not found in DOM (may be off-screen)", {
               textElementId: segment.textElementId,
-              hasChapterContent: !!chapterContent,
               hasAnySpans: !!hasAnySpans,
             });
           }
@@ -634,15 +757,21 @@ export function useAudioTextSync(
 
   // Mark that a chapter change is in progress (called from handleAudioTrackChange)
   const markChapterChange = useCallback((chapterId: string) => {
+    // Clear existing timeout
+    if (chapterChangeTimeoutRef.current) {
+      clearTimeout(chapterChangeTimeoutRef.current);
+    }
+    
     chapterChangeInProgressRef.current = chapterId;
     logger.log("[Audio Sync] Chapter change marked", { chapterId });
     
     // Clear the flag after a delay to allow chapter change to complete
-    setTimeout(() => {
+    chapterChangeTimeoutRef.current = window.setTimeout(() => {
       if (chapterChangeInProgressRef.current === chapterId) {
         chapterChangeInProgressRef.current = null;
         logger.log("[Audio Sync] Chapter change flag cleared", { chapterId });
       }
+      chapterChangeTimeoutRef.current = null;
     }, 3000); // 3 seconds should be enough for chapter to load
   }, []);
 
@@ -689,6 +818,7 @@ export function useAudioTextSync(
       headerCacheRef.current = { element: null, offset: 0, lastCheck: 0 };
       playerCacheRef.current = { element: null, offset: 0, lastCheck: 0 };
       safeAreaCacheRef.current = { top: 0, lastCheck: 0 };
+      spanElementCacheRef.current = { element: null, fontSize: 0, lastCheck: 0 };
       
       // Clear global DOM query cache on chapter change (memory optimization)
       clearAllCaches();
@@ -699,6 +829,18 @@ export function useAudioTextSync(
       }
     }
   }, [activeChapterId, pushHighlight]);
+
+  // Cleanup all timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (trackChangeTimeoutRef.current) {
+        clearTimeout(trackChangeTimeoutRef.current);
+      }
+      if (chapterChangeTimeoutRef.current) {
+        clearTimeout(chapterChangeTimeoutRef.current);
+      }
+    };
+  }, []);
 
   return {
     updateHighlight,

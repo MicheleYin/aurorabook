@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn, type LibraryBookStatus } from "@/lib/utils";
 
@@ -31,7 +32,7 @@ type LibraryStatusBadgeProps = {
   className?: string;
 };
 
-export function LibraryStatusBadge({ status, className }: LibraryStatusBadgeProps) {
+function LibraryStatusBadgeComponent({ status, className }: LibraryStatusBadgeProps) {
   const meta = STATUS_META[status];
   return (
     <Badge
@@ -47,5 +48,9 @@ export function LibraryStatusBadge({ status, className }: LibraryStatusBadgeProp
     </Badge>
   );
 }
+
+export const LibraryStatusBadge = memo(LibraryStatusBadgeComponent, (prevProps, nextProps) => {
+  return prevProps.status === nextProps.status && prevProps.className === nextProps.className;
+});
 
 

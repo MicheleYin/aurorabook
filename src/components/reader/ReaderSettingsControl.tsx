@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, memo } from "react";
 import { Settings2, X } from "lucide-react";
 
 import type { ReaderPreferences } from "../../types/reader";
@@ -37,7 +37,7 @@ type ReaderSettingsControlProps = {
   onThemeChange: (theme: UITheme) => void;
 };
 
-export function ReaderSettingsControl({
+function ReaderSettingsControlComponent({
   preferences,
   onPreferencesChange,
   isOpen,
@@ -77,7 +77,7 @@ export function ReaderSettingsControl({
     spacious: null,
   });
 
-  const scrollActiveOptions = useCallback(
+  const handleScrollActiveOptions = useCallback(
     (behavior: ScrollBehavior = "smooth") => {
       const nodes = [
         themeOptionRefs.current[uiTheme],
@@ -100,9 +100,9 @@ export function ReaderSettingsControl({
 
   useEffect(() => {
     if (!isOpen) return;
-    const frame = requestAnimationFrame(() => scrollActiveOptions());
+    const frame = requestAnimationFrame(() => handleScrollActiveOptions());
     return () => cancelAnimationFrame(frame);
-  }, [isOpen, scrollActiveOptions]);
+  }, [isOpen, handleScrollActiveOptions]);
 
   const settingsBody = (
     <div className="space-y-6">
@@ -306,3 +306,25 @@ export function ReaderSettingsControl({
     </Drawer>
   );
 }
+
+export const ReaderSettingsControl = memo(ReaderSettingsControlComponent, (prevProps, nextProps) => {
+  // Compare preferences object - check all properties
+  const prevPrefs = prevProps.preferences;
+  const nextPrefs = nextProps.preferences;
+  if (
+    prevPrefs.fontFamily !== nextPrefs.fontFamily ||
+    prevPrefs.fontSize !== nextPrefs.fontSize ||
+    prevPrefs.contentPadding !== nextPrefs.contentPadding ||
+    prevPrefs.lineHeight !== nextPrefs.lineHeight
+  ) {
+    return false;
+  }
+  
+  return (
+    prevProps.isOpen === nextProps.isOpen &&
+    prevProps.uiTheme === nextProps.uiTheme &&
+    prevProps.onPreferencesChange === nextProps.onPreferencesChange &&
+    prevProps.onOpenChange === nextProps.onOpenChange &&
+    prevProps.onThemeChange === nextProps.onThemeChange
+  );
+});

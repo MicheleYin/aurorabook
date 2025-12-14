@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, memo } from "react";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -20,7 +20,7 @@ type ConvertToAudiobookDialogProps = {
   bookTitle: string;
 };
 
-export function ConvertToAudiobookDialog({
+function ConvertToAudiobookDialogComponent({
   open,
   onOpenChange,
   onConfirm,
@@ -91,4 +91,13 @@ export function ConvertToAudiobookDialog({
     </Dialog>
   );
 }
+
+export const ConvertToAudiobookDialog = memo(ConvertToAudiobookDialogComponent, (prevProps, nextProps) => {
+  return (
+    prevProps.open === nextProps.open &&
+    prevProps.bookTitle === nextProps.bookTitle &&
+    prevProps.onOpenChange === nextProps.onOpenChange &&
+    prevProps.onConfirm === nextProps.onConfirm
+  );
+});
 

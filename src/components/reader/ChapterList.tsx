@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { Book } from "../../types/reader";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -13,7 +14,7 @@ type ChapterListProps = {
   onAfterSelect?: () => void;
 };
 
-export function ChapterList({
+function ChapterListComponent({
   book,
   activeChapterId,
   currentAudioTrackHref,
@@ -103,3 +104,31 @@ export function ChapterList({
     </div>
   );
 }
+
+export const ChapterList = memo(ChapterListComponent, (prevProps, nextProps) => {
+  // Compare book - check if it's the same reference or if key properties changed
+  if (prevProps.book !== nextProps.book) {
+    // If different reference, check if key properties changed
+    if (
+      prevProps.book.id !== nextProps.book.id ||
+      prevProps.book.chapters.length !== nextProps.book.chapters.length ||
+      prevProps.book.audioSyncMap !== nextProps.book.audioSyncMap
+    ) {
+      return false;
+    }
+    // Check if chapters array changed
+    const chaptersChanged = prevProps.book.chapters.some((chapter, index) => {
+      const nextChapter = nextProps.book.chapters[index];
+      return !nextChapter || chapter.id !== nextChapter.id || chapter !== nextChapter;
+    });
+    if (chaptersChanged) return false;
+  }
+  
+  return (
+    prevProps.activeChapterId === nextProps.activeChapterId &&
+    prevProps.currentAudioTrackHref === nextProps.currentAudioTrackHref &&
+    prevProps.className === nextProps.className &&
+    prevProps.onSelectChapter === nextProps.onSelectChapter &&
+    prevProps.onAfterSelect === nextProps.onAfterSelect
+  );
+});

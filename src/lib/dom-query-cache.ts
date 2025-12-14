@@ -1,6 +1,20 @@
 /**
  * DOM Query Cache - Aggressive caching for DOM queries
  * Reduces expensive DOM traversals by caching results
+ * 
+ * Cache Strategy:
+ * - TTL: 3000ms (3 seconds)
+ *   Rationale: DOM elements can change frequently during rendering/updates.
+ *   Short TTL ensures we don't serve stale element references while still
+ *   providing significant performance benefits for repeated queries.
+ * 
+ * - Max Size: 50 elements
+ *   Rationale: Limits memory usage while accommodating typical reading session
+ *   where only a subset of elements are actively queried.
+ * 
+ * - Cleanup: Interval-based + manual
+ *   Pattern: Automatic cleanup via interval (if started) + manual cleanup on
+ *   cache operations. Elements are also validated on access (isConnected check).
  */
 
 type CachedElement = {
@@ -17,6 +31,7 @@ const elementCache = new Map<string, CachedElement>();
 const queryCache = new Map<string, CachedElement>();
 
 // Cache TTL - 3 seconds (reduced from 5 for faster cleanup)
+// Short TTL ensures fresh DOM references while still providing performance benefits
 const CACHE_TTL_MS = 3000;
 
 /**

@@ -3,6 +3,8 @@
  * Prevents memory leaks by tracking and revoking blob URLs
  */
 
+import { logger } from "./logger";
+
 class BlobURLManager {
   private urls = new Map<string, Set<string>>(); // bookId -> Set of blob URLs
   private urlToBookId = new Map<string, string>(); // blob URL -> bookId (for reverse lookup)
@@ -36,7 +38,7 @@ class BlobURLManager {
         return;
       } else {
         // URL registered for different book - this shouldn't happen, log warning
-        console.warn(`[BlobURLManager] Blob URL already registered for different book`, {
+        logger.warn(`[BlobURLManager] Blob URL already registered for different book`, {
           url,
           existingBookId,
           newBookId: bookId,
@@ -56,14 +58,14 @@ class BlobURLManager {
         // Check if previous URL is still active
         if (this.activeAudioUrls.has(previousAudioUrl)) {
           // Previous URL is still in use - delay revocation
-          console.log(`[BlobURLManager] Previous audio track still in use, delaying revocation for book ${bookId}`, {
+          logger.debug(`[BlobURLManager] Previous audio track still in use, delaying revocation for book ${bookId}`, {
             previous: previousAudioUrl,
             new: url,
           });
           this.scheduleDelayedRevocation(previousAudioUrl, 5000); // 5 second delay
         } else {
           // Previous URL not in use - safe to revoke immediately
-          console.log(`[BlobURLManager] Revoking previous audio track blob for book ${bookId}`, {
+          logger.debug(`[BlobURLManager] Revoking previous audio track blob for book ${bookId}`, {
             previous: previousAudioUrl,
             new: url,
           });
@@ -101,10 +103,10 @@ class BlobURLManager {
       
       // Only revoke if URL is no longer active
       if (!this.activeAudioUrls.has(url)) {
-        console.log(`[BlobURLManager] Executing delayed revocation for ${url}`);
+        logger.debug(`[BlobURLManager] Executing delayed revocation for ${url}`);
         this.revoke(url);
       } else {
-        console.log(`[BlobURLManager] Skipping revocation - URL still active: ${url}`);
+        logger.debug(`[BlobURLManager] Skipping revocation - URL still active: ${url}`);
       }
     }, delayMs);
 
@@ -123,7 +125,7 @@ class BlobURLManager {
       if (timeoutId) {
         clearTimeout(timeoutId);
         this.pendingRevocations.delete(url);
-        console.log(`[BlobURLManager] Cancelled pending revocation for active URL: ${url}`);
+        logger.debug(`[BlobURLManager] Cancelled pending revocation for active URL: ${url}`);
       }
     }
   }
@@ -181,7 +183,7 @@ class BlobURLManager {
       URL.revokeObjectURL(url);
     } catch (error) {
       // URL may have already been revoked, ignore
-      console.warn("[BlobURLManager] Failed to revoke blob URL:", error);
+      logger.warn("[BlobURLManager] Failed to revoke blob URL:", { error });
     }
   }
 
@@ -202,7 +204,7 @@ class BlobURLManager {
         this.urlToBookId.delete(url);
         this.urlToType.delete(url);
       } catch (error) {
-        console.warn("[BlobURLManager] Failed to revoke blob URL:", error);
+        logger.warn("[BlobURLManager] Failed to revoke blob URL:", { error });
       }
     });
 
@@ -214,18 +216,36 @@ class BlobURLManager {
    * Revoke all blob URLs
    */
   revokeAll(): void {
+    // Cancel all pending revocations first
+    this.cancelPendingRevocations();
+    
     // Create a copy of all URLs to avoid modification during iteration
     const allUrls = Array.from(this.urlToBookId.keys());
     allUrls.forEach((url) => {
       try {
         URL.revokeObjectURL(url);
       } catch (error) {
-        console.warn("[BlobURLManager] Failed to revoke blob URL:", error);
+        logger.warn("[BlobURLManager] Failed to revoke blob URL:", { error });
       }
     });
 
     this.urls.clear();
     this.urlToBookId.clear();
+    this.currentAudioTrack.clear();
+    this.urlToType.clear();
+    this.activeAudioUrls.clear();
+  }
+
+  /**
+   * Cancel all pending revocations
+   * Call this on component unmount to prevent memory leaks
+   */
+  cancelPendingRevocations(): void {
+    this.pendingRevocations.forEach((timeoutId, url) => {
+      clearTimeout(timeoutId);
+      logger.debug(`[BlobURLManager] Cancelled pending revocation for ${url}`);
+    });
+    this.pendingRevocations.clear();
   }
 
   /**
@@ -296,7 +316,7 @@ class BlobURLManager {
    */
   logStats(): void {
     const stats = this.getStats();
-    console.log('[BlobURLManager] Statistics:', {
+    logger.debug('[BlobURLManager] Statistics:', {
       total: stats.total,
       byBook: stats.byBook,
       byType: stats.byType,

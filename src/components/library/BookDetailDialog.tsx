@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 import { ImageOff, X, Loader2, Headphones, Share2, Play ,  Square} from "lucide-react";
 import { toast } from "sonner";
 import { logger } from "../../lib/logger";
@@ -56,7 +56,7 @@ const formatFileSize = (bytes?: number) => {
   return `${size.toFixed(size < 10 && unitIndex > 0 ? 1 : 0)} ${units[unitIndex]}`;
 };
 
-export function BookDetailDialog({
+function BookDetailDialogComponent({
   book,
   open,
   onClose,
@@ -667,4 +667,35 @@ export function BookDetailDialog({
     </>
   );
 }
+
+export const BookDetailDialog = memo(BookDetailDialogComponent, (prevProps, nextProps) => {
+  // Compare book - check if it's the same reference or if key properties changed
+  if (prevProps.book !== nextProps.book) {
+    if (prevProps.book.id !== nextProps.book.id) return false;
+    // Check if important book properties changed
+    if (
+      prevProps.book.title !== nextProps.book.title ||
+      prevProps.book.author !== nextProps.book.author ||
+      prevProps.book.coverUrl !== nextProps.book.coverUrl ||
+      prevProps.book.audioTracks.length !== nextProps.book.audioTracks.length ||
+      prevProps.book.chapters.length !== nextProps.book.chapters.length ||
+      prevProps.book.conversionStatus !== nextProps.book.conversionStatus
+    ) {
+      return false;
+    }
+  }
+  
+  return (
+    prevProps.open === nextProps.open &&
+    prevProps.isDeleting === nextProps.isDeleting &&
+    prevProps.isCancelling === nextProps.isCancelling &&
+    prevProps.conversionProgress === nextProps.conversionProgress &&
+    prevProps.onClose === nextProps.onClose &&
+    prevProps.onOpenBook === nextProps.onOpenBook &&
+    prevProps.onDeleteBook === nextProps.onDeleteBook &&
+    prevProps.onConvertToAudiobook === nextProps.onConvertToAudiobook &&
+    prevProps.onCancelConversion === nextProps.onCancelConversion &&
+    prevProps.conversionStartTimeRef === nextProps.conversionStartTimeRef
+  );
+});
 

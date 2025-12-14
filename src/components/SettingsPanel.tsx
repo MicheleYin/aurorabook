@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, memo } from "react";
 import { Check, Play, Pause, Volume2, ChevronDown, ChevronUp, HelpCircle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { logger } from "../lib/logger";
@@ -65,7 +65,7 @@ const FAQ_DATA: FAQItem[] = [
   },
 ];
 
-export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps) {
+function SettingsPanelComponent({ settings, onSettingsChange }: SettingsPanelProps) {
   const [showSaved, setShowSaved] = useState(false);
   const [previousSettings, setPreviousSettings] = useState(settings);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
@@ -168,7 +168,7 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
     };
   }, []);
 
-  const toggleFAQ = (index: number) => {
+  const handleToggleFAQ = (index: number) => {
     setExpandedFAQ(expandedFAQ === index ? null : index);
   };
 
@@ -310,7 +310,7 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
                 className="rounded-lg border bg-card transition-all duration-200 hover:bg-muted/30"
               >
                 <button
-                  onClick={() => toggleFAQ(index)}
+                  onClick={() => handleToggleFAQ(index)}
                   className="w-full flex items-center justify-between p-4 text-left gap-4 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded-lg"
                   {...(isExpanded ? { "aria-expanded": "true" } : { "aria-expanded": "false" })}
                   aria-label={isExpanded ? `Collapse ${faq.question}` : `Expand ${faq.question}`}
@@ -344,4 +344,22 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
     </div>
   );
 }
+
+export const SettingsPanel = memo(SettingsPanelComponent, (prevProps, nextProps) => {
+  // Compare settings object - check all properties
+  const prevSettings = prevProps.settings;
+  const nextSettings = nextProps.settings;
+  if (
+    prevSettings.theme !== nextSettings.theme ||
+    prevSettings.ttsVoiceId !== nextSettings.ttsVoiceId ||
+    prevSettings.autoScrollEnabled !== nextSettings.autoScrollEnabled
+  ) {
+    return false;
+  }
+  
+  // Compare callback
+  if (prevProps.onSettingsChange !== nextProps.onSettingsChange) return false;
+  
+  return true;
+});
 

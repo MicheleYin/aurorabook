@@ -1,5 +1,5 @@
 import { BookOpen, X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, memo } from "react";
 
 import type { Book } from "../../types/reader";
 import type { ReaderPanelBaseProps } from "./types";
@@ -27,7 +27,7 @@ type ReaderTocDrawerProps = {
   onSelectChapter: ReaderPanelBaseProps["onSelectChapter"];
 };
 
-export function ReaderTocDrawer({
+function ReaderTocDrawerComponent({
   book,
   activeChapterId,
   currentAudioTrackHref,
@@ -124,3 +124,24 @@ export function ReaderTocDrawer({
     </Drawer>
   );
 }
+
+export const ReaderTocDrawer = memo(ReaderTocDrawerComponent, (prevProps, nextProps) => {
+  // Compare book - check if it's the same reference or if key properties changed
+  if (prevProps.book !== nextProps.book) {
+    if (
+      prevProps.book.id !== nextProps.book.id ||
+      prevProps.book.chapters.length !== nextProps.book.chapters.length ||
+      prevProps.book.audioSyncMap !== nextProps.book.audioSyncMap
+    ) {
+      return false;
+    }
+  }
+  
+  return (
+    prevProps.activeChapterId === nextProps.activeChapterId &&
+    prevProps.currentAudioTrackHref === nextProps.currentAudioTrackHref &&
+    prevProps.isOpen === nextProps.isOpen &&
+    prevProps.onOpenChange === nextProps.onOpenChange &&
+    prevProps.onSelectChapter === nextProps.onSelectChapter
+  );
+});

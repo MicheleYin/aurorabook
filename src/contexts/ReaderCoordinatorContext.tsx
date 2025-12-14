@@ -5,7 +5,7 @@
  * Provides locks, loading states, and cancellation for all operations.
  */
 
-import { createContext, useContext, useCallback, useRef, useState, useMemo, ReactNode } from "react";
+import { createContext, useContext, useCallback, useEffect, useRef, useState, useMemo, ReactNode } from "react";
 import { logger } from "../lib/logger";
 import type { ChapterProgressSnapshot, ChapterSelectionOptions } from "../components/reader/types";
 
@@ -188,6 +188,13 @@ export function ReaderCoordinatorProvider({
     progress: null,
   });
   
+  // Operation locks refs for reliable cancellation checks (not affected by closures)
+  const locksRef = useRef<OperationLocks>({
+    chapter: null,
+    audio: null,
+    progress: null,
+  });
+  
   // Loading states
   const [loading, setLoading] = useState<LoadingStates>({
     chapterLoading: false,
@@ -201,6 +208,11 @@ export function ReaderCoordinatorProvider({
   
   // Operation counter for unique IDs
   const operationCounterRef = useRef(0);
+  
+  // Sync refs with state whenever state changes
+  useEffect(() => {
+    locksRef.current = locks;
+  }, [locks]);
   
   // Generate unique operation ID
   const generateOperationId = useCallback(() => {
@@ -227,6 +239,9 @@ export function ReaderCoordinatorProvider({
         cancelled = true;
       }
       
+      // Sync refs with updated state
+      locksRef.current = updated;
+      
       if (cancelled) {
         logger.log("[Reader Coordinator] Operation cancelled", { operationId });
       }
@@ -237,20 +252,25 @@ export function ReaderCoordinatorProvider({
   
   // Cancel all operations
   const cancelAllOperations = useCallback(() => {
+    const clearedLocks: OperationLocks = {
+      chapter: null,
+      audio: null,
+      progress: null,
+    };
+    
     setLocks(prev => {
       const updated = {
         chapter: prev.chapter ? { ...prev.chapter, cancelled: true } : null,
         audio: prev.audio ? { ...prev.audio, cancelled: true } : null,
         progress: prev.progress ? { ...prev.progress, cancelled: true } : null,
       };
+      // Sync refs before clearing
+      locksRef.current = updated;
       return updated;
     });
     
-    setLocks({
-      chapter: null,
-      audio: null,
-      progress: null,
-    });
+    setLocks(clearedLocks);
+    locksRef.current = clearedLocks;
     
     setLoading({
       chapterLoading: false,
@@ -342,12 +362,16 @@ export function ReaderCoordinatorProvider({
       cancelled: false,
     };
     
-    setLocks(prev => ({ ...prev, chapter: operation }));
+    setLocks(prev => {
+      const updated = { ...prev, chapter: operation };
+      locksRef.current = updated;
+      return updated;
+    });
     setLoading(prev => ({ ...prev, chapterLoading: true }));
     
     try {
-      // Check if cancelled before starting
-      if (operation.cancelled) {
+      // Check if cancelled before starting (check current state, not closure)
+      if (locksRef.current.chapter?.id !== operationId || locksRef.current.chapter?.cancelled) {
         logger.log("[Reader Coordinator] Operation cancelled before execution", { operationId });
         return;
       }
@@ -355,15 +379,17 @@ export function ReaderCoordinatorProvider({
       // Call the handler
       await onChapterChange(bookId, chapterId, options);
       
-      // Check if cancelled during execution
-      if (operation.cancelled) {
+      // Check if cancelled during execution (check current state, not closure)
+      if (locksRef.current.chapter?.id !== operationId || locksRef.current.chapter?.cancelled) {
         logger.log("[Reader Coordinator] Operation cancelled during execution", { operationId });
         return;
       }
       
       logger.log("[Reader Coordinator] Chapter change completed", { bookId, chapterId });
     } catch (error) {
-      if (!operation.cancelled) {
+      // Check current state for cancellation, not closure value
+      const currentOp = locksRef.current.chapter;
+      if (currentOp?.id !== operationId || !currentOp?.cancelled) {
         logger.error("[Reader Coordinator] Chapter change failed", { bookId, chapterId, error });
         throw error;
       }
@@ -406,23 +432,31 @@ export function ReaderCoordinatorProvider({
       cancelled: false,
     };
     
-    setLocks(prev => ({ ...prev, chapter: operation }));
+    setLocks(prev => {
+      const updated = { ...prev, chapter: operation };
+      locksRef.current = updated;
+      return updated;
+    });
     setLoading(prev => ({ ...prev, chapterRestoring: true }));
     
     try {
-      if (operation.cancelled) return;
+      // Check current state, not closure value
+      if (locksRef.current.chapter?.id !== operationId || locksRef.current.chapter?.cancelled) return;
       await onChapterRestore(bookId, chapterId);
-      if (operation.cancelled) return;
+      if (locksRef.current.chapter?.id !== operationId || locksRef.current.chapter?.cancelled) return;
       logger.log("[Reader Coordinator] Chapter restore completed", { bookId, chapterId });
     } catch (error) {
-      if (!operation.cancelled) {
+      const currentOp = locksRef.current.chapter;
+      if (currentOp?.id !== operationId || !currentOp?.cancelled) {
         logger.error("[Reader Coordinator] Chapter restore failed", { bookId, chapterId, error });
         throw error;
       }
     } finally {
       setLocks(prev => {
         if (prev.chapter?.id === operationId) {
-          return { ...prev, chapter: null };
+          const updated = { ...prev, chapter: null };
+          locksRef.current = updated;
+          return updated;
         }
         return prev;
       });
@@ -458,23 +492,31 @@ export function ReaderCoordinatorProvider({
       cancelled: false,
     };
     
-    setLocks(prev => ({ ...prev, progress: operation }));
+    setLocks(prev => {
+      const updated = { ...prev, progress: operation };
+      locksRef.current = updated;
+      return updated;
+    });
     setLoading(prev => ({ ...prev, chapterRestoring: true }));
     
     try {
-      if (operation.cancelled) return;
+      // Check current state, not closure value
+      if (locksRef.current.progress?.id !== operationId || locksRef.current.progress?.cancelled) return;
       await onChapterProgressRestore(bookId, chapterId, withAutoScroll);
-      if (operation.cancelled) return;
+      if (locksRef.current.progress?.id !== operationId || locksRef.current.progress?.cancelled) return;
       logger.log("[Reader Coordinator] Chapter progress restore completed", { bookId, chapterId });
     } catch (error) {
-      if (!operation.cancelled) {
+      const currentOp = locksRef.current.progress;
+      if (currentOp?.id !== operationId || !currentOp?.cancelled) {
         logger.error("[Reader Coordinator] Chapter progress restore failed", { bookId, chapterId, error });
         throw error;
       }
     } finally {
       setLocks(prev => {
         if (prev.progress?.id === operationId) {
-          return { ...prev, progress: null };
+          const updated = { ...prev, progress: null };
+          locksRef.current = updated;
+          return updated;
         }
         return prev;
       });
@@ -770,32 +812,40 @@ export function ReaderCoordinatorProvider({
       cancelled: false,
     };
     
-    setLocks(prev => ({ ...prev, audio: operation }));
+    setLocks(prev => {
+      const updated = { ...prev, audio: operation };
+      locksRef.current = updated;
+      return updated;
+    });
     setLoading(prev => ({ ...prev, trackChanging: true }));
     
     try {
-      if (operation.cancelled) {
+      // Check current state, not closure value
+      if (locksRef.current.audio?.id !== operationId || locksRef.current.audio?.cancelled) {
         logger.log("[Reader Coordinator] Operation cancelled before execution", { operationId });
         return;
       }
       
       await onAudioTrackChange(bookId, trackId, direction);
       
-      if (operation.cancelled) {
+      if (locksRef.current.audio?.id !== operationId || locksRef.current.audio?.cancelled) {
         logger.log("[Reader Coordinator] Operation cancelled during execution", { operationId });
         return;
       }
       
       logger.log("[Reader Coordinator] Audio track change completed", { bookId, trackId, direction });
     } catch (error) {
-      if (!operation.cancelled) {
+      const currentOp = locksRef.current.audio;
+      if (currentOp?.id !== operationId || !currentOp?.cancelled) {
         logger.error("[Reader Coordinator] Audio track change failed", { bookId, trackId, error });
         throw error;
       }
     } finally {
       setLocks(prev => {
         if (prev.audio?.id === operationId) {
-          return { ...prev, audio: null };
+          const updated = { ...prev, audio: null };
+          locksRef.current = updated;
+          return updated;
         }
         return prev;
       });
