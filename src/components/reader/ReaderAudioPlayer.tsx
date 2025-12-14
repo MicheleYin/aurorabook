@@ -1615,6 +1615,20 @@ export function ReaderAudioPlayer({
       // Single source of truth: always read from audio element
       if (audio && Number.isFinite(audio.currentTime)) {
         emitProgressRef.current(audio.currentTime);
+        
+        // Explicitly save audio timestamp when player closes
+        const currentTrack = tracks[currentIndex];
+        if (currentTrack && bookId && coordinator?.saveAudioTimestamp) {
+          try {
+            await coordinator.saveAudioTimestamp(
+              bookId,
+              currentTrack.id,
+              audio.currentTime
+            );
+          } catch (error) {
+            logger.warn("[ReaderAudioPlayer] Failed to save audio timestamp on close", error);
+          }
+        }
       } else {
         // Fallback to 0 if audio isn't ready
         emitProgressRef.current(0);
@@ -1629,7 +1643,7 @@ export function ReaderAudioPlayer({
       // Parent component will handle unmounting after animation
       onClose?.();
     }, 350); // Slightly longer than animation duration to ensure smooth completion
-  }, [onClose, isDismissing, flushAudioStateUpdate]);
+  }, [onClose, isDismissing, flushAudioStateUpdate, bookId, tracks, currentIndex, coordinator]);
 
   // Save progress when component becomes hidden (not just on unmount)
   const previousVisibleRef = useRef(isVisible);
