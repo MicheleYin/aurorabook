@@ -103,6 +103,11 @@ export function ReaderAudioPlayer({
   // Notify parent of restoration state changes
   useEffect(() => {
     isRestoringRef.current = isRestoring;
+    // Update trackLoadedForRestorationRef to ensure restoration flag is set before audio loads
+    // This fixes the issue where audio might load before setupAudioSource runs
+    if (!restorationInProgressRef.current) {
+      trackLoadedForRestorationRef.current = isRestoring;
+    }
     onRestorationStateChange?.(isRestoring);
     
     // Clear restoration lock when restoration completes
@@ -172,6 +177,10 @@ export function ReaderAudioPlayer({
   const isRestoringRef = useRef(false);
   const hasBeenDismissedRef = useRef(false);
   const isAutoAdvancingRef = useRef(false);
+  // Track if we've loaded a track for restoration to prevent resetting time after restoration
+  const trackLoadedForRestorationRef = useRef(false);
+  // Lock to prevent concurrent restoration attempts
+  const restorationInProgressRef = useRef<string | null>(null);
 
   // Handle enter animation - only run if not dismissing and not previously dismissed
   useEffect(() => {
@@ -719,12 +728,8 @@ export function ReaderAudioPlayer({
     };
   }, [currentTrackId]);
 
-  // Track if we've loaded a track for restoration to prevent resetting time after restoration
-  const trackLoadedForRestorationRef = useRef(false);
   // Track which tracks we're currently loading to prevent duplicate loads
   const loadingTracksRef = useRef<Set<string>>(new Set());
-  // Lock to prevent concurrent restoration attempts
-  const restorationInProgressRef = useRef<string | null>(null);
   // Track when a track change is in progress to prevent audio from starting
   const trackChangeInProgressRef = useRef(false);
   // Track the last track href we notified about to prevent duplicate onTrackChange calls

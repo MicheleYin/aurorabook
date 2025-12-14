@@ -8,6 +8,7 @@ import { useCallback, useRef, useState } from "react";
 import { logger } from "../../lib/logger";
 import { useContext } from "react";
 import { ReaderCoordinatorContext } from "../../contexts/ReaderCoordinatorContext";
+import { findScrollableContainer } from "../../lib/scroll-utils";
 import type { Book, Chapter } from "../../types/reader";
 
 type UseChapterStateParams = {
@@ -44,8 +45,9 @@ export function useChapterState(params: UseChapterStateParams) {
   const onProgressRef = useRef(onProgress);
   const chaptersRef = useRef(chapters);
   const isRestoringRef = useRef(false);
+  const restoreScrollTopRef = useRef<number | null>(null);
+  const restoreElementIndexRef = useRef<number | null>(null);
   const restorationAppliedRef = useRef<string | null>(null);
-  const restorationInProgressRef = useRef<string | null>(null); // Lock to prevent concurrent restoration attempts
   const lastProgressSnapshotRef = useRef<{
     chapterId?: string;
     chapterHref?: string;
@@ -63,6 +65,8 @@ export function useChapterState(params: UseChapterStateParams) {
   chaptersRef.current = chapters;
   currentIndexRef.current = currentIndex;
   isRestoringRef.current = isRestoring;
+  restoreScrollTopRef.current = restoreScrollTop;
+  restoreElementIndexRef.current = restoreElementIndex;
 
 
   // Initialize from progress (call explicitly when needed)
@@ -431,20 +435,6 @@ export function useChapterState(params: UseChapterStateParams) {
     scrollToElement?: (elementId: string) => void
   ) => {
     const currentChapter = chaptersRef.current[currentIndexRef.current];
-    
-    logger.log("[useChapterState] onChapterLoaded called", {
-      hasChapter: !!currentChapter,
-      chapterId: currentChapter?.id,
-      chapterIndex: currentIndexRef.current,
-      hasContentElement: !!contentElement,
-      hasScrollToElement: !!scrollToElement,
-      restoreScrollTop,
-      restoreElementIndex,
-      isRestoring: isRestoringRef.current,
-      alreadyApplied: restorationAppliedRef.current,
-      restorationInProgress: restorationInProgressRef.current,
-    });
-    
     if (!currentChapter || !contentElement) {
       logger.warn("[useChapterState] onChapterLoaded: missing chapter or content element", {
         hasChapter: !!currentChapter,
@@ -454,225 +444,256 @@ export function useChapterState(params: UseChapterStateParams) {
     }
 
     const shouldRestore = isRestoringRef.current;
-    const scrollTopToRestore = restoreScrollTop;
-    const elementIndexToRestore = restoreElementIndex;
+    const scrollTopToRestore = restoreScrollTopRef.current;
+    const elementIndexToRestore = restoreElementIndexRef.current;
     const currentChapterId = currentChapter.id;
     const alreadyApplied = restorationAppliedRef.current === currentChapterId;
 
-    // Check if restoration is already in progress for this chapter (lock to prevent concurrent attempts)
-    if (restorationInProgressRef.current === currentChapterId) {
-      logger.log("[useChapterState] Restoration already in progress for this chapter, skipping", {
+    // Find the actual scrollable container (might be a parent of contentElement)
+    // Do this once outside the retry loop since the container structure won't change
+    let scrollContainer: HTMLElement = contentElement;
+    
+    // Wait for content to be fully loaded and scrollable (similar to audio waiting for track to load)
+    const waitForContentReady = (attempts = 0) => {
+      // Find the actual scrollable container (might be a parent of contentElement)
+      scrollContainer = findScrollableContainer(contentElement) || contentElement;
+      const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+      // Content is ready only when it's actually scrollable (maxScroll > 0)
+      // This ensures the layout is complete and we can restore scroll position
+      const isContentReady = maxScroll > 0;
+      
+      logger.log("[useChapterState] Checking if content is ready", {
         chapterId: currentChapterId,
+        attempt: attempts,
+        contentElementScrollHeight: contentElement.scrollHeight,
+        contentElementClientHeight: contentElement.clientHeight,
+        scrollContainerTag: scrollContainer.tagName,
+        scrollContainerScrollHeight: scrollContainer.scrollHeight,
+        scrollContainerClientHeight: scrollContainer.clientHeight,
+        maxScroll,
+        isContentReady,
+        isScrollContainerDifferent: scrollContainer !== contentElement,
       });
-      return;
-    }
-
-    logger.log("[useChapterState] onChapterLoaded: restoration decision", {
-      chapterId: currentChapterId,
-      shouldRestore,
-      scrollTopToRestore,
-      elementIndexToRestore,
-      alreadyApplied,
-      willRestore: shouldRestore && (scrollTopToRestore !== null || elementIndexToRestore !== null) && !alreadyApplied,
-    });
-
-    if (
-      shouldRestore &&
-      (scrollTopToRestore !== null || elementIndexToRestore !== null) &&
-      !alreadyApplied
-    ) {
-      // Set lock to prevent concurrent restoration attempts
-      restorationInProgressRef.current = currentChapterId;
       
-      // Set a timeout to clear the lock if restoration doesn't complete (safety measure)
-      const lockTimeout = setTimeout(() => {
-        if (restorationInProgressRef.current === currentChapterId) {
-          logger.warn("[useChapterState] Restoration lock timeout - clearing lock", {
-            chapterId: currentChapterId,
-          });
-          restorationInProgressRef.current = null;
-        }
-      }, 5000); // 5 second timeout
+      // If content isn't ready yet, wait and try again (up to 20 attempts)
+      if (!isContentReady && attempts < 20) {
+        setTimeout(() => {
+          requestAnimationFrame(() => waitForContentReady(attempts + 1));
+        }, 50);
+        return;
+      }
       
-      try {
-        logger.log("[useChapterState] Applying restoration", {
+      // If content still isn't ready after all attempts, try window/document scrolling
+      if (!isContentReady) {
+        // Check if window/document can scroll as a fallback
+        const documentMaxScroll = document.documentElement.scrollHeight - window.innerHeight;
+        const windowCanScroll = documentMaxScroll > 0;
+        
+        logger.log("[useChapterState] Element container not scrollable, checking window/document", {
           chapterId: currentChapterId,
-          scrollTopToRestore,
-          elementIndexToRestore,
-          contentElementScrollHeight: contentElement.scrollHeight,
-          contentElementClientHeight: contentElement.clientHeight,
+          attempts,
+          scrollHeight: scrollContainer.scrollHeight,
+          clientHeight: scrollContainer.clientHeight,
+          maxScroll,
+          documentScrollHeight: document.documentElement.scrollHeight,
+          windowInnerHeight: window.innerHeight,
+          documentMaxScroll,
+          windowCanScroll,
         });
         
-        // Restore element index first (if available) - uses scrollIntoView like audio
-        if (elementIndexToRestore !== null && Number.isFinite(elementIndexToRestore) && scrollToElement) {
-          logger.log("[useChapterState] Restoring element index", {
+        if (windowCanScroll) {
+          // Use window/document as the scroll container
+          scrollContainer = document.documentElement;
+          logger.log("[useChapterState] Using window/document as scroll container", {
             chapterId: currentChapterId,
-            elementIndex: elementIndexToRestore,
+            documentScrollHeight: document.documentElement.scrollHeight,
+            windowInnerHeight: window.innerHeight,
+            documentMaxScroll,
           });
-          
-          // Try to find element by index and scroll to it using scrollIntoView
-          const elements = contentElement.querySelectorAll('[id^="f"]');
-          logger.log("[useChapterState] Found elements for restoration", {
+        } else {
+          // No scrollable container found at all
+          logger.warn("[useChapterState] No scrollable container found after retries, cannot restore", {
             chapterId: currentChapterId,
-            elementIndex: elementIndexToRestore,
-            totalElements: elements.length,
+            attempts,
+            scrollHeight: scrollContainer.scrollHeight,
+            clientHeight: scrollContainer.clientHeight,
+            maxScroll,
+            documentScrollHeight: document.documentElement.scrollHeight,
+            windowInnerHeight: window.innerHeight,
+            documentMaxScroll,
           });
-          
-          if (elementIndexToRestore < elements.length) {
-            const element = elements[elementIndexToRestore] as HTMLElement;
-            if (element && element.id) {
-              logger.log("[useChapterState] Scrolling to element using scrollIntoView", {
-                chapterId: currentChapterId,
-                elementId: element.id,
-                elementIndex: elementIndexToRestore,
-              });
-              
-              // Use scrollIntoView like audio state sync
-              element.scrollIntoView({
-                behavior: "auto",
-                block: "start",
-                inline: "nearest"
-              });
-              
-              // Also call scrollToElement for compatibility
-              scrollToElement(element.id);
-            } else {
-              logger.warn("[useChapterState] Element at index has no ID", {
-                chapterId: currentChapterId,
-                elementIndex: elementIndexToRestore,
-              });
-            }
-          } else {
-            logger.warn("[useChapterState] Element index out of range", {
-              chapterId: currentChapterId,
-              elementIndex: elementIndexToRestore,
-              totalElements: elements.length,
-            });
-          }
-        }
-        
-        // Restore scroll position using scrollIntoView approach
-        // If we have scrollTop but no element index, find the element at that scroll position
-        if (scrollTopToRestore !== null && Number.isFinite(scrollTopToRestore) && elementIndexToRestore === null) {
-          logger.log("[useChapterState] Restoring scrollTop using scrollIntoView approach", {
-            chapterId: currentChapterId,
-            scrollTop: scrollTopToRestore,
-            maxScroll: contentElement.scrollHeight - contentElement.clientHeight,
-          });
-          
-          // Find element closest to the scroll position
-          const elements = contentElement.querySelectorAll('[id^="f"]');
-          let targetElement: HTMLElement | null = null;
-          
-          for (let i = 0; i < elements.length; i++) {
-            const element = elements[i] as HTMLElement;
-            const elementTop = element.offsetTop;
-            
-            if (elementTop >= scrollTopToRestore) {
-              targetElement = element;
-              break;
-            }
-          }
-          
-          if (targetElement) {
-            logger.log("[useChapterState] Found element at scroll position, using scrollIntoView", {
-              chapterId: currentChapterId,
-              elementId: targetElement.id,
-              elementTop: targetElement.offsetTop,
-              targetScrollTop: scrollTopToRestore,
-            });
-            
-            targetElement.scrollIntoView({
-              behavior: "auto",
-              block: "start",
-              inline: "nearest"
-            });
-            
-            // Adjust for exact scroll position if needed
-            requestAnimationFrame(() => {
-              const currentScrollTop = contentElement.scrollTop;
-              const diff = Math.abs(currentScrollTop - scrollTopToRestore);
-              if (diff > 10) { // Only adjust if significantly different
-                contentElement.scrollTop = scrollTopToRestore;
-                logger.log("[useChapterState] Adjusted scrollTop after scrollIntoView", {
-                  chapterId: currentChapterId,
-                  targetScrollTop: scrollTopToRestore,
-                  actualScrollTop: contentElement.scrollTop,
-                });
-              }
-            });
-          } else {
-            // Fallback: direct scroll if no element found
-            logger.log("[useChapterState] No element found at scroll position, using direct scroll", {
-              chapterId: currentChapterId,
-              scrollTop: scrollTopToRestore,
-            });
-            contentElement.scrollTop = scrollTopToRestore;
-          }
-          
-          logger.log("[useChapterState] ScrollTop restored", {
-            chapterId: currentChapterId,
-            actualScrollTop: contentElement.scrollTop,
-            expectedScrollTop: scrollTopToRestore,
-          });
-        }
-        
-        restorationAppliedRef.current = currentChapterId;
-        // Don't emit progress during restoration to avoid triggering saves that cause re-initialization
-        // Progress will be emitted naturally when user scrolls
-        setIsRestoring(false);
-        setRestoreScrollTop(null);
-        setRestoreElementIndex(null);
-        
-        logger.log("[useChapterState] Restoration applied successfully", {
-          chapterId: currentChapterId,
-          finalScrollTop: contentElement.scrollTop,
-        });
-      } catch (error) {
-        logger.error("[useChapterState] Failed to apply restore state", {
-          chapterId: currentChapterId,
-          error,
-          errorMessage: error instanceof Error ? error.message : String(error),
-          errorStack: error instanceof Error ? error.stack : undefined,
-        });
-        setIsRestoring(false);
-        setRestoreScrollTop(null);
-        setRestoreElementIndex(null);
-      } finally {
-        // Clear lock after restoration attempt (even if it fails)
-        clearTimeout(lockTimeout);
-        // Keep lock until restoration completes to prevent race conditions
-        // The lock will be cleared when isRestoring becomes false
-        if (!isRestoringRef.current) {
-          restorationInProgressRef.current = null;
+          // Clear restoration state since we can't restore
+          restorationAppliedRef.current = currentChapterId;
+          setIsRestoring(false);
+          setRestoreScrollTop(null);
+          setRestoreElementIndex(null);
+          return;
         }
       }
-    } else if (shouldRestore && scrollTopToRestore === null && elementIndexToRestore === null) {
-      logger.log("[useChapterState] Should restore but no values, clearing restoration state", {
-        chapterId: currentChapterId,
-      });
-      setIsRestoring(false);
-      setRestoreScrollTop(null);
-      setRestoreElementIndex(null);
-      restorationAppliedRef.current = currentChapterId;
-      restorationInProgressRef.current = null;
-    } else if (!shouldRestore && scrollTopToRestore === null && elementIndexToRestore === null && !alreadyApplied) {
-      logger.log("[useChapterState] No restoration needed, scrolling to top", {
-        chapterId: currentChapterId,
-      });
-      contentElement.scrollTop = 0;
-      restorationAppliedRef.current = null;
-      restorationInProgressRef.current = null;
-    } else {
-      logger.log("[useChapterState] onChapterLoaded: no action taken", {
+      
+      // Content is ready (or we've given up waiting), proceed with restoration
+      logger.log("[useChapterState] onChapterLoaded - content ready, proceeding", {
         chapterId: currentChapterId,
         shouldRestore,
         scrollTopToRestore,
         elementIndexToRestore,
         alreadyApplied,
+        willRestore: shouldRestore && (scrollTopToRestore !== null || elementIndexToRestore !== null) && !alreadyApplied,
       });
-    }
-  }, [restoreScrollTop, restoreElementIndex, emitProgress]);
+      
+      // Apply restoration now that content is ready
+      if (
+        shouldRestore &&
+        (scrollTopToRestore !== null || elementIndexToRestore !== null) &&
+        !alreadyApplied
+      ) {
+        try {
+          logger.log("[useChapterState] Applying restoration", {
+            chapterId: currentChapterId,
+            scrollTopToRestore,
+            elementIndexToRestore,
+            contentElementScrollHeight: contentElement.scrollHeight,
+            contentElementClientHeight: contentElement.clientHeight,
+            scrollContainerTag: scrollContainer.tagName,
+            scrollContainerScrollHeight: scrollContainer.scrollHeight,
+            scrollContainerClientHeight: scrollContainer.clientHeight,
+            isScrollContainerDifferent: scrollContainer !== contentElement,
+          });
+          
+          // Restore element index first (if available)
+          if (elementIndexToRestore !== null && Number.isFinite(elementIndexToRestore) && scrollToElement) {
+            const elements = contentElement.querySelectorAll('[id^="f"]');
+            if (elementIndexToRestore < elements.length) {
+              const element = elements[elementIndexToRestore] as HTMLElement;
+              if (element && element.id) {
+                element.scrollIntoView({
+                  behavior: "auto",
+                  block: "start",
+                  inline: "nearest"
+                });
+                scrollToElement(element.id);
+              }
+            }
+          }
+          
+          // Restore scroll position if we have scrollTop but no element index
+          if (scrollTopToRestore !== null && Number.isFinite(scrollTopToRestore) && elementIndexToRestore === null) {
+            const isDocumentElement = scrollContainer === document.documentElement;
+            const maxScroll = isDocumentElement 
+              ? document.documentElement.scrollHeight - window.innerHeight
+              : scrollContainer.scrollHeight - scrollContainer.clientHeight;
+            // Calculate target scroll position
+            const targetScroll = Math.min(scrollTopToRestore, maxScroll);
+            
+            logger.log("[useChapterState] Applying scroll restoration", {
+              chapterId: currentChapterId,
+              scrollTopToRestore,
+              targetScroll,
+              maxScroll,
+              scrollContainerTag: scrollContainer.tagName,
+              isDocumentElement,
+            });
+            
+            const elements = contentElement.querySelectorAll('[id^="f"]');
+            let targetElement: HTMLElement | null = null;
+            
+            for (let i = 0; i < elements.length; i++) {
+              const element = elements[i] as HTMLElement;
+              const elementTop = element.offsetTop;
+              
+              if (elementTop >= scrollTopToRestore) {
+                targetElement = element;
+                break;
+              }
+            }
+            
+            if (targetElement) {
+              targetElement.scrollIntoView({
+                behavior: "auto",
+                block: "start",
+                inline: "nearest"
+              });
+              
+              requestAnimationFrame(() => {
+                const currentScrollTop = isDocumentElement 
+                  ? window.scrollY 
+                  : scrollContainer.scrollTop;
+                const diff = Math.abs(currentScrollTop - targetScroll);
+                if (diff > 10) {
+                  if (isDocumentElement) {
+                    window.scrollTo({ top: targetScroll, behavior: "auto" });
+                  } else {
+                    scrollContainer.scrollTop = targetScroll;
+                  }
+                  logger.log("[useChapterState] Adjusted scrollTop after scrollIntoView", {
+                    chapterId: currentChapterId,
+                    targetScrollTop: targetScroll,
+                    actualScrollTop: isDocumentElement ? window.scrollY : scrollContainer.scrollTop,
+                  });
+                }
+              });
+            } else {
+              if (isDocumentElement) {
+                window.scrollTo({ top: targetScroll, behavior: "auto" });
+              } else {
+                scrollContainer.scrollTop = targetScroll;
+              }
+              logger.log("[useChapterState] Direct scrollTop restoration", {
+                chapterId: currentChapterId,
+                scrollTop: targetScroll,
+                actualScrollTop: isDocumentElement ? window.scrollY : scrollContainer.scrollTop,
+                maxScroll,
+              });
+            }
+          }
+          
+          restorationAppliedRef.current = currentChapterId;
+          setIsRestoring(false);
+          setRestoreScrollTop(null);
+          setRestoreElementIndex(null);
+          
+          const finalScrollTop = scrollContainer === document.documentElement 
+            ? window.scrollY 
+            : scrollContainer.scrollTop;
+          logger.log("[useChapterState] Restoration applied successfully", {
+            chapterId: currentChapterId,
+            finalScrollTop,
+            scrollContainerTag: scrollContainer.tagName,
+            isDocumentElement: scrollContainer === document.documentElement,
+          });
+        } catch (error) {
+          logger.warn("Failed to apply restore state:", error);
+          setIsRestoring(false);
+          setRestoreScrollTop(null);
+          setRestoreElementIndex(null);
+        }
+      } else if (shouldRestore && scrollTopToRestore === null && elementIndexToRestore === null) {
+        logger.log("[useChapterState] Should restore but no values, clearing restoration state", {
+          chapterId: currentChapterId,
+        });
+        setIsRestoring(false);
+        setRestoreScrollTop(null);
+        setRestoreElementIndex(null);
+        restorationAppliedRef.current = currentChapterId;
+      } else if (!shouldRestore && scrollTopToRestore === null && elementIndexToRestore === null && !alreadyApplied) {
+        logger.log("[useChapterState] No restoration needed, scrolling to top", {
+          chapterId: currentChapterId,
+        });
+        restorationAppliedRef.current = null;
+      } else {
+        logger.log("[useChapterState] onChapterLoaded: no action taken", {
+          chapterId: currentChapterId,
+          shouldRestore,
+          scrollTopToRestore,
+          elementIndexToRestore,
+          alreadyApplied,
+        });
+      }
+    };
+    
+    // Start waiting for content to be ready
+    waitForContentReady();
+  }, []);
 
   const setCurrentIndex = useCallback((index: number) => {
     // Validate index before setting

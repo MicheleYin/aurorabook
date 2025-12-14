@@ -138,6 +138,10 @@ export function restoreWindowScrollPosition(savedMetrics: {
 }): boolean {
   const current = computeWindowScrollMetrics();
   if (current.maxScroll <= 0) return false;
+  console.log("[Scroll] restoreWindowScrollPosition called", {
+    savedMetrics,
+    current,
+  });
 
   const savedScrollTop = typeof savedMetrics.scrollTop === "number" && Number.isFinite(savedMetrics.scrollTop)
     ? Math.max(savedMetrics.scrollTop, 0)
@@ -266,6 +270,120 @@ export function isElementVisible(
   return isFullyVisible || (isPartiallyVisible && isMostlyVisible);
 }
 
+/**
+ * Find the actual scrollable container for an element
+ * Walks up the DOM tree to find the first parent that can actually scroll
+ * Only returns containers that can actually scroll (maxScroll > 0)
+ * Returns the scrollable container, or null if none found
+ */
+export function findScrollableContainer(element: HTMLElement | null): HTMLElement | null {
+  if (!element) return null;
+  
+  let current: HTMLElement | null = element;
+  let candidateWithOverflow: HTMLElement | null = null;
+  const checkedContainers: Array<{ tag: string; id: string; className: string; maxScroll: number; hasOverflow: boolean }> = [];
+  
+  // First pass: look for containers with overflow styles or that can scroll
+  while (current) {
+    const style = window.getComputedStyle(current);
+    const hasOverflow = style.overflowY === "auto" || style.overflowY === "scroll" || 
+                        style.overflow === "auto" || style.overflow === "scroll";
+    
+    // Check if it can actually scroll (has scrollable content)
+    const maxScroll = current.scrollHeight - current.clientHeight;
+    const canScroll = maxScroll > 0;
+    
+    // Log checked containers for debugging
+    checkedContainers.push({
+      tag: current.tagName,
+      id: current.id || "",
+      className: current.className || "",
+      maxScroll,
+      hasOverflow,
+    });
+    
+    // If it has overflow styles and can actually scroll, it's the scrollable container
+    if (hasOverflow && canScroll) {
+      console.log("[findScrollableContainer] Found scrollable container with overflow", {
+        tag: current.tagName,
+        id: current.id,
+        className: current.className,
+        maxScroll,
+        checkedContainers,
+      });
+      return current;
+    }
+    
+    // If it can scroll (even without explicit overflow styles), it's scrollable
+    if (canScroll) {
+      console.log("[findScrollableContainer] Found scrollable container without overflow styles", {
+        tag: current.tagName,
+        id: current.id,
+        className: current.className,
+        maxScroll,
+        checkedContainers,
+      });
+      return current;
+    }
+    
+    // Track the first element with overflow styles (in case content isn't loaded yet)
+    if (hasOverflow && !candidateWithOverflow) {
+      candidateWithOverflow = current;
+    }
+    
+    // Stop at body or html
+    if (current === document.body || current === document.documentElement) {
+      break;
+    }
+    
+    current = current.parentElement;
+  }
+  
+  // Second pass: if we found a candidate with overflow but it's not scrollable yet,
+  // check if document/window can scroll as a fallback
+  if (candidateWithOverflow) {
+    // Re-check the candidate - content might have loaded
+    const maxScroll = candidateWithOverflow.scrollHeight - candidateWithOverflow.clientHeight;
+    if (maxScroll > 0) {
+      console.log("[findScrollableContainer] Candidate with overflow became scrollable", {
+        tag: candidateWithOverflow.tagName,
+        id: candidateWithOverflow.id,
+        className: candidateWithOverflow.className,
+        maxScroll,
+        checkedContainers,
+      });
+      return candidateWithOverflow;
+    }
+  }
+  
+  // Fallback: check if window/document can scroll
+  const documentMaxScroll = document.documentElement.scrollHeight - window.innerHeight;
+  if (documentMaxScroll > 0) {
+    console.log("[findScrollableContainer] Using document.documentElement as scrollable container", {
+      documentScrollHeight: document.documentElement.scrollHeight,
+      windowInnerHeight: window.innerHeight,
+      documentMaxScroll,
+      checkedContainers,
+    });
+    return document.documentElement;
+  }
+  
+  // If no scrollable container found, return the candidate with overflow styles
+  // (it might become scrollable once content fully loads)
+  if (candidateWithOverflow) {
+    console.log("[findScrollableContainer] No scrollable container found, returning candidate with overflow", {
+      tag: candidateWithOverflow.tagName,
+      id: candidateWithOverflow.id,
+      className: candidateWithOverflow.className,
+      checkedContainers,
+    });
+  } else {
+    console.log("[findScrollableContainer] No scrollable container found", {
+      checkedContainers,
+    });
+  }
+  return candidateWithOverflow;
+}
 
 export function scrollToElement(
   elementId: string,
