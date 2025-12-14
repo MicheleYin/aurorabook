@@ -183,38 +183,83 @@ export function ReaderAudioPlayer({
     setIsVisible(false);
   }, [bookId, tracks.length]);
 
+  // Track animation timeout refs for cleanup
+  const trackAnimationTimeoutRef = useRef<number | null>(null);
+  const trackAnimationResetTimeoutRef = useRef<number | null>(null);
+
   // Trigger track animation when track index changes
   useEffect(() => {
     const previousIndex = previousTrackIndexRef.current;
     
+    // Clear any pending timeouts
+    if (trackAnimationTimeoutRef.current !== null) {
+      clearTimeout(trackAnimationTimeoutRef.current);
+      trackAnimationTimeoutRef.current = null;
+    }
+    if (trackAnimationResetTimeoutRef.current !== null) {
+      clearTimeout(trackAnimationResetTimeoutRef.current);
+      trackAnimationResetTimeoutRef.current = null;
+    }
+    
     if (previousIndex !== undefined && previousIndex !== currentIndex) {
       // Determine direction based on previous vs current index
       const direction = currentIndex > previousIndex ? "left" : "right";
-      setTrackAnimationDirection(direction);
       
-      // Track changed - trigger animation
-      setTrackAnimationState("entering");
-      setTimeout(() => {
-        setTrackAnimationState("entered");
-      }, 50);
+      // Reset animation state first to ensure CSS classes re-trigger
+      setTrackAnimationState(null);
+      setTrackAnimationDirection(null);
+      
+      // Use double requestAnimationFrame to ensure DOM has fully updated before applying animation
+      // This is a common pattern to ensure the browser has painted the reset state
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setTrackAnimationDirection(direction);
+          setTrackAnimationState("entering");
+          
+          // After animation starts, mark as entered
+          trackAnimationTimeoutRef.current = window.setTimeout(() => {
+            setTrackAnimationState("entered");
+            
+            // Reset animation state after animation completes (300ms for duration)
+            trackAnimationResetTimeoutRef.current = window.setTimeout(() => {
+              setTrackAnimationState(null);
+              setTrackAnimationDirection(null);
+            }, 300);
+          }, 50);
+        });
+      });
     } else if (previousIndex === undefined) {
       // First render - no animation
       setTrackAnimationDirection(null);
+      setTrackAnimationState(null);
     }
     
     previousTrackIndexRef.current = currentIndex;
+    
+    // Cleanup function
+    return () => {
+      if (trackAnimationTimeoutRef.current !== null) {
+        clearTimeout(trackAnimationTimeoutRef.current);
+        trackAnimationTimeoutRef.current = null;
+      }
+      if (trackAnimationResetTimeoutRef.current !== null) {
+        clearTimeout(trackAnimationResetTimeoutRef.current);
+        trackAnimationResetTimeoutRef.current = null;
+      }
+    };
   }, [currentIndex]);
 
-  // Determine track animation class
+  // Determine track animation class - always use slide left or right (same as chapter animations)
   const trackAnimationClass = useMemo(() => {
     if (trackAnimationState === "entering" || trackAnimationState === "entered") {
+      // Always use slide animations - left for next track, right for previous track
       if (trackAnimationDirection === "left") {
         return animPatterns.chapterSlideLeft;
       } else if (trackAnimationDirection === "right") {
         return animPatterns.chapterSlideRight;
-      } else {
-        return animPatterns.chapterCrossFade;
       }
+      // Default to slide left if direction is not set
+      return animPatterns.chapterSlideLeft;
     }
     return null;
   }, [trackAnimationState, trackAnimationDirection]);

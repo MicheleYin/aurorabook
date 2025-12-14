@@ -33,7 +33,7 @@ export function useFragmentNavigation(
 
     const cleanFragment = fragment.replace(/^#/, "");
     rafIdRef.current = requestAnimationFrame(() => {
-      scrollToElement(node, cleanFragment, "smooth");
+      scrollToElement(cleanFragment, "smooth");
       onFragmentConsumed?.();
       rafIdRef.current = null;
     });

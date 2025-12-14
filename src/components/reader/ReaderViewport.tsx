@@ -29,6 +29,7 @@ import { useChapterTransitions } from "../../hooks/reader/useChapterTransitions"
 import { useHighlighting } from "../../hooks/reader/useHighlighting";
 import { useLinkHandling } from "../../hooks/reader/useLinkHandling";
 import { useChapterLoadedCallback } from "../../hooks/reader/useChapterLoadedCallback";
+import { VirtualizedChapterContent, type VirtualizedChapterContentHandle } from "./VirtualizedChapterContent";
 
 type ResolvedReaderTheme = Exclude<ReaderTheme, "system">;
 
@@ -126,6 +127,9 @@ export function ReaderViewport({
   // Use external contentRef if provided, otherwise create own
   const internalContentRef = useRef<HTMLDivElement | null>(null);
   const contentRef = externalContentRef || internalContentRef;
+  
+  // Ref for virtualized content handle (for scroll integration)
+  const virtualizedContentRef = useRef<VirtualizedChapterContentHandle | null>(null);
 
   // Custom hooks (no useEffects)
   const fragmentNav = useFragmentNavigation(contentRef, onFragmentConsumed);
@@ -411,17 +415,18 @@ export function ReaderViewport({
                 <div className="text-muted-foreground">Loading chapter content...</div>
               </div>
             ) : activeChapter.contentHtml ? (
-              <div
-                data-reader-chapter-content="true"
-                data-chapter-id={activeChapter.id}
+              <VirtualizedChapterContent
+                ref={virtualizedContentRef}
+                contentHtml={activeChapter.contentHtml}
+                chapterId={activeChapter.id}
+                highlightedElementId={highlightedElementId}
+                onContentRendered={onChapterLoaded}
+                contentRef={contentRef}
+                scrollerRef={contentRef}
                 className="animate-in fade-in duration-300"
                 style={{
                   // CSS containment to limit layout calculations for off-screen content
                   contain: "layout style paint",
-                  contentVisibility: "auto",
-                }}
-                dangerouslySetInnerHTML={{
-                  __html: activeChapter.contentHtml,
                 }}
               />
             ) : (

@@ -516,7 +516,7 @@ export function useAudioTextSync(
           hasContentRef: !!contentRef.current,
         });
         
-        const scrolled = scrollToElement(contentRef.current, segment.textElementId, "smooth", headerOffset, playerOffset, elementIndex);
+        const scrolled = scrollToElement(segment.textElementId, "smooth", headerOffset, playerOffset);
         
         logger.log("[Audio Sync] Scroll result", {
           scrolled,

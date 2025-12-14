@@ -75,10 +75,8 @@ export function useScrollManagement(
   }, [contentRef]);
 
   const scrollToElementId = useCallback((elementId: string, behavior: "smooth" | "auto" = "smooth") => {
-    const node = contentRef.current;
-    if (!node) return;
-    scrollToElement(node, elementId, behavior);
-  }, [contentRef]);
+    scrollToElement(elementId, behavior);
+  }, []);
 
   // Scroll tracking
   const handleScroll = useCallback(() => {

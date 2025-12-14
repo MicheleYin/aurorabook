@@ -37,7 +37,7 @@ export function useLinkHandling(
 
       if (href.startsWith("#")) {
         const fragment = href.slice(1);
-        scrollToElement(root, fragment, "smooth");
+        scrollToElement(fragment, "smooth");
         return;
       }
 

@@ -260,245 +260,150 @@ export function isElementVisible(
   return isFullyVisible || (isPartiallyVisible && isMostlyVisible);
 }
 
-/**
- * Find the actual scrollable container for an element
- * Returns the first parent that can actually scroll
- */
-function findScrollableContainer(element: HTMLElement): HTMLElement | null {
-  let current: HTMLElement | null = element;
-  
-  while (current) {
-    const style = window.getComputedStyle(current);
-    const hasOverflow = style.overflowY === "auto" || style.overflowY === "scroll" || 
-                        style.overflow === "auto" || style.overflow === "scroll";
-    
-    // Check if it can actually scroll (has scrollable content)
-    const canScroll = current.scrollHeight > current.clientHeight;
-    
-    // Also check if it has overflow styles (even if not currently scrollable, it might be the intended container)
-    if (hasOverflow) {
-      // If it has overflow styles, prefer it even if not currently scrollable
-      // (content might not be fully loaded yet)
-      return current;
-    }
-    
-    if (canScroll) {
-      return current;
-    }
-    
-    // Stop at body or html
-    if (current === document.body || current === document.documentElement) {
-      break;
-    }
-    
-    current = current.parentElement;
-  }
-  
-  // Fallback: check if window/document can scroll
-  if (document.documentElement.scrollHeight > window.innerHeight) {
-    return document.documentElement;
-  }
-  
-  return null;
-}
-
-type ElementIndexHook = {
-  hasElement: (elementId: string) => boolean;
-  getScrollPositionEstimate: (elementId: string) => number | undefined;
-};
 
 export function scrollToElement(
-  root: HTMLElement,
   elementId: string,
   behavior: ScrollBehavior = "smooth",
   headerOffset: number = 0,
   playerOffset: number = 0,
-  elementIndex?: ElementIndexHook,
 ): boolean {
   console.log("[Scroll] scrollToElement called", {
     elementId,
     behavior,
     headerOffset,
-    rootTag: root.tagName,
-    rootId: root.id,
-    rootScrollHeight: root.scrollHeight,
-    rootClientHeight: root.clientHeight,
     playerOffset,
   });
 
-  // Use getElementById for better performance (O(1) vs O(n) for querySelector)
-  // This is much faster, especially with large DOMs
-  let element: HTMLElement | null = null;
-  const docElement = document.getElementById(elementId);
-  if (docElement && root.contains(docElement)) {
-    element = docElement;
-  }
+  // Find the virtualized container handle
+  type ElementWithVirtualizedHandle = HTMLElement & {
+    __virtualizedHandle?: {
+      ensureSegmentRendered: (elementId: string) => Promise<boolean>;
+    };
+  };
   
-  // Fallback to querySelector for anchor tags with name attribute
-  if (!element) {
-    const selector = typeof CSS !== "undefined" && CSS.escape
-      ? `#${CSS.escape(elementId)}`
-      : `#${elementId}`;
-    element = root.querySelector<HTMLElement>(selector) ??
-      root.querySelector<HTMLElement>(`a[name="${elementId}"]`);
+  // Look for virtualized handle in the document
+  const virtualizedContainer = document.querySelector('[data-reader-chapter-content]')?.parentElement as ElementWithVirtualizedHandle | null;
+  const virtualizedHandle = virtualizedContainer?.__virtualizedHandle;
+  
+  if (virtualizedHandle && typeof virtualizedHandle.ensureSegmentRendered === 'function') {
+    // Ensure element is rendered, then scroll it
+    console.log("[Scroll] Ensuring virtualized element is rendered", { elementId });
+    virtualizedHandle.ensureSegmentRendered(elementId)
+      .then((rendered: boolean) => {
+        if (!rendered) {
+          console.warn("[Scroll] Failed to render virtualized element", { elementId });
+          return;
+        }
+
+        const element = document.getElementById(elementId);
+        if (!element) {
+          console.warn("[Scroll] Element not found after rendering", { elementId });
+          return;
+        }
+
+        // Find the scrollable container (should be the virtualized container or its parent)
+        const scrollContainer = virtualizedContainer || 
+          (element.closest('[data-reader-chapter-content]')?.parentElement as HTMLElement) ||
+          document.documentElement;
+
+        // Check if element is already visible
+        const isVisible = isElementVisible(element, scrollContainer, headerOffset, 10, playerOffset);
+        if (isVisible) {
+          console.log("[Scroll] Element is already visible", { elementId });
+          return;
+        }
+
+        // Scroll using scrollIntoView, then adjust for header offset
+        element.scrollIntoView({ 
+          behavior, 
+          block: "start",
+          inline: "nearest"
+        });
+
+        // Adjust for header offset if needed
+        if (headerOffset > 0) {
+          setTimeout(() => {
+            const elementRect = element.getBoundingClientRect();
+            
+            if (scrollContainer === document.documentElement) {
+              // Window/document scrolling
+              const currentScrollY = window.scrollY;
+              const elementTopRelativeToViewport = elementRect.top + currentScrollY;
+              const targetScrollY = elementTopRelativeToViewport - headerOffset;
+              
+              window.scrollTo({
+                top: Math.max(0, targetScrollY),
+                behavior,
+              });
+            } else {
+              // Container scrolling
+              const containerRect = scrollContainer.getBoundingClientRect();
+              const currentScrollTop = scrollContainer.scrollTop;
+              const elementTopRelativeToContainer = elementRect.top - containerRect.top + currentScrollTop;
+              const targetScrollTop = elementTopRelativeToContainer - headerOffset;
+              const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+              const clampedScrollTop = Math.max(0, Math.min(targetScrollTop, maxScroll));
+              
+              scrollContainer.scrollTo({
+                top: clampedScrollTop,
+                behavior,
+              });
+            }
+          }, behavior === "smooth" ? 300 : 100);
+        }
+
+        console.log("[Scroll] Element scrolled", { elementId });
+      })
+      .catch((error: Error) => {
+        console.warn("[Scroll] Virtualized render failed", { error, elementId });
+      });
+    
+    return true;
   }
+
+  // Fallback: try to find element directly (non-virtualized case)
+  const element = document.getElementById(elementId) ||
+    document.querySelector<HTMLElement>(`#${CSS.escape(elementId)}`) ||
+    document.querySelector<HTMLElement>(`a[name="${elementId}"]`);
   
   if (!element) {
     console.log("[Scroll] Element not found", { elementId });
     return false;
   }
 
-  // Phase 1: Use element index for scroll position estimation if available
-  if (elementIndex) {
-    const estimatedScrollTop = elementIndex.getScrollPositionEstimate(elementId);
-    if (estimatedScrollTop !== undefined) {
-      console.log("[Scroll] Using estimated scroll position from index", {
-        elementId,
-        estimatedScrollTop,
-        actualScrollTop: root.scrollTop,
-      });
-      // Could use this for faster scrolling, but for now we'll still use the actual element
-      // This is useful for virtual scrolling where elements might not be rendered yet
-    }
-  }
-
-  console.log("[Scroll] Element found", {
-    elementId,
-    elementTag: element.tagName,
-    headerOffset,
-    playerOffset,
-  });
-
-  // Find the actual scrollable container
-  let scrollContainer = findScrollableContainer(element);
+  // Use document as scroll container for non-virtualized content
+  const scrollContainer = document.documentElement;
   
-  // If no scrollable container found, try the root
-  if (!scrollContainer || scrollContainer.scrollHeight <= scrollContainer.clientHeight) {
-    // Check if root can scroll
-    if (root.scrollHeight > root.clientHeight) {
-      scrollContainer = root;
-    } else {
-      // Try document/window as fallback
-      if (document.documentElement.scrollHeight > window.innerHeight) {
-        scrollContainer = document.documentElement;
-      } else {
-        scrollContainer = root; // Use root anyway, might work
-      }
-    }
-  }
-  
-  const isRootScrollable = scrollContainer === root;
-  const isDocumentElement = scrollContainer === document.documentElement;
-  
-  console.log("[Scroll] Scroll container", {
-    isRootScrollable,
-    isDocumentElement,
-    containerTag: scrollContainer.tagName,
-    containerScrollHeight: scrollContainer.scrollHeight,
-    containerClientHeight: scrollContainer.clientHeight,
-    containerMaxScroll: scrollContainer.scrollHeight - scrollContainer.clientHeight,
-  });
-
-  // Check if element is already visible (accounting for header and player offsets)
+  // Check if element is already visible
   const isVisible = isElementVisible(element, scrollContainer, headerOffset, 10, playerOffset);
-  console.log("[Scroll] Element visibility check", {
-    isVisible,
-    headerOffset,
-    playerOffset,
-  });
-  
   if (isVisible) {
-    console.log("[Scroll] Element is already visible, skipping scroll");
+    console.log("[Scroll] Element is already visible", { elementId });
     return true;
   }
 
-  // If container can't scroll (maxScroll is 0 or negative), use scrollIntoView with offset
-  const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
-  if (maxScroll <= 0) {
-    console.log("[Scroll] Container cannot scroll, using scrollIntoView with offset workaround");
-    
-    // Use scrollIntoView and then adjust for header offset
-    element.scrollIntoView({ behavior, block: "start" });
-    
-    // If header offset is needed, adjust after scroll
-    if (headerOffset > 0) {
-      // Wait for scroll to start, then adjust
-      requestAnimationFrame(() => {
-        if (isDocumentElement) {
-          window.scrollBy({ top: -headerOffset, behavior: "smooth" });
-        } else {
-          scrollContainer.scrollBy({ top: -headerOffset, behavior: "smooth" });
-        }
+  // Scroll using scrollIntoView
+  element.scrollIntoView({ 
+    behavior, 
+    block: "start",
+    inline: "nearest"
+  });
+
+  // Adjust for header offset if needed
+  if (headerOffset > 0) {
+    setTimeout(() => {
+      const currentScrollY = window.scrollY;
+      const elementRect = element.getBoundingClientRect();
+      const elementTopRelativeToViewport = elementRect.top + currentScrollY;
+      const targetScrollY = elementTopRelativeToViewport - headerOffset;
+      
+      window.scrollTo({
+        top: Math.max(0, targetScrollY),
+        behavior,
       });
-    }
-    
-    return true;
+    }, behavior === "smooth" ? 300 : 100);
   }
 
-  // If no header offset, use simple scrollIntoView
-  if (headerOffset === 0) {
-    console.log("[Scroll] Using scrollIntoView (no header offset)");
-    element.scrollIntoView({ behavior, block: "start" });
-    return true;
-  }
-
-  // Calculate scroll position accounting for header and player offsets
-  const elementRect = element.getBoundingClientRect();
-  const containerRect = scrollContainer.getBoundingClientRect();
-  
-  // For document element, use window coordinates
-  const containerTop = isDocumentElement ? 0 : containerRect.top;
-  const currentScrollTop = isDocumentElement ? window.scrollY : scrollContainer.scrollTop;
-  
-  console.log("[Scroll] Calculating scroll position", {
-    elementTop: elementRect.top,
-    containerTop,
-    currentScrollTop,
-    headerOffset,
-    playerOffset,
-    containerScrollHeight: scrollContainer.scrollHeight,
-    containerClientHeight: scrollContainer.clientHeight,
-    isDocumentElement,
-  });
-  
-  // Calculate the element's position relative to the scroll container
-  // elementRect.top is relative to viewport
-  // For document element, elementRect.top is already relative to viewport (containerTop = 0)
-  // For other containers, elementRect.top - containerRect.top gives position relative to container's visible area
-  const elementTopRelativeToContainer = elementRect.top - containerTop + currentScrollTop;
-  
-  // Subtract header offset to position element below header
-  // Note: player offset doesn't affect scroll position calculation, only visibility check
-  // The element should be positioned accounting for header, and player offset is handled in visibility
-  const targetScrollTop = elementTopRelativeToContainer - headerOffset;
-  
-  // Ensure we don't scroll past the bounds
-  const clampedScrollTop = Math.max(0, Math.min(targetScrollTop, maxScroll));
-  
-  console.log("[Scroll] Scrolling to position", {
-    elementTopRelativeToContainer,
-    targetScrollTop,
-    clampedScrollTop,
-    maxScroll,
-    currentScrollTop,
-    behavior,
-    headerOffset,
-    playerOffset,
-  });
-  
-  // Scroll the container
-  if (isDocumentElement) {
-    window.scrollTo({
-      top: clampedScrollTop,
-      behavior,
-    });
-  } else {
-    scrollContainer.scrollTo({
-      top: clampedScrollTop,
-      behavior,
-    });
-  }
-  
   return true;
 }
+
 
