@@ -189,8 +189,10 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       });
     }
 
-    // Disable auto-scroll on manual selection
-    if (options?.isManualSelection && autoScrollEnabled) {
+    // Disable auto-scroll on manual selection (only for audiobooks)
+    const activeBook = library.find(b => b.id === activeBookId);
+    const hasAudioTracks = (activeBook?.audioTracks?.length ?? 0) > 0;
+    if (options?.isManualSelection && autoScrollEnabled && hasAudioTracks) {
       logger.log("[App] Disabling auto-scroll due to manual chapter selection");
       setAutoScrollEnabled(false);
       updateSettings({ autoScrollEnabled: false });
