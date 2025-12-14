@@ -1,21 +1,25 @@
 use leptos::*;
 use crate::types::reader::Book;
-use crate::components::ui::{Progress, Separator};
+use crate::components::ui::{Progress, Separator, Button, ButtonVariant, ButtonSize};
 use crate::components::library::utils::{get_book_progress_summary, get_library_book_status_from_summary};
 use crate::components::library::LibraryStatusBadge;
 use crate::components::icons::ImageOff;
+use wasm_bindgen::JsCast;
 
 #[component]
 pub fn LibraryList(
     books: Vec<Book>,
     active_book_id: Option<String>,
     on_open_book: Callback<String>,
-    #[prop(optional)] on_view_details: Option<Callback<String>>,
+    on_view_details: Option<Callback<String>>,
 ) -> impl IntoView {
     let books_len = books.len();
     view! {
         <div class="flex flex-col divide-y divide-border overflow-hidden rounded-xl border">
             {books.into_iter().enumerate().map(move |(index, book)| {
+                // Calculate stagger delay for animation (20ms per item for list view)
+                let delay_ms = index * 20;
+                let stagger_class = format!("[animation-delay:{}ms]", delay_ms);
                 let book_id = book.id.clone();
                 let is_active = active_book_id.as_ref().map(|id| id == &book.id).unwrap_or(false);
                 let progress_summary = get_book_progress_summary(&book);
@@ -43,14 +47,23 @@ pub fn LibraryList(
                     <>
                         <div
                             class=move || {
-                                format!(
-                                    "flex items-center gap-4 p-4 cursor-pointer transition-colors hover:bg-muted/50 {}",
-                                    if is_active { "bg-primary/5" } else { "" }
-                                )
+                                let base_classes = format!("library-item-enter {} flex items-center gap-4 p-4 cursor-pointer transition-colors hover:bg-muted/50", stagger_class);
+                                if is_active {
+                                    format!("{} bg-primary/5", base_classes)
+                                } else {
+                                    base_classes
+                                }
                             }
                             on:click={
                                 let id = book_id.clone();
-                                move |_| {
+                                move |ev| {
+                                    // Don't open book if clicking on Details button
+                                    if let Some(target) = ev.target() {
+                                        if target.dyn_into::<web_sys::HtmlButtonElement>().is_ok() {
+                                            // Clicked on a button, don't open the book
+                                            return;
+                                        }
+                                    }
                                     on_open.call(id.clone());
                                 }
                             }
@@ -72,21 +85,21 @@ pub fn LibraryList(
                                 move || format!("Open {} by {}", title.clone(), author.clone())
                             }
                         >
-                            <div class="relative h-20 w-16 shrink-0 overflow-hidden rounded bg-muted">
+                            <div class="relative h-16 w-12 shrink-0 overflow-hidden rounded-md bg-muted">
                                 {if let Some(cover_url) = book_cover_url {
                                     let cover_alt = book_title.clone();
                                     view! {
                                         <img
                                             src=cover_url
                                             alt=format!("Cover for {}", cover_alt)
-                                            class="h-full w-full object-cover"
+                                            class="h-full w-full max-h-full max-w-full object-cover"
                                             loading="lazy"
                                         />
                                     }.into_view()
                                 } else {
                                     view! {
-                                        <div class="flex h-full w-full items-center justify-center">
-                                            <ImageOff size=32 class="text-muted-foreground/50" />
+                                        <div class="flex h-full w-full items-center justify-center text-muted-foreground">
+                                            <ImageOff size=24 class="h-6 w-6" />
                                         </div>
                                     }.into_view()
                                 }}
@@ -120,6 +133,24 @@ pub fn LibraryList(
                                     }.into_view()
                                 }}
                             </div>
+                            {if let Some(on_view_details) = on_view_details {
+                                let book_id_for_details = book_id.clone();
+                                let on_view = on_view_details.clone();
+                                view! {
+                                    <Button
+                                        variant=ButtonVariant::Ghost
+                                        size=ButtonSize::Sm
+                                        on_click=Callback::new(move |_ev: ()| {
+                                            // Note: Button's on_click doesn't provide event, so we handle stopPropagation in the card's click handler
+                                            on_view.call(book_id_for_details.clone());
+                                        })
+                                    >
+                                        {move || "Details"}
+                                    </Button>
+                                }.into_view()
+                            } else {
+                                view! {}.into_view()
+                            }}
                         </div>
                         {move || {
                             if idx < len.saturating_sub(1) {

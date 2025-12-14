@@ -44,14 +44,45 @@ where
         .map_err(|e| format!("Deserialization failed: {:?}", e))
 }
 
+/// Strip content from chapters and audio tracks to keep only metadata
+/// This ensures library view doesn't load unnecessary content
+fn strip_book_content(book: &mut Book) {
+    // Strip chapter content (keep only metadata)
+    for chapter in &mut book.chapters {
+        chapter.content_html = None;
+        chapter.plain_text = None;
+    }
+    
+    // Strip audio track URLs (keep only metadata)
+    for audio_track in &mut book.audio_tracks {
+        audio_track.url = None;
+    }
+    
+    // Clear audio sync map as it's not needed for library view
+    book.audio_sync_map = None;
+}
+
+/// Strip content from all books in a collection
+pub fn strip_books_content(books: &mut Vec<Book>) {
+    for book in books {
+        strip_book_content(book);
+    }
+}
+
 /// Read all books with optional filtering and search
 /// Does NOT preload chapter content - chapters are loaded lazily when needed
+/// Strips all content (chapter HTML/text and audio URLs) to keep only metadata
 pub async fn read_all_books(filter: Option<LibraryFilter>) -> Result<Vec<Book>, String> {
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({
         "filter": filter
     })).map_err(|e| format!("Serialization failed: {}", e))?;
     
-    invoke_tauri_command::<Vec<Book>>("read_all_books", args).await
+    let mut books = invoke_tauri_command::<Vec<Book>>("read_all_books", args).await?;
+    
+    // Strip content to ensure only metadata is kept
+    strip_books_content(&mut books);
+    
+    Ok(books)
 }
 
 /// Read a single complete book by ID
@@ -151,4 +182,32 @@ pub async fn load_epub_audio(
     })).map_err(|e| format!("Serialization failed: {}", e))?;
     
     invoke_tauri_command::<Option<String>>("load_epub_audio", args).await
+}
+
+/// Ingest an EPUB file
+/// This parses the EPUB and adds it to the library
+pub async fn ingest_epub(
+    epub_path: &str,
+    source_path: &str,
+) -> Result<Book, String> {
+    let args = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "epubPath": epub_path,
+        "sourcePath": source_path
+    })).map_err(|e| format!("Serialization failed: {}", e))?;
+    
+    invoke_tauri_command::<Book>("ingest_epub", args).await
+}
+
+/// Export EPUB file directly to disk (optimized for large files)
+/// This avoids the overhead of serializing large binary data through Tauri IPC
+pub async fn export_epub_to_file(
+    book_id: &str,
+    output_path: &str,
+) -> Result<(), String> {
+    let args = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "bookId": book_id,
+        "outputPath": output_path
+    })).map_err(|e| format!("Serialization failed: {}", e))?;
+    
+    invoke_tauri_command::<()>("export_epub_to_file", args).await
 }

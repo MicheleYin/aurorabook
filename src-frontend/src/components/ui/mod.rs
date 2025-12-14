@@ -12,6 +12,7 @@ pub mod dialog;
 pub mod drawer;
 pub mod progress;
 pub mod tabs;
+pub mod toaster;
 
 pub use button::*;
 pub use input::*;
@@ -20,7 +21,8 @@ pub use separator::*;
 pub use card::*;
 pub use slider::*;
 pub use select::*;
-pub use dialog::*;
-pub use drawer::*;
+pub use dialog::{Dialog, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose};
+pub use drawer::{Drawer, DrawerHandle, DrawerHeader, DrawerTitle, DrawerDescription, DrawerFooter, DrawerClose};
 pub use progress::*;
 pub use tabs::*;
+pub use toaster::*;

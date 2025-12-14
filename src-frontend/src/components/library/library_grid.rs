@@ -1,21 +1,25 @@
 use leptos::*;
 use crate::types::reader::Book;
-use crate::components::ui::{Card, CardContent, Progress};
+use crate::components::ui::{Progress, Button, ButtonVariant, ButtonSize};
 use crate::components::library::utils::{get_book_progress_summary, get_library_book_status_from_summary};
 use crate::components::library::LibraryStatusBadge;
 use crate::components::icons::ImageOff;
+use wasm_bindgen::JsCast;
 
 #[component]
 pub fn LibraryGrid(
     books: Vec<Book>,
     active_book_id: Option<String>,
     on_open_book: Callback<String>,
-    #[prop(optional)] on_view_details: Option<Callback<String>>,
+    on_view_details: Option<Callback<String>>,
 ) -> impl IntoView {
-    let books_len = books.len();
     view! {
         <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:flex 2xl:flex-wrap library-grid-transition">
             {books.into_iter().enumerate().map(move |(index, book)| {
+                // Calculate stagger delay for animation (30ms per item)
+                let delay_ms = index * 30;
+                let stagger_class = format!("[animation-delay:{}ms]", delay_ms);
+                let stagger_class_clone = stagger_class.clone();
                 let book_id = book.id.clone();
                 let is_active = active_book_id.as_ref().map(|id| id == &book.id).unwrap_or(false);
                 let progress_summary = get_book_progress_summary(&book);
@@ -40,14 +44,23 @@ pub fn LibraryGrid(
                 view! {
                     <div
                         class=move || {
-                            format!(
-                                "group relative cursor-pointer overflow-hidden transition-all duration-200 hover:shadow-lg rounded-lg border bg-card text-card-foreground shadow-sm {}",
-                                if is_active { "ring-2 ring-primary" } else { "" }
-                            )
+                            let base_classes = format!("library-item-enter {} group flex h-full flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:scale-[1.02] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 2xl:w-[200px]", stagger_class_clone);
+                            if is_active {
+                                format!("{} border-primary shadow-md ring-1 ring-primary/40", base_classes)
+                            } else {
+                                base_classes
+                            }
                         }
                         on:click={
                             let id = book_id.clone();
-                            move |_| {
+                            move |ev| {
+                                // Don't open book if clicking on Details button
+                                if let Some(target) = ev.target() {
+                                    if let Ok(button) = target.dyn_into::<web_sys::HtmlButtonElement>() {
+                                        // Clicked on a button, don't open the book
+                                        return;
+                                    }
+                                }
                                 on_open.call(id.clone());
                             }
                         }
@@ -69,56 +82,75 @@ pub fn LibraryGrid(
                             move || format!("Open {} by {}", title.clone(), author.clone())
                         }
                     >
-                        <CardContent class="p-0">
-                            <div class="relative aspect-[2/3] w-full overflow-hidden bg-muted">
-                                {if let Some(cover_url) = book_cover_url {
-                                    let cover_alt = book_title.clone();
+                        <div class="relative aspect-[3/4] w-full max-w-full overflow-hidden bg-muted">
+                            <div class="absolute left-2 top-2 z-10">
+                                <LibraryStatusBadge status=status />
+                            </div>
+                            {if let Some(cover_url) = book_cover_url {
+                                let cover_alt = format!("{} cover", book_title);
+                                view! {
+                                    <img
+                                        src=cover_url
+                                        alt=cover_alt
+                                        class="h-full w-full max-h-full max-w-full object-cover transition-transform duration-300 ease-out group-hover:scale-110"
+                                        loading="lazy"
+                                    />
+                                }.into_view()
+                            } else {
+                                view! {
+                                    <div class="flex h-full w-full items-center justify-center text-muted-foreground">
+                                        <ImageOff size=40 />
+                                    </div>
+                                }.into_view()
+                            }}
+                        </div>
+                        <div class="flex flex-1 flex-col gap-2 p-4">
+                            <div>
+                                <p class="line-clamp-1 text-sm font-semibold text-foreground">
+                                    {book_title.clone()}
+                                </p>
+                                <p class="line-clamp-1 text-xs text-muted-foreground">
+                                    {book_author.clone()}
+                                </p>
+                            </div>
+                            {if has_chapters && book_progress.is_some() {
+                                let progress = book_progress.as_ref().unwrap();
+                                let percent = progress.book_progress_percent * 100.0;
+                                let progress_text_clone = progress_text.clone();
+                                view! {
+                                    <p class="text-xs text-muted-foreground">{progress_text_clone}</p>
+                                }.into_view()
+                            } else {
+                                let chapter_summary_clone = chapter_summary.clone();
+                                view! {
+                                    <p class="text-xs text-muted-foreground">{chapter_summary_clone}</p>
+                                }.into_view()
+                            }}
+                            <div class="mt-auto flex items-center justify-between text-xs text-muted-foreground">
+                                <div class="flex flex-col">
+                                    <span>{chapter_summary.clone()}</span>
+                                </div>
+                                {if let Some(on_view_details) = on_view_details {
+                                    let book_id_for_details = book_id.clone();
+                                    let on_view = on_view_details.clone();
                                     view! {
-                                        <img
-                                            src=cover_url
-                                            alt=format!("Cover for {}", cover_alt)
-                                            class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                                            loading="lazy"
-                                        />
+                                        <Button
+                                            variant=ButtonVariant::Ghost
+                                            size=ButtonSize::Sm
+                                            on_click=Callback::new(move |_ev: ()| {
+                                                // Note: Button's on_click doesn't provide event, so we handle stopPropagation in the card's click handler
+                                                on_view.call(book_id_for_details.clone());
+                                            })
+                                            class="shrink-0"
+                                        >
+                                            {move || "Details"}
+                                        </Button>
                                     }.into_view()
                                 } else {
-                                    view! {
-                                        <div class="flex h-full w-full items-center justify-center">
-                                            <ImageOff size=48 class="text-muted-foreground/50" />
-                                        </div>
-                                    }.into_view()
-                                }}
-                                <div class="absolute top-2 right-2">
-                                    <LibraryStatusBadge status=status />
-                                </div>
-                            </div>
-                            <div class="p-3 space-y-2">
-                                <div>
-                                    <h3 class="font-semibold text-sm line-clamp-2 group-hover:text-primary transition-colors">
-                                        {book_title.clone()}
-                                    </h3>
-                                    <p class="text-xs text-muted-foreground mt-1 line-clamp-1">
-                                        {book_author.clone()}
-                                    </p>
-                                </div>
-                                {if has_chapters && book_progress.is_some() {
-                                    let progress = book_progress.as_ref().unwrap();
-                                    let percent = progress.book_progress_percent * 100.0;
-                                    let progress_text_clone = progress_text.clone();
-                                    view! {
-                                        <div class="space-y-1">
-                                            <Progress value=percent class="h-1" />
-                                            <p class="text-xs text-muted-foreground">{progress_text_clone}</p>
-                                        </div>
-                                    }.into_view()
-                                } else {
-                                    let chapter_summary_clone = chapter_summary.clone();
-                                    view! {
-                                        <p class="text-xs text-muted-foreground">{chapter_summary_clone}</p>
-                                    }.into_view()
+                                    view! {}.into_view()
                                 }}
                             </div>
-                        </CardContent>
+                        </div>
                     </div>
                 }
             }).collect::<Vec<_>>()}

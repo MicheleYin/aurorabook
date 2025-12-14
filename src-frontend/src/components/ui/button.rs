@@ -45,13 +45,13 @@ pub fn Button(
     #[prop(optional)] variant: Option<ButtonVariant>,
     #[prop(optional)] size: Option<ButtonSize>,
     #[prop(optional)] class: Option<&'static str>,
-    #[prop(optional)] disabled: Option<bool>,
+    #[prop(optional)] disabled: Option<ReadSignal<bool>>,
     #[prop(optional)] on_click: Option<Callback<()>>,
     children: Children,
 ) -> impl IntoView {
     let variant = variant.unwrap_or(ButtonVariant::Default);
     let size = size.unwrap_or(ButtonSize::Default);
-    let disabled = disabled.unwrap_or(false);
+    let disabled_signal = disabled;
     
     let (ripple_active, set_ripple_active) = create_signal(false);
     
@@ -76,8 +76,12 @@ pub fn Button(
         class.unwrap_or(""),
     ]);
     
+    let is_disabled = move || {
+        disabled_signal.map(|s| s.get()).unwrap_or(false)
+    };
+    
     let handle_click = move |_| {
-        if !disabled {
+        if !is_disabled() {
             // Trigger ripple effect for primary and destructive buttons
             if matches!(variant, ButtonVariant::Default | ButtonVariant::Destructive) {
                 set_ripple_active.set(true);
@@ -95,7 +99,7 @@ pub fn Button(
     view! {
         <button
             class=classes
-            disabled=disabled
+            disabled=move || is_disabled()
             on:click=handle_click
         >
             {children()}
