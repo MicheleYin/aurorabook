@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.bigemperor26.tauri",
   "build": {
-    "beforeDevCommand": "cd src-frontend && ./dev.sh",
+    "beforeDevCommand": "cd src-svelte && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "cd src-frontend && bun run build:css && trunk build --release",
-    "frontendDist": "../dist"
+    "beforeBuildCommand": "cd src-svelte && npm run build",
+    "frontendDist": "../src-svelte/build"
   },
   "app": {
     "withGlobalTauri": true,

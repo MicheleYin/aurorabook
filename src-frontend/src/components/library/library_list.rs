@@ -3,7 +3,8 @@ use crate::types::reader::Book;
 use crate::components::ui::{Progress, Separator, Button, ButtonVariant, ButtonSize};
 use crate::components::library::utils::{get_book_progress_summary, get_library_book_status_from_summary};
 use crate::components::library::LibraryStatusBadge;
-use crate::components::icons::ImageOff;
+use crate::components::icons::{ImageOff, Loader2};
+use crate::hooks::use_conversion::use_conversion;
 use wasm_bindgen::JsCast;
 
 #[component]
@@ -13,6 +14,8 @@ pub fn LibraryList(
     on_open_book: Callback<String>,
     on_view_details: Option<Callback<String>>,
 ) -> impl IntoView {
+    let conversion = use_conversion();
+    let conversion_progress_signal = conversion.get_progress_signal();
     let books_len = books.len();
     view! {
         <div class="flex flex-col divide-y divide-border overflow-hidden rounded-xl border">
@@ -35,11 +38,14 @@ pub fn LibraryList(
                 } else {
                     "Chapters: Not available".to_string()
                 };
+                let chapter_summary_for_progress = chapter_summary.clone();
                 let book_title = book.title.clone();
                 let book_author = book.author.clone();
                 let book_cover_url = book.cover_url.clone();
                 let book_progress = book.progress.clone();
                 let on_open = on_open_book.clone();
+                let book_id_for_progress = book_id.clone();
+                let conversion_signal_clone = conversion_progress_signal.clone();
                 let idx = index;
                 let len = books_len;
                 
@@ -116,21 +122,48 @@ pub fn LibraryList(
                                         {book_author.clone()}
                                     </p>
                                 </div>
-                                {if has_chapters && book_progress.is_some() {
-                                    let progress = book_progress.as_ref().unwrap();
-                                    let percent = progress.book_progress_percent * 100.0;
-                                    let progress_text_clone = progress_text.clone();
-                                    view! {
-                                        <div class="space-y-1">
-                                            <Progress value=percent class="h-1" />
-                                            <p class="text-xs text-muted-foreground">{progress_text_clone}</p>
-                                        </div>
-                                    }.into_view()
-                                } else {
-                                    let chapter_summary_clone = chapter_summary.clone();
-                                    view! {
-                                        <p class="text-xs text-muted-foreground">{chapter_summary_clone}</p>
-                                    }.into_view()
+                                {move || {
+                                    // Check for conversion progress first - make it reactive
+                                    let conversion_progress = conversion_signal_clone.get().get(&book_id_for_progress).cloned();
+                                    if let Some(conv_progress) = conversion_progress {
+                                        let percent = if conv_progress.total_words > 0 {
+                                            ((conv_progress.words_processed as f64 / conv_progress.total_words as f64) * 100.0).min(100.0).max(0.0)
+                                        } else if conv_progress.total_chapters > 0 {
+                                            ((conv_progress.current_chapter as f64 / conv_progress.total_chapters as f64) * 100.0).min(100.0).max(0.0)
+                                        } else {
+                                            0.0
+                                        };
+                                        
+                                        let progress_msg = if conv_progress.total_words > 0 {
+                                            format!("Converting: {}% - {}", percent.round() as u32, conv_progress.message)
+                                        } else {
+                                            format!("Converting: {}% - {}", percent.round() as u32, conv_progress.message)
+                                        };
+                                        
+                                        view! {
+                                            <div class="space-y-1">
+                                                <Progress value=percent max=100.0 class="h-1" />
+                                                <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                                    <Loader2 size=10 class="animate-spin" />
+                                                    <p class="line-clamp-1">{progress_msg}</p>
+                                                </div>
+                                            </div>
+                                        }.into_view()
+                                    } else if has_chapters && book_progress.is_some() {
+                                        let progress = book_progress.as_ref().unwrap();
+                                        let percent = progress.book_progress_percent * 100.0;
+                                        let progress_text_clone = progress_text.clone();
+                                        view! {
+                                            <div class="space-y-1">
+                                                <Progress value=percent class="h-1" />
+                                                <p class="text-xs text-muted-foreground">{progress_text_clone}</p>
+                                            </div>
+                                        }.into_view()
+                                    } else {
+                                        view! {
+                                            <p class="text-xs text-muted-foreground">{chapter_summary_for_progress.clone()}</p>
+                                        }.into_view()
+                                    }
                                 }}
                             </div>
                             {if let Some(on_view_details) = on_view_details {

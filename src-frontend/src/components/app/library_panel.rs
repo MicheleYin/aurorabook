@@ -5,8 +5,10 @@ use crate::components::ui::Button;
 use crate::components::icons::{Plus, Loader2};
 use crate::components::ui::ButtonVariant;
 use crate::hooks::use_toast::use_toast;
+use crate::hooks::use_conversion::use_conversion;
 use crate::services::{open_file_dialog, save_file_dialog};
 use crate::services::book_service::{delete_book, export_epub_to_file, ingest_epub};
+use crate::types::reader::VoiceId;
 use leptos::spawn_local;
 
 #[component]
@@ -16,6 +18,10 @@ pub fn LibraryPanel() -> impl IntoView {
     let is_loading_library = use_context::<ReadSignal<bool>>().expect("IsLoadingLibrary context not found");
     let refresh_library = use_context::<Callback<()>>().expect("RefreshLibrary context not found");
     let toast = use_toast();
+    let conversion = use_conversion();
+    
+    // Get reader state (LibraryPanel is rendered inside ReaderStateProvider)
+    let reader_state = crate::hooks::use_reader_state::use_reader_state();
     
     // State for library management
     let (search_term, set_search_term) = create_signal(String::new());
@@ -150,11 +156,43 @@ pub fn LibraryPanel() -> impl IntoView {
         }
     });
 
-    let handle_open_book = Callback::new(move |book_id: String| {
-        let id = book_id.clone();
-        set_active_book_id.set(Some(book_id));
-        // TODO: Navigate to reader or open book details
-        web_sys::console::log_1(&format!("Open book: {}", id).into());
+    let handle_open_book = Callback::new({
+        let reader_state_clone = reader_state.clone();
+        let library_clone = library.clone();
+        move |book_id: String| {
+            // Set active book in reader state
+            reader_state_clone.set_active_book_id(Some(book_id.clone()));
+            
+            // Find the book to get its chapters
+            let book = library_clone.get().into_iter().find(|b| b.id == book_id);
+            if let Some(book) = book {
+                // Get valid chapter ID from progress or fallback to first chapter
+                let chapter_id = book.progress.as_ref()
+                    .and_then(|p| {
+                        // Try to find chapter by saved chapter ID
+                        book.chapters.iter()
+                            .find(|ch| ch.id == p.current_chapter_id)
+                            .map(|ch| ch.id.clone())
+                    })
+                    .or_else(|| {
+                        // Try by index
+                        book.progress.as_ref()
+                            .and_then(|p| book.chapters.get(p.current_chapter_index))
+                            .map(|ch| ch.id.clone())
+                    })
+                    .or_else(|| {
+                        // Fallback to first chapter
+                        book.chapters.first().map(|ch| ch.id.clone())
+                    });
+                
+                if let Some(ch_id) = chapter_id {
+                    reader_state_clone.set_active_chapter_id(Some(ch_id));
+                }
+            }
+            
+            // Navigation to reader will happen automatically via app-level effect
+            web_sys::console::log_1(&format!("Open book: {}", book_id).into());
+        }
     });
 
     let handle_view_details = Callback::new(move |book_id: String| {
@@ -181,6 +219,36 @@ pub fn LibraryPanel() -> impl IntoView {
     
     let handle_close_detail = Callback::new(move |_| {
         set_detail_book_id.set(None);
+    });
+
+    let handle_convert_to_audiobook = Callback::new({
+        let conversion_clone = conversion.clone();
+        let refresh_library_cb = refresh_library.clone();
+        move |(book, voice_id): (Book, VoiceId)| {
+            let conversion_for_async = conversion_clone.clone();
+            let book_for_async = book.clone();
+            let refresh_library_async = refresh_library_cb.clone();
+            spawn_local(async move {
+                if let Err(e) = conversion_for_async.convert_book(book_for_async, voice_id, refresh_library_async).await {
+                    web_sys::console::error_1(&format!("Conversion failed: {}", e).into());
+                }
+            });
+        }
+    });
+
+    let handle_cancel_conversion = Callback::new({
+        let conversion_clone = conversion.clone();
+        let library_signal = library.clone();
+        move |book_id: String| {
+            if let Some(book) = library_signal.get().into_iter().find(|b| b.id == book_id) {
+                let conversion_for_async = conversion_clone.clone();
+                spawn_local(async move {
+                    if let Err(e) = conversion_for_async.cancel_conversion_for_book(&book).await {
+                        web_sys::console::error_1(&format!("Failed to cancel conversion: {}", e).into());
+                    }
+                });
+            }
+        }
     });
 
     let handle_export_epub = Callback::new({
@@ -308,11 +376,45 @@ pub fn LibraryPanel() -> impl IntoView {
         }
     });
     
-    let handle_open_book_from_detail = Callback::new(move |book_id: String| {
-        set_detail_book_id.set(None);
-        set_active_book_id.set(Some(book_id.clone()));
-        // TODO: Navigate to reader
-        web_sys::console::log_1(&format!("Open book from details: {}", book_id).into());
+    let handle_open_book_from_detail = Callback::new({
+        let reader_state_clone = reader_state.clone();
+        let library_clone = library.clone();
+        move |book_id: String| {
+            set_detail_book_id.set(None);
+            
+            // Set active book in reader state
+            reader_state_clone.set_active_book_id(Some(book_id.clone()));
+            
+            // Find the book to get its chapters
+            let book = library_clone.get().into_iter().find(|b| b.id == book_id);
+            if let Some(book) = book {
+                // Get valid chapter ID from progress or fallback to first chapter
+                let chapter_id = book.progress.as_ref()
+                    .and_then(|p| {
+                        // Try to find chapter by saved chapter ID
+                        book.chapters.iter()
+                            .find(|ch| ch.id == p.current_chapter_id)
+                            .map(|ch| ch.id.clone())
+                    })
+                    .or_else(|| {
+                        // Try by index
+                        book.progress.as_ref()
+                            .and_then(|p| book.chapters.get(p.current_chapter_index))
+                            .map(|ch| ch.id.clone())
+                    })
+                    .or_else(|| {
+                        // Fallback to first chapter
+                        book.chapters.first().map(|ch| ch.id.clone())
+                    });
+                
+                if let Some(ch_id) = chapter_id {
+                    reader_state_clone.set_active_chapter_id(Some(ch_id));
+                }
+            }
+            
+            // Navigation to reader will happen automatically via app-level effect
+            web_sys::console::log_1(&format!("Open book from details: {}", book_id).into());
+        }
     });
 
 
@@ -447,6 +549,8 @@ pub fn LibraryPanel() -> impl IntoView {
                             on_delete_book=Some(on_delete)
                             is_deleting=is_deleting_signal
                             on_export_epub=Some(handle_export_epub.clone())
+                            on_convert_to_audiobook=Some(handle_convert_to_audiobook.clone())
+                            on_cancel_conversion=Some(handle_cancel_conversion.clone())
                         />
                     }.into_view()
                 } else {

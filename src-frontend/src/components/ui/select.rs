@@ -103,6 +103,9 @@ pub fn SelectValue(
                 if val.is_empty() {
                     placeholder.unwrap_or("Select...").to_string()
                 } else {
+                    // Try to find the voice name from the value
+                    // For now, just show the value (voice ID)
+                    // In a real implementation, you'd look up the voice name
                     val
                 }
             }}
@@ -126,7 +129,7 @@ pub fn SelectContent(
                 view! {
                     <div
                         class=format!(
-                            "relative z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-lg animate-in fade-in-0 zoom-in-95 slide-in-from-top-2 duration-200 {}",
+                            "relative z-[110] min-w-[8rem] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-lg animate-in fade-in-0 zoom-in-95 slide-in-from-top-2 duration-200 {}",
                             class_str
                         )
                         style="position: absolute; top: 100%; left: 0; margin-top: 0.25rem;"

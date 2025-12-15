@@ -32,10 +32,20 @@ pub fn Drawer(
                         }
                     ></div>
                     <div
-                        class=format!(
-                            "fixed inset-x-0 bottom-0 z-50 flex h-auto max-h-[90vh] w-full flex-col rounded-t-3xl border bg-card p-6 shadow-lg outline-none animate-in slide-in-from-bottom fade-in-0 drawer-slide-in-bottom {}",
-                            class_str_clone
-                        )
+                        class=move || {
+                            // Check if class contains left drawer positioning
+                            if class_str_clone.contains("left-0") || class_str_clone.contains("inset-y-0") {
+                                format!(
+                                    "fixed z-50 flex h-full w-full flex-col border bg-card shadow-lg outline-none animate-in fade-in-0 {}",
+                                    class_str_clone
+                                )
+                            } else {
+                                format!(
+                                    "fixed inset-x-0 bottom-0 z-50 flex h-auto max-h-[90vh] w-full flex-col rounded-t-3xl border bg-card p-6 shadow-lg outline-none animate-in slide-in-from-bottom fade-in-0 drawer-slide-in-bottom {}",
+                                    class_str_clone
+                                )
+                            }
+                        }
                         on:click=move |ev| {
                             ev.stop_propagation();
                         }
@@ -99,7 +109,7 @@ pub fn DrawerFooter(
     #[prop(optional)] class: Option<&'static str>,
 ) -> impl IntoView {
     view! {
-        <div class=format!("mt-auto flex flex-col gap-2 sm:flex-row sm:justify-end {}", class.unwrap_or(""))>
+        <div class=format!("mt-auto flex flex-col flex-wrap gap-2 sm:flex-row sm:justify-end {}", class.unwrap_or(""))>
             {children()}
         </div>
     }

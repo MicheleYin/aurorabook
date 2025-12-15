@@ -13,6 +13,7 @@ pub mod drawer;
 pub mod progress;
 pub mod tabs;
 pub mod toaster;
+pub mod scroll_area;
 
 pub use button::*;
 pub use input::*;
@@ -26,3 +27,4 @@ pub use drawer::{Drawer, DrawerHandle, DrawerHeader, DrawerTitle, DrawerDescript
 pub use progress::*;
 pub use tabs::*;
 pub use toaster::*;
+pub use scroll_area::*;

@@ -7,8 +7,10 @@ pub fn Dialog(
     on_open_change: Callback<bool>,
     children: Children,
     #[prop(optional)] class: Option<&'static str>,
+    #[prop(optional)] z_index: Option<&'static str>,
 ) -> impl IntoView {
     let class_str = class.unwrap_or("");
+    let z_index_str = z_index.unwrap_or("z-50");
     let on_close = on_open_change.clone();
     let children_rendered = children();
     
@@ -19,18 +21,21 @@ pub fn Dialog(
             }
             let on_close_clone = on_close.clone();
             let class_str_clone = class_str.to_string();
+            let z_index_clone = z_index_str.to_string();
+            let z_index_overlay = if z_index_str == "z-[100]" { "z-[90]" } else { "z-40" };
             let children_clone = children_rendered.clone();
             view! {
-                <div class="fixed inset-0 z-50 flex items-center justify-center">
+                <div class=format!("fixed inset-0 {} flex items-center justify-center", z_index_clone)>
                     <div
-                        class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm sm:backdrop-blur-md animate-in fade-in-0 dialog-overlay"
+                        class=format!("fixed inset-0 {} bg-background/60 backdrop-blur-sm sm:backdrop-blur-md animate-in fade-in-0 dialog-overlay", z_index_overlay)
                         on:click=move |_| {
                             on_close_clone.call(false);
                         }
                     ></div>
                     <div
                         class=format!(
-                            "relative z-50 flex max-h-[90vh] w-full max-w-lg flex-col gap-4 overflow-hidden rounded-3xl border bg-card p-6 shadow-lg animate-in fade-in-0 zoom-in-95 slide-in-from-left-1/2 slide-in-from-top-[48%] {}",
+                            "relative {} flex max-h-[90vh] w-full max-w-lg flex-col gap-4 overflow-hidden rounded-3xl border bg-card p-6 shadow-lg animate-in fade-in-0 zoom-in-95 slide-in-from-left-1/2 slide-in-from-top-[48%] {}",
+                            z_index_clone,
                             class_str_clone
                         )
                         on:click=move |ev| {
@@ -91,7 +96,7 @@ pub fn DialogFooter(
     #[prop(optional)] class: Option<&'static str>,
 ) -> impl IntoView {
     view! {
-        <div class=format!("flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2 {}", class.unwrap_or(""))>
+        <div class=format!("flex flex-col-reverse flex-wrap gap-2 sm:flex-row sm:justify-end sm:space-x-2 {}", class.unwrap_or(""))>
             {children()}
         </div>
     }

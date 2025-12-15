@@ -7,6 +7,7 @@ pub mod library_list;
 pub mod library_empty;
 pub mod library_status_badge;
 pub mod book_detail_dialog;
+pub mod convert_to_audiobook_dialog;
 
 pub use types::*;
 pub use utils::*;
@@ -17,3 +18,4 @@ pub use library_list::*;
 pub use library_empty::*;
 pub use library_status_badge::*;
 pub use book_detail_dialog::*;
+pub use convert_to_audiobook_dialog::*;
