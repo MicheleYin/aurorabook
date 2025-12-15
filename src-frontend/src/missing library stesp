@@ -1,9 +1,0 @@
-images are still unbounded in the listview
-
-when search or filters, cards dont animate in or out
-
-check the react implementation to mimic the animation
-
-change the scope of the library to whole app so i dont need to reload when changing tabs
-
-
