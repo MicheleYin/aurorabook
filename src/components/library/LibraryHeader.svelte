@@ -46,9 +46,12 @@
         {@const label = LIBRARY_FILTER_LABELS[option]}
         <button
           type="button"
-          onclick={() => onFilterChange(option)}
+          onclick={() => {
+            // Update immediately - no await
+            onFilterChange(option);
+          }}
           class={cn(
-            "rounded-full border px-3 py-1 transition-colors",
+            "rounded-full border px-3 py-1 transition-colors cursor-pointer",
             isActive
               ? "border-primary bg-primary/5 text-primary"
               : "border-border hover:bg-muted",
@@ -65,9 +68,12 @@
           {@const isActive = mode === viewMode}
           <button
             type="button"
-            onclick={() => onViewModeChange(mode)}
+            onclick={() => {
+              // Update immediately - no await
+              onViewModeChange(mode);
+            }}
             class={cn(
-              "flex items-center justify-center rounded-md border px-2 py-1 text-muted-foreground transition-colors",
+              "flex items-center justify-center rounded-md border px-2 py-1 text-muted-foreground transition-colors cursor-pointer",
               isActive
                 ? "border-primary bg-primary/5 text-primary"
                 : "border-border hover:bg-muted",

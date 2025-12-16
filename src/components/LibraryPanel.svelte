@@ -47,6 +47,12 @@
     conversionStartTimeRef,
   }: Props = $props();
 
+  // #region agent log
+  $effect(() => {
+    fetch('http://127.0.0.1:7242/ingest/18fa94d2-7129-4c74-b901-497fa1f501bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'LibraryPanel.svelte:48',message:'LibraryPanel render',data:{searchTerm,libraryLength:library.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'F'})}).catch(()=>{});
+  });
+  // #endregion
+
   let isSearching = $derived((searchTerm || "").trim().length > 0);
   let hasBooks = $derived(library.length > 0);
 </script>
