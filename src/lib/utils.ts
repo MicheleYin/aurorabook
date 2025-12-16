@@ -1,8 +1,7 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
-import type { Book, Chapter } from "./types/reader";
-import type { LibraryFilterOption } from "./types/library";
-import type { LibraryBookStatus } from "./types/library";
+
+import type { Book, Chapter } from "../types/reader";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -10,8 +9,6 @@ export function cn(...inputs: ClassValue[]) {
 
 const WORD_MATCH_REGEX = /\S+/g;
 const AVERAGE_WORDS_PER_PAGE = 275;
-const MIN_PROGRESS_THRESHOLD = 0.01;
-const MAX_PROGRESS_THRESHOLD = 0.99;
 
 const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
@@ -49,6 +46,7 @@ export const getChapterWordCount = (
   if (chapter.plainText) {
     return countWords(chapter.plainText);
   }
+  // If plainText is not loaded yet, return 0 (will be calculated when chapter is loaded)
   return 0;
 };
 
@@ -74,6 +72,11 @@ export type BookProgressSummary = {
   percent?: number;
   chapterNumber?: number;
   currentChapterTitle?: string;
+};
+
+type LegacyProgressFields = {
+  currentChapterPageIndex?: number;
+  currentChapterPageCount?: number;
 };
 
 export function getBookProgressSummary(
@@ -113,7 +116,7 @@ export function getBookProgressSummary(
     };
   }
 
-  const progress = book.progress;
+  const progress = book.progress as Book["progress"] & LegacyProgressFields;
   const byIdIndex =
     progress?.currentChapterId !== undefined
       ? book.chapters.findIndex((chapter) => chapter.id === progress.currentChapterId)
@@ -163,7 +166,22 @@ export function getBookProgressSummary(
   }
 
   if (percent === undefined) {
-    percent = 0;
+    if (
+      typeof progress?.currentChapterPageIndex === "number" &&
+      Number.isFinite(progress.currentChapterPageIndex) &&
+      typeof progress?.currentChapterPageCount === "number" &&
+      Number.isFinite(progress.currentChapterPageCount) &&
+      progress.currentChapterPageCount > 1
+    ) {
+      percent = clamp(
+        Math.round(progress.currentChapterPageIndex) /
+          Math.max(Math.round(progress.currentChapterPageCount) - 1, 1),
+        0,
+        1,
+      );
+    } else {
+      percent = 0;
+    }
   }
 
   const resolvedPercent = Number((percent ?? 0).toFixed(4));
@@ -199,6 +217,16 @@ export function getBookProgressSummary(
   };
 }
 
+export function formatPageCount(pageCount?: number) {
+  if (typeof pageCount !== "number" || !Number.isFinite(pageCount) || pageCount <= 0) {
+    return undefined;
+  }
+  const rounded = Math.max(1, Math.round(pageCount));
+  return `${rounded} page${rounded === 1 ? "" : "s"}`;
+}
+
+export type LibraryBookStatus = "new" | "resume" | "finished";
+
 export function getLibraryBookStatusFromSummary(
   summary: BookProgressSummary,
 ): LibraryBookStatus {
@@ -211,68 +239,32 @@ export function getLibraryBookStatusFromSummary(
   return "resume";
 }
 
-export function filterLibrary(
-  books: Book[],
-  filter: LibraryFilterOption,
-  searchTerm: string,
-): Book[] {
-  let filtered = [...books];
+export function getLibraryBookStatus(
+  book: Pick<Book, "chapters" | "progress">,
+): LibraryBookStatus {
+  const summary = getBookProgressSummary(book);
+  return getLibraryBookStatusFromSummary(summary);
+}
 
-  // Apply search filter
-  if (searchTerm.trim()) {
-    const searchLower = searchTerm.toLowerCase();
-    filtered = filtered.filter(
-      (book) =>
-        book.title.toLowerCase().includes(searchLower) ||
-        book.author.toLowerCase().includes(searchLower),
-    );
+export function formatDurationShort(seconds?: number) {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) {
+    return "0s";
   }
+  const totalSeconds = Math.floor(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const remainingSeconds = totalSeconds % 60;
 
-  // Apply quick filter
-  if (filter !== "all") {
-    switch (filter) {
-      case "new": {
-        filtered = filtered.filter((book) => {
-          return book.progress
-            ? book.progress.bookProgressPercent < MIN_PROGRESS_THRESHOLD
-            : true; // No progress means "new"
-        });
-        break;
-      }
-      case "resume": {
-        filtered = filtered.filter((book) => {
-          if (!book.progress) return false;
-          const progress = book.progress.bookProgressPercent;
-          return (
-            progress >= MIN_PROGRESS_THRESHOLD &&
-            progress < MAX_PROGRESS_THRESHOLD
-          );
-        });
-        break;
-      }
-      case "finished": {
-        filtered = filtered.filter((book) => {
-          return book.progress
-            ? book.progress.bookProgressPercent >= MAX_PROGRESS_THRESHOLD
-            : false;
-        });
-        break;
-      }
-      case "recent": {
-        // Reverse the array to show most recently added first
-        filtered = filtered.reverse();
-        break;
-      }
-      case "author": {
-        // Sort by author name
-        filtered = filtered.sort((a, b) => a.author.localeCompare(b.author));
-        break;
-      }
-      default:
-        break;
-    }
+  if (hours > 0) {
+    return minutes > 0
+      ? `${hours}h ${minutes}m`
+      : `${hours}h`;
   }
-
-  return filtered;
+  if (minutes > 0) {
+    return remainingSeconds > 0
+      ? `${minutes}m ${remainingSeconds}s`
+      : `${minutes}m`;
+  }
+  return `${remainingSeconds}s`;
 }
 
