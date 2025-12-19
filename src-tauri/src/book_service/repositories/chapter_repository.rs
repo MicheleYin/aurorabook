@@ -36,6 +36,10 @@ impl ChapterRepository {
     }
     
     /// Find all chapters for a book (with caching)
+    /// 
+    /// Note: This loads all chapter data including content_html and plain_text.
+    /// For large books, consider using a lightweight version that excludes content
+    /// and loads it on-demand when needed (future optimization).
     pub async fn find_by_book_id(db: &DatabaseConnection, book_id: &str) -> Result<Vec<Chapter>, String> {
         // Try cache first
         if let Ok(cache) = crate::book_service::database::get_db_cache() {

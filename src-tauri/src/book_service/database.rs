@@ -258,8 +258,11 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
     // Create indexes
     let indexes = vec![
         "CREATE INDEX IF NOT EXISTS idx_chapters_book_id ON chapters(book_id)",
+        "CREATE INDEX IF NOT EXISTS idx_chapters_book_id_href ON chapters(book_id, href)",
         "CREATE INDEX IF NOT EXISTS idx_images_book_id ON images(book_id)",
+        "CREATE INDEX IF NOT EXISTS idx_images_book_id_href ON images(book_id, href)",
         "CREATE INDEX IF NOT EXISTS idx_audio_tracks_book_id ON audio_tracks(book_id)",
+        "CREATE INDEX IF NOT EXISTS idx_audio_tracks_book_id_href ON audio_tracks(book_id, href)",
         "CREATE INDEX IF NOT EXISTS idx_books_source_path ON books(source_path)",
         "CREATE INDEX IF NOT EXISTS idx_epub_data_book_id ON epub_data(book_id)",
     ];
@@ -270,6 +273,24 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
             log::warn!("Failed to create index: {}", e);
         }
     }
+    
+    // Enable WAL mode for better concurrency and performance
+    db.execute_unprepared("PRAGMA journal_mode=WAL").await
+        .map_err(|e| format!("Failed to enable WAL mode: {}", e))?;
+    
+    // Set synchronous mode to NORMAL (faster than FULL, still safe with WAL)
+    db.execute_unprepared("PRAGMA synchronous=NORMAL").await
+        .map_err(|e| format!("Failed to set synchronous mode: {}", e))?;
+    
+    // Set cache size to 64MB (negative value means KB, so -64000 = 64MB)
+    db.execute_unprepared("PRAGMA cache_size=-64000").await
+        .map_err(|e| format!("Failed to set cache size: {}", e))?;
+    
+    // Enable foreign key constraints (should be on by default, but explicit is better)
+    db.execute_unprepared("PRAGMA foreign_keys=ON").await
+        .map_err(|e| format!("Failed to enable foreign keys: {}", e))?;
+    
+    log::info!("Database schema initialized with optimizations (WAL mode, indexes)");
     
     Ok(())
 }
