@@ -1,14 +1,31 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { Provider } from "react-redux";
+import { store } from "./store";
 import App from "./App";
 import "./index.css";
 
+const rootElement = document.getElementById("root");
 
+if (!rootElement) {
+  throw new Error("Root element not found. Make sure there's a <div id='root'></div> in your HTML.");
+}
 
-
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-
-    <App />
-  </React.StrictMode>,
-);
+try {
+  ReactDOM.createRoot(rootElement).render(
+    <React.StrictMode>
+      <Provider store={store}>
+        <App />
+      </Provider>
+    </React.StrictMode>,
+  );
+} catch (error) {
+  console.error("Failed to render app:", error);
+  rootElement.innerHTML = `
+    <div style="padding: 2rem; font-family: system-ui; color: red;">
+      <h1>Failed to load application</h1>
+      <p>${error instanceof Error ? error.message : String(error)}</p>
+      <p>Check the browser console for more details.</p>
+    </div>
+  `;
+}

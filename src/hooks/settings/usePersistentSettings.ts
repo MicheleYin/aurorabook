@@ -23,14 +23,24 @@ export function usePersistentSettings() {
     let cancelled = false;
 
     const loadSettings = async () => {
+      // Add timeout to ensure hydration completes even if Tauri command hangs
+      const timeoutId = setTimeout(() => {
+        if (!cancelled) {
+          logger.warn("[SettingsPersistence]: Settings load timeout, using defaults");
+          setIsHydrated(true);
+        }
+      }, 5000); // 5 second timeout
+
       try {
         const loadedSettings = await invoke<AppSettings>("get_app_settings");
+        clearTimeout(timeoutId);
         if (!cancelled) {
           // Merge with defaults to ensure all fields are present
           setSettings({ ...DEFAULT_SETTINGS, ...loadedSettings });
           setIsHydrated(true);
         }
       } catch (error) {
+        clearTimeout(timeoutId);
         logger.warn("[SettingsPersistence]: failed to load settings from backend, using defaults:", { error });
         if (!cancelled) {
           setIsHydrated(true);

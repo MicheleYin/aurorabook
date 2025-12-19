@@ -100,10 +100,20 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
 
     const hydrateLibrary = async () => {
+      // Add timeout to ensure hydration completes even if Tauri command hangs
+      const timeoutId = setTimeout(() => {
+        if (!cancelled) {
+          logger.warn("[LibraryContext]: Library hydration timeout, proceeding with empty library");
+          setIsHydrated(true);
+        }
+      }, 5000); // 5 second timeout
+
       try {
         await refreshLibrary();
+        clearTimeout(timeoutId);
         if (cancelled) return;
       } catch (error) {
+        clearTimeout(timeoutId);
         logger.warn("Failed to load books from Rust backend.", error);
       } finally {
         if (!cancelled) {

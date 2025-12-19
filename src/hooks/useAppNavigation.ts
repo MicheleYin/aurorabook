@@ -1,19 +1,33 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { logger } from "../lib/logger";
 import type { LibraryFilterOption, LibraryViewMode } from "../components/library/types";
-import type { Book } from "../types/reader";
+import { useAppDispatch, useAppSelector } from "../store/hooks";
+import {
+  selectCurrentTab,
+  selectLibrarySearchTerm,
+  selectLibraryFilter,
+  selectLibraryViewMode,
+  selectLibrary,
+} from "../store/selectors";
+import {
+  setCurrentTab,
+  setLibrarySearchTerm,
+  setLibraryFilter,
+  setLibraryViewMode,
+} from "../store/slices/navigationSlice";
 
 export type AppView = "library" | "reader" | "settings";
 
 export function useAppNavigation(
-  library: Book[],
   refreshLibrary: () => Promise<void>,
   isHydrated: boolean,
 ) {
-  const [activeView, setActiveView] = useState<AppView>("library");
-  const [librarySearchTerm, setLibrarySearchTerm] = useState("");
-  const [libraryFilter, setLibraryFilter] = useState<LibraryFilterOption>("all");
-  const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("grid");
+  const dispatch = useAppDispatch();
+  const activeView = useAppSelector(selectCurrentTab);
+  const librarySearchTerm = useAppSelector(selectLibrarySearchTerm);
+  const libraryFilter = useAppSelector(selectLibraryFilter);
+  const libraryViewMode = useAppSelector(selectLibraryViewMode);
+  const library = useAppSelector(selectLibrary);
   const previousViewRef = useRef<AppView>(activeView);
 
   // Refresh library on mount when hydrated (no longer triggered by filter/search changes)
@@ -26,9 +40,9 @@ export function useAppNavigation(
 
   useEffect(() => {
     if (!library.length) {
-      setActiveView("library");
+      dispatch(setCurrentTab("library"));
     }
-  }, [library.length]);
+  }, [library.length, dispatch]);
 
   useEffect(() => {
     previousViewRef.current = activeView;
@@ -46,13 +60,13 @@ export function useAppNavigation(
 
   return {
     activeView,
-    setActiveView,
+    setActiveView: (view: AppView) => dispatch(setCurrentTab(view)),
     librarySearchTerm,
-    setLibrarySearchTerm,
+    setLibrarySearchTerm: (term: string) => dispatch(setLibrarySearchTerm(term)),
     libraryFilter,
-    setLibraryFilter,
+    setLibraryFilter: (filter: LibraryFilterOption) => dispatch(setLibraryFilter(filter)),
     libraryViewMode,
-    setLibraryViewMode,
+    setLibraryViewMode: (mode: LibraryViewMode) => dispatch(setLibraryViewMode(mode)),
     navigationItems,
     previousViewRef,
   };

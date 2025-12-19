@@ -1,5 +1,5 @@
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
 
@@ -19,26 +19,64 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { useLibrary } from "./hooks/useLibrary";
 import { LibraryProvider } from "./hooks/library/LibraryContext";
 import { usePersistentSettings } from "./hooks/settings/usePersistentSettings";
-import { useBookConversion } from "./hooks/useBookConversion";
 import { useAppNavigation } from "./hooks/useAppNavigation";
 import { AppContextProvider, useAppContext } from "./contexts/AppContext";
+import { useAppDispatch, useAppSelector } from "./store/hooks";
+import { setLibrary, setIsHydrated, removeBook } from "./store/slices/librarySlice";
+import {
+  selectLibrary,
+  selectIsHydrated,
+  selectIsImporting,
+  selectCurrentTab,
+  selectCurrentBookId,
+  selectIsChapterLoaded,
+  selectIsAudioTrackLoaded,
+  selectShowConvertDialog,
+  selectPendingBookForConversion,
+  selectIsConverting,
+  selectBookConversionProgress,
+  selectIsCancelling,
+  selectCancellingBookId,
+  selectConversionStartTime,
+  selectAutoScrollEnabled,
+  selectDeletingBookId,
+  selectAudioPlayerOpen,
+  selectAudioPlayerDismissing,
+  selectAudioPlayerTrackHref,
+  selectAudioPlayerProgress,
+} from "./store/selectors";
+import { loadProgressChapter, loadProgressAudioTrack } from "./store/thunks/readerThunks";
+import {
+  convertBook,
+  cancelConversion,
+} from "./store/thunks/conversionThunks";
+import { setShowDialog, setPendingBook } from "./store/slices/conversionSlice";
+import { setAutoScrollEnabled, setDeletingBookId } from "./store/slices/uiSlice";
+import {
+  setAudioPlayerOpen,
+  setAudioPlayerDismissing,
+  setAudioPlayerTrackHref,
+  setAudioPlayerProgress,
+  setDetailBookId,
+} from "./store/slices/readerSlice";
+import { importFromDialog, refreshLibrary as refreshLibraryThunk, ingestEpub as ingestEpubThunk } from "./store/thunks/libraryThunks";
 import { useResolvedTheme } from "./hooks/useResolvedTheme";
 import { filterLibrary } from "./hooks/library/libraryHelpers";
 import type { ChapterSelectionOptions, AudioProgressSnapshot } from "./components/reader/types";
+import type { Book } from "./types/reader";
 import { cn } from "./lib/utils";
 import { animPatterns, viewTransition } from "./lib/animations";
 import { findChaptersForAudioTrack } from "./lib/epub";
 import { ReaderCoordinatorProvider } from "./contexts/ReaderCoordinatorContext";
 
 function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary> }) {
+  // Get library state from Redux
+  const library = useAppSelector(selectLibrary);
+  const isHydrated = useAppSelector(selectIsHydrated);
+  const isImporting = useAppSelector(selectIsImporting);
+  
+  // Keep library operations from hook for now (will migrate fully later)
   const {
-    library,
-    setLibrary,
-    isHydrated,
-    isImporting,
-    importFromDialog,
-    ingestEpub,
-    refreshLibrary,
     updateBookProgress,
     updateBookAudioState,
     handleChapterProgress,
@@ -71,20 +109,48 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     handleSelectBook: handleSelectBookContext,
   } = useAppContext();
 
-  const {
-    showConvertDialog,
-    setShowConvertDialog,
-    pendingBookForConversion,
-    setPendingBookForConversion,
-    isConverting,
-    bookConversionProgress,
-    isCancelling,
-    cancellingBookId,
-    conversionStartTimeRef,
-    handleConvertToAudiobook,
-    handleConvertBookFromDetail,
-    cancelConversionForBook,
-  } = useBookConversion(library, setLibrary);
+  // Redux conversion state
+  const dispatch = useAppDispatch();
+  const showConvertDialog = useAppSelector(selectShowConvertDialog);
+  const pendingBookForConversion = useAppSelector(selectPendingBookForConversion);
+  const isConverting = useAppSelector(selectIsConverting);
+  const bookConversionProgress = useAppSelector(selectBookConversionProgress);
+  const isCancelling = useAppSelector(selectIsCancelling);
+  const cancellingBookId = useAppSelector(selectCancellingBookId);
+  const conversionStartTime = useAppSelector(selectConversionStartTime);
+  const conversionStartTimeRef = useRef(conversionStartTime);
+  
+  // Update ref when Redux state changes
+  useEffect(() => {
+    conversionStartTimeRef.current = conversionStartTime;
+  }, [conversionStartTime]);
+  
+  // Conversion handlers
+  const handleConvertToAudiobook = useCallback(async (voiceId: string) => {
+    if (!pendingBookForConversion || isConverting || isCancelling) return;
+    await dispatch(convertBook({ book: pendingBookForConversion.book, voiceId, closeDialog: true }));
+    dispatch(setPendingBook(null));
+  }, [dispatch, pendingBookForConversion, isConverting, isCancelling]);
+  
+  const handleConvertBookFromDetail = useCallback(async (book: Book, voiceId: string) => {
+    const conversionStatus = book.conversionStatus ?? "notStarted";
+    if (book.audioTracks.length > 0 && conversionStatus === "notStarted") {
+      return;
+    }
+    if (isConverting || isCancelling) {
+      toast.warning("Conversion in progress", {
+        description: isCancelling 
+          ? "Please wait for the cancellation to complete before starting a new conversion."
+          : "Please wait for the current conversion to complete before starting another one.",
+      });
+      return;
+    }
+    await dispatch(convertBook({ book, voiceId }));
+  }, [dispatch, isConverting, isCancelling]);
+  
+  const cancelConversionForBook = useCallback(async (bookId: string) => {
+    await dispatch(cancelConversion({ bookId }));
+  }, [dispatch]);
 
   const {
     activeView,
@@ -97,9 +163,13 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     setLibraryViewMode,
     navigationItems,
     previousViewRef,
-  } = useAppNavigation(library, refreshLibrary, isHydrated);
+  } = useAppNavigation(async () => {
+    await dispatch(refreshLibraryThunk()).unwrap();
+  }, isHydrated);
 
-  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+  // Redux UI state
+  const autoScrollEnabled = useAppSelector(selectAutoScrollEnabled);
+  const deletingBookId = useAppSelector(selectDeletingBookId);
 
   const uiTheme = settings.theme;
   const resolvedUiTheme = useResolvedTheme(uiTheme);
@@ -107,9 +177,42 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   // Load auto-scroll setting from persistent settings
   useEffect(() => {
     if (isSettingsHydrated && settings.autoScrollEnabled !== undefined) {
-      setAutoScrollEnabled(settings.autoScrollEnabled);
+      dispatch(setAutoScrollEnabled(settings.autoScrollEnabled));
     }
-  }, [isSettingsHydrated, settings.autoScrollEnabled]);
+  }, [isSettingsHydrated, settings.autoScrollEnabled, dispatch]);
+
+  // Load progress chapter and audio track when opening reader tab
+  const currentTab = useAppSelector(selectCurrentTab);
+  const currentBookId = useAppSelector(selectCurrentBookId);
+  const currentChapterId = useAppSelector((state) => state.reader.currentChapterId);
+  const currentAudioTrackId = useAppSelector((state) => state.reader.currentAudioTrackId);
+  const isChapterLoaded = useAppSelector(selectIsChapterLoaded);
+  const isAudioTrackLoaded = useAppSelector(selectIsAudioTrackLoaded);
+
+  useEffect(() => {
+    // Only load when reader tab is active and we have a book selected
+    if (currentTab !== 'reader' || !currentBookId || !activeBook) return;
+
+    // Load progress chapter if not already loaded
+    if (currentChapterId && !isChapterLoaded && activeBook.progress?.currentChapterId === currentChapterId) {
+      const chapter = activeBook.chapters.find((c) => c.id === currentChapterId);
+      if (chapter && !chapter.contentHtml) {
+        logger.debug('[App] Loading progress chapter when opening reader', { bookId: currentBookId, chapterId: currentChapterId });
+        if (currentChapterId) {
+          dispatch(loadProgressChapter({ bookId: currentBookId, chapterId: currentChapterId }));
+        }
+      }
+    }
+
+    // Load progress audio track if not already loaded
+    if (currentAudioTrackId && !isAudioTrackLoaded && activeBook.audioState?.currentTrackId === currentAudioTrackId) {
+      const track = activeBook.audioTracks.find((t) => t.id === currentAudioTrackId);
+      if (track && !track.url) {
+        logger.debug('[App] Loading progress audio track when opening reader', { bookId: currentBookId, trackId: currentAudioTrackId });
+        dispatch(loadProgressAudioTrack({ bookId: currentBookId, trackId: currentAudioTrackId }));
+      }
+    }
+  }, [currentTab, currentBookId, currentChapterId, currentAudioTrackId, isChapterLoaded, isAudioTrackLoaded, activeBook, dispatch]);
 
   // Refs to track pending dynamic import promises for cleanup
   const lazyChapterLoaderPromiseRef = useRef<Promise<unknown> | null>(null);
@@ -331,11 +434,11 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     setActiveView("reader");
   }, [activeBookId, activeChapterId, autoScrollEnabled, setAutoScrollEnabled, updateSettings, setActiveChapterId, updateBookProgress, setPendingFragment, setActiveView, activeBook, library]);
 
-  // Inline useAudioPlayer functionality (UI state management)
-  const [isAudioPlayerOpen, setIsAudioPlayerOpen] = useState(false);
-  const [isAudioPlayerDismissing, setIsAudioPlayerDismissing] = useState(false);
-  const [currentAudioTrackHref, setCurrentAudioTrackHref] = useState<string | undefined>(undefined);
-  const [currentAudioProgress, setCurrentAudioProgress] = useState<AudioProgressSnapshot | undefined>(undefined);
+  // Redux audio player state
+  const isAudioPlayerOpen = useAppSelector(selectAudioPlayerOpen);
+  const isAudioPlayerDismissing = useAppSelector(selectAudioPlayerDismissing);
+  const currentAudioTrackHref = useAppSelector(selectAudioPlayerTrackHref);
+  const currentAudioProgress = useAppSelector(selectAudioPlayerProgress);
   
   // Memoize hasAudioTracks
   const hasAudioTracks = useMemo(
@@ -356,24 +459,22 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     }
     
     // Start dismissal immediately for responsive UI
-    setIsAudioPlayerDismissing(true);
+    dispatch(setAudioPlayerDismissing(true));
     // Wait for exit animation to complete before unmounting
-    // The audio player component also has its own timeout, but we need this
-    // to update the showAudioPlayer condition after animation completes
     audioPlayerCloseTimeoutRef.current = window.setTimeout(() => {
-      setIsAudioPlayerOpen(false);
-      setIsAudioPlayerDismissing(false);
+      dispatch(setAudioPlayerOpen(false));
+      dispatch(setAudioPlayerDismissing(false));
       audioPlayerCloseTimeoutRef.current = null;
     }, 500); // Match animation duration
-  }, []);
+  }, [dispatch]);
 
   const handleProgress = useCallback((snapshot: AudioProgressSnapshot) => {
-    setCurrentAudioTrackHref(snapshot.trackHref);
-    setCurrentAudioProgress(snapshot);
-  }, []);
+    dispatch(setAudioPlayerTrackHref(snapshot.trackHref));
+    dispatch(setAudioPlayerProgress(snapshot));
+  }, [dispatch]);
 
   const handleAutoScrollToggle = useCallback((enabled: boolean) => {
-    setAutoScrollEnabled(enabled);
+    dispatch(setAutoScrollEnabled(enabled));
     updateSettings({ autoScrollEnabled: enabled });
     
     // When enabling sync, sync the chapter to the current audio track
@@ -421,7 +522,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
         duration: 2000,
       });
     }
-  }, [setAutoScrollEnabled, updateSettings, currentAudioTrackHref, activeBook, activeChapterId, handleSelectChapter]);
+  }, [dispatch, updateSettings, currentAudioTrackHref, activeBook, activeChapterId, handleSelectChapter]);
 
   // Consolidated track change handler - now handled by useAudioPlayerProgress.handleAudioTrackChange
   // This is just a wrapper that calls the handler from ReaderWrapper
@@ -442,9 +543,9 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   // Auto-open audio player when switching to reader view
   useEffect(() => {
     if (activeView === "reader" && hasAudioTracks) {
-      setIsAudioPlayerOpen(true);
+      dispatch(setAudioPlayerOpen(true));
     }
-  }, [activeView, hasAudioTracks]);
+  }, [activeView, hasAudioTracks, dispatch]);
 
   // Listen for file-opened events (when app is opened with an EPUB file)
   useEffect(() => {
@@ -483,33 +584,20 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
 
           try {
             logger.log("[App] Ingesting EPUB from file-opened event", { filePath });
-            const book = await ingestEpub({
+            const book = await dispatch(ingestEpubThunk({
               filePath,
               sourcePath: filePath,
-            });
+            })).unwrap();
 
             if (!book) {
               toast.error("Failed to import EPUB file");
               return;
             }
 
-            // Update library
-            setLibrary((prevLibrary) => {
-              const existingIndex = prevLibrary.findIndex(
-                (b) => b.id === book.id 
-                  || b.sourcePath === book.sourcePath
-                  || (book.contentHash && b.contentHash && b.contentHash === book.contentHash),
-              );
-              if (existingIndex !== -1) {
-                const updated = [...prevLibrary];
-                updated[existingIndex] = book;
-                return updated;
-              }
-              return [...prevLibrary, book];
-            });
+            // Book is already added to Redux by ingestEpubThunk
 
             // Refresh library to ensure consistency
-            await refreshLibrary();
+            await dispatch(refreshLibraryThunk());
 
             toast.success("EPUB imported successfully", {
               description: `"${book.title}" has been added to your library.`,
@@ -520,8 +608,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
               // Get EPUB buffer for conversion
               const { getEpubBuffer } = await import("./lib/book-service");
               const buffer = (await getEpubBuffer(filePath)) ?? new ArrayBuffer(0);
-              setPendingBookForConversion({ book, buffer });
-              setShowConvertDialog(true);
+              dispatch(setPendingBook({ book, buffer }));
+              dispatch(setShowDialog(true));
             }
           } catch (error) {
             logger.error("[App] Failed to ingest EPUB from file-opened event", error);
@@ -545,7 +633,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
         clearTimeout(fileOpenRetryTimeoutRef.current);
       }
     };
-  }, [isHydrated, isImporting, ingestEpub, setLibrary, refreshLibrary, isConverting, setPendingBookForConversion, setShowConvertDialog]);
+  }, [isHydrated, isImporting, dispatch, isConverting]);
 
   const handleSelectBook = useCallback(async (bookId: string) => {
     await handleSelectBookContext(bookId);
@@ -555,8 +643,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   const handleAddEbook = useCallback(async () => {
     if (isImporting) return;
     
-    const result = await importFromDialog();
-    if (!result) {
+    const result = await dispatch(importFromDialog()).unwrap();
+    if (!result || result === true) {
       // User cancelled or not in Tauri environment
       return;
     }
@@ -568,8 +656,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       if (book.audioTracks.length === 0) {
         // Only show conversion dialog if not already converting
         if (!isConverting) {
-          setPendingBookForConversion({ book, buffer: result.buffer });
-          setShowConvertDialog(true);
+          dispatch(setPendingBook({ book, buffer: result.buffer }));
+          dispatch(setShowDialog(true));
         } else {
           // Book is imported, but conversion dialog is skipped while another conversion is in progress
           toast.info("Ebook imported", {
@@ -578,17 +666,15 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
         }
       }
     }
-  }, [isImporting, importFromDialog, isConverting, setPendingBookForConversion, setShowConvertDialog]);
-
-  const [deletingBookId, setDeletingBookId] = useState<string | null>(null);
+  }, [isImporting, dispatch, isConverting]);
 
   const handleDeleteBook = useCallback(async (bookId: string) => {
     // Set deleting state
-    setDeletingBookId(bookId);
+    dispatch(setDeletingBookId(bookId));
     
     try {
       // If this book is currently being converted, cancel the conversion
-      cancelConversionForBook(bookId);
+      await cancelConversionForBook(bookId);
       
       // Find the book first to get its sourcePath for cache cleanup
       const bookToDelete = library.find((book) => book.id === bookId);
@@ -598,8 +684,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       await deleteBook(bookId);
       
       // Update local state
-      setLibrary((prev) => prev.filter((book) => book.id !== bookId));
-      setDetailBookId(null);
+      dispatch(removeBook(bookId));
+      dispatch(setDetailBookId(null));
 
       // Clear lazy loader cache
       if (bookToDelete) {
@@ -624,12 +710,12 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
       });
     } finally {
       // Clear deleting state
-      setDeletingBookId(null);
+      dispatch(setDeletingBookId(null));
     }
   }, [
+    dispatch,
     library,
     cancelConversionForBook,
-    setLibrary,
     setDetailBookId,
     activeBookId,
     setActiveBookId,
@@ -682,8 +768,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   }, [setActiveView, saveProgress, activeChapterId, activeBookId]);
 
   const handleOpenAudioPlayer = useCallback(() => {
-    setIsAudioPlayerOpen(true);
-  }, []);
+    dispatch(setAudioPlayerOpen(true));
+  }, [dispatch]);
 
   const handleSaveProgress = useCallback((saveFn: () => void) => {
     saveProgressRef.current = saveFn;
@@ -694,8 +780,8 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   }, [updateSettings]);
 
   const handleViewDetails = useCallback((bookId: string) => {
-    setDetailBookId(bookId);
-  }, []);
+    dispatch(setDetailBookId(bookId));
+  }, [dispatch]);
 
   const libraryView = useMemo(
     () => (
@@ -822,10 +908,10 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
             onChromeVisibilityChange={setIsReaderChromeVisible}
             audioPlayerVisible={Boolean(activeBook?.audioTracks?.length) && isAudioPlayerOpen}
             onOpenAudioPlayer={handleOpenAudioPlayer}
-            currentAudioTrackHref={currentAudioTrackHref}
+            currentAudioTrackHref={currentAudioTrackHref ?? undefined}
             onSaveProgress={handleSaveProgress}
             autoScrollEnabled={autoScrollEnabled}
-            currentAudioProgress={currentAudioProgress}
+            currentAudioProgress={currentAudioProgress ?? undefined}
             onTrackChangeHandlerReady={handleTrackChangeHandlerReady}
           />
         </ReaderCoordinatorProvider>
@@ -974,13 +1060,13 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
         <BookDetailDialog
           book={detailBook}
           open
-          onClose={() => setDetailBookId(null)}
+          onClose={() => dispatch(setDetailBookId(null))}
           onOpenBook={() => {
-            setDetailBookId(null);
+            dispatch(setDetailBookId(null));
             handleSelectBook(detailBook.id);
           }}
           onDeleteBook={() => handleDeleteBook(detailBook.id)}
-          isDeleting={deletingBookId === detailBook.id}
+          isDeleting={Boolean(deletingBookId && deletingBookId === detailBook.id)}
           conversionProgress={bookConversionProgress[detailBook.id]}
           onConvertToAudiobook={handleConvertBookFromDetail}
           onCancelConversion={cancelConversionForBook}
@@ -993,9 +1079,9 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
           open={showConvertDialog && !isConverting && !isCancelling}
           onOpenChange={(open) => {
             if (!isConverting && !isCancelling) {
-              setShowConvertDialog(open);
+              dispatch(setShowDialog(open));
               if (!open) {
-                setPendingBookForConversion(null);
+                dispatch(setPendingBook(null));
               }
             }
           }}
@@ -1018,13 +1104,29 @@ function App() {
 
 function AppWithLibrary() {
   const libraryHook = useLibrary();
+  const dispatch = useAppDispatch();
+  const reduxLibrary = useAppSelector(selectLibrary);
+
+  // Sync library state from LibraryContext to Redux
+  useEffect(() => {
+    if (libraryHook.library.length > 0 || reduxLibrary.length === 0) {
+      dispatch(setLibrary(libraryHook.library));
+    }
+  }, [libraryHook.library, reduxLibrary.length, dispatch]);
+
+  useEffect(() => {
+    dispatch(setIsHydrated(libraryHook.isHydrated));
+  }, [libraryHook.isHydrated, dispatch]);
+
+  // Set up conversion listeners once on mount
+  useEffect(() => {
+    import('./store/thunks/conversionThunks').then(({ setupConversionListeners }) => {
+      dispatch(setupConversionListeners());
+    });
+  }, [dispatch]);
 
   return (
-    <AppContextProvider
-      library={libraryHook.library}
-      setLibrary={libraryHook.setLibrary}
-      updateBookProgress={libraryHook.updateBookProgress}
-    >
+    <AppContextProvider>
       <AppContent libraryHook={libraryHook} />
     </AppContextProvider>
   );
