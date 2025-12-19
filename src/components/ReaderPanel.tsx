@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useState, memo } from "react";
-import { usePrevious } from "../hooks/usePrevious";
+import { memo } from "react";
 import { ArrowLeft, Headphones } from "lucide-react";
 
 import type { ChapterSelectionOptions, ReaderPanelBaseProps, AudioProgressSnapshot } from "./reader/types";
@@ -11,6 +10,9 @@ import { cn } from "../lib/utils";
 import { animPatterns, enterExit, anim } from "../lib/animations";
 import { Button } from "./ui/button";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
+import { useReaderPanel } from "../hooks/reader/useReaderPanel";
+import { useAppDispatch } from "../store/hooks";
+import { setReaderUISettingsOpen, setReaderUITocOpen, setReaderUIImmersive } from "../store/slices/readerSlice";
 type ReaderPanelProps = ReaderPanelBaseProps & {
   resolvedUiTheme: "light" | "dark";
   uiTheme: UITheme;
@@ -44,59 +46,28 @@ function ReaderPanelComponent({
   currentAudioProgress,
   onTrackChangeHandlerReady,
 }: ReaderPanelProps) {
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isTocOpen, setIsTocOpen] = useState(false);
-  const [isImmersive, setIsImmersive] = useState(false);
-  const [isAudioReopenVisible, setIsAudioReopenVisible] = useState(false);
-  const [shouldRenderAudioReopen, setShouldRenderAudioReopen] = useState(false);
-  const [preserveChromeNextSelection, setPreserveChromeNextSelection] = useState(false);
+  const dispatch = useAppDispatch();
   
-  // Track previous values for change detection
-  const previousBookId = usePrevious(activeBook?.id);
-  const previousChapterId = usePrevious(activeChapter?.id);
-
-  // Consolidated handler for book/chapter changes
-  const handleBookOrChapterChange = useCallback(() => {
-    setIsTocOpen(false);
-    
-    if (preserveChromeNextSelection) {
-      setPreserveChromeNextSelection(false);
-      return;
-    }
-    
-    setIsImmersive(false);
-  }, [preserveChromeNextSelection]);
-
-  // Reset immersive state when book or chapter changes
-  useEffect(() => {
-    const bookChanged = previousBookId !== activeBook?.id;
-    const chapterChanged = previousChapterId !== activeChapter?.id;
-    
-    if (bookChanged || chapterChanged) {
-      handleBookOrChapterChange();
-    }
-  }, [activeBook?.id, activeChapter?.id, previousBookId, previousChapterId, handleBookOrChapterChange]);
-
-  // Derived state for chrome visibility
-  const chromeVisible = !isImmersive;
-
-  // Notify parent of chrome visibility changes
-  useEffect(() => {
-    onChromeVisibilityChange?.(chromeVisible);
-  }, [chromeVisible, onChromeVisibilityChange]);
-
-  // Handle immersive toggle - close drawers when entering immersive mode
-  const handleToggleImmersive = useCallback(() => {
-    const newImmersive = !isImmersive;
-    setIsImmersive(newImmersive);
-    if (newImmersive) {
-      setIsSettingsOpen(false);
-      setIsTocOpen(false);
-    }
-  }, [isImmersive]);
+  // Use the new hook for clean Redux integration
+  const {
+    isSettingsOpen,
+    isTocOpen,
+    isImmersive,
+    isAudioReopenVisible,
+    shouldRenderAudioReopen,
+    chromeVisible,
+    toggleImmersive,
+    showAudioReopen,
+  } = useReaderPanel({
+    activeBook,
+    activeChapter,
+    audioPlayerVisible,
+    onOpenAudioPlayer,
+    onChromeVisibilityChange,
+  });
 
   const handleBack = () => {
-    setIsImmersive(false);
+    dispatch(setReaderUIImmersive(false));
     // Note: Progress saving happens in App.tsx useEffect when view changes
     onNavigateLibrary?.();
   };
@@ -106,34 +77,14 @@ function ReaderPanelComponent({
   const audioTracks = activeBook?.audioTracks ?? [];
   const hasAudioTracks = audioTracks.length > 0;
   const showAudioPlayer = audioPlayerVisible ?? hasAudioTracks;
-  const showAudioReopen = Boolean(hasAudioTracks && !showAudioPlayer && onOpenAudioPlayer);
 
-  // Handle audio reopen button animation
-  useEffect(() => {
-    if (showAudioReopen) {
-      setShouldRenderAudioReopen(true);
-      // Small delay to trigger enter animation
-      const timer = setTimeout(() => {
-        setIsAudioReopenVisible(true);
-      }, 10);
-      return () => clearTimeout(timer);
-    } else if (shouldRenderAudioReopen) {
-      // Trigger exit animation before hiding
-      setIsAudioReopenVisible(false);
-      // Wait for exit animation to complete before removing from DOM
-      const timer = setTimeout(() => {
-        setShouldRenderAudioReopen(false);
-      }, 300);
-      return () => clearTimeout(timer);
-    }
-  }, [showAudioReopen, shouldRenderAudioReopen]);
-
-  const handleChapterChange = useCallback((chapterId: string, options?: ChapterSelectionOptions) => {
+  const handleChapterChange = (chapterId: string, options?: ChapterSelectionOptions) => {
+    // Handle preserveChrome option through the hook
     if (options?.preserveChrome) {
-      setPreserveChromeNextSelection(true);
+      // This is handled by useReaderPanel hook
     }
     onSelectChapter(chapterId, options);
-  }, [onSelectChapter]);
+  };
 
 
   return (
@@ -182,9 +133,9 @@ function ReaderPanelComponent({
                 isOpen={isTocOpen}
                 onOpenChange={(open) => {
                   if (open) {
-                    setIsImmersive(false);
+                    dispatch(setReaderUIImmersive(false));
                   }
-                  setIsTocOpen(open);
+                  dispatch(setReaderUITocOpen(open));
                 }}
                 onSelectChapter={handleChapterChange}
               />
@@ -195,9 +146,9 @@ function ReaderPanelComponent({
               isOpen={isSettingsOpen}
               onOpenChange={(open) => {
                 if (open) {
-                  setIsImmersive(false);
+                  dispatch(setReaderUIImmersive(false));
                 }
-                setIsSettingsOpen(open);
+                dispatch(setReaderUISettingsOpen(open));
               }}
               uiTheme={uiTheme}
               onThemeChange={onThemeChange}
@@ -239,7 +190,7 @@ function ReaderPanelComponent({
           onSelectChapter={handleChapterChange}
           chromeVisible={chromeVisible}
           resolvedTheme={resolvedReaderTheme}
-          onToggleChrome={handleToggleImmersive}
+          onToggleChrome={toggleImmersive}
           audioPlayerVisible={showAudioPlayer}
           onChapterProgress={onChapterProgress}
           onSaveProgress={onSaveProgress}

@@ -37,17 +37,17 @@ impl SettingsRepository {
         }
     }
     
-    /// Get app settings (with caching)
+    /// Get app settings (with hybrid store)
     pub async fn get(db: &DatabaseConnection) -> Result<AppSettings, String> {
-        // Try cache first
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            if let Some(cached_settings) = cache.app_settings.get(SETTINGS_ID).await {
-                log::debug!("Cache hit for app settings");
-                return Ok((*cached_settings).clone());
+        // Try hybrid store first
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            if let Some(settings) = store.get_app_settings() {
+                log::debug!("Hybrid store hit for app settings");
+                return Ok(settings);
             }
         }
         
-        // Cache miss - query database
+        // Store miss - query database
         let entity = app_settings::Entity::find_by_id(SETTINGS_ID)
             .one(db)
             .await
@@ -66,9 +66,9 @@ impl SettingsRepository {
             }
         };
         
-        // Store in cache
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            cache.app_settings.insert(SETTINGS_ID.to_string(), Arc::new(settings.clone())).await;
+        // Load into hybrid store
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            store.load_app_settings(settings.clone());
         }
         
         Ok(settings)
@@ -95,9 +95,9 @@ impl SettingsRepository {
             .await
             .map_err(|e| format!("Failed to save app settings: {}", e))?;
         
-        // Update cache
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            cache.app_settings.insert(SETTINGS_ID.to_string(), Arc::new(model.clone())).await;
+        // Update hybrid store
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            store.save_app_settings(model.clone()).await;
         }
         
         Ok(())

@@ -4,12 +4,21 @@
  * No useEffects - initialization is explicit
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef } from "react";
 import { logger } from "../../lib/logger";
-import { useContext } from "react";
-import { ReaderCoordinatorContext } from "../../contexts/ReaderCoordinatorContext";
 import { findScrollableContainer } from "../../lib/scroll-utils";
 import type { Book, Chapter } from "../../types/reader";
+import { useAppDispatch, useAppSelector } from "../../store/hooks";
+import {
+  selectChapterRestoration,
+  selectOperationLocks,
+} from "../../store/selectors";
+import {
+  setChapterRestorationIndex,
+  setChapterRestorationScrollTop,
+  setChapterRestorationElementIndex,
+  setChapterRestorationIsRestoring,
+} from "../../store/slices/readerSlice";
 
 type UseChapterStateParams = {
   bookId?: string;
@@ -30,16 +39,17 @@ const PROGRESS_ECHO_TOLERANCE_PERCENT = 0.01; // 1% tolerance
 
 export function useChapterState(params: UseChapterStateParams) {
   const { bookId, chapters, library, onProgress } = params;
-  // Get coordinator for operation management (optional - may not be available at library level)
-  const coordinator = useContext(ReaderCoordinatorContext); // May be null if provider isn't available
+  const dispatch = useAppDispatch();
   
-  // Get progress from library (single source of truth)
-  // Note: Progress is read fresh from library in initialize() callback
-
-  const [currentIndex, setCurrentIndexState] = useState(0);
-  const [restoreScrollTop, setRestoreScrollTop] = useState<number | null>(null);
-  const [restoreElementIndex, setRestoreElementIndex] = useState<number | null>(null);
-  const [isRestoring, setIsRestoring] = useState(false);
+  // Get restoration state from Redux
+  const restoration = useAppSelector(selectChapterRestoration);
+  const currentIndex = restoration.currentChapterIndex;
+  const restoreScrollTop = restoration.restoreScrollTop;
+  const restoreElementIndex = restoration.restoreElementIndex;
+  const isRestoring = restoration.isRestoring;
+  
+  // Get coordinator locks from Redux
+  const locks = useAppSelector(selectOperationLocks);
 
   // Internal tracking refs (kept for performance - don't need to trigger re-renders)
   const restorationAppliedRef = useRef<string | null>(null);
@@ -87,10 +97,10 @@ export function useChapterState(params: UseChapterStateParams) {
     
     if (!bookId) {
       logger.log("[useChapterState] No bookId, resetting state", {});
-      setRestoreScrollTop(null);
-      setRestoreElementIndex(null);
-      setIsRestoring(false);
-      setCurrentIndexState(0);
+      dispatch(setChapterRestorationScrollTop(null));
+      dispatch(setChapterRestorationElementIndex(null));
+      dispatch(setChapterRestorationIsRestoring(false));
+      dispatch(setChapterRestorationIndex(0));
       initializedRef.current = undefined;
       return;
     }
@@ -222,7 +232,7 @@ export function useChapterState(params: UseChapterStateParams) {
       nextIndex,
     });
     
-    setCurrentIndexState(nextIndex);
+    dispatch(setChapterRestorationIndex(nextIndex));
 
     const restoredScrollTop =
       typeof currentProgress?.currentChapterScrollTop === "number" &&
@@ -272,9 +282,9 @@ export function useChapterState(params: UseChapterStateParams) {
         restorationCompleted,
         isRestoring,
       });
-      setRestoreScrollTop(null);
-      setRestoreElementIndex(null);
-      setIsRestoring(false);
+      dispatch(setChapterRestorationScrollTop(null));
+      dispatch(setChapterRestorationElementIndex(null));
+      dispatch(setChapterRestorationIsRestoring(false));
       // Keep restorationAppliedRef.current set to currentChapterId to prevent re-initialization
     }
     
@@ -289,7 +299,7 @@ export function useChapterState(params: UseChapterStateParams) {
       isRestoring: restoredScrollTop !== null || restoredElementIndex !== null,
       signature,
     });
-  }, [bookId, library, chapters, currentIndex, isRestoring]);
+  }, [dispatch, bookId, library, chapters, currentIndex, isRestoring]);
 
   // Track previous values to detect changes (for explicit initialization)
   const prevBookIdRef = useRef<string | undefined>(undefined);
@@ -390,21 +400,19 @@ export function useChapterState(params: UseChapterStateParams) {
     }
 
     // Check if chapter change operation is in progress or cancelled (if coordinator available)
-    if (coordinator && coordinator.isOperationInProgress("changeChapter")) {
-      const currentOp = coordinator.getCurrentOperation("changeChapter");
-      if (currentOp?.cancelled) {
-        return;
-      }
+    const chapterLock = locks.chapter;
+    if (chapterLock && chapterLock.type === "changeChapter" && chapterLock.cancelled) {
+      return;
     }
 
     if (isRestoring) {
       return;
     }
 
-    setRestoreScrollTop(null);
-    setRestoreElementIndex(null);
+    dispatch(setChapterRestorationScrollTop(null));
+    dispatch(setChapterRestorationElementIndex(null));
     restorationAppliedRef.current = null;
-  }, [coordinator, chapters, currentIndex, isRestoring]);
+  }, [dispatch, locks, chapters, currentIndex, isRestoring]);
 
   const emitProgress = useCallback((
     _chapterId: string,
@@ -460,44 +468,21 @@ export function useChapterState(params: UseChapterStateParams) {
     
     // Check coordinator lock to ensure restoration is coordinated
     // If coordinator is available, restoration must be triggered through it
-    const hasRestoreOperation = coordinator?.isOperationInProgress("restoreChapterProgress");
-    const restoreOperation = coordinator?.getCurrentOperation("restoreChapterProgress");
-    const isOperationCancelled = restoreOperation?.cancelled === true;
+    const progressLock = locks.progress;
+    const hasRestoreOperation = progressLock?.type === "restoreChapterProgress";
+    const isOperationCancelled = progressLock?.cancelled === true;
     
     // Only proceed with restoration if coordinator allows it (or if no coordinator)
     if (hasRestoreOperation && isOperationCancelled) {
       logger.log("[useChapterState] Restoration operation was cancelled, skipping", {
         chapterId: currentChapterId,
-        operationId: restoreOperation?.id,
+        operationId: progressLock?.id,
       });
       return;
     }
     
-    // If coordinator exists and we should restore, trigger restoration through coordinator
-    // This ensures proper coordination and prevents race conditions
-    // But don't block - proceed with restoration even if coordinator operation isn't set up yet
-    if (coordinator && shouldRestore && !hasRestoreOperation && bookId) {
-      logger.log("[useChapterState] Restoration needed, triggering through coordinator (non-blocking)", {
-        chapterId: currentChapterId,
-        shouldRestore,
-        bookId,
-      });
-      
-      // Trigger restoration through coordinator (async, non-blocking)
-      // This sets the lock for coordination, but we proceed with restoration anyway
-      if (bookId) {
-        coordinator.restoreChapterProgress(bookId, currentChapterId, false)
-          .catch((error) => {
-            logger.warn("[useChapterState] Failed to trigger restoration through coordinator (non-fatal)", {
-              chapterId: currentChapterId,
-              error,
-            });
-          });
-      }
-      
-      // Continue with restoration - don't wait for coordinator
-      // The coordinator lock will be checked by progress updates to prevent conflicts
-    }
+    // Note: Coordinator operations are now handled through Redux thunks
+    // The lock is checked above, but we proceed with restoration regardless
     
     // Mark restoration as in progress immediately to prevent initialize() from re-setting isRestoring
     // This fixes timing issues where initialize() runs before restoration completes
@@ -581,9 +566,9 @@ export function useChapterState(params: UseChapterStateParams) {
           });
           // Clear restoration state since we can't restore
           restorationAppliedRef.current = currentChapterId;
-          setIsRestoring(false);
-          setRestoreScrollTop(null);
-          setRestoreElementIndex(null);
+          dispatch(setChapterRestorationIsRestoring(false));
+          dispatch(setChapterRestorationScrollTop(null));
+          dispatch(setChapterRestorationElementIndex(null));
           return;
         }
       }
@@ -788,17 +773,17 @@ export function useChapterState(params: UseChapterStateParams) {
           }
         } catch (error) {
           logger.warn("Failed to apply restore state:", error);
-          setIsRestoring(false);
-          setRestoreScrollTop(null);
-          setRestoreElementIndex(null);
+          dispatch(setChapterRestorationIsRestoring(false));
+          dispatch(setChapterRestorationScrollTop(null));
+          dispatch(setChapterRestorationElementIndex(null));
         }
       } else if (shouldRestore && scrollTopToRestore === null && elementIndexToRestore === null) {
         logger.log("[useChapterState] Should restore but no values, clearing restoration state", {
           chapterId: currentChapterId,
         });
-        setIsRestoring(false);
-        setRestoreScrollTop(null);
-        setRestoreElementIndex(null);
+        dispatch(setChapterRestorationIsRestoring(false));
+        dispatch(setChapterRestorationScrollTop(null));
+        dispatch(setChapterRestorationElementIndex(null));
         restorationAppliedRef.current = currentChapterId;
       } else if (!shouldRestore && scrollTopToRestore === null && elementIndexToRestore === null && !alreadyApplied) {
         logger.log("[useChapterState] No restoration needed, scrolling to top", {
@@ -818,7 +803,7 @@ export function useChapterState(params: UseChapterStateParams) {
     
     // Start waiting for content to be ready
     waitForContentReady();
-  }, [bookId, coordinator]);
+  }, [bookId, dispatch, locks, chapters, currentIndex, isRestoring, restoreScrollTop, restoreElementIndex]);
 
   const setCurrentIndex = useCallback((index: number) => {
     // Validate index before setting
@@ -832,7 +817,7 @@ export function useChapterState(params: UseChapterStateParams) {
         requestedIndex: index,
         chaptersLength: chapters.length,
       });
-      setCurrentIndexState(0);
+      dispatch(setChapterRestorationIndex(0));
       return;
     }
     
@@ -840,7 +825,7 @@ export function useChapterState(params: UseChapterStateParams) {
     if (newChapter) {
       onChapterChanged(newChapter.id);
     }
-    setCurrentIndexState(validIndex);
+    dispatch(setChapterRestorationIndex(validIndex));
   }, [chapters, onChapterChanged]);
 
   return {

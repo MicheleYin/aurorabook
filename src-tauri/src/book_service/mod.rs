@@ -3,7 +3,9 @@ pub mod filters;
 pub mod database;
 pub mod entities;
 pub mod repositories;
-pub mod cache;
+pub mod hybrid_store;
+pub mod hybrid_store_sync;
+pub mod hybrid_repository;
 
 pub use models::*;
 use filters::*;
@@ -1047,7 +1049,7 @@ pub async fn export_epub_to_file(
 /// Update book progress
 /// Uses lightweight update_progress_only instead of full save to avoid expensive
 /// chapter deletion/re-insertion and audio track re-saving
-/// Optimized: Returns from cache if available, avoiding expensive re-fetch
+/// Optimized: Returns from hybrid store if available, avoiding expensive re-fetch
 #[tauri::command]
 pub async fn update_book_progress(
     book_id: String,
@@ -1061,15 +1063,15 @@ pub async fn update_book_progress(
     BookRepository::update_progress_only(db.as_ref(), &book_id, &progress).await
         .map_err(|e| AppError::Store(e))?;
     
-    // Try to get updated book from cache first (cache was updated in-place)
-    if let Ok(cache) = crate::book_service::database::get_db_cache() {
-        if let Some(cached_book) = cache.books.get(&book_id).await {
-            log::debug!("Returning updated book from cache after progress update");
-            return Ok((*cached_book).clone());
+    // Try to get updated book from hybrid store first
+    if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+        if let Some(book) = store.get_book(&book_id) {
+            log::debug!("Returning updated book from hybrid store after progress update");
+            return Ok(book);
         }
     }
     
-    // Fallback: re-fetch if not in cache (should rarely happen)
+    // Fallback: re-fetch if not in store (should rarely happen)
     let book = BookRepository::find_by_id(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))?
         .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
@@ -1080,7 +1082,7 @@ pub async fn update_book_progress(
 /// Update book audio state
 /// Uses lightweight update_audio_state_only instead of full save to avoid expensive
 /// chapter deletion/re-insertion and audio track re-saving
-/// Optimized: Returns from cache if available, avoiding expensive re-fetch
+/// Optimized: Returns from hybrid store if available, avoiding expensive re-fetch
 #[tauri::command]
 pub async fn update_book_audio_state(
     book_id: String,
@@ -1094,15 +1096,15 @@ pub async fn update_book_audio_state(
     BookRepository::update_audio_state_only(db.as_ref(), &book_id, &audio_state).await
         .map_err(|e| AppError::Store(e))?;
     
-    // Try to get updated book from cache first (cache was updated in-place)
-    if let Ok(cache) = crate::book_service::database::get_db_cache() {
-        if let Some(cached_book) = cache.books.get(&book_id).await {
-            log::debug!("Returning updated book from cache after audio state update");
-            return Ok((*cached_book).clone());
+    // Try to get updated book from hybrid store first
+    if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+        if let Some(book) = store.get_book(&book_id) {
+            log::debug!("Returning updated book from hybrid store after audio state update");
+            return Ok(book);
         }
     }
     
-    // Fallback: re-fetch if not in cache (should rarely happen)
+    // Fallback: re-fetch if not in store (should rarely happen)
     let book = BookRepository::find_by_id(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))?
         .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
@@ -1761,10 +1763,7 @@ pub async fn update_book_last_opened_time(
         .await
         .map_err(|e| AppError::Store(format!("Failed to update last_opened_time: {}", e)))?;
     
-    // Invalidate cache for this book
-    if let Ok(cache) = crate::book_service::database::get_db_cache() {
-        cache.books.invalidate(&book_id).await;
-    }
+    // Book update is handled via write queue in hybrid store
     
     Ok(())
 }

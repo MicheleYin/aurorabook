@@ -15,6 +15,27 @@ interface ReaderState {
   pendingFragment: string | null;
   isReaderChromeVisible: boolean;
   detailBookId: string | null;
+  // ReaderPanel UI state
+  readerUI: {
+    isSettingsOpen: boolean;
+    isTocOpen: boolean;
+    isImmersive: boolean;
+    isAudioReopenVisible: boolean;
+    shouldRenderAudioReopen: boolean;
+    preserveChromeNextSelection: boolean;
+  };
+  // Chapter restoration state
+  chapterRestoration: {
+    currentChapterIndex: number;
+    restoreScrollTop: number | null;
+    restoreElementIndex: number | null;
+    isRestoring: boolean;
+  };
+  // Chapter animation state
+  chapterAnimation: {
+    state: 'entering' | 'entered' | null;
+    direction: 'forward' | 'backward' | null;
+  };
   // Audio player state
   audioPlayer: {
     isOpen: boolean;
@@ -24,6 +45,34 @@ interface ReaderState {
     currentTrackIndex: number;
     restoreTime: number | null;
     isRestoring: boolean;
+    // Playback state
+    playback: {
+      isPlaying: boolean;
+      currentTime: number;
+      duration: number;
+      playbackRate: number;
+    };
+    // Scrubbing state
+    scrubbing: {
+      isScrubbing: boolean;
+      scrubTime: number | null;
+    };
+    // UI state
+    ui: {
+      isVisible: boolean;
+      showTracksDialog: boolean;
+    };
+    // Animation state
+    animation: {
+      trackAnimationState: 'entering' | 'entered' | null;
+      trackAnimationDirection: 'left' | 'right' | null;
+    };
+    // Loading state
+    loading: {
+      loadedCount: number;
+      isTrackLoading: boolean;
+      isLocalTrackChanging: boolean;
+    };
   };
 }
 
@@ -38,6 +87,24 @@ const initialState: ReaderState = {
   pendingFragment: null,
   isReaderChromeVisible: true,
   detailBookId: null,
+  readerUI: {
+    isSettingsOpen: false,
+    isTocOpen: false,
+    isImmersive: false,
+    isAudioReopenVisible: false,
+    shouldRenderAudioReopen: false,
+    preserveChromeNextSelection: false,
+  },
+  chapterRestoration: {
+    currentChapterIndex: 0,
+    restoreScrollTop: null,
+    restoreElementIndex: null,
+    isRestoring: false,
+  },
+  chapterAnimation: {
+    state: null,
+    direction: null,
+  },
   audioPlayer: {
     isOpen: false,
     isDismissing: false,
@@ -46,6 +113,29 @@ const initialState: ReaderState = {
     currentTrackIndex: 0,
     restoreTime: null,
     isRestoring: false,
+    playback: {
+      isPlaying: false,
+      currentTime: 0,
+      duration: 0,
+      playbackRate: 1.0,
+    },
+    scrubbing: {
+      isScrubbing: false,
+      scrubTime: null,
+    },
+    ui: {
+      isVisible: false,
+      showTracksDialog: false,
+    },
+    animation: {
+      trackAnimationState: null,
+      trackAnimationDirection: null,
+    },
+    loading: {
+      loadedCount: 0,
+      isTrackLoading: false,
+      isLocalTrackChanging: false,
+    },
   },
 };
 
@@ -117,6 +207,89 @@ const readerSlice = createSlice({
     setAudioPlayerRestoring: (state, action: PayloadAction<boolean>) => {
       state.audioPlayer.isRestoring = action.payload;
     },
+    // ReaderPanel UI state
+    setReaderUISettingsOpen: (state, action: PayloadAction<boolean>) => {
+      state.readerUI.isSettingsOpen = action.payload;
+    },
+    setReaderUITocOpen: (state, action: PayloadAction<boolean>) => {
+      state.readerUI.isTocOpen = action.payload;
+    },
+    setReaderUIImmersive: (state, action: PayloadAction<boolean>) => {
+      state.readerUI.isImmersive = action.payload;
+    },
+    setReaderUIAudioReopenVisible: (state, action: PayloadAction<boolean>) => {
+      state.readerUI.isAudioReopenVisible = action.payload;
+    },
+    setReaderUIShouldRenderAudioReopen: (state, action: PayloadAction<boolean>) => {
+      state.readerUI.shouldRenderAudioReopen = action.payload;
+    },
+    setReaderUIPreserveChromeNextSelection: (state, action: PayloadAction<boolean>) => {
+      state.readerUI.preserveChromeNextSelection = action.payload;
+    },
+    // Chapter restoration state
+    setChapterRestorationIndex: (state, action: PayloadAction<number>) => {
+      state.chapterRestoration.currentChapterIndex = action.payload;
+    },
+    setChapterRestorationScrollTop: (state, action: PayloadAction<number | null>) => {
+      state.chapterRestoration.restoreScrollTop = action.payload;
+    },
+    setChapterRestorationElementIndex: (state, action: PayloadAction<number | null>) => {
+      state.chapterRestoration.restoreElementIndex = action.payload;
+    },
+    setChapterRestorationIsRestoring: (state, action: PayloadAction<boolean>) => {
+      state.chapterRestoration.isRestoring = action.payload;
+    },
+    // Chapter animation state
+    setChapterAnimationState: (state, action: PayloadAction<'entering' | 'entered' | null>) => {
+      state.chapterAnimation.state = action.payload;
+    },
+    setChapterAnimationDirection: (state, action: PayloadAction<'forward' | 'backward' | null>) => {
+      state.chapterAnimation.direction = action.payload;
+    },
+    // Audio player playback state
+    setAudioPlayerIsPlaying: (state, action: PayloadAction<boolean>) => {
+      state.audioPlayer.playback.isPlaying = action.payload;
+    },
+    setAudioPlayerCurrentTime: (state, action: PayloadAction<number>) => {
+      state.audioPlayer.playback.currentTime = action.payload;
+    },
+    setAudioPlayerDuration: (state, action: PayloadAction<number>) => {
+      state.audioPlayer.playback.duration = action.payload;
+    },
+    setAudioPlayerPlaybackRate: (state, action: PayloadAction<number>) => {
+      state.audioPlayer.playback.playbackRate = action.payload;
+    },
+    // Audio player scrubbing state
+    setAudioPlayerIsScrubbing: (state, action: PayloadAction<boolean>) => {
+      state.audioPlayer.scrubbing.isScrubbing = action.payload;
+    },
+    setAudioPlayerScrubTime: (state, action: PayloadAction<number | null>) => {
+      state.audioPlayer.scrubbing.scrubTime = action.payload;
+    },
+    // Audio player UI state
+    setAudioPlayerIsVisible: (state, action: PayloadAction<boolean>) => {
+      state.audioPlayer.ui.isVisible = action.payload;
+    },
+    setAudioPlayerShowTracksDialog: (state, action: PayloadAction<boolean>) => {
+      state.audioPlayer.ui.showTracksDialog = action.payload;
+    },
+    // Audio player animation state
+    setAudioPlayerTrackAnimationState: (state, action: PayloadAction<'entering' | 'entered' | null>) => {
+      state.audioPlayer.animation.trackAnimationState = action.payload;
+    },
+    setAudioPlayerTrackAnimationDirection: (state, action: PayloadAction<'left' | 'right' | null>) => {
+      state.audioPlayer.animation.trackAnimationDirection = action.payload;
+    },
+    // Audio player loading state
+    setAudioPlayerLoadedCount: (state, action: PayloadAction<number>) => {
+      state.audioPlayer.loading.loadedCount = action.payload;
+    },
+    setAudioPlayerIsTrackLoading: (state, action: PayloadAction<boolean>) => {
+      state.audioPlayer.loading.isTrackLoading = action.payload;
+    },
+    setAudioPlayerIsLocalTrackChanging: (state, action: PayloadAction<boolean>) => {
+      state.audioPlayer.loading.isLocalTrackChanging = action.payload;
+    },
     // Reset reader state
     resetReader: (state) => {
       state.currentBookId = null;
@@ -129,6 +302,24 @@ const readerSlice = createSlice({
       state.pendingFragment = null;
       state.isReaderChromeVisible = true;
       state.detailBookId = null;
+      state.readerUI = {
+        isSettingsOpen: false,
+        isTocOpen: false,
+        isImmersive: false,
+        isAudioReopenVisible: false,
+        shouldRenderAudioReopen: false,
+        preserveChromeNextSelection: false,
+      };
+      state.chapterRestoration = {
+        currentChapterIndex: 0,
+        restoreScrollTop: null,
+        restoreElementIndex: null,
+        isRestoring: false,
+      };
+      state.chapterAnimation = {
+        state: null,
+        direction: null,
+      };
       state.audioPlayer = {
         isOpen: false,
         isDismissing: false,
@@ -137,6 +328,29 @@ const readerSlice = createSlice({
         currentTrackIndex: 0,
         restoreTime: null,
         isRestoring: false,
+        playback: {
+          isPlaying: false,
+          currentTime: 0,
+          duration: 0,
+          playbackRate: 1.0,
+        },
+        scrubbing: {
+          isScrubbing: false,
+          scrubTime: null,
+        },
+        ui: {
+          isVisible: false,
+          showTracksDialog: false,
+        },
+        animation: {
+          trackAnimationState: null,
+          trackAnimationDirection: null,
+        },
+        loading: {
+          loadedCount: 0,
+          isTrackLoading: false,
+          isLocalTrackChanging: false,
+        },
       };
     },
   },
@@ -160,6 +374,31 @@ export const {
   setAudioPlayerTrackIndex,
   setAudioPlayerRestoreTime,
   setAudioPlayerRestoring,
+  setReaderUISettingsOpen,
+  setReaderUITocOpen,
+  setReaderUIImmersive,
+  setReaderUIAudioReopenVisible,
+  setReaderUIShouldRenderAudioReopen,
+  setReaderUIPreserveChromeNextSelection,
+  setChapterRestorationIndex,
+  setChapterRestorationScrollTop,
+  setChapterRestorationElementIndex,
+  setChapterRestorationIsRestoring,
+  setChapterAnimationState,
+  setChapterAnimationDirection,
+  setAudioPlayerIsPlaying,
+  setAudioPlayerCurrentTime,
+  setAudioPlayerDuration,
+  setAudioPlayerPlaybackRate,
+  setAudioPlayerIsScrubbing,
+  setAudioPlayerScrubTime,
+  setAudioPlayerIsVisible,
+  setAudioPlayerShowTracksDialog,
+  setAudioPlayerTrackAnimationState,
+  setAudioPlayerTrackAnimationDirection,
+  setAudioPlayerLoadedCount,
+  setAudioPlayerIsTrackLoading,
+  setAudioPlayerIsLocalTrackChanging,
   resetReader,
 } = readerSlice.actions;
 

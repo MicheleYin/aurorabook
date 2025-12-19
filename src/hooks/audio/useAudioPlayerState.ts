@@ -4,26 +4,39 @@
  * No useEffects - initialization is explicit
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef } from "react";
 import { logger } from "../../lib/logger";
 import type { UseAudioPlayerStateParams } from "../library/types";
-import { useContext } from "react";
-import { ReaderCoordinatorContext } from "../../contexts/ReaderCoordinatorContext";
+import { useAppDispatch, useAppSelector } from "../../store/hooks";
+import {
+  selectAudioPlayerTrackIndex,
+  selectAudioPlayerRestoreTime,
+  selectAudioPlayerRestoring,
+  selectOperationLocks,
+} from "../../store/selectors";
+import {
+  setAudioPlayerTrackIndex,
+  setAudioPlayerRestoreTime,
+  setAudioPlayerRestoring,
+} from "../../store/slices/readerSlice";
 
 const PROGRESS_ECHO_TOLERANCE_SECONDS = 0.5;
 
 export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
   const { bookId, tracks, library, onProgress } = params;
-  // Get coordinator for operation management (optional - may not be available at library level)
-  const coordinator = useContext(ReaderCoordinatorContext); // May be null if provider isn't available
+  const dispatch = useAppDispatch();
+  
+  // Get restoration state from Redux
+  const currentIndex = useAppSelector(selectAudioPlayerTrackIndex);
+  const restoreTime = useAppSelector(selectAudioPlayerRestoreTime);
+  const isRestoring = useAppSelector(selectAudioPlayerRestoring);
+  
+  // Get coordinator locks from Redux
+  const locks = useAppSelector(selectOperationLocks);
   
   // Get audio state from library (single source of truth)
   const book = bookId ? library.find((b) => b.id === bookId) : undefined;
   const initialAudioState = book?.audioState;
-
-  const [currentIndex, setCurrentIndexState] = useState(0);
-  const [restoreTime, setRestoreTime] = useState<number | null>(null);
-  const [isRestoring, setIsRestoring] = useState(false);
 
   // Internal tracking refs (kept for performance - don't need to trigger re-renders)
   const restorationAppliedRef = useRef<string | null>(null);
@@ -118,9 +131,9 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
   // Initialize from audio state (call explicitly when needed)
   const initialize = useCallback(() => {
     if (!bookId) {
-      setRestoreTime(null);
-      setIsRestoring(false);
-      setCurrentIndexState(0);
+      dispatch(setAudioPlayerRestoreTime(null));
+      dispatch(setAudioPlayerRestoring(false));
+      dispatch(setAudioPlayerTrackIndex(0));
       initializedRef.current = undefined;
       return;
     }
@@ -137,7 +150,7 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
     }
 
     const nextIndex = findTrackIndex();
-    setCurrentIndexState(nextIndex);
+    dispatch(setAudioPlayerTrackIndex(nextIndex));
 
     const restoredTime =
       typeof initialAudioState?.currentTimeSeconds === "number" &&
@@ -145,23 +158,22 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
         ? Math.max(initialAudioState.currentTimeSeconds, 0)
         : null;
 
-    setRestoreTime(restoredTime);
-    setIsRestoring(restoredTime !== null);
+    dispatch(setAudioPlayerRestoreTime(restoredTime));
+    dispatch(setAudioPlayerRestoring(restoredTime !== null));
     restorationAppliedRef.current = null;
     lastProgressSnapshotRef.current = { timestamp: 0 };
     initializedRef.current = signature;
-  }, [bookId, initialAudioState, tracks.length, findTrackIndex, isProgressEcho]);
+  }, [dispatch, bookId, initialAudioState, tracks.length, findTrackIndex, isProgressEcho]);
 
-  // Initialize when bookId or state changes (moved to useEffect to avoid state updates during render)
-  useEffect(() => {
-    const currentSignature = bookId && initialAudioState
-      ? `${bookId}|${initialAudioState.currentTrackId}|${initialAudioState.updatedAt}|${tracks.length}`
-      : undefined;
-    
-    if (initializedRef.current !== currentSignature) {
-      initialize();
-    }
-  }, [bookId, initialAudioState?.currentTrackId, initialAudioState?.updatedAt, tracks.length, initialize]);
+  // Initialize when bookId or state changes
+  // Note: This is now handled explicitly by callers, but keeping for compatibility
+  const currentSignature = bookId && initialAudioState
+    ? `${bookId}|${initialAudioState.currentTrackId}|${initialAudioState.updatedAt}|${tracks.length}`
+    : undefined;
+  
+  if (initializedRef.current !== currentSignature) {
+    initialize();
+  }
 
   const onTrackChanged = useCallback((newTrackId: string) => {
     const currentTrack = tracks[currentIndex];
@@ -169,21 +181,19 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
       return;
     }
 
-    // Check if track change operation is in progress or cancelled (if coordinator available)
-    if (coordinator && coordinator.isOperationInProgress("changeAudioTrack")) {
-      const currentOp = coordinator.getCurrentOperation("changeAudioTrack");
-      if (currentOp?.cancelled) {
-        return;
-      }
+    // Check if track change operation is in progress or cancelled
+    const audioLock = locks.audio;
+    if (audioLock && audioLock.type === "changeAudioTrack" && audioLock.cancelled) {
+      return;
     }
 
     if (isRestoring) {
       return;
     }
 
-    setRestoreTime(null);
+    dispatch(setAudioPlayerRestoreTime(null));
     restorationAppliedRef.current = null;
-  }, [coordinator, tracks, currentIndex, isRestoring]);
+  }, [dispatch, locks, tracks, currentIndex, isRestoring]);
 
   const emitProgress = useCallback((timeSeconds: number) => {
     const track = tracks[currentIndex];
@@ -230,16 +240,16 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
         const appliedTime = audioElement.currentTime || timeToRestore;
         restorationAppliedRef.current = currentTrackId;
         emitProgress(appliedTime);
-        setIsRestoring(false);
-        setRestoreTime(null);
+        dispatch(setAudioPlayerRestoring(false));
+        dispatch(setAudioPlayerRestoreTime(null));
       } catch (error) {
         logger.warn("Failed to apply restore time:", error);
-        setIsRestoring(false);
-        setRestoreTime(null);
+        dispatch(setAudioPlayerRestoring(false));
+        dispatch(setAudioPlayerRestoreTime(null));
       }
     } else if (shouldRestore && timeToRestore === null) {
-      setIsRestoring(false);
-      setRestoreTime(null);
+      dispatch(setAudioPlayerRestoring(false));
+      dispatch(setAudioPlayerRestoreTime(null));
       restorationAppliedRef.current = currentTrackId;
     } else if (!shouldRestore && timeToRestore === null && !alreadyApplied) {
       audioElement.currentTime = 0;
@@ -254,12 +264,12 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
     if (newTrack) {
       onTrackChanged(newTrack.id);
     }
-    setCurrentIndexState(index);
-  }, [tracks, onTrackChanged]);
+    dispatch(setAudioPlayerTrackIndex(index));
+  }, [dispatch, tracks, onTrackChanged]);
 
   // Ensure index is valid
   if (tracks.length && currentIndex >= tracks.length) {
-    setCurrentIndexState(0);
+    dispatch(setAudioPlayerTrackIndex(0));
   }
 
   return {

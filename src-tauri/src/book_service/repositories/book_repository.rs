@@ -216,17 +216,17 @@ impl BookRepository {
         Ok(books)
     }
     
-    /// Find book by ID (with caching)
+    /// Find book by ID (with hybrid store)
     pub async fn find_by_id(db: &DatabaseConnection, book_id: &str) -> Result<Option<Book>, String> {
-        // Try cache first
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            if let Some(cached_book) = cache.books.get(book_id).await {
-                log::debug!("Cache hit for book: {}", book_id);
-                return Ok(Some((*cached_book).clone()));
+        // Try hybrid store first
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            if let Some(book) = store.get_book(book_id) {
+                log::debug!("Hybrid store hit for book: {}", book_id);
+                return Ok(Some(book));
             }
         }
         
-        // Cache miss - query database
+        // Store miss - query database
         let entity = book::Entity::find_by_id(book_id)
             .one(db)
             .await
@@ -237,9 +237,9 @@ impl BookRepository {
             let audio_tracks = AudioRepository::find_by_book_id(db, &entity.id).await?;
             let book = Self::entity_to_model(entity, chapters, audio_tracks);
             
-            // Store in cache
-            if let Ok(cache) = crate::book_service::database::get_db_cache() {
-                cache.books.insert(book_id.to_string(), Arc::new(book.clone())).await;
+            // Load into hybrid store
+            if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+                store.load_book(book.clone()).await;
             }
             
             Ok(Some(book))
@@ -352,10 +352,7 @@ impl BookRepository {
                     .map_err(|e| format!("Failed to batch insert chapters: {}", e))?;
             }
             
-            // Invalidate cache after batch insert
-            if let Ok(cache) = crate::book_service::database::get_db_cache() {
-                cache.chapters_list.invalidate(&model.id).await;
-            }
+            // Chapters are saved via write queue in hybrid store
         }
         
         // Batch insert audio tracks (metadata only, data is stored separately)
@@ -398,19 +395,13 @@ impl BookRepository {
                     .map_err(|e| format!("Failed to save audio track: {}", e))?;
             }
             
-            // Invalidate cache after batch insert
-            if let Ok(cache) = crate::book_service::database::get_db_cache() {
-                cache.audio_tracks_list.invalidate(&model.id).await;
-            }
+            // Audio tracks are saved via write queue in hybrid store
         }
         
         txn.commit().await
             .map_err(|e| format!("Failed to commit transaction: {}", e))?;
         
-        // Invalidate cache for this book
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            cache.invalidate_book(&model.id).await;
-        }
+        // Book is saved via write queue in hybrid store, no need to invalidate here
         
         Ok(())
     }
@@ -448,18 +439,9 @@ impl BookRepository {
             .await
             .map_err(|e| format!("Failed to update book progress: {}", e))?;
         
-        // Update cached book in-place if it exists (much faster than invalidating and re-fetching)
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            if let Some(cached_book) = cache.books.get(book_id).await {
-                use std::sync::Arc;
-                // Clone the book, update progress, and re-insert
-                let mut updated_book = (*cached_book).clone();
-                updated_book.progress = Some(progress.clone());
-                cache.books.insert(book_id.to_string(), Arc::new(updated_book)).await;
-            } else {
-                // Not in cache, just invalidate to be safe
-                cache.invalidate_book(book_id).await;
-            }
+        // Update hybrid store if loaded
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            store.update_progress(book_id.to_string(), progress.clone()).await;
         }
         
         Ok(())
@@ -492,18 +474,9 @@ impl BookRepository {
             .await
             .map_err(|e| format!("Failed to update book audio state: {}", e))?;
         
-        // Update cached book in-place if it exists (much faster than invalidating and re-fetching)
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            if let Some(cached_book) = cache.books.get(book_id).await {
-                use std::sync::Arc;
-                // Clone the book, update audio_state, and re-insert
-                let mut updated_book = (*cached_book).clone();
-                updated_book.audio_state = Some(audio_state.clone());
-                cache.books.insert(book_id.to_string(), Arc::new(updated_book)).await;
-            } else {
-                // Not in cache, just invalidate to be safe
-                cache.invalidate_book(book_id).await;
-            }
+        // Update hybrid store if loaded
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            store.update_audio_state(book_id.to_string(), audio_state.clone()).await;
         }
         
         Ok(())
@@ -516,10 +489,7 @@ impl BookRepository {
             .await
             .map_err(|e| format!("Failed to delete book: {}", e))?;
         
-        // Invalidate cache for this book
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            cache.invalidate_book(book_id).await;
-        }
+        // Book deletion is handled via write queue in hybrid store
         
         Ok(())
     }

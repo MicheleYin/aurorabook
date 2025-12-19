@@ -4,6 +4,8 @@
  * Uses the same pattern as usePersistentLibrary.ts for consistency
  */
 
+import { logger } from "./logger";
+
 const STORE_PATH = "epub-cache.store.json";
 const STORE_KEY_PREFIX = "epub:";
 const EPUB_STORE_LOG_PREFIX = "[EPUBStore]";
@@ -19,18 +21,18 @@ let storeRef: StoreHandle | null = null;
 
 const getStore = async (): Promise<StoreHandle | null> => {
   if (storeRef) {
-    console.debug(`${EPUB_STORE_LOG_PREFIX} using cached store reference`);
+    logger.debug(`${EPUB_STORE_LOG_PREFIX} using cached store reference`);
     return storeRef;
   }
 
   try {
-    console.debug(`${EPUB_STORE_LOG_PREFIX} loading store from ${STORE_PATH}`);
+    logger.debug(`${EPUB_STORE_LOG_PREFIX} loading store from ${STORE_PATH}`);
     const { load } = await import("@tauri-apps/plugin-store");
     storeRef = (await load(STORE_PATH)) as StoreHandle;
-    console.debug(`${EPUB_STORE_LOG_PREFIX} store loaded successfully`);
+    logger.debug(`${EPUB_STORE_LOG_PREFIX} store loaded successfully`);
     return storeRef;
   } catch (error) {
-    console.error(`${EPUB_STORE_LOG_PREFIX} failed to load store`, {
+    logger.error(`${EPUB_STORE_LOG_PREFIX} failed to load store`, {
       error,
       storePath: STORE_PATH,
     });
@@ -65,7 +67,7 @@ const base64ToArrayBuffer = (value: string): ArrayBuffer => {
 export const storeConvertedEpub = async (sourcePath: string, buffer: ArrayBuffer): Promise<void> => {
   const store = await getStore();
   if (!store) {
-    console.warn(`${EPUB_STORE_LOG_PREFIX} store not available, cannot save converted EPUB`);
+    logger.warn(`${EPUB_STORE_LOG_PREFIX} store not available, cannot save converted EPUB`);
     throw new Error("Store not available");
   }
 
@@ -75,11 +77,11 @@ export const storeConvertedEpub = async (sourcePath: string, buffer: ArrayBuffer
     // Check buffer size - warn if very large
     const sizeMB = buffer.byteLength / (1024 * 1024);
     if (sizeMB > 100) {
-      console.warn(`${EPUB_STORE_LOG_PREFIX} EPUB is very large (${sizeMB.toFixed(2)}MB), storage may be slow`);
+      logger.warn(`${EPUB_STORE_LOG_PREFIX} EPUB is very large (${sizeMB.toFixed(2)}MB), storage may be slow`);
     }
     
     const base64Data = arrayBufferToBase64(buffer);
-    console.debug(`${EPUB_STORE_LOG_PREFIX} storing converted EPUB`, {
+    logger.debug(`${EPUB_STORE_LOG_PREFIX} storing converted EPUB`, {
       sourcePath,
       key,
       sizeBytes: buffer.byteLength,
@@ -89,11 +91,11 @@ export const storeConvertedEpub = async (sourcePath: string, buffer: ArrayBuffer
     
     // Set the value
     await store.set(key, base64Data);
-    console.debug(`${EPUB_STORE_LOG_PREFIX} set value in store, now saving...`);
+    logger.debug(`${EPUB_STORE_LOG_PREFIX} set value in store, now saving...`);
     
     // Save the store - this is critical
     await store.save();
-    console.debug(`${EPUB_STORE_LOG_PREFIX} store.save() completed`);
+    logger.debug(`${EPUB_STORE_LOG_PREFIX} store.save() completed`);
     
     // Small delay to ensure store is fully persisted
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -101,7 +103,7 @@ export const storeConvertedEpub = async (sourcePath: string, buffer: ArrayBuffer
     // Verify it was stored correctly
     const verify = await store.get<string>(key);
     if (!verify) {
-      console.error(`${EPUB_STORE_LOG_PREFIX} verification failed - EPUB was not stored!`, {
+      logger.error(`${EPUB_STORE_LOG_PREFIX} verification failed - EPUB was not stored!`, {
         key,
         sourcePath,
       });
@@ -109,7 +111,7 @@ export const storeConvertedEpub = async (sourcePath: string, buffer: ArrayBuffer
     }
     
     if (verify.length !== base64Data.length) {
-      console.error(`${EPUB_STORE_LOG_PREFIX} verification failed - size mismatch!`, {
+      logger.error(`${EPUB_STORE_LOG_PREFIX} verification failed - size mismatch!`, {
         expected: base64Data.length,
         actual: verify.length,
         key,
@@ -118,13 +120,13 @@ export const storeConvertedEpub = async (sourcePath: string, buffer: ArrayBuffer
       throw new Error(`Failed to verify EPUB storage - size mismatch (expected ${base64Data.length}, got ${verify.length})`);
     }
     
-    console.debug(`${EPUB_STORE_LOG_PREFIX} stored and verified converted EPUB successfully`, {
+    logger.debug(`${EPUB_STORE_LOG_PREFIX} stored and verified converted EPUB successfully`, {
       sourcePath,
       sizeBytes: buffer.byteLength,
       storedSize: verify.length,
     });
   } catch (error) {
-    console.error(`${EPUB_STORE_LOG_PREFIX} failed to store converted EPUB`, {
+    logger.error(`${EPUB_STORE_LOG_PREFIX} failed to store converted EPUB`, {
       error,
       sourcePath,
       bufferSize: buffer.byteLength,
@@ -140,33 +142,33 @@ export const storeConvertedEpub = async (sourcePath: string, buffer: ArrayBuffer
 export const getConvertedEpub = async (sourcePath: string): Promise<ArrayBuffer | null> => {
   const store = await getStore();
   if (!store) {
-    console.warn(`${EPUB_STORE_LOG_PREFIX} store not available, cannot retrieve converted EPUB`);
+    logger.warn(`${EPUB_STORE_LOG_PREFIX} store not available, cannot retrieve converted EPUB`);
     return null;
   }
 
   try {
     const key = `${STORE_KEY_PREFIX}${sourcePath}`;
-    console.debug(`${EPUB_STORE_LOG_PREFIX} retrieving converted EPUB`, {
+    logger.debug(`${EPUB_STORE_LOG_PREFIX} retrieving converted EPUB`, {
       sourcePath,
       key,
     });
     const base64Data = await store.get<string>(key);
     if (!base64Data) {
-      console.debug(`${EPUB_STORE_LOG_PREFIX} converted EPUB not found in store`, {
+      logger.debug(`${EPUB_STORE_LOG_PREFIX} converted EPUB not found in store`, {
         sourcePath,
         key,
       });
       return null;
     }
     const buffer = base64ToArrayBuffer(base64Data);
-    console.debug(`${EPUB_STORE_LOG_PREFIX} retrieved converted EPUB successfully`, {
+    logger.debug(`${EPUB_STORE_LOG_PREFIX} retrieved converted EPUB successfully`, {
       sourcePath,
       sizeBytes: buffer.byteLength,
       base64Length: base64Data.length,
     });
     return buffer;
   } catch (error) {
-    console.error(`${EPUB_STORE_LOG_PREFIX} failed to retrieve converted EPUB`, error);
+    logger.error(`${EPUB_STORE_LOG_PREFIX} failed to retrieve converted EPUB`, error);
     return null;
   }
 };
@@ -178,7 +180,7 @@ export const getConvertedEpub = async (sourcePath: string): Promise<ArrayBuffer 
 export const storeOriginalEpub = async (sourcePath: string, buffer: ArrayBuffer): Promise<void> => {
   const store = await getStore();
   if (!store) {
-    console.warn(`${EPUB_STORE_LOG_PREFIX} store not available, cannot save original EPUB`);
+    logger.warn(`${EPUB_STORE_LOG_PREFIX} store not available, cannot save original EPUB`);
     throw new Error("Store not available");
   }
 
@@ -188,11 +190,11 @@ export const storeOriginalEpub = async (sourcePath: string, buffer: ArrayBuffer)
     // Check buffer size - warn if very large
     const sizeMB = buffer.byteLength / (1024 * 1024);
     if (sizeMB > 100) {
-      console.warn(`${EPUB_STORE_LOG_PREFIX} EPUB is very large (${sizeMB.toFixed(2)}MB), storage may be slow`);
+      logger.warn(`${EPUB_STORE_LOG_PREFIX} EPUB is very large (${sizeMB.toFixed(2)}MB), storage may be slow`);
     }
     
     const base64Data = arrayBufferToBase64(buffer);
-    console.debug(`${EPUB_STORE_LOG_PREFIX} storing original EPUB`, {
+    logger.debug(`${EPUB_STORE_LOG_PREFIX} storing original EPUB`, {
       sourcePath,
       key,
       sizeBytes: buffer.byteLength,
@@ -203,12 +205,12 @@ export const storeOriginalEpub = async (sourcePath: string, buffer: ArrayBuffer)
     await store.set(key, base64Data);
     await store.save();
     
-    console.debug(`${EPUB_STORE_LOG_PREFIX} stored original EPUB successfully`, {
+    logger.debug(`${EPUB_STORE_LOG_PREFIX} stored original EPUB successfully`, {
       sourcePath,
       sizeBytes: buffer.byteLength,
     });
   } catch (error) {
-    console.error(`${EPUB_STORE_LOG_PREFIX} failed to store original EPUB`, {
+    logger.error(`${EPUB_STORE_LOG_PREFIX} failed to store original EPUB`, {
       error,
       sourcePath,
       bufferSize: buffer.byteLength,
@@ -224,7 +226,7 @@ export const storeOriginalEpub = async (sourcePath: string, buffer: ArrayBuffer)
 export const getEpub = async (sourcePath: string): Promise<ArrayBuffer | null> => {
   const store = await getStore();
   if (!store) {
-    console.warn(`${EPUB_STORE_LOG_PREFIX} store not available, cannot retrieve EPUB`);
+    logger.warn(`${EPUB_STORE_LOG_PREFIX} store not available, cannot retrieve EPUB`);
     return null;
   }
 
@@ -232,20 +234,20 @@ export const getEpub = async (sourcePath: string): Promise<ArrayBuffer | null> =
     const key = `${STORE_KEY_PREFIX}${sourcePath}`;
     const base64Data = await store.get<string>(key);
     if (!base64Data) {
-      console.debug(`${EPUB_STORE_LOG_PREFIX} EPUB not found in store`, {
+      logger.debug(`${EPUB_STORE_LOG_PREFIX} EPUB not found in store`, {
         sourcePath,
         key,
       });
       return null;
     }
     const buffer = base64ToArrayBuffer(base64Data);
-    console.debug(`${EPUB_STORE_LOG_PREFIX} retrieved EPUB successfully`, {
+    logger.debug(`${EPUB_STORE_LOG_PREFIX} retrieved EPUB successfully`, {
       sourcePath,
       sizeBytes: buffer.byteLength,
     });
     return buffer;
   } catch (error) {
-    console.error(`${EPUB_STORE_LOG_PREFIX} failed to retrieve EPUB`, error);
+    logger.error(`${EPUB_STORE_LOG_PREFIX} failed to retrieve EPUB`, error);
     return null;
   }
 };
@@ -265,10 +267,10 @@ export const removeEpub = async (sourcePath: string): Promise<void> => {
     const deleted = await store.delete(key);
     if (deleted) {
       await store.save();
-      console.debug(`${EPUB_STORE_LOG_PREFIX} removed EPUB`, { sourcePath });
+      logger.debug(`${EPUB_STORE_LOG_PREFIX} removed EPUB`, { sourcePath });
     }
   } catch (error) {
-    console.error(`${EPUB_STORE_LOG_PREFIX} failed to remove EPUB`, error);
+    logger.error(`${EPUB_STORE_LOG_PREFIX} failed to remove EPUB`, error);
   }
 };
 

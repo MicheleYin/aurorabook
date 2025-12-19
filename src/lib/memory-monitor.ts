@@ -35,7 +35,7 @@ export class MemoryMonitor {
     this.isAvailable = available;
     
     if (!available && !this.hasWarnedAboutUnavailability) {
-      console.info(
+      logger.log(
         '[MemoryMonitor] JavaScript heap memory API not available.\n' +
         '  This is expected in WebKit/Safari (Tauri uses WebKit).\n' +
         '  Use WebKit Inspector (Safari → Develop → Show Web Inspector) for memory profiling.\n' +

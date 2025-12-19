@@ -647,7 +647,7 @@ export function useAudioTextSync(
             (now - lastAttempt.timestamp) >= reloadThrottleMs;
           
           if (shouldReload) {
-            console.warn("[Audio Sync] Chapter content missing spans, triggering reload", {
+            logger.warn("[Audio Sync] Chapter content missing spans, triggering reload", {
               chapterId: chapter.id,
               textElementId: segment.textElementId,
             });

@@ -35,21 +35,21 @@ impl ChapterRepository {
         }
     }
     
-    /// Find all chapters for a book (with caching)
+    /// Find all chapters for a book (with hybrid store)
     /// 
     /// Note: This loads all chapter data including content_html and plain_text.
     /// For large books, consider using a lightweight version that excludes content
     /// and loads it on-demand when needed (future optimization).
     pub async fn find_by_book_id(db: &DatabaseConnection, book_id: &str) -> Result<Vec<Chapter>, String> {
-        // Try cache first
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            if let Some(cached_chapters) = cache.chapters_list.get(book_id).await {
-                log::debug!("Cache hit for chapters list: {}", book_id);
-                return Ok((*cached_chapters).clone());
+        // Try hybrid store first
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            if let Some(chapters) = store.get_chapters(book_id) {
+                log::debug!("Hybrid store hit for chapters list: {}", book_id);
+                return Ok(chapters);
             }
         }
         
-        // Cache miss - query database
+        // Store miss - query database
         let entities = chapter::Entity::find()
             .filter(chapter::Column::BookId.eq(book_id))
             .order_by_asc(chapter::Column::ChapterOrder)
@@ -59,29 +59,28 @@ impl ChapterRepository {
         
         let chapters: Vec<Chapter> = entities.into_iter().map(Self::entity_to_model).collect();
         
-        // Store in cache
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            cache.chapters_list.insert(book_id.to_string(), Arc::new(chapters.clone())).await;
+        // Load into hybrid store
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            store.load_chapters(book_id.to_string(), chapters.clone()).await;
         }
         
         Ok(chapters)
     }
     
-    /// Find chapter by book ID and href (with caching)
+    /// Find chapter by book ID and href (with hybrid store)
     pub async fn find_by_href(db: &DatabaseConnection, book_id: &str, href: &str) -> Result<Option<Chapter>, String> {
-        // Try to find chapter ID from href first (we need ID for cache key)
-        // For now, we'll use (book_id, href) as cache key
-        let cache_key = (book_id.to_string(), href.to_string());
-        
-        // Try cache first
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            if let Some(cached_chapter) = cache.chapters.get(&cache_key).await {
-                log::debug!("Cache hit for chapter: {} / {}", book_id, href);
-                return Ok(Some((*cached_chapter).clone()));
+        // Try hybrid store first (check individual chapters cache)
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            // First try to find in chapters list
+            if let Some(chapters) = store.get_chapters(book_id) {
+                if let Some(chapter) = chapters.iter().find(|c| c.href == href) {
+                    log::debug!("Hybrid store hit for chapter: {} / {}", book_id, href);
+                    return Ok(Some(chapter.clone()));
+                }
             }
         }
         
-        // Cache miss - query database
+        // Store miss - query database
         let entity = chapter::Entity::find()
             .filter(chapter::Column::BookId.eq(book_id))
             .filter(chapter::Column::Href.eq(href))
@@ -90,11 +89,11 @@ impl ChapterRepository {
             .map_err(|e| format!("Failed to query chapter: {}", e))?;
         
         if let Some(entity) = entity {
-            let chapter = Self::entity_to_model(entity);
+            let chapter = Self::entity_to_model(entity.clone());
             
-            // Store in cache
-            if let Ok(cache) = crate::book_service::database::get_db_cache() {
-                cache.chapters.insert(cache_key, Arc::new(chapter.clone())).await;
+            // Load into hybrid store
+            if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+                store.save_chapter(book_id.to_string(), chapter.clone()).await;
             }
             
             Ok(Some(chapter))
@@ -124,10 +123,7 @@ impl ChapterRepository {
             .await
             .map_err(|e| format!("Failed to save chapter: {}", e))?;
         
-        // Invalidate cache
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            cache.invalidate_chapter(book_id, &model.id).await;
-        }
+        // Chapter is saved via write queue in hybrid store
         
         Ok(())
     }
@@ -161,15 +157,14 @@ impl ChapterRepository {
                 log::info!("[ChapterRepository] ✓ Successfully updated chapter content in database: book_id={}, chapter_id={}, html_size={} bytes", 
                     book_id, chapter_id, new_html_size);
                 
-                // Invalidate cache after updating content
-                if let Ok(cache) = crate::book_service::database::get_db_cache() {
-                    log::debug!("[ChapterRepository] Invalidating cache for chapter: book_id={}, chapter_id={}", book_id, chapter_id);
-                    cache.invalidate_chapter(book_id, chapter_id).await;
-                    // Also invalidate the chapters list cache to ensure fresh data
-                    cache.chapters_list.invalidate(book_id).await;
-                    log::debug!("[ChapterRepository] ✓ Cache invalidated for chapter: book_id={}, chapter_id={}", book_id, chapter_id);
-                } else {
-                    log::warn!("[ChapterRepository] Failed to get cache, cannot invalidate: book_id={}, chapter_id={}", book_id, chapter_id);
+                // Update hybrid store if loaded
+                if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+                    store.update_chapter_content(
+                        book_id.to_string(),
+                        chapter_id.to_string(),
+                        content_html.to_string(),
+                        plain_text.map(|s| s.to_string()),
+                    ).await;
                 }
                 
                 Ok(())
@@ -190,10 +185,7 @@ impl ChapterRepository {
             .await
             .map_err(|e| format!("Failed to delete chapters: {}", e))?;
         
-        // Invalidate cache
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            cache.chapters_list.invalidate(book_id).await;
-        }
+        // Chapters deletion is handled via write queue in hybrid store
         
         Ok(())
     }

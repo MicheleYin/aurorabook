@@ -80,7 +80,7 @@ export function useAudioPlayerProgress({
 
   // Handle audio progress updates
   const handleAudioProgress = useCallback((snapshot: AudioProgressSnapshot) => {
-    console.log("[Audio Progress] handleAudioProgress called", {
+    logger.debug("[Audio Progress] handleAudioProgress called", {
       hasActiveBook: !!activeBook,
       trackHref: snapshot.trackHref,
       currentTime: snapshot.currentTimeSeconds,
@@ -96,7 +96,7 @@ export function useAudioPlayerProgress({
         snapshot.currentTimeSeconds
       );
     } else {
-      console.log("[Audio Progress] Skipping update - missing book or trackHref");
+      logger.debug("[Audio Progress] Skipping update - missing book or trackHref");
     }
   }, [activeBook, activeChapter, audioSync]);
 

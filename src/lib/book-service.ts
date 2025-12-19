@@ -4,6 +4,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { logger } from "./logger";
 import type { Book, Chapter, AudioTrack } from "../types/reader";
 
 export interface LibraryFilter {
@@ -23,7 +24,7 @@ export async function readAllBooks(
     // Return books without preloading - chapters will be loaded on-demand
     return books;
   } catch (error) {
-    console.error("Failed to read all books:", error);
+    logger.error("Failed to read all books:", error);
     throw error;
   }
 }
@@ -44,7 +45,7 @@ export async function readOneBook(bookId: string): Promise<Book | null> {
     // This significantly improves performance for large books
     return book;
   } catch (error) {
-    console.error("Failed to read book:", error);
+    logger.error("Failed to read book:", error);
     throw error;
   }
 }
@@ -64,7 +65,7 @@ export async function readSingleChapter(
     });
     return chapter;
   } catch (error) {
-    console.error("Failed to read chapter:", error);
+    logger.error("Failed to read chapter:", error);
     throw error;
   }
 }
@@ -84,7 +85,7 @@ export async function loadChapterContent(
     });
     return chapter;
   } catch (error) {
-    console.error("Failed to load chapter content:", error);
+    logger.error("Failed to load chapter content:", error);
     throw error;
   }
 }
@@ -104,7 +105,7 @@ export async function loadEpubChapterBlob(
   bookId: string,
   chapterHref: string
 ): Promise<{ blobUrl: string; htmlString: string } | null> {
-  console.log("[BookService] loadEpubChapterBlob called", {
+  logger.debug("[BookService] loadEpubChapterBlob called", {
     bookId,
     chapterHref,
   });
@@ -115,7 +116,7 @@ export async function loadEpubChapterBlob(
     });
     
     if (!result) {
-      console.log("[BookService] loadEpubChapterBlob result: not found", {
+      logger.debug("[BookService] loadEpubChapterBlob result: not found", {
         bookId,
         chapterHref,
       });
@@ -141,7 +142,7 @@ export async function loadEpubChapterBlob(
       blobURLManager.register(bookId, blobUrl, "other", false);
     }
     
-    console.log("[BookService] loadEpubChapterBlob result: success", {
+    logger.debug("[BookService] loadEpubChapterBlob result: success", {
       bookId,
       chapterHref,
       bytesLength: bytes.length,
@@ -152,7 +153,7 @@ export async function loadEpubChapterBlob(
     
     return { blobUrl, htmlString };
   } catch (error) {
-    console.error("[BookService] Failed to load EPUB chapter bytes:", {
+    logger.error("[BookService] Failed to load EPUB chapter bytes:", {
       bookId,
       chapterHref,
       error: error instanceof Error ? error.message : String(error),
@@ -170,7 +171,7 @@ export async function loadEpubImage(
   imageHref: string,
   chapterHref?: string
 ): Promise<string | null> {
-  console.log("[BookService] loadEpubImage called", {
+  logger.debug("[BookService] loadEpubImage called", {
     bookId,
     imageHref,
     chapterHref,
@@ -181,7 +182,7 @@ export async function loadEpubImage(
       imageHref,
       chapterHref,
     });
-    console.log("[BookService] loadEpubImage result", {
+    logger.debug("[BookService] loadEpubImage result", {
       bookId,
       imageHref,
       chapterHref,
@@ -190,7 +191,7 @@ export async function loadEpubImage(
     });
     return dataUrl;
   } catch (error) {
-    console.error("[BookService] Failed to load EPUB image:", {
+    logger.error("[BookService] Failed to load EPUB image:", {
       bookId,
       imageHref,
       chapterHref,
@@ -209,7 +210,7 @@ export async function loadEpubAudio(
   bookId: string,
   audioHref: string
 ): Promise<string | null> {
-  console.log("[BookService] loadEpubAudio called", {
+  logger.debug("[BookService] loadEpubAudio called", {
     bookId,
     audioHref,
   });
@@ -218,7 +219,7 @@ export async function loadEpubAudio(
       bookId,
       audioHref,
     });
-    console.log("[BookService] loadEpubAudio result", {
+    logger.debug("[BookService] loadEpubAudio result", {
       bookId,
       audioHref,
       found: !!dataUrl,
@@ -226,7 +227,7 @@ export async function loadEpubAudio(
     });
     return dataUrl;
   } catch (error) {
-    console.error("[BookService] Failed to load EPUB audio:", {
+    logger.error("[BookService] Failed to load EPUB audio:", {
       bookId,
       audioHref,
       error: error instanceof Error ? error.message : String(error),
@@ -248,7 +249,7 @@ export async function loadEpubAudioBlob(
   bookId: string,
   audioHref: string
 ): Promise<string | null> {
-  console.log("[BookService] loadEpubAudioBlob called", {
+  logger.debug("[BookService] loadEpubAudioBlob called", {
     bookId,
     audioHref,
   });
@@ -259,7 +260,7 @@ export async function loadEpubAudioBlob(
     });
     
     if (!result) {
-      console.log("[BookService] loadEpubAudioBlob result: not found", {
+      logger.debug("[BookService] loadEpubAudioBlob result: not found", {
         bookId,
         audioHref,
       });
@@ -283,7 +284,7 @@ export async function loadEpubAudioBlob(
       blobURLManager.register(bookId, blobUrl, "audio", true);
     }
     
-    console.log("[BookService] loadEpubAudioBlob result: success", {
+    logger.debug("[BookService] loadEpubAudioBlob result: success", {
       bookId,
       audioHref,
       bytesLength: bytes.length,
@@ -293,7 +294,7 @@ export async function loadEpubAudioBlob(
     
     return blobUrl;
   } catch (error) {
-    console.error("[BookService] Failed to load EPUB audio bytes:", {
+    logger.error("[BookService] Failed to load EPUB audio bytes:", {
       bookId,
       audioHref,
       error: error instanceof Error ? error.message : String(error),
@@ -316,7 +317,7 @@ export async function readSingleAudioTrack(
     });
     return track;
   } catch (error) {
-    console.error("Failed to read audio track:", error);
+    logger.error("Failed to read audio track:", error);
     throw error;
   }
 }
@@ -328,7 +329,7 @@ export async function deleteBook(bookId: string): Promise<void> {
   try {
     await invoke("delete_book", { bookId });
   } catch (error) {
-    console.error("Failed to delete book:", error);
+    logger.error("Failed to delete book:", error);
     throw error;
   }
 }
@@ -351,7 +352,7 @@ export async function addBook(
     });
     return result;
   } catch (error) {
-    console.error("Failed to add book:", error);
+    logger.error("Failed to add book:", error);
     throw error;
   }
 }
@@ -371,7 +372,7 @@ export async function getEpubBuffer(
     }
     return new Uint8Array(bytes).buffer;
   } catch (error) {
-    console.error("Failed to get EPUB buffer:", error);
+    logger.error("Failed to get EPUB buffer:", error);
     throw error;
   }
 }
@@ -390,7 +391,7 @@ export async function exportEpubToFile(
       outputPath,
     });
   } catch (error) {
-    console.error("Failed to export EPUB:", error);
+    logger.error("Failed to export EPUB:", error);
     throw error;
   }
 }
@@ -412,7 +413,7 @@ export async function updateBookProgress(
     });
     return book;
   } catch (error) {
-    console.error("Failed to update book progress:", error);
+    logger.error("Failed to update book progress:", error);
     throw error;
   }
 }
@@ -434,7 +435,7 @@ export async function updateBookAudioState(
     });
     return book;
   } catch (error) {
-    console.error("Failed to update book audio state:", error);
+    logger.error("Failed to update book audio state:", error);
     throw error;
   }
 }
@@ -454,7 +455,7 @@ export async function ingestEpub(
     });
     return book;
   } catch (error) {
-    console.error("Failed to ingest EPUB:", error);
+    logger.error("Failed to ingest EPUB:", error);
     throw error;
   }
 }

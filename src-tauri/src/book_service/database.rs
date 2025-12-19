@@ -2,13 +2,17 @@ use sea_orm::{Database, DatabaseConnection};
 use tauri::AppHandle;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
-use crate::book_service::cache::DbCache;
+use std::time::Duration;
+use crate::book_service::hybrid_store::HybridStore;
 
 /// Global database connection (initialized once)
 static DB_CONNECTION: OnceCell<Arc<DatabaseConnection>> = OnceCell::const_new();
 
-/// Global database cache (initialized once)
-static DB_CACHE: OnceCell<Arc<DbCache>> = OnceCell::const_new();
+/// Global hybrid in-memory store (initialized once)
+static HYBRID_STORE: OnceCell<Arc<HybridStore>> = OnceCell::const_new();
+
+/// Background sync task handle
+static SYNC_HANDLE: OnceCell<tokio::task::JoinHandle<()>> = OnceCell::const_new();
 
 /// Initialize database connection and store it globally
 /// This should be called once during app setup
@@ -57,17 +61,36 @@ pub async fn init_db_connection(app: &AppHandle) -> Result<(), String> {
     // Initialize schema
     init_database_schema(&db).await?;
     
-    // Store connection globally
+    // Store connection globally (wrap in Arc)
+    let db_arc = Arc::new(db);
     DB_CONNECTION
-        .set(Arc::new(db))
+        .set(db_arc.clone())
         .map_err(|_| "Database connection already initialized".to_string())?;
     
-    // Initialize cache
-    DB_CACHE
-        .set(Arc::new(DbCache::new()))
-        .map_err(|_| "Database cache already initialized".to_string())?;
+    // Initialize hybrid store with eviction limits
+    // Configuration: keep 50 books, 100 chapter lists, 100 audio track lists in memory
+    let hybrid_store = Arc::new(HybridStore::new(
+        50,  // max_books_in_memory
+        100, // max_chapters_in_memory
+        100, // max_audio_tracks_in_memory
+        Duration::from_secs(5), // sync_interval: 5 seconds
+    ));
     
-    log::info!("Database connection and cache initialized successfully");
+    // Start background sync task
+    let sync_handle = HybridStore::start_sync_task(
+        hybrid_store.clone(),
+        db_arc.clone(),
+    );
+    
+    HYBRID_STORE
+        .set(hybrid_store)
+        .map_err(|_| "Hybrid store already initialized".to_string())?;
+    
+    SYNC_HANDLE
+        .set(sync_handle)
+        .map_err(|_| "Sync handle already initialized".to_string())?;
+    
+    log::info!("Database connection and hybrid store initialized successfully");
     
     Ok(())
 }
@@ -87,13 +110,13 @@ pub async fn get_db_connection(_app: &AppHandle) -> Result<Arc<DatabaseConnectio
     Ok(db_arc.clone())
 }
 
-/// Get database cache from global state
-/// Returns a reference to the shared cache
-pub fn get_db_cache() -> Result<Arc<DbCache>, String> {
-    DB_CACHE
+/// Get hybrid store from global state
+/// Returns a reference to the shared hybrid store
+pub fn get_hybrid_store() -> Result<Arc<HybridStore>, String> {
+    HYBRID_STORE
         .get()
-        .ok_or_else(|| "Database cache not initialized. Call init_db_connection first.".to_string())
-        .map(|cache| cache.clone())
+        .ok_or_else(|| "Hybrid store not initialized. Call init_db_connection first.".to_string())
+        .map(|store| store.clone())
 }
 
 /// Initialize database schema - creates tables if they don't exist

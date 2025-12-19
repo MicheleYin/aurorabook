@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { logger } from "./logger";
 
 let engineInitialized = false;
 
@@ -28,9 +29,9 @@ export async function initKokorosEngine(): Promise<void> {
     });
 
     engineInitialized = true;
-    console.log("ONNX Runtime engine initialized successfully (using bundle resources)");
+    logger.log("ONNX Runtime engine initialized successfully (using bundle resources)");
   } catch (error) {
-    console.error("Failed to initialize Kokoros engine:", error);
+    logger.error("Failed to initialize Kokoros engine:", error);
     engineInitialized = false; // Reset flag on error so we can retry
     throw error;
   }

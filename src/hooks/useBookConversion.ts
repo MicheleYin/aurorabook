@@ -502,7 +502,7 @@ export function useBookConversion(
     // Allow conversion if book has started status (for resuming) even if some tracks exist
     const conversionStatus = book.conversionStatus ?? "notStarted";
     if (book.audioTracks.length > 0 && conversionStatus === "notStarted") {
-      console.log("Skipping conversion - book already has audio tracks and conversion not started");
+      logger.debug("Skipping conversion - book already has audio tracks and conversion not started");
       return;
     }
     

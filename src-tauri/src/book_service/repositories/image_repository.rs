@@ -38,27 +38,22 @@ impl ImageRepository {
             .await
             .map_err(|e| format!("Failed to save image: {}", e))?;
         
-        // Invalidate cache
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            cache.invalidate_image(book_id, href).await;
-        }
+        // Image is saved via write queue in hybrid store
         
         Ok(())
     }
     
-    /// Get image (with caching)
+    /// Get image (with hybrid store)
     pub async fn find_by_href(db: &DatabaseConnection, book_id: &str, href: &str) -> Result<Option<(String, Vec<u8>)>, String> {
-        let cache_key = (book_id.to_string(), href.to_string());
-        
-        // Try cache first
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            if let Some(cached_image) = cache.images.get(&cache_key).await {
-                log::debug!("Cache hit for image: {} / {}", book_id, href);
-                return Ok(Some((*cached_image).clone()));
+        // Try hybrid store first
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            if let Some(image) = store.get_image(book_id, href) {
+                log::debug!("Hybrid store hit for image: {} / {}", book_id, href);
+                return Ok(Some(image));
             }
         }
         
-        // Cache miss - query database
+        // Store miss - query database
         let entity = image::Entity::find()
             .filter(image::Column::BookId.eq(book_id))
             .filter(image::Column::Href.eq(href))
@@ -67,11 +62,11 @@ impl ImageRepository {
             .map_err(|e| format!("Failed to query image: {}", e))?;
         
         if let Some(entity) = entity {
-            let result = (entity.mime_type, entity.data);
+            let result = (entity.mime_type.clone(), entity.data.clone());
             
-            // Store in cache
-            if let Ok(cache) = crate::book_service::database::get_db_cache() {
-                cache.images.insert(cache_key, Arc::new(result.clone())).await;
+            // Load into hybrid store
+            if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+                store.load_image(book_id.to_string(), href.to_string(), entity.mime_type, entity.data).await;
             }
             
             Ok(Some(result))

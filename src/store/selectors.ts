@@ -1,6 +1,8 @@
 import { createSelector } from '@reduxjs/toolkit';
 import type { RootState } from './index';
 import type { Book } from '../types/reader';
+import { LibraryFilterOption } from '@/components/library/types';
+import { filterLibrary } from '@/hooks/library/libraryHelpers';
 
 // Library selectors
 export const selectLibrary = (state: RootState) => state.library.books;
@@ -81,7 +83,65 @@ export const selectLoadingStates = (state: RootState) => state.readerCoordinator
 export const selectChapterLoading = (state: RootState) => state.readerCoordinator.loading.chapterLoading;
 export const selectTrackChanging = (state: RootState) => state.readerCoordinator.loading.trackChanging;
 
+// ReaderPanel UI selectors
+export const selectReaderUI = (state: RootState) => state.reader.readerUI;
+export const selectReaderUISettingsOpen = (state: RootState) => state.reader.readerUI.isSettingsOpen;
+export const selectReaderUITocOpen = (state: RootState) => state.reader.readerUI.isTocOpen;
+export const selectReaderUIImmersive = (state: RootState) => state.reader.readerUI.isImmersive;
+export const selectReaderUIAudioReopenVisible = (state: RootState) => state.reader.readerUI.isAudioReopenVisible;
+export const selectReaderUIShouldRenderAudioReopen = (state: RootState) => state.reader.readerUI.shouldRenderAudioReopen;
+export const selectReaderUIPreserveChromeNextSelection = (state: RootState) => state.reader.readerUI.preserveChromeNextSelection;
+
+// Chapter restoration selectors
+export const selectChapterRestoration = (state: RootState) => state.reader.chapterRestoration;
+export const selectChapterRestorationIndex = (state: RootState) => state.reader.chapterRestoration.currentChapterIndex;
+export const selectChapterRestorationScrollTop = (state: RootState) => state.reader.chapterRestoration.restoreScrollTop;
+export const selectChapterRestorationElementIndex = (state: RootState) => state.reader.chapterRestoration.restoreElementIndex;
+export const selectChapterRestorationIsRestoring = (state: RootState) => state.reader.chapterRestoration.isRestoring;
+
+// Chapter animation selectors
+export const selectChapterAnimation = (state: RootState) => state.reader.chapterAnimation;
+export const selectChapterAnimationState = (state: RootState) => state.reader.chapterAnimation.state;
+export const selectChapterAnimationDirection = (state: RootState) => state.reader.chapterAnimation.direction;
+
+// Audio player playback selectors
+export const selectAudioPlayerPlayback = (state: RootState) => state.reader.audioPlayer.playback;
+export const selectAudioPlayerIsPlaying = (state: RootState) => state.reader.audioPlayer.playback.isPlaying;
+export const selectAudioPlayerCurrentTime = (state: RootState) => state.reader.audioPlayer.playback.currentTime;
+export const selectAudioPlayerDuration = (state: RootState) => state.reader.audioPlayer.playback.duration;
+export const selectAudioPlayerPlaybackRate = (state: RootState) => state.reader.audioPlayer.playback.playbackRate;
+
+// Audio player scrubbing selectors
+export const selectAudioPlayerScrubbing = (state: RootState) => state.reader.audioPlayer.scrubbing;
+export const selectAudioPlayerIsScrubbing = (state: RootState) => state.reader.audioPlayer.scrubbing.isScrubbing;
+export const selectAudioPlayerScrubTime = (state: RootState) => state.reader.audioPlayer.scrubbing.scrubTime;
+
+// Audio player UI selectors
+export const selectAudioPlayerUI = (state: RootState) => state.reader.audioPlayer.ui;
+export const selectAudioPlayerIsVisible = (state: RootState) => state.reader.audioPlayer.ui.isVisible;
+export const selectAudioPlayerShowTracksDialog = (state: RootState) => state.reader.audioPlayer.ui.showTracksDialog;
+
+// Audio player animation selectors
+export const selectAudioPlayerAnimation = (state: RootState) => state.reader.audioPlayer.animation;
+export const selectAudioPlayerTrackAnimationState = (state: RootState) => state.reader.audioPlayer.animation.trackAnimationState;
+export const selectAudioPlayerTrackAnimationDirection = (state: RootState) => state.reader.audioPlayer.animation.trackAnimationDirection;
+
+// Audio player loading selectors
+export const selectAudioPlayerLoading = (state: RootState) => state.reader.audioPlayer.loading;
+export const selectAudioPlayerLoadedCount = (state: RootState) => state.reader.audioPlayer.loading.loadedCount;
+export const selectAudioPlayerIsTrackLoading = (state: RootState) => state.reader.audioPlayer.loading.isTrackLoading;
+export const selectAudioPlayerIsLocalTrackChanging = (state: RootState) => state.reader.audioPlayer.loading.isLocalTrackChanging;
+
 // UI selectors
 export const selectAutoScrollEnabled = (state: RootState) => state.ui.autoScrollEnabled;
 export const selectDeletingBookId = (state: RootState) => state.ui.deletingBookId;
+
+// Memoized filtered library selector
+// This prevents re-filtering when library/search/filter haven't changed
+export const selectFilteredLibrary = createSelector(
+  [selectLibrary, selectLibrarySearchTerm, selectLibraryFilter],
+  (books, searchTerm, filter: LibraryFilterOption) => {
+    return filterLibrary(books, filter, searchTerm);
+  }
+);
 

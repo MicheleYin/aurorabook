@@ -21,6 +21,7 @@ import { formatTime } from "../../lib/format-time";
 import { cn } from "../../lib/utils";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { anim } from "../../lib/animations";
+import { logger } from "@/lib/logger";
 
 
 type AudioTracksDialogProps = {
@@ -130,7 +131,7 @@ function AudioTracksDialogComponent({
               boxSizing: "border-box",
             }}
             onClick={() => {
-              console.log("[AudioTracksDialog] Button clicked", {
+              logger.debug("[AudioTracksDialog] Button clicked", {
                 index,
                 trackId: track.id,
                 hasUrl,

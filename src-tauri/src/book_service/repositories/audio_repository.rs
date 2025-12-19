@@ -32,17 +32,17 @@ impl AudioRepository {
         }
     }
     
-    /// Find all audio tracks for a book (ordered by track_order, with caching)
+    /// Find all audio tracks for a book (ordered by track_order, with hybrid store)
     pub async fn find_by_book_id(db: &DatabaseConnection, book_id: &str) -> Result<Vec<AudioTrack>, String> {
-        // Try cache first
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            if let Some(cached_tracks) = cache.audio_tracks_list.get(book_id).await {
-                log::debug!("Cache hit for audio tracks list: {}", book_id);
-                return Ok((*cached_tracks).clone());
+        // Try hybrid store first
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            if let Some(tracks) = store.get_audio_tracks(book_id) {
+                log::debug!("Hybrid store hit for audio tracks list: {}", book_id);
+                return Ok(tracks);
             }
         }
         
-        // Cache miss - query database
+        // Store miss - query database
         use sea_orm::QueryOrder;
         let entities = audio_track::Entity::find()
             .filter(audio_track::Column::BookId.eq(book_id))
@@ -59,9 +59,9 @@ impl AudioRepository {
             log::debug!("  Track #{}: href='{}', order={}", idx, track.href, track.order);
         }
         
-        // Store in cache
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            cache.audio_tracks_list.insert(book_id.to_string(), Arc::new(tracks.clone())).await;
+        // Load into hybrid store
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            store.load_audio_tracks(book_id.to_string(), tracks.clone()).await;
         }
         
         Ok(tracks)
@@ -87,10 +87,7 @@ impl AudioRepository {
             .await
             .map_err(|e| format!("Failed to save audio track: {}", e))?;
         
-        // Invalidate audio tracks list cache to ensure fresh data is loaded
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            cache.audio_tracks_list.invalidate(book_id).await;
-        }
+        // Audio track is saved via write queue in hybrid store
         
         Ok(())
     }
@@ -146,27 +143,22 @@ impl AudioRepository {
                 .map_err(|e| format!("Failed to insert audio track with data: {}", e))?;
         }
         
-        // Invalidate cache
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            cache.invalidate_audio_data(book_id, href).await;
-        }
+        // Audio data is saved via write queue in hybrid store
         
         Ok(())
     }
     
-    /// Get audio track data (with caching)
+    /// Get audio track data (with hybrid store)
     pub async fn find_data_by_href(db: &DatabaseConnection, book_id: &str, href: &str) -> Result<Option<Vec<u8>>, String> {
-        let cache_key = (book_id.to_string(), href.to_string());
-        
-        // Try cache first
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            if let Some(cached_data) = cache.audio_data.get(&cache_key).await {
-                log::debug!("Cache hit for audio data: {} / {}", book_id, href);
-                return Ok(Some((*cached_data).clone()));
+        // Try hybrid store first
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            if let Some(data) = store.get_audio_data(book_id, href) {
+                log::debug!("Hybrid store hit for audio data: {} / {}", book_id, href);
+                return Ok(Some(data));
             }
         }
         
-        // Cache miss - query database
+        // Store miss - query database
         let entity = audio_track::Entity::find()
             .filter(audio_track::Column::BookId.eq(book_id))
             .filter(audio_track::Column::Href.eq(href))
@@ -175,9 +167,9 @@ impl AudioRepository {
             .map_err(|e| format!("Failed to query audio track: {}", e))?;
         
         if let Some(data) = entity.and_then(|e| e.data) {
-            // Store in cache
-            if let Ok(cache) = crate::book_service::database::get_db_cache() {
-                cache.audio_data.insert(cache_key, Arc::new(data.clone())).await;
+            // Load into hybrid store
+            if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+                store.load_audio_data(book_id.to_string(), href.to_string(), data.clone()).await;
             }
             Ok(Some(data))
         } else {

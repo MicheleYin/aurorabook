@@ -37,17 +37,17 @@ impl ReaderPreferencesRepository {
         }
     }
     
-    /// Get reader preferences (with caching)
+    /// Get reader preferences (with hybrid store)
     pub async fn get(db: &DatabaseConnection) -> Result<ReaderPreferences, String> {
-        // Try cache first
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            if let Some(cached_prefs) = cache.reader_preferences.get(PREFERENCES_ID).await {
-                log::debug!("Cache hit for reader preferences");
-                return Ok((*cached_prefs).clone());
+        // Try hybrid store first
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            if let Some(preferences) = store.get_reader_preferences() {
+                log::debug!("Hybrid store hit for reader preferences");
+                return Ok(preferences);
             }
         }
         
-        // Cache miss - query database
+        // Store miss - query database
         let entity = reader_preferences::Entity::find_by_id(PREFERENCES_ID)
             .one(db)
             .await
@@ -66,9 +66,9 @@ impl ReaderPreferencesRepository {
             }
         };
         
-        // Store in cache
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            cache.reader_preferences.insert(PREFERENCES_ID.to_string(), Arc::new(preferences.clone())).await;
+        // Load into hybrid store
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            store.load_reader_preferences(preferences.clone());
         }
         
         Ok(preferences)
@@ -95,9 +95,9 @@ impl ReaderPreferencesRepository {
             .await
             .map_err(|e| format!("Failed to save reader preferences: {}", e))?;
         
-        // Update cache
-        if let Ok(cache) = crate::book_service::database::get_db_cache() {
-            cache.reader_preferences.insert(PREFERENCES_ID.to_string(), Arc::new(model.clone())).await;
+        // Update hybrid store
+        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+            store.save_reader_preferences(model.clone()).await;
         }
         
         Ok(())
