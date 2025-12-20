@@ -167,27 +167,114 @@ impl BookRepository {
         // Collect all book IDs
         let book_ids: Vec<String> = entities.iter().map(|e| e.id.clone()).collect();
         
-        // Load all chapters for all books in one query
-        let all_chapters = crate::book_service::entities::chapter::Entity::find()
+        // Load all chapters for all books in one query (EXCLUDE content_html and plain_text BLOBs for performance)
+        // These large fields will be loaded lazily when chapters are opened
+        // Using select_only to exclude BLOBs, then manually constructing models with None for excluded fields
+        use sea_orm::QuerySelect;
+        use sea_orm::FromQueryResult;
+        
+        #[derive(Debug, FromQueryResult)]
+        struct ChapterPartial {
+            id: String,
+            book_id: String,
+            title: String,
+            href: String,
+            chapter_order: i64,
+            word_count: Option<i64>,
+            estimated_page_count: Option<i64>,
+        }
+        
+        let chapter_partials = crate::book_service::entities::chapter::Entity::find()
+            .select_only()
+            .columns([
+                crate::book_service::entities::chapter::Column::Id,
+                crate::book_service::entities::chapter::Column::BookId,
+                crate::book_service::entities::chapter::Column::Title,
+                crate::book_service::entities::chapter::Column::Href,
+                crate::book_service::entities::chapter::Column::ChapterOrder,
+                crate::book_service::entities::chapter::Column::WordCount,
+                crate::book_service::entities::chapter::Column::EstimatedPageCount,
+                // Explicitly EXCLUDE: ContentHtml, PlainText (large BLOBs)
+            ])
             .filter(crate::book_service::entities::chapter::Column::BookId.is_in(book_ids.clone()))
             .order_by_asc(crate::book_service::entities::chapter::Column::BookId)
             .order_by_asc(crate::book_service::entities::chapter::Column::ChapterOrder)
+            .into_model::<ChapterPartial>()
             .all(db)
             .await
             .map_err(|e| format!("Failed to query chapters: {}", e))?;
         
-        // Load all audio tracks for all books in one query
-        let all_audio_tracks = crate::book_service::entities::audio_track::Entity::find()
+        // Convert partial results to full chapter models (with content_html and plain_text as None)
+        let all_chapters: Vec<crate::book_service::entities::chapter::Model> = chapter_partials
+            .into_iter()
+            .map(|p| crate::book_service::entities::chapter::Model {
+                id: p.id,
+                book_id: p.book_id,
+                title: p.title,
+                href: p.href,
+                content_html: None, // Excluded for performance - loaded lazily
+                plain_text: None,   // Excluded for performance - loaded lazily
+                chapter_order: p.chapter_order,
+                word_count: p.word_count,
+                estimated_page_count: p.estimated_page_count,
+            })
+            .collect();
+        
+        // Load all audio tracks for all books in one query (EXCLUDE data BLOB for performance)
+        // The data field will be loaded lazily when tracks are played
+        #[derive(Debug, FromQueryResult)]
+        struct AudioTrackPartial {
+            id: String,
+            book_id: String,
+            title: String,
+            href: String,
+            url: Option<String>,
+            duration: Option<f64>,
+            track_order: i64,
+        }
+        
+        let audio_track_partials = crate::book_service::entities::audio_track::Entity::find()
+            .select_only()
+            .columns([
+                crate::book_service::entities::audio_track::Column::Id,
+                crate::book_service::entities::audio_track::Column::BookId,
+                crate::book_service::entities::audio_track::Column::Title,
+                crate::book_service::entities::audio_track::Column::Href,
+                crate::book_service::entities::audio_track::Column::Url,
+                crate::book_service::entities::audio_track::Column::Duration,
+                crate::book_service::entities::audio_track::Column::TrackOrder,
+                // Explicitly EXCLUDE: Data (large BLOB)
+            ])
             .filter(crate::book_service::entities::audio_track::Column::BookId.is_in(book_ids.clone()))
             .order_by_asc(crate::book_service::entities::audio_track::Column::BookId)
             .order_by_asc(crate::book_service::entities::audio_track::Column::TrackOrder)
+            .into_model::<AudioTrackPartial>()
             .all(db)
             .await
             .map_err(|e| format!("Failed to query audio tracks: {}", e))?;
         
+        // Convert partial results to full audio track models (with data as None)
+        let all_audio_tracks: Vec<crate::book_service::entities::audio_track::Model> = audio_track_partials
+            .into_iter()
+            .map(|p| crate::book_service::entities::audio_track::Model {
+                id: p.id,
+                book_id: p.book_id,
+                title: p.title,
+                href: p.href,
+                url: p.url,
+                duration: p.duration,
+                track_order: p.track_order,
+                data: None, // Excluded for performance - loaded lazily
+            })
+            .collect();
+        
         // Group chapters by book_id
+        // Note: content_html and plain_text are None (excluded for performance)
+        // They will be loaded lazily when chapters are opened
         let mut chapters_by_book: HashMap<String, Vec<crate::book_service::models::Chapter>> = HashMap::new();
         for entity in all_chapters {
+            // Create chapter model with content_html and plain_text as None
+            // (since we excluded them from the query for performance)
             let chapter = ChapterRepository::entity_to_model(entity.clone());
             chapters_by_book
                 .entry(entity.book_id.clone())
@@ -196,8 +283,11 @@ impl BookRepository {
         }
         
         // Group audio tracks by book_id
+        // Note: data is None (excluded for performance)
+        // It will be loaded lazily when tracks are played
         let mut audio_tracks_by_book: HashMap<String, Vec<crate::book_service::models::AudioTrack>> = HashMap::new();
         for entity in all_audio_tracks {
+            // AudioTrack model doesn't include data field, so this is fine
             let track = AudioRepository::entity_to_model(entity.clone());
             audio_tracks_by_book
                 .entry(entity.book_id.clone())
