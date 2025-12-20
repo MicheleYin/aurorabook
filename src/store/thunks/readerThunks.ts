@@ -1,30 +1,22 @@
 import { createAsyncThunk } from '@reduxjs/toolkit';
 import { logger } from '../../lib/logger';
-import { readOneBook } from '../../lib/book-service';
 import type { Chapter, AudioTrack } from '../../types/reader';
 import type { RootState, AppDispatch } from '../index';
 import {
-  setCurrentBookId,
-  setCurrentChapterId,
-  setCurrentAudioTrackId,
-  setCurrentChapterProgress,
-  setCurrentAudioTrackProgress,
-  setChapterLoaded,
-  setAudioTrackLoaded,
-  setCurrentChapterLoading,
+  setCurrentChapter,
   setCurrentChapterData,
-  setCurrentChapterError,
-  setCurrentChapterLoadAttempt,
-  setCurrentAudioTrackLoading,
-  setCurrentAudioTrackData,
-  setCurrentAudioTrackError,
-  setCurrentAudioTrackLoadAttempt,
+  setIsLoading,
 } from '../slices/readerSlice';
-import { addBook, updateBook } from '../slices/librarySlice';
+import {
+  setCurrentTrack,
+  setCurrentTrackData,
+  setTrackUrl,
+  setIsLoading as setAudioIsLoading,
+} from '../slices/audioSlice';
+import { updateBook } from '../slices/librarySlice';
 
 /**
- * Load chapter content when opening the reader
- * Only loads the chapter that matches the current progress
+ * Load chapter content
  */
 export const loadProgressChapter = createAsyncThunk<
   { chapter: Chapter; bookId: string },
@@ -41,37 +33,26 @@ export const loadProgressChapter = createAsyncThunk<
         throw new Error(`Book ${bookId} not found in library`);
       }
 
-      // Check if chapter is already loaded
       const chapter = book.chapters.find((c) => c.id === chapterId);
       if (!chapter) {
         throw new Error(`Chapter ${chapterId} not found in book ${bookId}`);
       }
 
-      const loadKey = `${bookId}-${chapterId}`;
-      
-      // Prevent duplicate loads
-      if (state.reader.currentChapter.lastLoadAttempt === loadKey && 
-          state.reader.currentChapter.loading) {
-        logger.debug('[loadProgressChapter] Already loading, skipping', { bookId, chapterId });
-        return rejectWithValue('Already loading');
-      }
-
-      // If chapter content is already loaded, set it in resolved state
+      // If chapter content is already loaded, use it
       if (chapter.contentHtml) {
         logger.debug('[loadProgressChapter] Chapter already loaded', { bookId, chapterId });
+        dispatch(setCurrentChapter(chapterId));
         dispatch(setCurrentChapterData(chapter));
-        dispatch(setChapterLoaded(true));
         return { chapter, bookId };
       }
 
       // Mark as loading
-      dispatch(setCurrentChapterLoading(true));
-      dispatch(setCurrentChapterLoadAttempt(loadKey));
+      dispatch(setIsLoading(true));
 
       // Load chapter content
       logger.debug('[loadProgressChapter] Loading chapter content', { bookId, chapterId });
       const { ensureChapterLoaded } = await import('../../lib/lazy-chapter-loader');
-      const loadedChapter = await ensureChapterLoaded(book.sourcePath, chapter);
+      const loadedChapter = await ensureChapterLoaded(bookId, chapter);
       
       // Update book in library with loaded chapter
       const updatedChapters = book.chapters.map((c) =>
@@ -83,25 +64,24 @@ export const loadProgressChapter = createAsyncThunk<
       }));
 
       // Set resolved chapter state
+      dispatch(setCurrentChapter(chapterId));
       dispatch(setCurrentChapterData(loadedChapter));
-      dispatch(setChapterLoaded(true));
       return { chapter: loadedChapter, bookId };
     } catch (error) {
       logger.error('[loadProgressChapter] Error loading chapter', { bookId, chapterId, error });
       const errorMessage = error instanceof Error ? error.message : String(error);
-      dispatch(setCurrentChapterError(errorMessage));
-      dispatch(setChapterLoaded(false));
       return rejectWithValue(errorMessage);
+    } finally {
+      dispatch(setIsLoading(false));
     }
   }
 );
 
 /**
- * Load audio track when opening the reader
- * Only loads the audio track that matches the current progress
+ * Load audio track
  */
 export const loadProgressAudioTrack = createAsyncThunk<
-  { audioTrack: AudioTrack; bookId: string },
+  { track: AudioTrack; url: string | null },
   { bookId: string; trackId: string },
   { state: RootState; dispatch: AppDispatch }
 >(
@@ -115,44 +95,29 @@ export const loadProgressAudioTrack = createAsyncThunk<
         throw new Error(`Book ${bookId} not found in library`);
       }
 
-      // Check if audio track is already loaded
-      const audioTrack = book.audioTracks.find((t) => t.id === trackId);
-      if (!audioTrack) {
-        throw new Error(`Audio track ${trackId} not found in book ${bookId}`);
+      const track = book.audioTracks.find((t) => t.id === trackId);
+      if (!track) {
+        throw new Error(`Track ${trackId} not found in book ${bookId}`);
       }
 
-      const loadKey = `${bookId}-${trackId}`;
-      
-      // Prevent duplicate loads
-      if (state.reader.currentAudioTrack.lastLoadAttempt === loadKey && 
-          state.reader.currentAudioTrack.loading) {
-        logger.debug('[loadProgressAudioTrack] Already loading, skipping', { bookId, trackId });
-        return rejectWithValue('Already loading');
-      }
-
-      // If audio track URL is already loaded, set it in resolved state
-      if (audioTrack.url) {
-        logger.debug('[loadProgressAudioTrack] Audio track already loaded', { bookId, trackId });
-        dispatch(setCurrentAudioTrackData({ track: audioTrack, url: audioTrack.url }));
-        dispatch(setAudioTrackLoaded(true));
-        return { audioTrack, bookId };
+      // If track URL is already loaded, use it
+      if (track.url) {
+        logger.debug('[loadProgressAudioTrack] Track already loaded', { bookId, trackId });
+        dispatch(setCurrentTrack(trackId));
+        dispatch(setCurrentTrackData(track));
+        dispatch(setTrackUrl(track.url));
+        return { track, url: track.url };
       }
 
       // Mark as loading
-      dispatch(setCurrentAudioTrackLoading(true));
-      dispatch(setCurrentAudioTrackLoadAttempt(loadKey));
+      dispatch(setAudioIsLoading(true));
 
       // Load audio track
       logger.debug('[loadProgressAudioTrack] Loading audio track', { bookId, trackId });
-      const { loadAudioTrackUrl } = await import('../../lib/lazy-chapter-loader');
-      const trackUrl = await loadAudioTrackUrl(book.sourcePath, audioTrack);
+      const { ensureAudioTrackLoaded } = await import('../../lib/lazy-chapter-loader');
+      const loadedTrack = await ensureAudioTrackLoaded(bookId, track);
       
-      const loadedTrack: AudioTrack = {
-        ...audioTrack,
-        url: trackUrl,
-      };
-
-      // Update book in library with loaded audio track
+      // Update book in library with loaded track
       const updatedTracks = book.audioTracks.map((t) =>
         t.id === trackId ? loadedTrack : t
       );
@@ -161,22 +126,23 @@ export const loadProgressAudioTrack = createAsyncThunk<
         updates: { audioTracks: updatedTracks },
       }));
 
-      // Set resolved audio track state
-      dispatch(setCurrentAudioTrackData({ track: loadedTrack, url: trackUrl }));
-      dispatch(setAudioTrackLoaded(true));
-      return { audioTrack: loadedTrack, bookId };
+      // Set resolved track state
+      dispatch(setCurrentTrack(trackId));
+      dispatch(setCurrentTrackData(loadedTrack));
+      dispatch(setTrackUrl(loadedTrack.url || null));
+      return { track: loadedTrack, url: loadedTrack.url || null };
     } catch (error) {
-      logger.error('[loadProgressAudioTrack] Error loading audio track', { bookId, trackId, error });
+      logger.error('[loadProgressAudioTrack] Error loading track', { bookId, trackId, error });
       const errorMessage = error instanceof Error ? error.message : String(error);
-      dispatch(setCurrentAudioTrackError(errorMessage));
-      dispatch(setAudioTrackLoaded(false));
       return rejectWithValue(errorMessage);
+    } finally {
+      dispatch(setAudioIsLoading(false));
     }
   }
 );
 
 /**
- * Select a book and load its progress chapter/audio track
+ * Select book (opens it in reader)
  */
 export const selectBook = createAsyncThunk<
   void,
@@ -184,63 +150,25 @@ export const selectBook = createAsyncThunk<
   { state: RootState; dispatch: AppDispatch }
 >(
   'reader/selectBook',
-  async ({ bookId }, { getState, dispatch, rejectWithValue }) => {
-    try {
-      const state = getState();
-      let book = state.library.books.find((b) => b.id === bookId);
-      
-      if (!book) {
-        // Try to fetch from backend
-        logger.debug('[selectBook] Book not in library, fetching from backend', { bookId });
-        const fetchedBook = await readOneBook(bookId);
-        if (!fetchedBook) {
-          throw new Error(`Book ${bookId} not found`);
-        }
-        // Add to library
-        dispatch(addBook(fetchedBook));
-        book = fetchedBook;
-      }
+  async ({ bookId }, { getState, dispatch }) => {
+    const state = getState();
+    const book = state.library.books.find((b) => b.id === bookId);
+    
+    if (!book) {
+      logger.warn('[selectBook] Book not found', { bookId });
+      return;
+    }
 
-      // Set current book
-      dispatch(setCurrentBookId(bookId));
-
-      // Set current chapter from progress
-      if (book.progress?.currentChapterId) {
-        const chapterId = book.progress.currentChapterId;
-        dispatch(setCurrentChapterId(chapterId));
-        dispatch(setCurrentChapterProgress(book.progress));
-        
-        // Load chapter content
-        await dispatch(loadProgressChapter({ bookId, chapterId }));
-      }
-
-      // Set current audio track from progress
-      if (book.audioState?.currentTrackId) {
-        const trackId = book.audioState.currentTrackId;
-        dispatch(setCurrentAudioTrackId(trackId));
-        dispatch(setCurrentAudioTrackProgress(book.audioState));
-        
-        // Load audio track
-        await dispatch(loadProgressAudioTrack({ bookId, trackId }));
-      }
-
-      // Update last opened time
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        await invoke('update_book_last_opened_time', { bookId });
-        // Update local state
-        dispatch(updateBook({
-          bookId,
-          updates: { lastOpenedTime: new Date().toISOString() },
-        }));
-      } catch (error) {
-        logger.warn('[selectBook] Failed to update last opened time:', error);
-      }
-    } catch (error) {
-      logger.error('[selectBook] Error selecting book', { bookId, error });
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return rejectWithValue(errorMessage);
+    // Set current book
+    dispatch(setCurrentChapter(null)); // Will be set by loadProgressChapter
+    dispatch(setCurrentChapterData(null));
+    
+    // Load last chapter if progress exists
+    if (book.progress?.currentChapterId) {
+      await dispatch(loadProgressChapter({
+        bookId,
+        chapterId: book.progress.currentChapterId,
+      })).unwrap();
     }
   }
 );
-

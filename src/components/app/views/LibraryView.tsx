@@ -1,65 +1,37 @@
 import { memo } from "react";
 import { ErrorBoundary } from "../../ErrorBoundary";
-import { LibraryPanel } from "../../LibraryPanel";
+import { LibraryGrid } from "../../library/LibraryGrid";
+import { LibraryEmpty } from "../../library/LibraryEmpty";
 import type { Book } from "../../../types/reader";
-import type { LibraryFilterOption, LibraryViewMode } from "../../library/types";
-import type { ConversionProgress } from "../../../lib/audiobook-converter";
 
 type LibraryViewProps = {
-  library: Book[];
-  totalBooks: number;
-  searchTerm: string;
-  onSearchChange: (term: string) => void;
-  activeFilter: LibraryFilterOption;
-  onFilterChange: (filter: LibraryFilterOption) => void;
-  viewMode: LibraryViewMode;
-  onViewModeChange: (mode: LibraryViewMode) => void;
-  activeBookId?: string;
-  isImporting: boolean;
-  onAddEbook: () => Promise<void>;
-  onOpenBook: (bookId: string) => Promise<void>;
-  onViewDetails: (bookId: string) => void;
-  bookConversionProgress: Record<string, ConversionProgress>;
-  conversionStartTimeRef: React.MutableRefObject<number | null>;
+  books: Book[];
+  onSelectBook: (bookId: string) => void;
 };
 
 export const LibraryView = memo(function LibraryView({
-  library,
-  totalBooks,
-  searchTerm,
-  onSearchChange,
-  activeFilter,
-  onFilterChange,
-  viewMode,
-  onViewModeChange,
-  activeBookId,
-  isImporting,
-  onAddEbook,
-  onOpenBook,
-  onViewDetails,
-  bookConversionProgress,
-  conversionStartTimeRef,
+  books,
+  onSelectBook,
 }: LibraryViewProps) {
+  if (books.length === 0) {
+    return (
+      <ErrorBoundary>
+        <LibraryEmpty isSearching={false} activeFilter="all" />
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
-      <LibraryPanel
-        library={library}
-        totalBooks={totalBooks}
-        searchTerm={searchTerm}
-        onSearchChange={onSearchChange}
-        activeFilter={activeFilter}
-        onFilterChange={onFilterChange}
-        viewMode={viewMode}
-        onViewModeChange={onViewModeChange}
-        activeBookId={activeBookId}
-        isImporting={isImporting}
-        onAddEbook={onAddEbook}
-        onOpenBook={onOpenBook}
-        onViewDetails={onViewDetails}
-        bookConversionProgress={bookConversionProgress}
-        conversionStartTimeRef={conversionStartTimeRef}
-      />
+      <div className="p-4">
+        <LibraryGrid
+          books={books}
+          activeBookId={undefined}
+          onOpenBook={onSelectBook}
+          onViewDetails={() => {}} // Simplified - no details view
+          bookConversionProgress={{}}
+        />
+      </div>
     </ErrorBoundary>
   );
 });
-

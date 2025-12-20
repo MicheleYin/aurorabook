@@ -6,7 +6,7 @@ import { isIOS } from '../../lib/is-tauri';
 import { readAllBooks, addBook as addBookToBackend } from '../../lib/book-service';
 import type { Book } from '../../types/reader';
 import type { RootState, AppDispatch } from '../index';
-import { setLibrary, setIsImporting, addBook, updateBook } from '../slices/librarySlice';
+import { setLibrary, setIsLoading, addBook, updateBook } from '../slices/librarySlice';
 import { applyDerivedFields, normalizeBookProgressShape, getNumberValue, getPercentValue } from '../../hooks/library/libraryHelpers';
 
 export type IngestParams = {
@@ -258,10 +258,10 @@ export const importFromDialog = createAsyncThunk<
   'library/importFromDialog',
   async (_, { dispatch, getState, rejectWithValue }) => {
     const state = getState();
-    if (state.library.isImporting) return false;
+    if (state.library.isLoading) return false;
     
     try {
-      dispatch(setIsImporting(true));
+      dispatch(setIsLoading(true));
       
       const dialogOptions: Parameters<typeof open>[0] = isIOS()
         ? { multiple: false }
@@ -357,7 +357,7 @@ export const importFromDialog = createAsyncThunk<
       }
       return rejectWithValue(error);
     } finally {
-      dispatch(setIsImporting(false));
+      dispatch(setIsLoading(false));
     }
   }
 );
@@ -405,8 +405,8 @@ export const updateBookProgress = createAsyncThunk<
     const scrollHeight = getNumberValue(progress.scrollHeight, book.progress?.currentChapterScrollHeight ?? 0);
     const clientHeight = getNumberValue(progress.clientHeight, book.progress?.currentChapterClientHeight ?? 0);
     const percent = getPercentValue(progress.percent, book.progress?.chapterProgressPercent ?? 0);
-    const elementId = getElementId(progress.elementId);
-    const elementIndex = getElementIndex(progress.elementIndex);
+    const elementId = getElementId(progress.elementId, book.progress?.currentChapterElementId ?? null);
+    const elementIndex = getElementIndex(progress.elementIndex, book.progress?.currentChapterElementIndex ?? null);
 
     const totalChapters = book.chapters.length;
     const bookProgressPercent = totalChapters > 0

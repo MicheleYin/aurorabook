@@ -4,13 +4,13 @@ import type { Book } from '../../types/reader';
 interface LibraryState {
   books: Book[];
   isHydrated: boolean;
-  isImporting: boolean;
+  isLoading: boolean;
 }
 
 const initialState: LibraryState = {
   books: [],
   isHydrated: false,
-  isImporting: false,
+  isLoading: false,
 };
 
 const librarySlice = createSlice({
@@ -73,8 +73,8 @@ const librarySlice = createSlice({
     setIsHydrated: (state, action: PayloadAction<boolean>) => {
       state.isHydrated = action.payload;
     },
-    setIsImporting: (state, action: PayloadAction<boolean>) => {
-      state.isImporting = action.payload;
+    setIsLoading: (state, action: PayloadAction<boolean>) => {
+      state.isLoading = action.payload;
     },
   },
 });
@@ -85,7 +85,7 @@ export const {
   updateBook,
   removeBook,
   setIsHydrated,
-  setIsImporting,
+  setIsLoading,
 } = librarySlice.actions;
 
 export default librarySlice.reducer;

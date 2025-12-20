@@ -6,9 +6,7 @@
 import { useCallback, useMemo, useState, useRef } from "react";
 import type { Book, Chapter } from "../../types/reader";
 import type { ChapterProgressSnapshot } from "../../components/reader/types";
-import { useChapterLoader } from "./useChapterLoader";
 import { logger } from "../../lib/logger";
-import { useReaderCoordinator } from "../reader/useReaderCoordinatorRedux";
 import { useAppDispatch } from "../../store/hooks";
 import { updateBookProgress } from "../../store/thunks/libraryThunks";
 import { computeScrollMetrics, computeWindowScrollMetrics, scrollToElement, findScrollableContainer, type ScrollMetrics, type ScrollMetricsWithSegments } from "../../lib/scroll-utils";
