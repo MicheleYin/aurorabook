@@ -36,6 +36,8 @@ import {
   selectIsImporting,
   selectCurrentBookId,
   selectCurrentBook,
+  selectCurrentChapter,
+  selectCurrentAudioTrack,
   selectShowConvertDialog,
   selectPendingBookForConversion,
   selectIsConverting,

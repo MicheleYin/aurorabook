@@ -26,10 +26,14 @@ export function useReaderProgressSave({
   readerManager,
 }: UseReaderProgressSaveParams) {
   const dispatch = useAppDispatch();
+  const dispatchRef = useRef(dispatch);
   const readerManagerRef = useRef(readerManager);
   const savePromiseRef = useRef<Promise<void> | null>(null);
   const activeChapterIdRef = useRef<string | undefined>(activeChapterId);
   const activeBookIdRef = useRef<string | undefined>(activeBookId);
+
+  // Update dispatch ref
+  dispatchRef.current = dispatch;
 
   // Update refs when values change
   readerManagerRef.current = readerManager;
@@ -112,14 +116,12 @@ export function useReaderProgressSave({
   }, [dispatch]);
 
   // Save progress on unmount
+  // Use empty dependency array - we use refs to access current values
   useEffect(() => {
     return () => {
       const bookId = activeBookIdRef.current;
       const chapterId = activeChapterIdRef.current;
       const readerManager = readerManagerRef.current;
-
-      // Clear any pending scroll operations
-      // (This would be handled by the component if needed)
 
       // Only save if we have valid IDs
       if (chapterId && bookId) {
@@ -143,7 +145,21 @@ export function useReaderProgressSave({
             bookId,
             chapterId,
           });
-          performSave(bookId, chapterId).catch((error) => {
+          // Call performSave directly using refs to avoid dependency issues
+          const performSaveDirectly = async (bId: string, cId: string) => {
+            try {
+              readerManager.emitChapterProgress();
+              await readerManager.saveProgress(cId);
+              await dispatchRef.current(flushProgressUpdate({ bookId: bId })).unwrap();
+            } catch (error) {
+              logger.error("[useReaderProgressSave] Unmount save failed", {
+                bookId: bId,
+                chapterId: cId,
+                error,
+              });
+            }
+          };
+          performSaveDirectly(bookId, chapterId).catch((error) => {
             logger.error("[useReaderProgressSave] Unmount save failed", {
               bookId,
               chapterId,
@@ -158,7 +174,9 @@ export function useReaderProgressSave({
         });
       }
     };
-  }, [performSave]);
+    // Empty dependency array - we use refs to access current values
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return { performSave };
 }

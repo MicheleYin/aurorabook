@@ -50,9 +50,9 @@ export const ReaderView = memo(function ReaderView({
   return (
     <ErrorBoundary>
       <ReaderPanel
-        activeBook={activeBook}
-        activeChapter={activeChapter}
-        readerPreferences={readerPreferences}
+        activeBook={activeBook ?? undefined}
+        activeChapter={activeChapter ?? undefined}
+        preferences={readerPreferences}
         onPreferencesChange={onPreferencesChange}
         onSelectChapter={onSelectChapter}
         onNavigateLibrary={onNavigateLibrary}
@@ -71,7 +71,5 @@ export const ReaderView = memo(function ReaderView({
       />
     </ErrorBoundary>
   );
-}
-
 });
 

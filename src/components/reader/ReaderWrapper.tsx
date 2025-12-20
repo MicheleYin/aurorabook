@@ -18,7 +18,7 @@ import { useReaderAudioSync } from "../../hooks/reader/useReaderAudioSync";
 import { HighlightQueueProvider } from "../../contexts/HighlightQueueContext";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { selectLibrary, selectChapterAnimationState, selectCurrentBook, selectCurrentChapter } from "../../store/selectors";
-import { setChapterAnimationState, setTrackChangeHandler, setSaveProgressHandler, setAudioPlayerProgress } from "../../store/slices/readerSlice";
+import { setChapterAnimationState, setAudioPlayerProgress } from "../../store/slices/readerSlice";
 
 type ReaderWrapperProps = {
   activeBookId?: string;
@@ -487,12 +487,12 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
     elementIndex, // Pass element index for fast lookups
   });
 
-  // Store handlers in Redux instead of using callbacks
+  // Register track change handler with parent via callback
   useEffect(() => {
-    if (audioPlayerProgress.handleAudioTrackChange) {
-      dispatch(setTrackChangeHandler(audioPlayerProgress.handleAudioTrackChange));
+    if (audioPlayerProgress.handleAudioTrackChange && props.onTrackChangeHandlerReady) {
+      props.onTrackChangeHandlerReady(audioPlayerProgress.handleAudioTrackChange);
     }
-  }, [audioPlayerProgress.handleAudioTrackChange, dispatch]);
+  }, [audioPlayerProgress.handleAudioTrackChange, props.onTrackChangeHandlerReady]);
 
   // Handle audio progress updates - dispatch to Redux
   useEffect(() => {
@@ -524,15 +524,6 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
       savePromiseRef.current = null;
     }
   }, [activeChapter?.id, activeBook?.id]);
-  
-  // Store save progress handler in Redux
-  useEffect(() => {
-    if (onSaveProgress && activeBook?.id && activeChapter?.id) {
-      dispatch(setSaveProgressHandler(() => performSave(activeBook.id, activeChapter.id)));
-    } else {
-      dispatch(setSaveProgressHandler(null));
-    }
-  }, [activeBook?.id, activeChapter?.id, onSaveProgress, performSave, dispatch]);
   
   // Cleanup DOM refs on unmount (progress save is handled by useReaderProgressSave hook)
   useEffect(() => {

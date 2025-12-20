@@ -4,7 +4,7 @@
  * No useEffects - initialization is explicit
  */
 
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useEffect } from "react";
 import { logger } from "../../lib/logger";
 import { findScrollableContainer } from "../../lib/scroll-utils";
 import type { Book, Chapter } from "../../types/reader";
@@ -307,9 +307,16 @@ export function useChapterState(params: UseChapterStateParams) {
   const prevChapterIndexRef = useRef<number | undefined>(undefined);
   const prevChaptersLengthRef = useRef<number>(0);
   
-  // Check for changes and initialize explicitly (instead of useEffect)
+  // Check for changes and initialize in useEffect to avoid dispatching during render
   // Don't re-initialize if we're currently restoring - wait for restoration to complete
-  if (!isRestoring) {
+  useEffect(() => {
+    if (isRestoring) {
+      logger.log("[useChapterState] Currently restoring, skipping initialization check", {
+        bookId,
+      });
+      return;
+    }
+    
     // Get fresh progress from library
     const currentBook = bookId ? library.find((b) => b.id === bookId) : undefined;
     const currentProgress = currentBook?.progress;
@@ -387,11 +394,7 @@ export function useChapterState(params: UseChapterStateParams) {
         }
       }
     }
-  } else {
-    logger.log("[useChapterState] Currently restoring, skipping initialization check", {
-      bookId,
-    });
-  }
+  }, [bookId, library, chapters.length, isRestoring, initialize]);
 
   const onChapterChanged = useCallback((newChapterId: string) => {
     const currentChapter = chapters[currentIndex];

@@ -50,11 +50,6 @@ interface ReaderState {
     state: 'entering' | 'entered' | null;
     direction: 'forward' | 'backward' | null;
   };
-  // Handler storage (for imperative operations)
-  handlers: {
-    trackChangeHandler: ((trackHref: string) => Promise<void>) | null;
-    saveProgressHandler: (() => Promise<void>) | null;
-  };
   // Audio player state
   audioPlayer: {
     isOpen: boolean;
@@ -136,10 +131,6 @@ const initialState: ReaderState = {
   chapterAnimation: {
     state: null,
     direction: null,
-  },
-  handlers: {
-    trackChangeHandler: null,
-    saveProgressHandler: null,
   },
   audioPlayer: {
     isOpen: false,
@@ -400,13 +391,6 @@ const readerSlice = createSlice({
     setAudioPlayerIsLocalTrackChanging: (state, action: PayloadAction<boolean>) => {
       state.audioPlayer.loading.isLocalTrackChanging = action.payload;
     },
-    // Handler storage
-    setTrackChangeHandler: (state, action: PayloadAction<((trackHref: string) => Promise<void>) | null>) => {
-      state.handlers.trackChangeHandler = action.payload;
-    },
-    setSaveProgressHandler: (state, action: PayloadAction<(() => Promise<void>) | null>) => {
-      state.handlers.saveProgressHandler = action.payload;
-    },
     // Reset reader state
     resetReader: (state) => {
       state.currentBookId = null;
@@ -419,10 +403,6 @@ const readerSlice = createSlice({
       state.pendingFragment = null;
       state.isReaderChromeVisible = true;
       state.detailBookId = null;
-      state.handlers = {
-        trackChangeHandler: null,
-        saveProgressHandler: null,
-      };
       state.readerUI = {
         isSettingsOpen: false,
         isTocOpen: false,
@@ -528,8 +508,6 @@ export const {
   setAudioPlayerLoadedCount,
   setAudioPlayerIsTrackLoading,
   setAudioPlayerIsLocalTrackChanging,
-  setTrackChangeHandler,
-  setSaveProgressHandler,
   resetReader,
 } = readerSlice.actions;
 

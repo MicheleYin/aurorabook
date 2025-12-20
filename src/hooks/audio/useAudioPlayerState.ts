@@ -4,7 +4,7 @@
  * No useEffects - initialization is explicit
  */
 
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useEffect } from "react";
 import { logger } from "../../lib/logger";
 import type { UseAudioPlayerStateParams } from "../library/types";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
@@ -165,15 +165,16 @@ export function useAudioPlayerState(params: UseAudioPlayerStateParams) {
     initializedRef.current = signature;
   }, [dispatch, bookId, initialAudioState, tracks.length, findTrackIndex, isProgressEcho]);
 
-  // Initialize when bookId or state changes
-  // Note: This is now handled explicitly by callers, but keeping for compatibility
-  const currentSignature = bookId && initialAudioState
-    ? `${bookId}|${initialAudioState.currentTrackId}|${initialAudioState.updatedAt}|${tracks.length}`
-    : undefined;
-  
-  if (initializedRef.current !== currentSignature) {
-    initialize();
-  }
+  // Initialize when bookId or state changes in useEffect to avoid dispatching during render
+  useEffect(() => {
+    const currentSignature = bookId && initialAudioState
+      ? `${bookId}|${initialAudioState.currentTrackId}|${initialAudioState.updatedAt}|${tracks.length}`
+      : undefined;
+    
+    if (initializedRef.current !== currentSignature) {
+      initialize();
+    }
+  }, [bookId, initialAudioState, tracks.length, initialize]);
 
   const onTrackChanged = useCallback((newTrackId: string) => {
     const currentTrack = tracks[currentIndex];

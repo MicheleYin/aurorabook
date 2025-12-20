@@ -113,13 +113,13 @@ export function useReaderCoordinator() {
     chapterId: string,
     snapshot: ChapterProgressSnapshot
   ): Promise<void> => {
+    // Use the unified reader operations thunk instead of coordinator thunk
+    // Progress saving doesn't need coordination - it's just a state update
+    const { saveChapterProgress: saveChapterProgressThunk } = await import('../../store/thunks/readerOperationsThunks');
     await dispatch(saveChapterProgressThunk({
       bookId,
       chapterId,
       snapshot,
-      onExecute: async () => {
-        throw new Error('onExecute must be provided');
-      },
     })).unwrap();
   }, [dispatch]);
 

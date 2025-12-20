@@ -155,8 +155,6 @@ export const selectAudioPlayerIsTrackLoading = (state: RootState) => state.reade
 export const selectAudioPlayerIsLocalTrackChanging = (state: RootState) => state.reader.audioPlayer.loading.isLocalTrackChanging;
 
 // Handler selectors
-export const selectTrackChangeHandler = (state: RootState) => state.reader.handlers.trackChangeHandler;
-export const selectSaveProgressHandler = (state: RootState) => state.reader.handlers.saveProgressHandler;
 
 // UI selectors
 export const selectAutoScrollEnabled = (state: RootState) => state.ui.autoScrollEnabled;
