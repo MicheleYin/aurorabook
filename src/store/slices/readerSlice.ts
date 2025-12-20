@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import type { BookProgress, BookAudioState } from '../../types/reader';
+import type { BookProgress, BookAudioState, Chapter, AudioTrack } from '../../types/reader';
 import type { AudioProgressSnapshot } from '../../components/reader/types';
 
 interface ReaderState {
@@ -8,7 +8,21 @@ interface ReaderState {
   currentAudioTrackId: string | null;
   currentChapterProgress: BookProgress | null;
   currentAudioTrackProgress: BookAudioState | null;
-  // Flags to track if chapter/audio track are loaded
+  // Resolved chapter and audio track (loaded from library)
+  currentChapter: {
+    data: Chapter | null;
+    loading: boolean;
+    error: string | null;
+    lastLoadAttempt: string | null; // "bookId-chapterId" to prevent duplicates
+  };
+  currentAudioTrack: {
+    data: AudioTrack | null;
+    url: string | null;
+    loading: boolean;
+    error: string | null;
+    lastLoadAttempt: string | null; // "bookId-trackId" to prevent duplicates
+  };
+  // Flags to track if chapter/audio track are loaded (deprecated - use currentChapter/currentAudioTrack)
   isChapterLoaded: boolean;
   isAudioTrackLoaded: boolean;
   // UI state
@@ -35,6 +49,11 @@ interface ReaderState {
   chapterAnimation: {
     state: 'entering' | 'entered' | null;
     direction: 'forward' | 'backward' | null;
+  };
+  // Handler storage (for imperative operations)
+  handlers: {
+    trackChangeHandler: ((trackHref: string) => Promise<void>) | null;
+    saveProgressHandler: (() => Promise<void>) | null;
   };
   // Audio player state
   audioPlayer: {
@@ -82,6 +101,19 @@ const initialState: ReaderState = {
   currentAudioTrackId: null,
   currentChapterProgress: null,
   currentAudioTrackProgress: null,
+  currentChapter: {
+    data: null,
+    loading: false,
+    error: null,
+    lastLoadAttempt: null,
+  },
+  currentAudioTrack: {
+    data: null,
+    url: null,
+    loading: false,
+    error: null,
+    lastLoadAttempt: null,
+  },
   isChapterLoaded: false,
   isAudioTrackLoaded: false,
   pendingFragment: null,
@@ -104,6 +136,10 @@ const initialState: ReaderState = {
   chapterAnimation: {
     state: null,
     direction: null,
+  },
+  handlers: {
+    trackChangeHandler: null,
+    saveProgressHandler: null,
   },
   audioPlayer: {
     isOpen: false,
@@ -153,15 +189,89 @@ const readerSlice = createSlice({
         state.currentAudioTrackProgress = null;
         state.isChapterLoaded = false;
         state.isAudioTrackLoaded = false;
+        state.currentChapter = {
+          data: null,
+          loading: false,
+          error: null,
+          lastLoadAttempt: null,
+        };
+        state.currentAudioTrack = {
+          data: null,
+          url: null,
+          loading: false,
+          error: null,
+          lastLoadAttempt: null,
+        };
       }
     },
     setCurrentChapterId: (state, action: PayloadAction<string | null>) => {
       state.currentChapterId = action.payload;
       state.isChapterLoaded = false; // Mark as needing load
+      // Reset resolved chapter when chapter ID changes
+      if (action.payload !== state.currentChapterId) {
+        state.currentChapter = {
+          data: null,
+          loading: false,
+          error: null,
+          lastLoadAttempt: null,
+        };
+      }
     },
     setCurrentAudioTrackId: (state, action: PayloadAction<string | null>) => {
       state.currentAudioTrackId = action.payload;
       state.isAudioTrackLoaded = false; // Mark as needing load
+      // Reset resolved audio track when track ID changes
+      if (action.payload !== state.currentAudioTrackId) {
+        state.currentAudioTrack = {
+          data: null,
+          url: null,
+          loading: false,
+          error: null,
+          lastLoadAttempt: null,
+        };
+      }
+    },
+    // Resolved chapter state
+    setCurrentChapterLoading: (state, action: PayloadAction<boolean>) => {
+      state.currentChapter.loading = action.payload;
+    },
+    setCurrentChapterData: (state, action: PayloadAction<Chapter | null>) => {
+      state.currentChapter.data = action.payload;
+      state.currentChapter.loading = false;
+      state.currentChapter.error = null;
+      state.isChapterLoaded = action.payload !== null;
+    },
+    setCurrentChapterError: (state, action: PayloadAction<string | null>) => {
+      state.currentChapter.error = action.payload;
+      state.currentChapter.loading = false;
+      state.isChapterLoaded = false;
+    },
+    setCurrentChapterLoadAttempt: (state, action: PayloadAction<string>) => {
+      state.currentChapter.lastLoadAttempt = action.payload;
+    },
+    // Resolved audio track state
+    setCurrentAudioTrackLoading: (state, action: PayloadAction<boolean>) => {
+      state.currentAudioTrack.loading = action.payload;
+    },
+    setCurrentAudioTrackData: (state, action: PayloadAction<{ track: AudioTrack; url: string | null } | null>) => {
+      if (action.payload) {
+        state.currentAudioTrack.data = action.payload.track;
+        state.currentAudioTrack.url = action.payload.url;
+      } else {
+        state.currentAudioTrack.data = null;
+        state.currentAudioTrack.url = null;
+      }
+      state.currentAudioTrack.loading = false;
+      state.currentAudioTrack.error = null;
+      state.isAudioTrackLoaded = action.payload !== null;
+    },
+    setCurrentAudioTrackError: (state, action: PayloadAction<string | null>) => {
+      state.currentAudioTrack.error = action.payload;
+      state.currentAudioTrack.loading = false;
+      state.isAudioTrackLoaded = false;
+    },
+    setCurrentAudioTrackLoadAttempt: (state, action: PayloadAction<string>) => {
+      state.currentAudioTrack.lastLoadAttempt = action.payload;
     },
     setCurrentChapterProgress: (state, action: PayloadAction<BookProgress | null>) => {
       state.currentChapterProgress = action.payload;
@@ -290,6 +400,13 @@ const readerSlice = createSlice({
     setAudioPlayerIsLocalTrackChanging: (state, action: PayloadAction<boolean>) => {
       state.audioPlayer.loading.isLocalTrackChanging = action.payload;
     },
+    // Handler storage
+    setTrackChangeHandler: (state, action: PayloadAction<((trackHref: string) => Promise<void>) | null>) => {
+      state.handlers.trackChangeHandler = action.payload;
+    },
+    setSaveProgressHandler: (state, action: PayloadAction<(() => Promise<void>) | null>) => {
+      state.handlers.saveProgressHandler = action.payload;
+    },
     // Reset reader state
     resetReader: (state) => {
       state.currentBookId = null;
@@ -302,6 +419,10 @@ const readerSlice = createSlice({
       state.pendingFragment = null;
       state.isReaderChromeVisible = true;
       state.detailBookId = null;
+      state.handlers = {
+        trackChangeHandler: null,
+        saveProgressHandler: null,
+      };
       state.readerUI = {
         isSettingsOpen: false,
         isTocOpen: false,
@@ -364,6 +485,14 @@ export const {
   setCurrentAudioTrackProgress,
   setChapterLoaded,
   setAudioTrackLoaded,
+  setCurrentChapterLoading,
+  setCurrentChapterData,
+  setCurrentChapterError,
+  setCurrentChapterLoadAttempt,
+  setCurrentAudioTrackLoading,
+  setCurrentAudioTrackData,
+  setCurrentAudioTrackError,
+  setCurrentAudioTrackLoadAttempt,
   setPendingFragment,
   setIsReaderChromeVisible,
   setDetailBookId,
@@ -399,6 +528,8 @@ export const {
   setAudioPlayerLoadedCount,
   setAudioPlayerIsTrackLoading,
   setAudioPlayerIsLocalTrackChanging,
+  setTrackChangeHandler,
+  setSaveProgressHandler,
   resetReader,
 } = readerSlice.actions;
 

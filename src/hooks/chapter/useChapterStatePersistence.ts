@@ -16,15 +16,14 @@ import {
   getElementIndex,
   isProgressUnchanged,
 } from "../library/libraryHelpers";
-import { useContext } from "react";
-import { ReaderCoordinatorContext } from "../../contexts/ReaderCoordinatorContext";
+import { useReaderCoordinator } from "../reader/useReaderCoordinatorRedux";
 
 export function useChapterStatePersistence(
   library: Book[],
   setLibrary: React.Dispatch<React.SetStateAction<Book[]>>,
 ) {
-  // Get coordinator for operation management (optional - may not be available at library level)
-  const coordinator = useContext(ReaderCoordinatorContext); // May be null if provider isn't available
+  // Get coordinator for operation management
+  const coordinator = useReaderCoordinator();
   // Pending progress update
   const pendingProgressUpdateRef = useRef<{
     bookId: string;

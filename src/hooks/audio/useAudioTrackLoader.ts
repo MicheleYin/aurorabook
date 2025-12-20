@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import type { AudioTrack } from "../../types/reader";
 import { loadEpubAudioBlob } from "../../lib/book-service";
 import { useResourceLoader } from "../useResourceLoader";
-import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
+import { useReaderCoordinator } from "../reader/useReaderCoordinatorRedux";
 import { blobURLManager } from "../../lib/blob-url-manager";
 import { logger } from "../../lib/logger";
 

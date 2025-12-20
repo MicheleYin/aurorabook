@@ -4,20 +4,21 @@
  */
 
 import { useCallback, useRef, useEffect, memo } from "react";
-import { toast } from "sonner";
 import { logger } from "../../lib/logger";
 import type { ReaderPreferences, Chapter } from "../../types/reader";
 import type { ChapterProgressSnapshot, ChapterSelectionOptions, AudioProgressSnapshot } from "./types";
 import { ReaderViewport } from "./ReaderViewport";
-import { findCurrentAudioSegment } from "../../lib/epub";
 import { useReaderManager } from "../../hooks/reader/useReaderManager";
 import { useAudioPlayerProgress } from "../../hooks/audio/useAudioPlayerProgress";
 import { useElementIndex } from "../../hooks/reader/useElementIndex";
+import { useReaderProgressSave } from "../../hooks/reader/useReaderProgressSave";
+import { useReaderChapterReload } from "../../hooks/reader/useReaderChapterReload";
+import { useReaderAudioSync } from "../../hooks/reader/useReaderAudioSync";
+// Handler bridges removed - using Redux directly
 import { HighlightQueueProvider } from "../../contexts/HighlightQueueContext";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
-import { selectLibrary, selectChapterAnimationState } from "../../store/selectors";
-import { setChapterAnimationState } from "../../store/slices/readerSlice";
-import { updateBook } from "../../store/slices/librarySlice";
+import { selectLibrary, selectChapterAnimationState, selectCurrentBook, selectCurrentChapter } from "../../store/selectors";
+import { setChapterAnimationState, setTrackChangeHandler, setSaveProgressHandler, setAudioPlayerProgress } from "../../store/slices/readerSlice";
 
 type ReaderWrapperProps = {
   activeBookId?: string;
@@ -44,7 +45,6 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
     activeChapterId,
     preferences,
     onPreferencesChange,
-    onTrackChangeHandlerReady,
     onSelectChapter,
     onChapterProgress,
     onSaveProgress,
@@ -59,11 +59,9 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
 
   // Get book and chapter from Redux (single source of truth)
   const dispatch = useAppDispatch();
-  const library = useAppSelector(selectLibrary);
-  const activeBook = activeBookId ? library.find(b => b.id === activeBookId) : undefined;
-  const activeChapter = activeBook && activeChapterId 
-    ? activeBook.chapters.find(ch => ch.id === activeChapterId)
-    : undefined;
+  const library = useAppSelector(selectLibrary); // Still needed for some operations
+  const activeBook = useAppSelector(selectCurrentBook);
+  const activeChapter = useAppSelector(selectCurrentChapter);
 
   // Get chapter animation state from Redux
   const chapterAnimationState = useAppSelector(selectChapterAnimationState);
@@ -92,39 +90,24 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
   const chapterForIndex = readerManager.loadedChapter || activeChapter;
   const elementIndex = useElementIndex(chapterForIndex?.contentHtml);
 
-  // Save progress - now uses reader manager
   // Use ref to avoid recreating callback when readerManager changes
   const readerManagerRef = useRef(readerManager);
   readerManagerRef.current = readerManager;
+  
+  // Extract progress saving logic
+  const { performSave } = useReaderProgressSave({
+    activeBookId,
+    activeChapterId,
+    readerManager,
+  });
   
   const saveProgress = useCallback(async (chapterId: string) => {
     if (!activeBook) {
       logger.warn("[ReaderWrapper] saveProgress: no active book", { chapterId });
       return;
     }
-    
-    logger.log("[ReaderWrapper] saveProgress called", {
-      bookId: activeBook.id,
-      chapterId,
-    });
-    
-    // Use readerManager to save progress (handles coordinator internally)
-    try {
-      await readerManagerRef.current.saveProgress(chapterId);
-      logger.log("[ReaderWrapper] saveProgress completed", {
-        bookId: activeBook.id,
-        chapterId,
-      });
-    } catch (error) {
-      logger.error("[ReaderWrapper] saveProgress failed", {
-        bookId: activeBook.id,
-        chapterId,
-        error,
-        errorMessage: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
-  }, [activeBook]);
+    await performSave(activeBook.id, chapterId);
+  }, [activeBook, performSave]);
 
   // Helper to determine if progress should be restored for a chapter
   // Manual selections (TOC, nav buttons) should NOT restore progress
@@ -183,151 +166,19 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
   // which fires after the DOM is updated with chapter content
   // It uses useChapterState.onChapterLoaded directly (coordinator pattern, similar to audio)
 
-  // Chapter loading helper - uses readerManager's chapterLoader internally
-  const ensureChapterLoaded = useCallback(async (
-    bookId: string,
-    chapter: Chapter,
-    forceReload: boolean = false
-  ): Promise<Chapter | null> => {
-    // If forcing reload, clear cache first
-    if (forceReload) {
-      // Access chapterLoader through coordinator or directly
-      const { clearBookCache } = await import("../../lib/lazy-chapter-loader");
-      clearBookCache(bookId);
-    }
+  // Chapter loading is now handled by readerManager and useReaderChapterReload hook
 
-    // Use readerManager's changeChapter which handles loading
-    // For now, we'll use the lazy chapter loader directly
-    const { ensureChapterLoaded: ensureChapterLoadedFromLoader } = await import("../../lib/lazy-chapter-loader");
-    const processed = await ensureChapterLoadedFromLoader(bookId, chapter);
-    
-    if (processed.contentHtml) {
-      // Note: readerManager.changeChapter will handle setLoadedChapter
-      return processed;
-    }
-    // Error toast is already shown in ensureChapterLoaded, but show a fallback if content is missing
-    if (!processed.contentHtml) {
-      toast.error("Failed to load chapter", {
-        description: `Chapter "${chapter.title || chapter.id}" could not be loaded`,
-      });
-    }
-    return null;
-  }, []);
+  // Extract chapter reload logic
+  const { handleChapterReload: handleChapterReloadFromHook } = useReaderChapterReload({
+    activeBookId,
+    activeChapterId,
+    onSelectChapter,
+  });
 
-  // Handle chapter reload (for when content is missing spans or when chapter is updated during conversion)
-  const handleChapterReload = useCallback(async (chapterId: string) => {
-    if (!activeBookId || !chapterId) {
-      logger.warn("[ReaderWrapper] Cannot reload chapter - missing bookId or chapterId", {
-        chapterId,
-        activeBookId,
-      });
-      return;
-    }
-
-    // Get fresh book and chapter from library state (not from closure)
-    // This ensures we have the latest merged chapter with spans
-    const currentBook = library.find((b) => b.id === activeBookId);
-    if (!currentBook) {
-      logger.warn("[ReaderWrapper] Book not found in library when reloading chapter", {
-        bookId: activeBookId,
-      });
-      return;
-    }
-
-    const currentChapter = currentBook.chapters.find((ch) => ch.id === chapterId);
-    if (!currentChapter) {
-      logger.warn("[ReaderWrapper] Chapter not found in book when reloading", {
-        bookId: activeBookId,
-        chapterId,
-      });
-      return;
-    }
-
-    logger.log("[ReaderWrapper] 🔄 Starting chapter reload", {
-      chapterId,
-      bookId: activeBookId,
-      chapterHref: currentChapter.href,
-      reason: "chapter updated or missing spans",
-      currentContentHtmlSize: currentChapter.contentHtml?.length || 0,
-      hasSpans: currentChapter.contentHtml?.includes('id="f') || false,
-    });
-
-    // Check if chapter already has contentHtml with spans from the merge
-    // If so, we can use it directly without reloading from backend
-    if (currentChapter.contentHtml && currentChapter.contentHtml.includes('id="f')) {
-      logger.log("[ReaderWrapper] ✓ Chapter already has spans, using merged content", {
-        chapterId,
-        contentHtmlSize: currentChapter.contentHtml.length,
-        spanCount: (currentChapter.contentHtml.match(/id="f\d{6}"/g) || []).length,
-      });
-      
-      // Note: readerManager will handle setLoadedChapter when we call changeChapter
-      // For now, we need to trigger a re-render - this will be handled by readerManager
-      // Trigger re-render by calling changeChapter with forceReload
-      await readerManager.changeChapter(chapterId, { scrollPosition: "maintain" });
-      
-      return; // No backend reload needed, chapter already has spans
-    }
-
-    // Chapter doesn't have spans, need to reload from backend
-    try {
-      // Force reload the chapter (this will clear cache and fetch fresh data)
-      const reloaded = await ensureChapterLoaded(activeBookId, currentChapter, true);
-      if (reloaded && reloaded.contentHtml) {
-        logger.log("[ReaderWrapper] ✓ Chapter reloaded successfully", {
-          chapterId,
-          bookId: activeBookId,
-          newContentHtmlSize: reloaded.contentHtml.length,
-          hasSpans: reloaded.contentHtml.includes('id="f'),
-        });
-        
-        // Use readerManager to update the loaded chapter
-        await readerManager.changeChapter(chapterId, { scrollPosition: "maintain" });
-        
-        // Update the library state with the reloaded chapter
-        const currentBook = library.find((b) => b.id === activeBookId);
-        if (currentBook) {
-          const prevChapterIndex = currentBook.chapters.findIndex((ch) => ch.id === chapterId);
-          if (prevChapterIndex !== -1) {
-            const updatedBook = {
-              ...currentBook,
-              chapters: currentBook.chapters.map((ch, idx) => 
-                idx === prevChapterIndex ? reloaded : ch
-              ),
-            };
-            
-            dispatch(updateBook({ bookId: activeBookId, updates: updatedBook }));
-            
-            logger.log("[ReaderWrapper] ✓ Updated library state with reloaded chapter", {
-              bookId: activeBookId,
-              chapterId,
-              newContentHtmlSize: reloaded.contentHtml?.length || 0,
-              hasSpans: reloaded.contentHtml?.includes('id="f') || false,
-            });
-          }
-        }
-        
-        // Trigger re-render
-        dispatch(setChapterAnimationState("entering"));
-        setTimeout(() => {
-          dispatch(setChapterAnimationState("entered"));
-        }, 50);
-      } else {
-        logger.error("[ReaderWrapper] ✗ Failed to reload chapter", {
-          chapterId,
-          bookId: activeBookId,
-          reloaded: !!reloaded,
-          hasContent: !!reloaded?.contentHtml,
-        });
-      }
-    } catch (error) {
-      logger.error("[ReaderWrapper] ✗ Error reloading chapter", {
-        chapterId,
-        bookId: activeBookId,
-        error,
-      });
-    }
-  }, [dispatch, activeBookId, library, ensureChapterLoaded, readerManager]);
+  // Wrapper that matches the expected signature
+  const handleChapterReload = useCallback(async (_chapterId: string) => {
+    await handleChapterReloadFromHook();
+  }, [handleChapterReloadFromHook]);
 
   // Use refs to access current values without causing re-renders
   // Declare refs that will be reused later in the file
@@ -369,10 +220,10 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
       
       // Get fresh book and chapter from library state using refs (not from closure)
       const currentBook = activeBookIdRefForEvent.current 
-        ? libraryRef.current.find(b => b.id === activeBookIdRefForEvent.current) 
+        ? libraryRef.current.find((b: { id: string }) => b.id === activeBookIdRefForEvent.current) 
         : undefined;
       const currentChapter = currentBook && activeChapterIdRefForEvent.current 
-        ? currentBook.chapters.find(ch => ch.id === activeChapterIdRefForEvent.current)
+        ? currentBook.chapters.find((ch: { id: string }) => ch.id === activeChapterIdRefForEvent.current)
         : undefined;
       
       logger.log("[ReaderWrapper] 📥 Received chapter-updated event", {
@@ -609,70 +460,20 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
     loadChapterIfNeeded();
   }, [loadChapterIfNeeded]);
 
-  // Sync button: go to current audio chapter
-  const handleSyncToAudio = useCallback(() => {
-    if (!activeBook?.audioState || !activeBook?.audioSyncMap) return;
-    const audioState = activeBook.audioState;
-    const segment = findCurrentAudioSegment(
-      activeBook.audioSyncMap,
-      audioState.currentTrackHref,
-      audioState.currentTimeSeconds
-    );
-
-    if (!segment) return;
-
-    // Find chapter by href
-    const chapter = activeBook.chapters.find(ch => {
-      const chHref = ch.href.split("#")[0];
-      return chHref === segment.chapterHref;
-    });
-
-    if (!chapter) return;
-
-    // If already in this chapter, just scroll to the element
-    if (activeChapter?.id === chapter.id) {
-      readerManagerRef.current.scrollToElementId(segment.textElementId, "smooth");
-      return;
-    }
-
-    // Navigate to chapter (no restore, will scroll to element after load)
-    // Store the element ID to scroll to after chapter loads
-    pendingScrollToElementIdRef.current = segment.textElementId;
-    handleChapterChange(chapter.id, { scrollPosition: "top" });
-  }, [activeBook, activeChapter, handleChapterChange, readerManager]);
-
-  // Wrapper for chapter change from audio sync
-  // Converts the audio sync format (chapterId, elementId) to the chapter change format
-  const handleAudioSyncChapterChange = useCallback(async (chapterId: string, elementId?: string) => {
-    logger.log("[ReaderWrapper] handleAudioSyncChapterChange called", {
-      chapterId,
-      elementId,
-      currentChapterId: activeChapter?.id,
-      currentChapterHref: activeChapter?.href,
-      previousChapterIdRef: previousChapterIdRef.current,
-    });
-    
-    if (elementId) {
-      // Store the element ID to scroll to after chapter loads
+  // Extract audio sync logic
+  const { handleSyncToAudio, handleAudioSyncChapterChange } = useReaderAudioSync({
+    activeBook,
+    activeChapter,
+    readerManager,
+    onPendingScrollTarget: (elementId: string) => {
       pendingScrollToElementIdRef.current = elementId;
-    }
-    
-    // Navigate to chapter with scrollPosition: "top" so it loads at the top,
-    // then handlePendingScrollTarget will scroll to the element after load
-    // Note: handleChapterChange will update previousChapterIdRef AFTER loading
-    await handleChapterChange(chapterId, { scrollPosition: "top", isManualSelection: false });
-    
-    logger.log("[ReaderWrapper] handleAudioSyncChapterChange completed", {
-      chapterId,
-      activeChapterIdAfter: activeChapter?.id,
-      previousChapterIdRefAfter: previousChapterIdRef.current,
-    });
-  }, [handleChapterChange, activeChapter]);
+    },
+  });
 
   // Audio player progress logic
   const audioPlayerProgress = useAudioPlayerProgress({
     activeBook,
-    activeChapter,
+    activeChapter: activeChapter ?? undefined,
     contentRef,
     autoScrollEnabled,
     isRestoringScroll: restoreState.isRestoring,
@@ -686,69 +487,30 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
     elementIndex, // Pass element index for fast lookups
   });
 
-  // Expose handleAudioTrackChange to parent (App.tsx) via callback
-  // Use useEffect for side effect (calling callback when handler is ready)
-  const trackHandlerRef = useRef(audioPlayerProgress.handleAudioTrackChange);
-  const onTrackChangeHandlerReadyRef = useRef(onTrackChangeHandlerReady);
-  
-  // Update refs when values change
+  // Store handlers in Redux instead of using callbacks
   useEffect(() => {
-    trackHandlerRef.current = audioPlayerProgress.handleAudioTrackChange;
-  }, [audioPlayerProgress.handleAudioTrackChange]);
-  
-  useEffect(() => {
-    onTrackChangeHandlerReadyRef.current = onTrackChangeHandlerReady;
-  }, [onTrackChangeHandlerReady]);
-  
-  // Expose handler to parent - only call when handler actually changes
-  useEffect(() => {
-    if (onTrackChangeHandlerReadyRef.current) {
-      onTrackChangeHandlerReadyRef.current(trackHandlerRef.current);
+    if (audioPlayerProgress.handleAudioTrackChange) {
+      dispatch(setTrackChangeHandler(audioPlayerProgress.handleAudioTrackChange));
     }
-  }, [audioPlayerProgress.handleAudioTrackChange]); // Only depend on the handler, not the callback
+  }, [audioPlayerProgress.handleAudioTrackChange, dispatch]);
 
-  // Handle audio progress updates from App.tsx
-  // This ensures highlighting and scrolling are updated when audio plays
-  // Use useEffect for side effect (calling handler when progress changes)
-  const lastProgressRef = useRef<AudioProgressSnapshot | undefined>(undefined);
-  const handleAudioProgressRef = useRef(audioPlayerProgress.handleAudioProgress);
-  
+  // Handle audio progress updates - dispatch to Redux
   useEffect(() => {
-    // Update ref when handler changes (just storage - no cleanup needed)
-    handleAudioProgressRef.current = audioPlayerProgress.handleAudioProgress;
-  }, [audioPlayerProgress.handleAudioProgress]);
-  
-  useEffect(() => {
-    // Only update if values actually changed
-    if (!currentAudioProgress) return;
-    
-    const lastProgress = lastProgressRef.current;
-    // Quick reference check first (most common case - same object)
-    if (lastProgress !== currentAudioProgress) {
-      // Compare by value only if reference changed
-      const isNewProgress = 
-        !lastProgress ||
-        lastProgress.trackHref !== currentAudioProgress.trackHref ||
-        Math.abs(lastProgress.currentTimeSeconds - currentAudioProgress.currentTimeSeconds) > 0.1 || // Only update if time changed significantly (>100ms)
-        lastProgress.updatedAt !== currentAudioProgress.updatedAt;
-      
-      if (isNewProgress) {
-        lastProgressRef.current = currentAudioProgress;
-        handleAudioProgressRef.current(currentAudioProgress);
-      }
+    if (currentAudioProgress) {
+      dispatch(setAudioPlayerProgress(currentAudioProgress));
+      // Also call the handler for immediate updates
+      audioPlayerProgress.handleAudioProgress(currentAudioProgress);
     }
-  }, [currentAudioProgress]);
+  }, [currentAudioProgress, dispatch]);
 
   const loadedChapter = readerManager.loadedChapter;
 
   // Save progress when component unmounts or when leaving reader view
   // Use refs to track state and prevent duplicate saves
   const savePromiseRef = useRef<Promise<void> | null>(null);
-  const activeChapterIdRef = useRef<string | undefined>(activeChapter?.id);
-  const activeBookIdRef = useRef<string | undefined>(activeBook?.id);
+  const activeChapterIdRef = useRef<string | undefined>(activeChapter?.id ?? undefined);
+  const activeBookIdRef = useRef<string | undefined>(activeBook?.id ?? undefined);
   
-  // Update refs when chapter/book changes (reset save promise)
-  // Use useEffect for side effect (resetting save state when chapter/book changes)
   useEffect(() => {
     if (activeChapterIdRef.current !== activeChapter?.id || activeBookIdRef.current !== activeBook?.id) {
       logger.log("[ReaderWrapper] Chapter or book changed, resetting save state", {
@@ -759,146 +521,26 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
       });
       activeChapterIdRef.current = activeChapter?.id;
       activeBookIdRef.current = activeBook?.id;
-      savePromiseRef.current = null; // Reset save promise when chapter/book changes
+      savePromiseRef.current = null;
     }
   }, [activeChapter?.id, activeBook?.id]);
   
-  // Function to save progress (can be called before unmount or during unmount)
-  const performSave = useCallback(async (bookId: string, chapterId: string) => {
-    // Check if save is already in progress
-    if (savePromiseRef.current) {
-      logger.log("[ReaderWrapper] Save already in progress, waiting for completion", {
-        bookId,
-        chapterId,
-      });
-      try {
-        await savePromiseRef.current;
-        logger.log("[ReaderWrapper] Previous save completed", {
-          bookId,
-          chapterId,
-        });
-      } catch (error) {
-        logger.warn("[ReaderWrapper] Previous save failed, continuing with new save", {
-          bookId,
-          chapterId,
-          error,
-        });
-      }
-    }
-    
-    logger.log("[ReaderWrapper] Starting progress save", {
-      bookId,
-      chapterId,
-    });
-    
-    // First, emit current progress to ensure it's captured
-    try {
-      readerManagerRef.current.emitChapterProgress();
-      logger.log("[ReaderWrapper] Emitted current progress before save", {
-        bookId,
-        chapterId,
-      });
-    } catch (error) {
-      logger.warn("[ReaderWrapper] Failed to emit progress before save", {
-        bookId,
-        chapterId,
-        error,
-      });
-    }
-    
-    // Create save promise
-    const savePromise = readerManagerRef.current.saveProgress(chapterId)
-      .then(() => {
-        logger.log("[ReaderWrapper] Progress saved via readerManager", {
-          bookId,
-          chapterId,
-        });
-        savePromiseRef.current = null;
-      })
-      .catch((error) => {
-        logger.error("[ReaderWrapper] Failed to save or flush progress", {
-          bookId,
-          chapterId,
-          error,
-          errorMessage: error instanceof Error ? error.message : String(error),
-          errorStack: error instanceof Error ? error.stack : undefined,
-        });
-        savePromiseRef.current = null;
-        throw error;
-      });
-    
-    savePromiseRef.current = savePromise;
-    return savePromise;
-  }, []);
-  
-  // Expose save function to parent via onSaveProgress callback
-  // Use useEffect for side effect (calling callback when save function is ready)
-  const saveKey = activeBook?.id && activeChapter?.id ? `${activeBook.id}-${activeChapter.id}` : null;
-  
+  // Store save progress handler in Redux
   useEffect(() => {
-    if (onSaveProgress && activeBook && activeChapter && saveKey) {
-      onSaveProgress(async () => {
-        await performSave(activeBook.id, activeChapter.id);
-      });
+    if (onSaveProgress && activeBook?.id && activeChapter?.id) {
+      dispatch(setSaveProgressHandler(() => performSave(activeBook.id, activeChapter.id)));
+    } else {
+      dispatch(setSaveProgressHandler(null));
     }
-  }, [onSaveProgress, activeBook, activeChapter, saveKey, performSave]);
+  }, [activeBook?.id, activeChapter?.id, onSaveProgress, performSave, dispatch]);
   
-  // Save progress only on actual unmount (not on every render)
+  // Cleanup DOM refs on unmount (progress save is handled by useReaderProgressSave hook)
   useEffect(() => {
     return () => {
-      const bookId = activeBookIdRef.current;
-      const chapterId = activeChapterIdRef.current;
-      
-      logger.log("[ReaderWrapper] Unmount cleanup triggered", {
-        bookId,
-        chapterId,
-        hasSaveInProgress: !!savePromiseRef.current,
-      });
-      
-      // Clear DOM refs to allow garbage collection
       contentRef.current = null;
       pendingScrollToElementIdRef.current = null;
-      
-      // Only save if we have valid IDs
-      if (chapterId && bookId) {
-        // If save is already in progress, wait for it (but don't block unmount)
-        if (savePromiseRef.current) {
-          logger.log("[ReaderWrapper] Save already in progress, will complete asynchronously", {
-            bookId,
-            chapterId,
-          });
-          // Don't await - let it complete in background
-          savePromiseRef.current.catch((error) => {
-            logger.error("[ReaderWrapper] Background save failed", {
-              bookId,
-              chapterId,
-              error,
-            });
-          });
-        } else {
-          // Start new save (fire and forget - can't await in cleanup)
-          logger.log("[ReaderWrapper] Starting progress save on unmount", {
-            bookId,
-            chapterId,
-          });
-          performSave(bookId, chapterId).catch((error) => {
-            logger.error("[ReaderWrapper] Unmount save failed", {
-              bookId,
-              chapterId,
-              error,
-            });
-          });
-        }
-      } else {
-        logger.log("[ReaderWrapper] Skipping progress save on unmount - missing IDs", {
-          hasChapterId: !!chapterId,
-          hasBookId: !!bookId,
-        });
-      }
     };
-    // Empty dependency array - this effect only runs on mount/unmount
-    // We use refs to access current values, so we don't need dependencies
-  }, [performSave]);
+  }, []);
 
   return (
     <ReaderViewport
@@ -911,7 +553,7 @@ function ReaderWrapperContentInner(props: ReaderWrapperProps) {
       }}
       state={{
         book: activeBook,
-        chapter: loadedChapter || activeChapter,
+        chapter: loadedChapter || (activeChapter ?? undefined),
         isLoading: readerManager.isLoading,
         animationState: readerManager.animationState || chapterAnimationState,
         pendingFragment: null,

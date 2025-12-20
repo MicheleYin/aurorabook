@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { lazy, Suspense } from "react";
 
@@ -23,7 +23,6 @@ import { AppNavigation } from "./components/app/AppNavigation";
 import { AppDialogs } from "./components/app/AppDialogs";
 
 import { useLibrary } from "./hooks/useLibrary";
-import { LibraryProvider } from "./hooks/library/LibraryContext";
 import { usePersistentSettings } from "./hooks/settings/usePersistentSettings";
 import { useAppNavigation } from "./hooks/useAppNavigation";
 import { usePersistentReaderPreferences } from "./hooks/settings/usePersistentReaderPreferences";
@@ -81,14 +80,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   const dispatch = useAppDispatch();
   const activeBookId = useAppSelector(selectCurrentBookId);
   const activeBook = useAppSelector(selectCurrentBook);
-  const activeChapter = useAppSelector((state) => {
-    if (!activeBookId) return null;
-    const book = state.library.books.find((b) => b.id === activeBookId);
-    if (!book) return null;
-    const chapterId = state.reader.currentChapterId;
-    if (!chapterId) return null;
-    return book.chapters.find((c) => c.id === chapterId) ?? null;
-  });
+  const activeChapter = useAppSelector(selectCurrentChapter);
 
   const {
     preferences: readerPreferences,
@@ -191,18 +183,14 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
   const currentBookId = useAppSelector((state) => state.reader.currentBookId);
   const currentChapterId = useAppSelector((state) => state.reader.currentChapterId);
   const currentAudioTrackId = useAppSelector((state) => state.reader.currentAudioTrackId);
+  const currentChapter = useAppSelector(selectCurrentChapter);
+  const currentAudioTrack = useAppSelector(selectCurrentAudioTrack);
   const isChapterLoaded = useAppSelector((state) => {
-    if (!currentBookId || !currentChapterId) return false;
-    const book = state.library.books.find((b) => b.id === currentBookId);
-    if (!book) return false;
-    const chapter = book.chapters.find((c) => c.id === currentChapterId);
+    const chapter = state.reader.currentChapter.data;
     return chapter?.contentHtml !== undefined;
   });
   const isAudioTrackLoaded = useAppSelector((state) => {
-    if (!currentBookId || !currentAudioTrackId) return false;
-    const book = state.library.books.find((b) => b.id === currentBookId);
-    if (!book) return false;
-    const track = book.audioTracks.find((t) => t.id === currentAudioTrackId);
+    const track = state.reader.currentAudioTrack.data;
     return track?.url !== undefined;
   });
 
@@ -231,7 +219,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
 
     // Load progress chapter if not already loaded and not already attempted
     if (currentChapterId && !isChapterLoaded && book.progress?.currentChapterId === currentChapterId) {
-      const chapter = book.chapters.find((c) => c.id === currentChapterId);
+      const chapter = currentChapter || book.chapters.find((c) => c.id === currentChapterId);
       const loadKey = `${currentBookId}-${currentChapterId}`;
 
       if (chapter && !chapter.contentHtml && chapterLoadAttemptedRef.current !== loadKey) {
@@ -246,7 +234,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
 
     // Load progress audio track if not already loaded and not already attempted
     if (currentAudioTrackId && !isAudioTrackLoaded && book.audioState?.currentTrackId === currentAudioTrackId) {
-      const track = book.audioTracks.find((t) => t.id === currentAudioTrackId);
+      const track = currentAudioTrack || book.audioTracks.find((t) => t.id === currentAudioTrackId);
       const loadKey = `${currentBookId}-${currentAudioTrackId}`;
 
       if (track && !track.url && trackLoadAttemptedRef.current !== loadKey) {
@@ -258,7 +246,7 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
         dispatch(loadProgressAudioTrack({ bookId: currentBookId, trackId: currentAudioTrackId }));
       }
     }
-  }, [currentTab, currentBookId, currentChapterId, currentAudioTrackId, isChapterLoaded, isAudioTrackLoaded, dispatch]);
+  }, [currentTab, currentBookId, currentChapterId, currentAudioTrackId, isChapterLoaded, isAudioTrackLoaded, currentChapter, currentAudioTrack, dispatch]);
 
   // Refs to track pending dynamic import promises for cleanup
   const lazyChapterLoaderPromiseRef = useRef<Promise<unknown> | null>(null);
@@ -346,9 +334,10 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
     flushProgressUpdate,
     flushAudioStateUpdate,
     updateSettings,
-    setActiveView: (view: string) => {
+    setActiveView: useCallback((view: string) => {
+      logger.debug("[App] setActiveView called", { view });
       dispatch(setCurrentTab(view as "library" | "reader" | "settings"));
-    },
+    }, [dispatch]),
     activeBook: activeBook ?? null,
     activeChapterId: useAppSelector((state) => state.reader.currentChapterId),
     activeBookId: activeBookId ?? null,
@@ -676,28 +665,45 @@ function AppContent({ libraryHook }: { libraryHook: ReturnType<typeof useLibrary
 }
 
 function App() {
-  return (
-    <LibraryProvider>
-      <AppWithLibrary />
-    </LibraryProvider>
-  );
-}
-
-function AppWithLibrary() {
   const libraryHook = useLibrary();
   const dispatch = useAppDispatch();
-  const reduxLibrary = useAppSelector(selectLibrary);
+  const isHydrated = useAppSelector(selectIsHydrated);
 
-  // Sync library state from LibraryContext to Redux
+  // Hydrate library on mount
   useEffect(() => {
-    if (libraryHook.library.length > 0 || reduxLibrary.length === 0) {
-      dispatch(setLibrary(libraryHook.library));
-    }
-  }, [libraryHook.library, reduxLibrary.length, dispatch]);
+    if (isHydrated) return;
+    
+    let cancelled = false;
+    const timeoutId = setTimeout(() => {
+      if (!cancelled) {
+        logger.warn("[App] Library hydration timeout, proceeding with empty library");
+        dispatch(setIsHydrated(true));
+      }
+    }, 5000);
 
-  useEffect(() => {
-    dispatch(setIsHydrated(libraryHook.isHydrated));
-  }, [libraryHook.isHydrated, dispatch]);
+    const hydrateLibrary = async () => {
+      try {
+        await dispatch(refreshLibraryThunk()).unwrap();
+        clearTimeout(timeoutId);
+        if (!cancelled) {
+          dispatch(setIsHydrated(true));
+        }
+      } catch (error) {
+        clearTimeout(timeoutId);
+        logger.warn("Failed to load books from Rust backend.", error);
+        if (!cancelled) {
+          dispatch(setIsHydrated(true));
+        }
+      }
+    };
+
+    void hydrateLibrary();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [isHydrated, dispatch]);
 
   // Set up conversion listeners once on mount
   useEffect(() => {

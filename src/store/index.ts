@@ -5,6 +5,7 @@ import readerReducer from './slices/readerSlice';
 import conversionReducer from './slices/conversionSlice';
 import readerCoordinatorReducer from './slices/readerCoordinatorSlice';
 import uiReducer from './slices/uiSlice';
+import { progressDebounceMiddleware } from './middleware/progressDebounceMiddleware';
 
 export const store = configureStore({
   reducer: {
@@ -15,6 +16,8 @@ export const store = configureStore({
     readerCoordinator: readerCoordinatorReducer,
     ui: uiReducer,
   },
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware().concat(progressDebounceMiddleware),
 });
 
 export type RootState = ReturnType<typeof store.getState>;

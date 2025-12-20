@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import type { Chapter } from "../../types/reader";
 import { ensureChapterLoaded } from "../../lib/lazy-chapter-loader";
 import { useResourceLoader } from "../useResourceLoader";
-import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
+import { useReaderCoordinator } from "../reader/useReaderCoordinatorRedux";
 import { blobURLManager } from "../../lib/blob-url-manager";
 import { logger } from "../../lib/logger";
 

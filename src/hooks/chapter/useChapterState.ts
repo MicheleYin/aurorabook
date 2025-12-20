@@ -267,9 +267,9 @@ export function useChapterState(params: UseChapterStateParams) {
     
     // Only set restoration state if restoration hasn't been applied yet
     if (!alreadyAppliedByRef && !restorationCompleted) {
-      setRestoreScrollTop(restoredScrollTop);
-      setRestoreElementIndex(restoredElementIndex);
-      setIsRestoring(restoredScrollTop !== null || restoredElementIndex !== null);
+      dispatch(setChapterRestorationScrollTop(restoredScrollTop));
+      dispatch(setChapterRestorationElementIndex(restoredElementIndex));
+      dispatch(setChapterRestorationIsRestoring(restoredScrollTop !== null || restoredElementIndex !== null));
       // Don't reset restorationAppliedRef here - it will be set when restoration is applied
       // If it's already set for a different chapter, that's fine - it will be updated when restoration completes
     } else {
@@ -686,9 +686,9 @@ export function useChapterState(params: UseChapterStateParams) {
                     // Only clear restoration if scroll is close to target (within 50px tolerance)
                     if (finalDiff <= 50) {
                       restorationAppliedRef.current = currentChapterId;
-                      setIsRestoring(false);
-                      setRestoreScrollTop(null);
-                      setRestoreElementIndex(null);
+                      dispatch(setChapterRestorationIsRestoring(false));
+                      dispatch(setChapterRestorationScrollTop(null));
+                      dispatch(setChapterRestorationElementIndex(null));
                       
                       logger.log("[useChapterState] Restoration applied successfully", {
                         chapterId: currentChapterId,
@@ -708,9 +708,9 @@ export function useChapterState(params: UseChapterStateParams) {
                       });
                       setTimeout(() => {
                         restorationAppliedRef.current = currentChapterId;
-                        setIsRestoring(false);
-                        setRestoreScrollTop(null);
-                        setRestoreElementIndex(null);
+                        dispatch(setChapterRestorationIsRestoring(false));
+                        dispatch(setChapterRestorationScrollTop(null));
+                        dispatch(setChapterRestorationElementIndex(null));
                       }, 200);
                     }
                   });
@@ -740,9 +740,9 @@ export function useChapterState(params: UseChapterStateParams) {
                   // Only clear restoration if scroll is close to target (within 50px tolerance)
                   if (finalDiff <= 50) {
                     restorationAppliedRef.current = currentChapterId;
-                    setIsRestoring(false);
-                    setRestoreScrollTop(null);
-                    setRestoreElementIndex(null);
+                    dispatch(setChapterRestorationIsRestoring(false));
+                    dispatch(setChapterRestorationScrollTop(null));
+                    dispatch(setChapterRestorationElementIndex(null));
                     
                     logger.log("[useChapterState] Restoration applied successfully", {
                       chapterId: currentChapterId,
@@ -762,9 +762,9 @@ export function useChapterState(params: UseChapterStateParams) {
                     });
                     setTimeout(() => {
                       restorationAppliedRef.current = currentChapterId;
-                      setIsRestoring(false);
-                      setRestoreScrollTop(null);
-                      setRestoreElementIndex(null);
+                      dispatch(setChapterRestorationIsRestoring(false));
+                      dispatch(setChapterRestorationScrollTop(null));
+                      dispatch(setChapterRestorationElementIndex(null));
                     }, 200);
                   }
                 });

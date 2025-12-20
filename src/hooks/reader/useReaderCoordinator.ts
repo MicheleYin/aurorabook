@@ -6,7 +6,7 @@
 import { useCallback, useRef } from "react";
 import { logger } from "../../lib/logger";
 import type { ChapterProgressSnapshot, ChapterSelectionOptions } from "../../components/reader/types";
-import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
+import { useReaderCoordinator } from "./useReaderCoordinatorRedux";
 
 type UseReaderCoordinatorParams = {
   // Chapter operation implementations

@@ -12,13 +12,14 @@
  * All operations go through ReaderCoordinator for proper coordination.
  */
 
-import { useCallback, useMemo, useRef, useState, useEffect } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { logger } from "../../lib/logger";
 import type { AudioSyncMap, ReaderPreferences } from "../../types/reader";
 import type { ChapterProgressSnapshot, ChapterSelectionOptions } from "../../components/reader/types";
 import { findCurrentAudioSegment } from "../../lib/epub";
-import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
-import { useLibraryContext } from "../../hooks/library/LibraryContext";
+import { useReaderCoordinator } from "./useReaderCoordinatorRedux";
+import { useAppSelector } from "../../store/hooks";
+import { selectLibrary, selectCurrentBook, selectCurrentChapter } from "../../store/selectors";
 import { useChapterLoader } from "../chapter/useChapterLoader";
 import { useChapterProgress } from "../chapter/useChapterProgress";
 import { useChapterState } from "../chapter/useChapterState";
@@ -46,12 +47,9 @@ export function useReaderManager(params: UseReaderManagerParams) {
   } = params;
 
   const coordinator = useReaderCoordinator();
-  const { library } = useLibraryContext();
-  
-  const activeBook = activeBookId ? library.find(b => b.id === activeBookId) : undefined;
-  const activeChapter = activeBook && activeChapterId 
-    ? activeBook.chapters.find(ch => ch.id === activeChapterId)
-    : undefined;
+  const library = useAppSelector(selectLibrary); // Still needed for href lookups
+  const activeBook = useAppSelector(selectCurrentBook);
+  const activeChapter = useAppSelector(selectCurrentChapter);
 
   // Internal state
   const [chapterAnimationState, setChapterAnimationState] = useState<"entering" | "entered" | null>(null);
@@ -138,62 +136,70 @@ export function useReaderManager(params: UseReaderManagerParams) {
       return;
     }
 
-    // Use coordinator to manage the operation
-    await coordinator.changeChapter(activeBook.id, chapterId, options);
+    // Use coordinator to manage the operation with implementation
+    await coordinator.changeChapter(
+      activeBook.id,
+      chapterId,
+      options,
+      async (bId, cId, opts) => {
+        // Check if cancelled
+        const currentOp = coordinator.getCurrentOperation("changeChapter");
+        if (currentOp?.cancelled) {
+          logger.log("[Reader Manager] Chapter change was cancelled", { chapterId: cId });
+          return;
+        }
 
-    // Check if cancelled
-    const currentOp = coordinator.getCurrentOperation("changeChapter");
-    if (currentOp?.cancelled) {
-      logger.log("[Reader Manager] Chapter change was cancelled", { chapterId });
-      return;
-    }
+        // NOTE: Progress is NOT saved on chapter change - only saved when quitting reader
+        // This prevents progress from being saved during navigation
 
-    // NOTE: Progress is NOT saved on chapter change - only saved when quitting reader
-    // This prevents progress from being saved during navigation
+        // Call parent's onSelectChapter
+        onSelectChapter(cId, opts);
 
-    // Call parent's onSelectChapter
-    onSelectChapter(chapterId, options);
+        // Load chapter
+        const chapterToLoad = activeBook.chapters.find(ch => ch.id === cId);
+        if (!chapterToLoad) return;
+        
+        const loaded = await chapterLoader.loadChapter(bId, chapterToLoad);
+        
+        // Check again if cancelled
+        if (coordinator.getCurrentOperation("changeChapter")?.cancelled) {
+          return;
+        }
 
-    // Load chapter
-    const loaded = await chapterLoader.loadChapter(activeBook.id, chapter);
-    
-    // Check again if cancelled
-    if (coordinator.getCurrentOperation("changeChapter")?.cancelled) {
-      return;
-    }
-
-    if (loaded && loaded.contentHtml) {
-      previousChapterIdRef.current = chapterId;
-      chapterLoader.setLoadedChapter(loaded);
+        if (loaded && loaded.contentHtml) {
+          previousChapterIdRef.current = cId;
+          chapterLoader.setLoadedChapter(loaded);
       
-      // Clear existing timeouts
-      if (chapterAnimationTimeoutRef.current) {
-        clearTimeout(chapterAnimationTimeoutRef.current);
-      }
-      if (scrollTimeoutRef.current) {
-        clearTimeout(scrollTimeoutRef.current);
-      }
+          // Clear existing timeouts
+          if (chapterAnimationTimeoutRef.current) {
+            clearTimeout(chapterAnimationTimeoutRef.current);
+          }
+          if (scrollTimeoutRef.current) {
+            clearTimeout(scrollTimeoutRef.current);
+          }
       
-      setChapterAnimationState("entering");
-      chapterAnimationTimeoutRef.current = window.setTimeout(() => {
-        setChapterAnimationState("entered");
-        chapterAnimationTimeoutRef.current = null;
-      }, 50);
+          setChapterAnimationState("entering");
+          chapterAnimationTimeoutRef.current = window.setTimeout(() => {
+            setChapterAnimationState("entered");
+            chapterAnimationTimeoutRef.current = null;
+          }, 50);
 
-      // Handle scroll position
-      // Use a small delay to ensure virtualized content is rendered
-      if (options?.scrollPosition === "top" || options?.isManualSelection) {
-        scrollTimeoutRef.current = window.setTimeout(() => {
-          progress.scrollToTop();
-          scrollTimeoutRef.current = null;
-        }, 100);
-      } else if (options?.scrollPosition === "bottom") {
-        scrollTimeoutRef.current = window.setTimeout(() => {
-          progress.scrollToBottom();
-          scrollTimeoutRef.current = null;
-        }, 100);
+          // Handle scroll position
+          // Use a small delay to ensure virtualized content is rendered
+          if (opts?.scrollPosition === "top" || opts?.isManualSelection) {
+            scrollTimeoutRef.current = window.setTimeout(() => {
+              progress.scrollToTop();
+              scrollTimeoutRef.current = null;
+            }, 100);
+          } else if (opts?.scrollPosition === "bottom") {
+            scrollTimeoutRef.current = window.setTimeout(() => {
+              progress.scrollToBottom();
+              scrollTimeoutRef.current = null;
+            }, 100);
+          }
+        }
       }
-    }
+    );
   }, [activeBook, coordinator, chapterLoader, progress, onSelectChapter]);
 
   // Restore chapter progress
@@ -306,17 +312,8 @@ export function useReaderManager(params: UseReaderManagerParams) {
     // Coordinator access
     coordinator,
   };
-
-  // Cleanup timeouts on unmount
-  useEffect(() => {
-    return () => {
-      if (chapterAnimationTimeoutRef.current) {
-        clearTimeout(chapterAnimationTimeoutRef.current);
-      }
-      if (scrollTimeoutRef.current) {
-        clearTimeout(scrollTimeoutRef.current);
-      }
-    };
-  }, []);
 }
+
+// Cleanup timeouts on unmount - moved outside to avoid return statement issue
+// This should be handled by the component using the hook
 

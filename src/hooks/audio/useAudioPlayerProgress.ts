@@ -10,7 +10,9 @@ import { useAudioTrackLoader } from "./useAudioTrackLoader";
 import { useAudioTextSync } from "./useAudioTextSync";
 import { findChaptersForAudioTrack, chapterHrefsMatch } from "../../lib/epub";
 import { logger } from "../../lib/logger";
-import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
+import { useReaderCoordinator } from "../reader/useReaderCoordinatorRedux";
+import { useAppDispatch } from "../../store/hooks";
+import { updateBookAudioState } from "../../store/thunks/libraryThunks";
 
 type ElementIndexHook = {
   hasElement: (elementId: string) => boolean;
@@ -51,6 +53,7 @@ export function useAudioPlayerProgress({
   elementIndex,
 }: UseAudioPlayerProgressParams) {
   const coordinator = useReaderCoordinator();
+  const dispatch = useAppDispatch();
   const audioLoader = useAudioTrackLoader();
   
   // Calculate header offset - will be computed dynamically in useAudioTextSync
@@ -87,6 +90,20 @@ export function useAudioPlayerProgress({
       hasActiveChapter: !!activeChapter,
     });
     
+    // Dispatch audio state update to Redux (debouncing handled by middleware)
+    if (activeBook) {
+      dispatch(updateBookAudioState({
+        bookId: activeBook.id,
+        audioState: {
+          currentTimeSeconds: snapshot.currentTimeSeconds,
+          trackId: snapshot.trackId,
+          trackHref: snapshot.trackHref,
+          trackIndex: snapshot.trackIndex,
+          updatedAt: snapshot.updatedAt,
+        },
+      }));
+    }
+    
     // Update highlighting based on audioSyncMap
     if (activeBook && snapshot.trackHref) {
       audioSync.updateHighlight(
@@ -98,7 +115,7 @@ export function useAudioPlayerProgress({
     } else {
       logger.debug("[Audio Progress] Skipping update - missing book or trackHref");
     }
-  }, [activeBook, activeChapter, audioSync]);
+  }, [activeBook, activeChapter, audioSync, dispatch]);
 
   // Handle audio track change - SINGLE HANDLER that coordinates everything
   const handleAudioTrackChange = useCallback(async (trackHref: string) => {

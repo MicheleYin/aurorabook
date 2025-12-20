@@ -362,3 +362,195 @@ export const importFromDialog = createAsyncThunk<
   }
 );
 
+/**
+ * Update book progress with debouncing
+ */
+export const updateBookProgress = createAsyncThunk<
+  void,
+  {
+    bookId: string;
+    progress: {
+      chapterId: string;
+      scrollTop?: number;
+      scrollHeight?: number;
+      clientHeight?: number;
+      percent?: number;
+      elementId?: string | null;
+      elementIndex?: number | null;
+      updatedAt?: string;
+    };
+  },
+  { state: RootState; dispatch: AppDispatch }
+>(
+  'library/updateBookProgress',
+  async ({ bookId, progress }, { getState, dispatch }) => {
+    const state = getState();
+    const book = state.library.books.find((b) => b.id === bookId);
+    if (!book) {
+      logger.warn('[updateBookProgress] Book not found', { bookId });
+      return;
+    }
+
+    // Update local state immediately
+    const { getNumberValue, getPercentValue, getElementId, getElementIndex } = await import('../../hooks/library/libraryHelpers');
+    
+    const currentChapter = book.chapters.find((c) => c.id === progress.chapterId);
+    if (!currentChapter) {
+      logger.warn('[updateBookProgress] Chapter not found', { bookId, chapterId: progress.chapterId });
+      return;
+    }
+
+    const chapterIndex = book.chapters.findIndex((c) => c.id === progress.chapterId);
+    const scrollTop = getNumberValue(progress.scrollTop, book.progress?.currentChapterScrollTop ?? 0);
+    const scrollHeight = getNumberValue(progress.scrollHeight, book.progress?.currentChapterScrollHeight ?? 0);
+    const clientHeight = getNumberValue(progress.clientHeight, book.progress?.currentChapterClientHeight ?? 0);
+    const percent = getPercentValue(progress.percent, book.progress?.chapterProgressPercent ?? 0);
+    const elementId = getElementId(progress.elementId);
+    const elementIndex = getElementIndex(progress.elementIndex);
+
+    const totalChapters = book.chapters.length;
+    const bookProgressPercent = totalChapters > 0
+      ? Math.min(Math.max((chapterIndex + percent) / totalChapters, 0), 1)
+      : 0;
+
+    const newProgress = {
+      currentChapterId: progress.chapterId,
+      currentChapterHref: currentChapter.href,
+      currentChapterIndex: chapterIndex,
+      currentChapterScrollTop: scrollTop,
+      currentChapterScrollHeight: scrollHeight,
+      currentChapterClientHeight: clientHeight,
+      chapterProgressPercent: percent,
+      bookProgressPercent,
+      currentChapterElementId: elementId,
+      currentChapterElementIndex: elementIndex,
+      updatedAt: progress.updatedAt ?? new Date().toISOString(),
+    };
+
+    // Update Redux state
+    dispatch(updateBook({ bookId, updates: { progress: newProgress } }));
+
+    // Debounced backend sync will be handled by a middleware or separate thunk
+  }
+);
+
+/**
+ * Update book audio state with debouncing
+ */
+export const updateBookAudioState = createAsyncThunk<
+  void,
+  {
+    bookId: string;
+    audioState: {
+      currentTimeSeconds: number;
+      trackId?: string;
+      trackHref?: string;
+      trackIndex?: number;
+      updatedAt?: string;
+    };
+  },
+  { state: RootState; dispatch: AppDispatch }
+>(
+  'library/updateBookAudioState',
+  async ({ bookId, audioState }, { getState, dispatch }) => {
+    const state = getState();
+    const book = state.library.books.find((b) => b.id === bookId);
+    if (!book?.audioTracks.length) {
+      logger.warn('[updateBookAudioState] Book or tracks not found', { bookId });
+      return;
+    }
+
+    const resolvedTrack =
+      book.audioTracks.find((track) => track.id === audioState.trackId) ??
+      book.audioTracks.find((track) => track.href === audioState.trackHref) ??
+      book.audioTracks[audioState.trackIndex ?? 0];
+
+    if (!resolvedTrack) {
+      logger.warn('[updateBookAudioState] Track not found', { bookId, audioState });
+      return;
+    }
+
+    const resolvedIndex = book.audioTracks.findIndex(
+      (track) => track.id === resolvedTrack.id,
+    );
+    const normalizedSeconds = Number(audioState.currentTimeSeconds.toFixed(3));
+    const existing = book.audioState;
+
+    // Skip if unchanged (within tolerance)
+    if (
+      existing &&
+      existing.currentTrackId === resolvedTrack.id &&
+      Math.abs(existing.currentTimeSeconds - normalizedSeconds) < 0.25
+    ) {
+      return;
+    }
+
+    const newAudioState = {
+      currentTrackId: resolvedTrack.id,
+      currentTrackHref: resolvedTrack.href,
+      currentTrackIndex: resolvedIndex === -1 ? audioState.trackIndex ?? 0 : resolvedIndex,
+      currentTimeSeconds: normalizedSeconds,
+      updatedAt: audioState.updatedAt ?? new Date().toISOString(),
+    };
+
+    // Update Redux state
+    dispatch(updateBook({ bookId, updates: { audioState: newAudioState } }));
+
+    // Debounced backend sync will be handled by a middleware or separate thunk
+  }
+);
+
+/**
+ * Flush pending progress update to backend
+ */
+export const flushProgressUpdate = createAsyncThunk<
+  void,
+  { bookId: string },
+  { state: RootState; dispatch: AppDispatch }
+>(
+  'library/flushProgressUpdate',
+  async ({ bookId }, { getState, dispatch }) => {
+    const state = getState();
+    const book = state.library.books.find((b) => b.id === bookId);
+    if (!book?.progress) {
+      return;
+    }
+
+    try {
+      const { updateBookProgress: updateBookProgressBackend } = await import('../../lib/book-service');
+      const updatedBook = await updateBookProgressBackend(bookId, book.progress);
+      dispatch(updateBook({ bookId, updates: updatedBook }));
+    } catch (error) {
+      logger.error('[flushProgressUpdate] Failed to sync progress to backend', { bookId, error });
+      throw error;
+    }
+  }
+);
+
+/**
+ * Flush pending audio state update to backend
+ */
+export const flushAudioStateUpdate = createAsyncThunk<
+  void,
+  { bookId: string },
+  { state: RootState; dispatch: AppDispatch }
+>(
+  'library/flushAudioStateUpdate',
+  async ({ bookId }, { getState, dispatch }) => {
+    const state = getState();
+    const book = state.library.books.find((b) => b.id === bookId);
+    if (!book?.audioState) {
+      return;
+    }
+
+    try {
+      const { updateBookAudioState: updateBookAudioStateBackend } = await import('../../lib/book-service');
+      const updatedBook = await updateBookAudioStateBackend(bookId, book.audioState);
+      dispatch(updateBook({ bookId, updates: updatedBook }));
+    } catch (error) {
+      logger.error('[flushAudioStateUpdate] Failed to sync audio state to backend', { bookId, error });
+      throw error;
+    }
+  }
+);
+

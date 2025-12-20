@@ -38,7 +38,11 @@ export const selectCurrentBook = createSelector(
   }
 );
 
-export const selectCurrentChapter = createSelector(
+// Use resolved chapter from Redux (preferred)
+export const selectCurrentChapter = (state: RootState) => state.reader.currentChapter.data;
+
+// Fallback selector that finds chapter manually (for backward compatibility)
+export const selectCurrentChapterManual = createSelector(
   [selectCurrentBook, (state: RootState) => state.reader.currentChapterId],
   (book, chapterId) => {
     if (!book || !chapterId) return undefined;
@@ -46,13 +50,26 @@ export const selectCurrentChapter = createSelector(
   }
 );
 
-export const selectCurrentAudioTrack = createSelector(
+// Use resolved audio track from Redux (preferred)
+export const selectCurrentAudioTrack = (state: RootState) => state.reader.currentAudioTrack.data;
+export const selectCurrentAudioTrackUrl = (state: RootState) => state.reader.currentAudioTrack.url;
+
+// Fallback selector that finds track manually (for backward compatibility)
+export const selectCurrentAudioTrackManual = createSelector(
   [selectCurrentBook, selectCurrentAudioTrackId],
   (book, trackId) => {
     if (!book || !trackId) return undefined;
     return book.audioTracks.find((t) => t.id === trackId);
   }
 );
+
+// Chapter loading state
+export const selectCurrentChapterLoading = (state: RootState) => state.reader.currentChapter.loading;
+export const selectCurrentChapterError = (state: RootState) => state.reader.currentChapter.error;
+
+// Audio track loading state
+export const selectCurrentAudioTrackLoading = (state: RootState) => state.reader.currentAudioTrack.loading;
+export const selectCurrentAudioTrackError = (state: RootState) => state.reader.currentAudioTrack.error;
 
 // Audio player selectors
 export const selectAudioPlayer = (state: RootState) => state.reader.audioPlayer;
@@ -82,6 +99,11 @@ export const selectOperationLocks = (state: RootState) => state.readerCoordinato
 export const selectLoadingStates = (state: RootState) => state.readerCoordinator.loading;
 export const selectChapterLoading = (state: RootState) => state.readerCoordinator.loading.chapterLoading;
 export const selectTrackChanging = (state: RootState) => state.readerCoordinator.loading.trackChanging;
+export const selectChapterRestoring = (state: RootState) => state.readerCoordinator.loading.chapterRestoring;
+export const selectChapterSaving = (state: RootState) => state.readerCoordinator.loading.chapterSaving;
+export const selectAudioLoading = (state: RootState) => state.readerCoordinator.loading.audioLoading;
+export const selectAudioRestoring = (state: RootState) => state.readerCoordinator.loading.audioRestoring;
+export const selectAudioSaving = (state: RootState) => state.readerCoordinator.loading.audioSaving;
 
 // ReaderPanel UI selectors
 export const selectReaderUI = (state: RootState) => state.reader.readerUI;
@@ -131,6 +153,10 @@ export const selectAudioPlayerLoading = (state: RootState) => state.reader.audio
 export const selectAudioPlayerLoadedCount = (state: RootState) => state.reader.audioPlayer.loading.loadedCount;
 export const selectAudioPlayerIsTrackLoading = (state: RootState) => state.reader.audioPlayer.loading.isTrackLoading;
 export const selectAudioPlayerIsLocalTrackChanging = (state: RootState) => state.reader.audioPlayer.loading.isLocalTrackChanging;
+
+// Handler selectors
+export const selectTrackChangeHandler = (state: RootState) => state.reader.handlers.trackChangeHandler;
+export const selectSaveProgressHandler = (state: RootState) => state.reader.handlers.saveProgressHandler;
 
 // UI selectors
 export const selectAutoScrollEnabled = (state: RootState) => state.ui.autoScrollEnabled;

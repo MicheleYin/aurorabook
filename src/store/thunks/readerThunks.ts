@@ -3,7 +3,23 @@ import { logger } from '../../lib/logger';
 import { readOneBook } from '../../lib/book-service';
 import type { Chapter, AudioTrack } from '../../types/reader';
 import type { RootState, AppDispatch } from '../index';
-import { setCurrentBookId, setCurrentChapterId, setCurrentAudioTrackId, setCurrentChapterProgress, setCurrentAudioTrackProgress, setChapterLoaded, setAudioTrackLoaded } from '../slices/readerSlice';
+import {
+  setCurrentBookId,
+  setCurrentChapterId,
+  setCurrentAudioTrackId,
+  setCurrentChapterProgress,
+  setCurrentAudioTrackProgress,
+  setChapterLoaded,
+  setAudioTrackLoaded,
+  setCurrentChapterLoading,
+  setCurrentChapterData,
+  setCurrentChapterError,
+  setCurrentChapterLoadAttempt,
+  setCurrentAudioTrackLoading,
+  setCurrentAudioTrackData,
+  setCurrentAudioTrackError,
+  setCurrentAudioTrackLoadAttempt,
+} from '../slices/readerSlice';
 import { addBook, updateBook } from '../slices/librarySlice';
 
 /**
@@ -31,12 +47,26 @@ export const loadProgressChapter = createAsyncThunk<
         throw new Error(`Chapter ${chapterId} not found in book ${bookId}`);
       }
 
-      // If chapter content is already loaded, return it
+      const loadKey = `${bookId}-${chapterId}`;
+      
+      // Prevent duplicate loads
+      if (state.reader.currentChapter.lastLoadAttempt === loadKey && 
+          state.reader.currentChapter.loading) {
+        logger.debug('[loadProgressChapter] Already loading, skipping', { bookId, chapterId });
+        return rejectWithValue('Already loading');
+      }
+
+      // If chapter content is already loaded, set it in resolved state
       if (chapter.contentHtml) {
         logger.debug('[loadProgressChapter] Chapter already loaded', { bookId, chapterId });
+        dispatch(setCurrentChapterData(chapter));
         dispatch(setChapterLoaded(true));
         return { chapter, bookId };
       }
+
+      // Mark as loading
+      dispatch(setCurrentChapterLoading(true));
+      dispatch(setCurrentChapterLoadAttempt(loadKey));
 
       // Load chapter content
       logger.debug('[loadProgressChapter] Loading chapter content', { bookId, chapterId });
@@ -52,12 +82,16 @@ export const loadProgressChapter = createAsyncThunk<
         updates: { chapters: updatedChapters },
       }));
 
+      // Set resolved chapter state
+      dispatch(setCurrentChapterData(loadedChapter));
       dispatch(setChapterLoaded(true));
       return { chapter: loadedChapter, bookId };
     } catch (error) {
       logger.error('[loadProgressChapter] Error loading chapter', { bookId, chapterId, error });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      dispatch(setCurrentChapterError(errorMessage));
       dispatch(setChapterLoaded(false));
-      return rejectWithValue(error);
+      return rejectWithValue(errorMessage);
     }
   }
 );
@@ -87,12 +121,26 @@ export const loadProgressAudioTrack = createAsyncThunk<
         throw new Error(`Audio track ${trackId} not found in book ${bookId}`);
       }
 
-      // If audio track URL is already loaded, return it
+      const loadKey = `${bookId}-${trackId}`;
+      
+      // Prevent duplicate loads
+      if (state.reader.currentAudioTrack.lastLoadAttempt === loadKey && 
+          state.reader.currentAudioTrack.loading) {
+        logger.debug('[loadProgressAudioTrack] Already loading, skipping', { bookId, trackId });
+        return rejectWithValue('Already loading');
+      }
+
+      // If audio track URL is already loaded, set it in resolved state
       if (audioTrack.url) {
         logger.debug('[loadProgressAudioTrack] Audio track already loaded', { bookId, trackId });
+        dispatch(setCurrentAudioTrackData({ track: audioTrack, url: audioTrack.url }));
         dispatch(setAudioTrackLoaded(true));
         return { audioTrack, bookId };
       }
+
+      // Mark as loading
+      dispatch(setCurrentAudioTrackLoading(true));
+      dispatch(setCurrentAudioTrackLoadAttempt(loadKey));
 
       // Load audio track
       logger.debug('[loadProgressAudioTrack] Loading audio track', { bookId, trackId });
@@ -113,12 +161,16 @@ export const loadProgressAudioTrack = createAsyncThunk<
         updates: { audioTracks: updatedTracks },
       }));
 
+      // Set resolved audio track state
+      dispatch(setCurrentAudioTrackData({ track: loadedTrack, url: trackUrl }));
       dispatch(setAudioTrackLoaded(true));
       return { audioTrack: loadedTrack, bookId };
     } catch (error) {
       logger.error('[loadProgressAudioTrack] Error loading audio track', { bookId, trackId, error });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      dispatch(setCurrentAudioTrackError(errorMessage));
       dispatch(setAudioTrackLoaded(false));
-      return rejectWithValue(error);
+      return rejectWithValue(errorMessage);
     }
   }
 );
@@ -186,7 +238,8 @@ export const selectBook = createAsyncThunk<
       }
     } catch (error) {
       logger.error('[selectBook] Error selecting book', { bookId, error });
-      return rejectWithValue(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return rejectWithValue(errorMessage);
     }
   }
 );

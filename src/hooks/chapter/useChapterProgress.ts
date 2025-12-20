@@ -8,7 +8,9 @@ import type { Book, Chapter } from "../../types/reader";
 import type { ChapterProgressSnapshot } from "../../components/reader/types";
 import { useChapterLoader } from "./useChapterLoader";
 import { logger } from "../../lib/logger";
-import { useReaderCoordinator } from "../../contexts/ReaderCoordinatorContext";
+import { useReaderCoordinator } from "../reader/useReaderCoordinatorRedux";
+import { useAppDispatch } from "../../store/hooks";
+import { updateBookProgress } from "../../store/thunks/libraryThunks";
 import { computeScrollMetrics, computeWindowScrollMetrics, scrollToElement, findScrollableContainer, type ScrollMetrics, type ScrollMetricsWithSegments } from "../../lib/scroll-utils";
 import { createProgressSnapshot } from "../../lib/progress-utils";
 
@@ -72,6 +74,7 @@ export function useChapterProgress({
 }: UseChapterProgressParams) {
   // Get coordinator to check for restoration operations
   const coordinator = useReaderCoordinator();
+  const dispatch = useAppDispatch();
   const chapterLoader = useChapterLoader();
   
   // Get cached chapters
@@ -221,16 +224,28 @@ export function useChapterProgress({
       hasActiveChapter: !!activeChapter,
     });
     
-    // Progress is handled by the coordinator
+    // Dispatch progress update to Redux (debouncing handled by middleware)
     if (activeBook && snapshot.chapterId) {
-      // Progress will be saved via coordinator
-      logger.log("[Chapter Progress] Progress update", {
+      dispatch(updateBookProgress({
+        bookId: activeBook.id,
+        progress: {
+          chapterId: snapshot.chapterId,
+          scrollTop: snapshot.scrollTop,
+          scrollHeight: snapshot.scrollHeight,
+          clientHeight: snapshot.clientHeight,
+          percent: snapshot.chapterProgressPercent,
+          elementId: snapshot.elementId,
+          elementIndex: snapshot.elementIndex,
+          updatedAt: snapshot.updatedAt,
+        },
+      }));
+      logger.log("[Chapter Progress] Progress update dispatched to Redux", {
         chapterId: snapshot.chapterId,
         scrollTop: snapshot.scrollTop,
-        percent: snapshot.percent,
+        percent: snapshot.chapterProgressPercent,
       });
     }
-  }, [activeBook, activeChapter, _isRestoringScroll, coordinator]);
+  }, [activeBook, activeChapter, _isRestoringScroll, coordinator, dispatch]);
 
   // Handle chapter change - SINGLE HANDLER that coordinates everything
   // NOTE: Progress is NOT saved on chapter change - only saved when quitting reader

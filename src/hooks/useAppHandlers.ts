@@ -125,12 +125,11 @@ export function useAppHandlers({
     async (bookId: string) => {
       logger.debug("[App] handleSelectBook called", {
         bookId,
-        librarySize: library.length,
       });
       await dispatch(selectBook({ bookId }));
       dispatch(setPendingFragment(null));
     },
-    [dispatch, library]
+    [dispatch]
   );
 
   // Progress saving
@@ -359,8 +358,17 @@ export function useAppHandlers({
   // Book handlers
   const handleSelectBook = useCallback(
     async (bookId: string) => {
-      await handleSelectBookContext(bookId);
+      logger.debug("[useAppHandlers] handleSelectBook called", { bookId });
+      try {
+        await handleSelectBookContext(bookId);
+        logger.debug("[useAppHandlers] handleSelectBookContext completed, setting view to reader");
+      } catch (error) {
+        logger.error("[useAppHandlers] handleSelectBookContext failed", { error, bookId });
+      }
+      // Always navigate to reader view, even if book selection fails
+      logger.debug("[useAppHandlers] Setting view to reader");
       setActiveView("reader");
+      logger.debug("[useAppHandlers] setActiveView('reader') called");
     },
     [handleSelectBookContext, setActiveView]
   );
