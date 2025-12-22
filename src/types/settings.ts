@@ -4,4 +4,3 @@ export interface AppSettings {
   autoScrollEnabled?: boolean;
   audioPlaybackSpeed?: number;
 }
-

@@ -1,3 +1,5 @@
+import type { ToasterProps } from "sonner";
+import { type CSSProperties } from "react";
 import {
   CircleCheck,
   Info,
@@ -5,8 +7,7 @@ import {
   OctagonX,
   TriangleAlert,
 } from "lucide-react";
-import { type CSSProperties } from "react";
-import { Toaster as SonnerToaster, type ToasterProps } from "sonner";
+import { Toaster as SonnerToaster } from "sonner";
 
 export function Toaster(props: ToasterProps) {
   return (
@@ -28,7 +29,6 @@ export function Toaster(props: ToasterProps) {
         } as CSSProperties
       }
       {...props}
-      
     />
   );
 }

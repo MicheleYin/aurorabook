@@ -1,9 +1,10 @@
+import type { VariantProps } from "class-variance-authority";
 import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
-import { cva, type VariantProps } from "class-variance-authority";
+import { cva } from "class-variance-authority";
 
-import { cn } from "@/lib/utils";
 import { animPatterns } from "@/lib/animations";
+import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
   "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background disabled:pointer-events-none disabled:opacity-50",
@@ -31,11 +32,12 @@ const buttonVariants = cva(
       variant: "default",
       size: "default",
     },
-  },
+  }
 );
 
 export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+  extends
+    React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean;
 }
@@ -50,7 +52,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         setRippleActive(true);
         setTimeout(() => setRippleActive(false), 600); // Match animation duration
       }
-      
+
       onClick?.(event);
     };
 
@@ -58,7 +60,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     return (
       <Comp
         className={cn(
-          buttonVariants({ variant, size }), 
+          buttonVariants({ variant, size }),
           animPatterns.buttonHover,
           "relative overflow-hidden",
           rippleActive && "button-ripple ripple-active",
@@ -69,9 +71,8 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         {...props}
       />
     );
-  },
+  }
 );
 Button.displayName = "Button";
 
 export { Button, buttonVariants };
-

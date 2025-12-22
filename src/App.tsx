@@ -1,9 +1,9 @@
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { Toaster } from "./components/ui/sonner";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/ui/tabs";
-import { Library } from "./components/Library";
+import { Library } from "./components/library/Library";
 import { Reader } from "./components/Reader";
 import { Settings } from "./components/settings/SettingsPanel";
+import { Toaster } from "./components/ui/sonner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 
 function App() {
   return (
@@ -23,20 +23,20 @@ function App() {
           </main>
           <div className="absolute bottom-0 left-0 right-0 flex justify-center pb-4 pointer-events-none z-10">
             <TabsList className="rounded-full bg-background/80 backdrop-blur-lg border shadow-lg px-1 py-2 gap-1 pointer-events-auto">
-              <TabsTrigger 
-                value="library" 
+              <TabsTrigger
+                value="library"
                 className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
               >
                 Library
               </TabsTrigger>
-              <TabsTrigger 
-                value="reader" 
+              <TabsTrigger
+                value="reader"
                 className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
               >
                 Reader
               </TabsTrigger>
-              <TabsTrigger 
-                value="settings" 
+              <TabsTrigger
+                value="settings"
                 className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
               >
                 Settings
@@ -44,7 +44,7 @@ function App() {
             </TabsList>
           </div>
         </Tabs>
-        <Toaster />
+        <Toaster richColors position="top-center" />
       </div>
     </ErrorBoundary>
   );

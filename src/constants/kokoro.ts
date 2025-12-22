@@ -3,7 +3,8 @@ import type { VoiceId } from "../types/reader";
 export const DEFAULT_KOKORO_MODEL_ID = "onnx-community/Kokoro-82M-v1.0-ONNX";
 export const DEFAULT_KOKORO_VOICE_ID: VoiceId = "af_heart";
 export const KOKORO_MODEL_CARD_URL = `https://huggingface.co/${DEFAULT_KOKORO_MODEL_ID}`;
-export const KOKORO_VOICE_DATASET_URL = "https://huggingface.co/datasets/hexgrad/Kokoro-voices";
+export const KOKORO_VOICE_DATASET_URL =
+  "https://huggingface.co/datasets/hexgrad/Kokoro-voices";
 
 export type KokoroVoiceOption = {
   id: VoiceId;
@@ -28,7 +29,7 @@ const americanVoices: KokoroVoiceOption[] = [
     summary: "Expressive default, Grade A",
     sampleUrl: "voice-samples/af_heart.mp3",
   },
- 
+
   {
     id: "af_bella",
     name: "Bella",
@@ -45,7 +46,7 @@ const americanVoices: KokoroVoiceOption[] = [
     summary: "Soft conversational, Grade D",
     sampleUrl: "voice-samples/af_jessica.mp3",
   },
-  
+
   {
     id: "am_fenrir",
     name: "Fenrir",
@@ -54,7 +55,7 @@ const americanVoices: KokoroVoiceOption[] = [
     summary: "Deep & bold, Grade C+",
     sampleUrl: "voice-samples/am_fenrir.mp3",
   },
-  
+
   {
     id: "am_michael",
     name: "Michael",
@@ -63,11 +64,9 @@ const americanVoices: KokoroVoiceOption[] = [
     summary: "Presenter feel, Grade C+",
     sampleUrl: "voice-samples/am_michael.mp3",
   },
-
 ];
 
 const britishVoices: KokoroVoiceOption[] = [
-
   {
     id: "bf_emma",
     name: "Emma",
@@ -100,7 +99,6 @@ const britishVoices: KokoroVoiceOption[] = [
     summary: "Clean RP read, Grade C",
     sampleUrl: "voice-samples/bm_george.mp3",
   },
-  
 ];
 
 export const KOKORO_VOICE_GROUPS: KokoroVoiceGroup[] = [
@@ -113,5 +111,3 @@ export const KOKORO_VOICE_GROUPS: KokoroVoiceGroup[] = [
     voices: britishVoices,
   },
 ];
-
-

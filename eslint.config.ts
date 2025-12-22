@@ -1,20 +1,69 @@
 import js from "@eslint/js";
+import prettier from "eslint-config-prettier";
+import pluginReact from "eslint-plugin-react";
+import reactHooks from "eslint-plugin-react-hooks";
 import globals from "globals";
 import tseslint from "typescript-eslint";
-import pluginReact from "eslint-plugin-react";
-import json from "@eslint/json";
-import markdown from "@eslint/markdown";
-import css from "@eslint/css";
-import { defineConfig } from "eslint/config";
 
-export default defineConfig([
-  { files: ["**/*.{js,mjs,cjs,ts,mts,cts,jsx,tsx}"], plugins: { js }, extends: ["js/recommended"], languageOptions: { globals: globals.browser } },
-  tseslint.configs.recommended,
+export default [
   {
-    ...pluginReact.configs.flat.recommended,
+    ignores: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/target/**",
+      "**/.history/**",
+      "**/.mypy_cache/**",
+      "**/.svelte-kit/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/onnxruntime/**",
+      "**/ort/**",
+      "**/Kokoros/**",
+      "**/espeak-ng/**",
+      "**/misaki/**",
+      "**/misaki-rs/**",
+      "**/phonetisaurus-g2p-rs/**",
+      "**/piper-rs/**",
+      "**/patches/**",
+      "**/aurora-new/**",
+      "**/eslint/**",
+      "**/*.lock",
+      "**/bun.lock",
+      "**/package-lock.json",
+      "**/uv.lock",
+      "**/Cargo.lock",
+      "**/*.json",
+      "**/*.md",
+      "**/*.css",
+    ],
+  },
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  prettier,
+  {
+    files: ["**/*.{js,mjs,cjs,ts,mts,cts,jsx,tsx}"],
+    languageOptions: {
+      globals: globals.browser,
+      parserOptions: {
+        ecmaVersion: "latest",
+        sourceType: "module",
+      },
+    },
+  },
+  {
+    files: ["**/*.{jsx,tsx}"],
+    plugins: {
+      react: pluginReact,
+      "react-hooks": reactHooks,
+    },
     rules: {
       ...pluginReact.configs.flat.recommended.rules,
-      "react/react-in-jsx-scope": "off", // <-- 👈 disable the rule
+      ...reactHooks.configs.recommended.rules,
+      "react/react-in-jsx-scope": "off",
+      "react/prop-types": "off", // TypeScript handles prop validation
+      "react-hooks/rules-of-hooks": "error",
+      "react-hooks/exhaustive-deps": "warn", // Warn on missing dependencies
     },
     settings: {
       react: {
@@ -22,9 +71,12 @@ export default defineConfig([
       },
     },
   },
-  { files: ["**/*.json"], plugins: { json }, language: "json/json", extends: ["json/recommended"] },
-  { files: ["**/*.jsonc"], plugins: { json }, language: "json/jsonc", extends: ["json/recommended"] },
-  { files: ["**/*.json5"], plugins: { json }, language: "json/json5", extends: ["json/recommended"] },
-  { files: ["**/*.md"], plugins: { markdown }, language: "markdown/gfm", extends: ["markdown/recommended"] },
-  { files: ["**/*.css"], plugins: { css }, language: "css/css", extends: ["css/recommended"] },
-]);
+  {
+    files: ["**/*.config.{js,ts,mjs}", "**/vite.config.{js,ts}"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+];

@@ -83,9 +83,11 @@ pub struct ChapterCompletedEvent {
 /// and update the UI to show the cancellation state.
 ///
 /// # Fields
-/// * `source_path` - The source path of the book being converted
+/// * `book_id` - The book ID of the book being converted
+/// * `source_path` - The source path of the book being converted (kept for backward compatibility)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversionCancelledEvent {
+    pub book_id: String,
     pub source_path: String,
 }
 

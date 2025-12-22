@@ -1,9 +1,10 @@
 import { type ClassValue } from "clsx";
+
 import { cn } from "./utils";
 
 /**
  * Shared animation utilities and constants
- * 
+ *
  * This module provides a centralized animation system for consistent
  * timing, easing, and animation patterns across the application.
  */
@@ -34,34 +35,34 @@ export const animationClasses = {
   transitionNormal: "transition-all",
   transitionMedium: "transition-all",
   transitionSlow: "transition-all",
-  
+
   // Colors only
   transitionColors: "transition-colors",
-  
+
   // Opacity only
   transitionOpacity: "transition-opacity",
-  
+
   // Transform only
   transitionTransform: "transition-transform",
-  
+
   // Specific property transitions
   transitionPadding: "transition-[padding]",
   transitionShadow: "transition-shadow",
-  
+
   // Fade animations
   fadeIn: "animate-in fade-in-0",
   fadeOut: "animate-out fade-out-0",
-  
+
   // Slide animations
   slideUp: "animate-in slide-in-from-bottom-2",
   slideDown: "animate-in slide-in-from-top-2",
   slideLeft: "animate-in slide-in-from-right-2",
   slideRight: "animate-in slide-in-from-left-2",
-  
+
   // Scale animations
   scaleIn: "animate-in zoom-in-95",
   scaleOut: "animate-out zoom-out-95",
-  
+
   // Combined animations
   slideUpFade: "animate-in slide-in-from-bottom-2 fade-in-0",
   slideDownFade: "animate-in slide-in-from-top-2 fade-in-0",
@@ -73,7 +74,14 @@ export const animationClasses = {
  */
 export function anim(
   type: "fast" | "normal" | "medium" | "slow" | "slower" = "normal",
-  property: "all" | "colors" | "opacity" | "transform" | "padding" | "shadow" | "height" = "all",
+  property:
+    | "all"
+    | "colors"
+    | "opacity"
+    | "transform"
+    | "padding"
+    | "shadow"
+    | "height" = "all",
   ...additionalClasses: ClassValue[]
 ): string {
   const durationMap = {
@@ -83,7 +91,7 @@ export function anim(
     slow: "duration-400",
     slower: "duration-500",
   };
-  
+
   const propertyMap = {
     all: "transition-all",
     colors: "transition-colors",
@@ -93,12 +101,8 @@ export function anim(
     shadow: "transition-shadow",
     height: "transition-[height,max-height]",
   };
-  
-  return cn(
-    propertyMap[property],
-    durationMap[type],
-    ...additionalClasses
-  );
+
+  return cn(propertyMap[property], durationMap[type], ...additionalClasses);
 }
 
 /**
@@ -110,7 +114,7 @@ export function fade(
 ): string {
   const fadeClass = direction === "in" ? "fade-in-0" : "fade-out-0";
   const durationClass = `duration-${ANIMATION_DURATION[duration]}`;
-  
+
   return cn(
     direction === "in" ? "animate-in" : "animate-out",
     fadeClass,
@@ -131,7 +135,7 @@ export function slide(
     left: `slide-in-from-right-${distance}`,
     right: `slide-in-from-left-${distance}`,
   };
-  
+
   return cn("animate-in", directionMap[direction]);
 }
 
@@ -142,12 +146,10 @@ export function scale(
   direction: "in" | "out" = "in",
   amount: 90 | 95 | 100 | 105 = 95
 ): string {
-  const scaleClass = direction === "in" ? `zoom-in-${amount}` : `zoom-out-${amount}`;
-  
-  return cn(
-    direction === "in" ? "animate-in" : "animate-out",
-    scaleClass
-  );
+  const scaleClass =
+    direction === "in" ? `zoom-in-${amount}` : `zoom-out-${amount}`;
+
+  return cn(direction === "in" ? "animate-in" : "animate-out", scaleClass);
 }
 
 /**
@@ -166,10 +168,9 @@ export function hoverLift(
 /**
  * Creates hover scale animation classes
  */
-export function hoverScale(
-  amount: 1.02 | 1.05 | 1.1 = 1.05
-): string {
-  const scaleValue = amount === 1.02 ? "1.02" : amount === 1.05 ? "1.05" : "1.1";
+export function hoverScale(amount: 1.02 | 1.05 | 1.1 = 1.05): string {
+  const scaleValue =
+    amount === 1.02 ? "1.02" : amount === 1.05 ? "1.05" : "1.1";
   return `hover:scale-[${scaleValue}]`;
 }
 
@@ -178,7 +179,13 @@ export function hoverScale(
  */
 export function enterExit(
   isVisible: boolean,
-  type: "fade" | "slideUp" | "slideDown" | "scale" | "slideUpFade" | "scaleFade" = "fade"
+  type:
+    | "fade"
+    | "slideUp"
+    | "slideDown"
+    | "scale"
+    | "slideUpFade"
+    | "scaleFade" = "fade"
 ): string {
   if (isVisible) {
     switch (type) {
@@ -227,8 +234,7 @@ export const animPatterns = {
     "hover:-translate-y-0.5 hover:scale-[1.02] hover:shadow-lg",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
   ),
-  
-  
+
   // Button hover effect with scale
   buttonHover: cn(
     anim("normal", "all"),
@@ -237,56 +243,45 @@ export const animPatterns = {
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
     "transition-transform duration-150 ease-out"
   ),
-  
+
   // Image zoom on hover - smoother transition
   imageZoom: cn(
     anim("medium", "transform"),
     "group-hover:scale-110",
     "ease-out"
   ),
-  
+
   // Cover image loading shimmer
   coverShimmer: cn(
     "animate-shimmer bg-gradient-to-r from-muted via-muted/50 to-muted bg-[length:200%_100%]"
   ),
-  
+
   // Navigation bar hide/show
-  navBar: cn(
-    anim("normal", "all"),
-    "ease-out"
-  ),
-  
+  navBar: cn(anim("normal", "all"), "ease-out"),
+
   // Audio player slide
-  audioPlayer: cn(
-    anim("medium", "all"),
-    "ease-out"
-  ),
-  
+  audioPlayer: cn(anim("medium", "all"), "ease-out"),
+
   // Reader chrome transition
-  readerChrome: cn(
-    anim("medium", "all")
-  ),
-  
+  readerChrome: cn(anim("medium", "all")),
+
   // Progress bar fill - smooth transition
-  progressBar: cn(
-    anim("medium", "all"),
-    "ease-in-out"
-  ),
-  
+  progressBar: cn(anim("medium", "all"), "ease-in-out"),
+
   // Progress bar with pulse effect (for active conversions)
   progressBarPulse: cn(
     anim("medium", "all"),
     "ease-in-out",
     "progress-bar-pulse"
   ),
-  
+
   // Progress bar with shimmer effect
   progressBarShimmer: cn(
     anim("medium", "all"),
     "ease-in-out",
     "progress-bar-shimmer"
   ),
-  
+
   // Progress bar with wave effect
   progressBarWave: cn(
     anim("medium", "all"),
@@ -294,74 +289,53 @@ export const animPatterns = {
     "progress-bar-wave",
     "relative overflow-hidden"
   ),
-  
+
   // Dialog backdrop - enhanced fade-in
-  dialogBackdrop: cn(
-    "dialog-backdrop-enter"
-  ),
-  
+  dialogBackdrop: cn("dialog-backdrop-enter"),
+
   // Dialog content - scale from 0.95 to 1.0 with fade
-  dialogContent: cn(
-    "dialog-content-enter"
-  ),
-  
+  dialogContent: cn("dialog-content-enter"),
+
   // Dialog content exit
-  dialogContentExit: cn(
-    "dialog-content-exit"
-  ),
-  
+  dialogContentExit: cn("dialog-content-exit"),
+
   // Drawer slide with spring physics
-  drawerSlideBottom: cn(
-    "drawer-slide-in-bottom"
-  ),
-  
-  drawerSlideBottomExit: cn(
-    "drawer-slide-out-bottom"
-  ),
-  
-  drawerSlideLeft: cn(
-    "drawer-slide-in-left"
-  ),
-  
-  drawerSlideLeftExit: cn(
-    "drawer-slide-out-left"
-  ),
-  
+  drawerSlideBottom: cn("drawer-slide-in-bottom"),
+
+  drawerSlideBottomExit: cn("drawer-slide-out-bottom"),
+
+  drawerSlideLeft: cn("drawer-slide-in-left"),
+
+  drawerSlideLeftExit: cn("drawer-slide-out-left"),
+
   // Dialog section stagger animation
-  dialogSection: cn(
-    "dialog-section-enter"
-  ),
-  
+  dialogSection: cn("dialog-section-enter"),
+
   // View transition container
-  viewTransition: cn(
-    anim("medium", "all"),
-    "ease-in-out"
-  ),
-  
+  viewTransition: cn(anim("medium", "all"), "ease-in-out"),
+
   // View slide left (Library -> Reader -> Settings)
   viewSlideLeft: cn(
     "animate-in slide-in-from-right-4 fade-in-0 duration-300 ease-in-out"
   ),
-  
+
   // View slide right (Settings -> Reader -> Library)
   viewSlideRight: cn(
     "animate-in slide-in-from-left-4 fade-in-0 duration-300 ease-in-out"
   ),
-  
+
   // Chapter transition - slide left (next chapter)
   chapterSlideLeft: cn(
     "animate-in slide-in-from-right-8 fade-in-0 duration-300 ease-in-out"
   ),
-  
+
   // Chapter transition - slide right (previous chapter)
   chapterSlideRight: cn(
     "animate-in slide-in-from-left-8 fade-in-0 duration-300 ease-in-out"
   ),
-  
+
   // Chapter transition - cross fade
-  chapterCrossFade: cn(
-    "animate-in fade-in-0 duration-300 ease-in-out"
-  ),
+  chapterCrossFade: cn("animate-in fade-in-0 duration-300 ease-in-out"),
 } as const;
 
 /**
@@ -375,17 +349,17 @@ export function viewTransition(
     // Initial load - just fade in
     return fade("in", "medium");
   }
-  
+
   // Determine slide direction based on view order
   const viewOrder: Record<string, number> = {
     library: 0,
     reader: 1,
     settings: 2,
   };
-  
+
   const fromOrder = viewOrder[fromView];
   const toOrder = viewOrder[toView];
-  
+
   if (toOrder > fromOrder) {
     // Moving forward (Library -> Reader -> Settings) - slide left
     return animPatterns.viewSlideLeft;
@@ -406,10 +380,9 @@ export function staggerDelay(index: number, baseDelay: number = 50): string {
 /**
  * Creates stagger animation classes for dialog sections
  */
-export function dialogSectionStagger(index: number, baseDelay: number = 40): string {
-  return cn(
-    animPatterns.dialogSection,
-    staggerDelay(index, baseDelay)
-  );
+export function dialogSectionStagger(
+  index: number,
+  baseDelay: number = 40
+): string {
+  return cn(animPatterns.dialogSection, staggerDelay(index, baseDelay));
 }
-

@@ -1,11 +1,11 @@
-import { Monitor, Moon, Sun } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useState, memo } from "react";
+import { memo, useEffect, useState } from "react";
+import { Monitor, Moon, Sun } from "lucide-react";
 
-import { cn } from "../lib/utils";
-import { Button } from "./ui/button";
 import type { UITheme } from "../types/ui";
 import { anim } from "../lib/animations";
+import { cn } from "../lib/utils";
+import { Button } from "./ui/button";
 
 interface ThemeSwitcherProps {
   value: UITheme;
@@ -13,9 +13,21 @@ interface ThemeSwitcherProps {
 }
 
 const options: Array<{ id: UITheme; icon: ReactNode; label: string }> = [
-  { id: "light", icon: <Sun className="h-4 w-4" aria-hidden="true" />, label: "Light" },
-  { id: "dark", icon: <Moon className="h-4 w-4" aria-hidden="true" />, label: "Dark" },
-  { id: "system", icon: <Monitor className="h-4 w-4" aria-hidden="true" />, label: "System" },
+  {
+    id: "light",
+    icon: <Sun className="h-4 w-4" aria-hidden="true" />,
+    label: "Light",
+  },
+  {
+    id: "dark",
+    icon: <Moon className="h-4 w-4" aria-hidden="true" />,
+    label: "Dark",
+  },
+  {
+    id: "system",
+    icon: <Monitor className="h-4 w-4" aria-hidden="true" />,
+    label: "System",
+  },
 ];
 
 function ThemeSwitcherComponent({ value, onChange }: ThemeSwitcherProps) {
@@ -49,7 +61,7 @@ function ThemeSwitcherComponent({ value, onChange }: ThemeSwitcherProps) {
               "h-8 w-8 px-0 text-muted-foreground relative overflow-hidden",
               anim("medium", "all"),
               isActive && "bg-primary/10 text-primary",
-              isTransitioning && isActive && "animate-pulse",
+              isTransitioning && isActive && "animate-pulse"
             )}
             aria-label={`Switch to ${option.label} theme`}
           >
@@ -69,6 +81,12 @@ function ThemeSwitcherComponent({ value, onChange }: ThemeSwitcherProps) {
   );
 }
 
-export const ThemeSwitcher = memo(ThemeSwitcherComponent, (prevProps, nextProps) => {
-  return prevProps.value === nextProps.value && prevProps.onChange === nextProps.onChange;
-});
+export const ThemeSwitcher = memo(
+  ThemeSwitcherComponent,
+  (prevProps, nextProps) => {
+    return (
+      prevProps.value === nextProps.value &&
+      prevProps.onChange === nextProps.onChange
+    );
+  }
+);

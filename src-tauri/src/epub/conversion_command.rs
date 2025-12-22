@@ -110,7 +110,7 @@ pub async fn convert_epub_to_audiobook_command(
     };
     
     // Prepare conversion
-    let conversion_prep = prepare_conversion(&app, &source_path, &book_data).await?;
+    let conversion_prep = prepare_conversion(&app, &book_id, &book_data).await?;
     
     // Perform conversion
     // Note: epub_structure is cached at this level but not passed down since
@@ -118,6 +118,7 @@ pub async fn convert_epub_to_audiobook_command(
     // is loading EPUB and chapters from database instead of file system.
     let converted_epub = perform_conversion(
         &app,
+        &book_id,
         &source_path,
         epub_data_for_conversion,
         &book_data,
@@ -428,7 +429,7 @@ struct ConversionPrep {
 /// Prepare conversion with cancellation token and progress updates
 async fn prepare_conversion(
     app: &AppHandle,
-    source_path: &str,
+    book_id: &str,
     book_data: &BookData,
 ) -> AppResult<ConversionPrep> {
     log::info!("Resuming conversion: {} chapters remaining out of {} total ({} already completed)", 
@@ -452,7 +453,7 @@ async fn prepare_conversion(
     });
     
     // Get cancellation token for this conversion
-    let cancel_token = get_cancellation_token(app, source_path)?;
+    let cancel_token = get_cancellation_token(app, book_id)?;
     
     Ok(ConversionPrep { cancel_token })
 }
@@ -460,6 +461,7 @@ async fn prepare_conversion(
 /// Perform the actual EPUB conversion
 async fn perform_conversion(
     app: &AppHandle,
+    book_id: &str,
     source_path: &str,
     epub_data: Vec<u8>,
     book_data: &BookData,
@@ -490,11 +492,11 @@ async fn perform_conversion(
     ).await;
     
     // Clean up cancellation token
-    cleanup_cancellation_token(app, source_path);
+    cleanup_cancellation_token(app, book_id);
     
     // Check if conversion was cancelled
     if cancel_token.load(Ordering::Relaxed) {
-        handle_conversion_cancellation(app, source_path).await?;
+        handle_conversion_cancellation(app, book_id, source_path).await?;
         return Err(AppError::EpubParse("Conversion cancelled by user".to_string()));
     }
     
@@ -510,14 +512,15 @@ async fn perform_conversion(
 /// Handle conversion cancellation
 async fn handle_conversion_cancellation(
     app: &AppHandle,
+    book_id: &str,
     source_path: &str,
 ) -> AppResult<()> {
-    log::info!("Conversion was cancelled for: {}", source_path);
+    log::info!("Conversion was cancelled for book_id: {}, source_path: {}", book_id, source_path);
     
     // Set conversion status to "started" when cancelling
     if let Ok(db) = get_db_connection(app).await {
         if let Ok(mut books) = BookRepository::find_all(db.as_ref()).await {
-        if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
+        if let Some(book) = books.iter_mut().find(|b| b.id == book_id) {
             book.conversion_status = ConversionStatus::Started;
                 if let Err(e) = BookRepository::save(db.as_ref(), book).await {
                 log::warn!("Failed to set conversion status to started on cancellation: {}", e);
@@ -531,12 +534,13 @@ async fn handle_conversion_cancellation(
     // Emit conversion-cancelled event to frontend
     use crate::epub::converter::ConversionCancelledEvent;
     let event = ConversionCancelledEvent {
+        book_id: book_id.to_string(),
         source_path: source_path.to_string(),
     };
     if let Err(e) = app.emit("conversion-cancelled", event) {
         log::warn!("Failed to emit conversion-cancelled event: {}", e);
     } else {
-        log::debug!("Emitted conversion-cancelled event for: {}", source_path);
+        log::debug!("Emitted conversion-cancelled event for book_id: {}", book_id);
     }
     
     Ok(())

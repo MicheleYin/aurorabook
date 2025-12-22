@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Global cancellation token storage for conversions
-/// Maps source_path to cancellation token
+/// Maps book_id to cancellation token
 #[derive(Default)]
 pub struct CancellationTokens {
     tokens: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
@@ -31,7 +31,7 @@ impl CancellationTokens {
 /// Tauri command to cancel an ongoing conversion
 #[tauri::command]
 pub async fn cancel_conversion_command(
-    source_path: String,
+    book_id: String,
     app: AppHandle,
 ) -> AppResult<()> {
     let tokens = app.state::<CancellationTokens>();
@@ -41,11 +41,11 @@ pub async fn cancel_conversion_command(
             AppError::Store(format!("Failed to lock cancellation tokens: {}", e))
         })?;
         
-        if let Some(cancel_token) = tokens_guard.get(&source_path) {
+        if let Some(cancel_token) = tokens_guard.get(&book_id) {
             cancel_token.store(true, Ordering::Relaxed);
-            log::info!("Cancellation requested for conversion: {}", source_path);
+            log::info!("Cancellation requested for conversion: book_id={}", book_id);
         } else {
-            log::warn!("No active conversion found for: {}", source_path);
+            log::warn!("No active conversion found for book_id: {}", book_id);
         }
     }
     
@@ -55,7 +55,7 @@ pub async fn cancel_conversion_command(
 /// Get or create a cancellation token for a conversion
 pub fn get_cancellation_token(
     app: &AppHandle,
-    source_path: &str,
+    book_id: &str,
 ) -> AppResult<Arc<AtomicBool>> {
     let tokens = app.state::<CancellationTokens>();
     let tokens_map = tokens.inner().get();
@@ -65,7 +65,7 @@ pub fn get_cancellation_token(
         })?;
         
         // Remove any existing token (cleanup from previous conversion)
-        tokens_guard.remove(source_path);
+        tokens_guard.remove(book_id);
         
         // Create new cancellation token
         Arc::new(AtomicBool::new(false))
@@ -76,14 +76,14 @@ pub fn get_cancellation_token(
         let mut tokens_guard = tokens_map.lock().map_err(|e| {
             AppError::Store(format!("Failed to lock cancellation tokens: {}", e))
         })?;
-        tokens_guard.insert(source_path.to_string(), Arc::clone(&cancel_token));
+        tokens_guard.insert(book_id.to_string(), Arc::clone(&cancel_token));
     }
     
     Ok(cancel_token)
 }
 
 /// Clean up cancellation token after conversion completes
-pub fn cleanup_cancellation_token(app: &AppHandle, source_path: &str) {
+pub fn cleanup_cancellation_token(app: &AppHandle, book_id: &str) {
     // Extract the owned Arc first - it lives independently of the state reference
     let tokens_map_opt = {
         if let Some(tokens_state) = app.try_state::<CancellationTokens>() {
@@ -99,8 +99,8 @@ pub fn cleanup_cancellation_token(app: &AppHandle, source_path: &str) {
         // Lock and remove - the guard will be dropped at the end of the match
         match arc.lock() {
             Ok(mut tokens_guard) => {
-                tokens_guard.remove(source_path);
-                log::debug!("Cleaned up cancellation token for: {}", source_path);
+                tokens_guard.remove(book_id);
+                log::debug!("Cleaned up cancellation token for book_id: {}", book_id);
             }
             Err(_) => {
                 log::warn!("Failed to lock cancellation tokens for cleanup");

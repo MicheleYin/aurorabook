@@ -1,0 +1,440 @@
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
+import { BookOpen, Grid3x3, List, Plus, Search } from "lucide-react";
+import { toast } from "sonner";
+
+import type { Book } from "../../types/book";
+import { useBookConversion } from "../../hooks/useBookConversion";
+import { Button } from "../ui/button";
+import { Card, CardContent } from "../ui/card";
+import { Input } from "../ui/input";
+import { BookDetailDialog } from "./BookDetailDialog";
+
+type ViewMode = "grid" | "list";
+
+export function Library() {
+  const [books, setBooks] = useState<Book[]>([]);
+  const booksRef = useRef(books);
+  console.log("books", books);
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    booksRef.current = books;
+  }, [books]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isAddingBook, setIsAddingBook] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const loadBooks = async () => {
+    try {
+      setIsLoading(true);
+      const loadedBooks = await invoke<Book[]>("read_all_books", {
+        filter: null,
+      });
+      setBooks(loadedBooks);
+    } catch (err) {
+      console.error("Failed to load books:", err);
+      toast.error("Failed to load books");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const refreshBookById = async (bookId: string | null) => {
+    if (!bookId) return;
+    try {
+      // Use ref to access the latest books state
+      const bookToRefresh = booksRef.current.find((book) => book.id === bookId);
+
+      if (!bookToRefresh) {
+        // If not found, reload all books
+        await loadBooks();
+        return;
+      }
+
+      // Fetch the updated book from the backend
+      const updatedBook = await invoke<Book | null>("read_one_book", {
+        bookId: bookToRefresh.id,
+      });
+
+      if (updatedBook) {
+        // Update the book in the books array
+        setBooks((prevBooks) =>
+          prevBooks.map((book) =>
+            book.id === updatedBook.id ? updatedBook : book
+          )
+        );
+      }
+    } catch (err) {
+      console.error("Failed to refresh book:", err);
+      // Fallback to reloading all books on error
+      await loadBooks();
+    }
+  };
+  const handleSetStarted = async (bookId: string | null) => {
+    if (!bookId) return;
+    // Use functional update to access the latest books state
+    setBooks((prevBooks) => {
+      const convertingBook = prevBooks.find((book) => book.id === bookId);
+      if (convertingBook) {
+        // Create a new object to avoid mutating state
+        return prevBooks.map((book) =>
+          book.id === bookId
+            ? { ...book, conversionStatus: "started" as const }
+            : book
+        );
+      }
+      return prevBooks;
+    });
+  };
+
+  const { convertBook, cancelConversion, isConverting } = useBookConversion({
+    onConversionComplete: refreshBookById,
+    onConversionCancelled: refreshBookById,
+    onConversionStarted: handleSetStarted,
+    onChapterCompleted: refreshBookById,
+  });
+
+  useEffect(() => {
+    loadBooks();
+  }, []);
+
+  const ingestBook = async (epubPath: string) => {
+    try {
+      toast.loading("Adding book to library...", { id: "ingest-book" });
+
+      // Use the same path for both epub_path and source_path
+      // The backend will handle the file:// prefix if needed
+      const book = await invoke<Book>("ingest_epub", {
+        epubPath: epubPath,
+        sourcePath: epubPath,
+      });
+
+      toast.success(`"${book.title}" added to library!`, {
+        id: "ingest-book",
+      });
+
+      // Reload books to show the new one
+      await loadBooks();
+    } catch (err) {
+      console.error("Failed to ingest book:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Failed to add book to library",
+        { id: "ingest-book" }
+      );
+    }
+  };
+
+  const handleAddBook = async () => {
+    try {
+      setIsAddingBook(true);
+
+      // Open file dialog to select EPUB file
+      const selected = await open({
+        multiple: false,
+        filters: [
+          {
+            name: "EPUB Files",
+            extensions: ["epub"],
+          },
+        ],
+      });
+
+      if (!selected || typeof selected === "string") {
+        // User cancelled or selected a single file (string path)
+        if (selected) {
+          await ingestBook(selected);
+        }
+      } else if (Array.isArray(selected)) {
+        // Multiple files selected (shouldn't happen with multiple: false, but handle it)
+        for (const filePath of selected as string[]) {
+          await ingestBook(filePath);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to add book:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to add book");
+    } finally {
+      setIsAddingBook(false);
+    }
+  };
+
+  const filteredBooks = !searchQuery.trim()
+    ? books
+    : books.filter((book) => {
+        const query = searchQuery.toLowerCase();
+        return (
+          book.title.toLowerCase().includes(query) ||
+          book.author.toLowerCase().includes(query) ||
+          book.publisher?.toLowerCase().includes(query) ||
+          book.subjects?.some((subject) =>
+            subject.toLowerCase().includes(query)
+          )
+        );
+      });
+
+  const handleBookClick = (book: Book) => {
+    setSelectedBookId(book.id);
+    setIsDialogOpen(true);
+  };
+
+  const handleConvert = async () => {
+    if (!selectedBookId) return;
+    // Use ref to get the latest book title
+    const book = booksRef.current.find((book) => book.id === selectedBookId);
+    convertBook(selectedBookId, book?.title || "");
+    setIsDialogOpen(false);
+  };
+
+  const handleCancelConversion = () => {
+    if (!selectedBookId) return;
+    // cancelConversion expects bookId, not sourcePath
+    cancelConversion(selectedBookId);
+  };
+
+  const handleDelete = async () => {
+    if (!selectedBookId) return;
+
+    try {
+      setIsDeleting(true);
+      toast.loading("Deleting book...", { id: "delete-book" });
+
+      // Get book title before deleting for toast message
+      const book = booksRef.current.find((book) => book.id === selectedBookId);
+      const bookTitle = book?.title || "";
+
+      await invoke("delete_book", {
+        bookId: selectedBookId,
+      });
+
+      toast.success(`"${bookTitle}" deleted`, { id: "delete-book" });
+
+      // Remove the book from the list using functional update
+      setBooks((prevBooks) =>
+        prevBooks.filter((book) => book.id !== selectedBookId)
+      );
+      setSelectedBookId(null);
+      setIsDialogOpen(false);
+      setIsDeleting(false);
+    } catch (err) {
+      console.error("Failed to delete book:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Failed to delete book",
+        { id: "delete-book" }
+      );
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="text-center space-y-2">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+          <p className="text-sm text-muted-foreground">Loading library...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="flex-shrink-0 p-6 space-y-4 border-b">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Library</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              {filteredBooks.length}{" "}
+              {filteredBooks.length === 1 ? "book" : "books"}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={handleAddBook}
+              disabled={isAddingBook}
+              className="gap-2"
+            >
+              <Plus className="h-4 w-4" />
+              {isAddingBook ? "Adding..." : "Add Book"}
+            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                variant={viewMode === "grid" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setViewMode("grid")}
+                className="h-9 w-9 p-0"
+              >
+                <Grid3x3 className="h-4 w-4" />
+              </Button>
+              <Button
+                variant={viewMode === "list" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setViewMode("list")}
+                className="h-9 w-9 p-0"
+              >
+                <List className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="text"
+            placeholder="Search books by title, author, or subject..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-auto p-6">
+        {filteredBooks.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
+            <BookOpen className="h-12 w-12 text-muted-foreground" />
+            <div>
+              <p className="text-lg font-medium">
+                {searchQuery ? "No books found" : "No books in library"}
+              </p>
+              <p className="text-sm text-muted-foreground mt-1">
+                {searchQuery
+                  ? "Try adjusting your search query"
+                  : "Add books to get started"}
+              </p>
+            </div>
+          </div>
+        ) : viewMode === "grid" ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            {filteredBooks.map((book) => (
+              <Card
+                key={book.id}
+                className="cursor-pointer hover:shadow-lg transition-shadow"
+                onClick={() => handleBookClick(book)}
+              >
+                <CardContent className="p-0">
+                  <div className="aspect-[2/3] bg-muted relative overflow-hidden rounded-t-lg">
+                    {book.coverUrl ? (
+                      <img
+                        src={book.coverUrl}
+                        alt={book.title}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <BookOpen className="h-12 w-12 text-muted-foreground/50" />
+                      </div>
+                    )}
+                    {book.progress?.bookProgressPercent && (
+                      <div className="absolute bottom-0 left-0 right-0 h-1 bg-background/50">
+                        <div
+                          className="h-full bg-primary"
+                          style={{
+                            width: `${book.progress.bookProgressPercent}%`,
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <div className="p-3 space-y-1">
+                    <p
+                      className="font-medium text-sm line-clamp-2"
+                      title={book.title}
+                    >
+                      {book.title}
+                    </p>
+                    <p
+                      className="text-xs text-muted-foreground line-clamp-1"
+                      title={book.author}
+                    >
+                      {book.author}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {filteredBooks.map((book) => (
+              <Card
+                key={book.id}
+                className="cursor-pointer hover:bg-muted/50 transition-colors"
+                onClick={() => handleBookClick(book)}
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-start gap-4">
+                    <div className="w-16 h-24 bg-muted rounded shrink-0 overflow-hidden">
+                      {book.coverUrl ? (
+                        <img
+                          src={book.coverUrl}
+                          alt={book.title}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <BookOpen className="h-6 w-6 text-muted-foreground/50" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0 space-y-2">
+                      <div>
+                        <h3 className="font-semibold text-base">
+                          {book.title}
+                        </h3>
+                        <p className="text-sm text-muted-foreground">
+                          {book.author}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                        {book.chapters.length > 0 && (
+                          <span>{book.chapters.length} chapters</span>
+                        )}
+                        {book.pageCount && <span>{book.pageCount} pages</span>}
+                        {book.progress?.bookProgressPercent && (
+                          <span>
+                            {Math.round(book.progress.bookProgressPercent)}%
+                            read
+                          </span>
+                        )}
+                      </div>
+                      {book.progress?.bookProgressPercent && (
+                        <div className="h-1 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-primary"
+                            style={{
+                              width: `${book.progress.bookProgressPercent}%`,
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {selectedBookId && (
+        <BookDetailDialog
+          book={books.find((book) => book.id === selectedBookId) || null}
+          isOpen={isDialogOpen}
+          onOpenChange={setIsDialogOpen}
+          onConvert={handleConvert}
+          onCancel={handleCancelConversion}
+          onDelete={handleDelete}
+          isConverting={isConverting}
+          isDeleting={isDeleting}
+        />
+      )}
+    </div>
+  );
+}

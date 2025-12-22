@@ -1,15 +1,28 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Play, Pause } from "lucide-react";
-import { ThemeSwitcher } from "../ThemeSwitcher";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
-import { Separator } from "../ui/separator";
-import { Button } from "../ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
-import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
-import type { UITheme } from "../../types/ui";
+import { Pause, Play } from "lucide-react";
+
 import type { AppSettings } from "../../types/settings";
+import type { UITheme } from "../../types/ui";
+import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
+import { ThemeSwitcher } from "../ThemeSwitcher";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
+import { Separator } from "../ui/separator";
 
 export function Settings() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -31,7 +44,7 @@ export function Settings() {
       setError(null);
       const appSettings = await invoke<AppSettings>("get_app_settings");
       setSettings(appSettings);
-      
+
       // Apply theme from backend settings
       if (appSettings.theme) {
         applyTheme(appSettings.theme as UITheme);
@@ -72,9 +85,12 @@ export function Settings() {
 
   const applyTheme = (newTheme: UITheme) => {
     const root = document.documentElement;
-    
+
     if (newTheme === "system") {
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
+        .matches
+        ? "dark"
+        : "light";
       root.classList.remove("light", "dark");
       root.classList.add(systemTheme);
     } else {
@@ -171,7 +187,9 @@ export function Settings() {
 
   // Get all voices from groups
   const allVoices = KOKORO_VOICE_GROUPS.flatMap((group) => group.voices);
-  const selectedVoice = allVoices.find((voice) => voice.id === settings?.ttsVoiceId);
+  const selectedVoice = allVoices.find(
+    (voice) => voice.id === settings?.ttsVoiceId
+  );
 
   if (isLoading) {
     return (
@@ -250,7 +268,8 @@ export function Settings() {
             <CardHeader>
               <CardTitle>Text-to-Speech Voice</CardTitle>
               <CardDescription>
-                Select and preview the default voice for text-to-speech conversion
+                Select and preview the default voice for text-to-speech
+                conversion
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -260,23 +279,22 @@ export function Settings() {
                   <Select
                     value={settings.ttsVoiceId || "af_heart"}
                     onValueChange={handleVoiceChange}
-
                   >
-                    <SelectTrigger >
-                      <SelectValue >
+                    <SelectTrigger>
+                      <SelectValue>
                         {selectedVoice
                           ? `${selectedVoice.name} (${selectedVoice.gender})`
                           : "Select a voice"}
-                        </SelectValue>
-                      </SelectTrigger>
-                    <SelectContent >
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
                       {KOKORO_VOICE_GROUPS.map((group) => (
-                        <div key={group.label} >
+                        <div key={group.label}>
                           <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
                             {group.label}
                           </div>
                           {group.voices.map((voice) => (
-                            <SelectItem key={voice.id} value={voice.id} >
+                            <SelectItem key={voice.id} value={voice.id}>
                               {voice.name} ({voice.gender})
                             </SelectItem>
                           ))}
@@ -289,9 +307,9 @@ export function Settings() {
                   <div className="flex justify-between items-center gap-3 sm:flex-col sm:items-start sm:gap-2">
                     <div className="flex flex-col gap-1.5 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                      <Badge variant="outline" className="text-xs">
-                        {selectedVoice.languageTag}
-                      </Badge>
+                        <Badge variant="outline" className="text-xs">
+                          {selectedVoice.languageTag}
+                        </Badge>
                         <Badge variant="secondary" className="text-xs">
                           {selectedVoice.gender}
                         </Badge>
@@ -304,7 +322,10 @@ export function Settings() {
                       variant="outline"
                       size="sm"
                       onClick={() =>
-                        handlePlaySample(selectedVoice.id, selectedVoice.sampleUrl)
+                        handlePlaySample(
+                          selectedVoice.id,
+                          selectedVoice.sampleUrl
+                        )
                       }
                       className="h-10 w-10 p-0 shrink-0"
                     >
@@ -324,16 +345,12 @@ export function Settings() {
           <Card>
             <CardHeader>
               <CardTitle>General</CardTitle>
-              <CardDescription>
-                General application settings
-              </CardDescription>
+              <CardDescription>General application settings</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-col gap-2">
                 <p className="font-medium">Application Version</p>
-                <p className="text-sm text-muted-foreground">
-                  Version 1.0.0
-                </p>
+                <p className="text-sm text-muted-foreground">Version 1.0.0</p>
               </div>
               {isSaving && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -348,4 +365,3 @@ export function Settings() {
     </div>
   );
 }
-
