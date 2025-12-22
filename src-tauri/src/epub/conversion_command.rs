@@ -10,7 +10,7 @@ use crate::utils::path_validation::validate_file_size;
 use crate::book_service::models::{Book, ConversionStatus};
 use crate::book_service::database::get_db_connection;
 use crate::book_service::repositories::{BookRepository, EpubRepository};
-use crate::epub::converter::{ConversionOptions, ConversionProgress, ConversionChapter, emit_progress, CachedEpubStructure};
+use crate::epub::converter::{ConversionOptions, ConversionProgress, ConversionChapter, emit_progress};
 use crate::epub::cancellation::{get_cancellation_token, cleanup_cancellation_token};
 use crate::epub::book_update::update_book_audio_tracks;
 use std::sync::Arc;
@@ -76,12 +76,9 @@ pub async fn convert_epub_to_audiobook_command(
     // Validate EPUB
     validate_and_cache_epub(&app, &source_path, &epub_data)?;
     
-    // Cache EPUB structure (OPF path, base path) to avoid repeated parsing
-    let epub_structure = cache_epub_structure(&epub_data)?;
-    log::debug!("Cached EPUB structure: opf_path={}, base_path={}", epub_structure.opf_path, epub_structure.base_path);
-    
     // Load chapters from database instead of extracting from EPUB
-    let all_conversion_chapters = load_chapters_from_database(&app, &book_id, &epub_structure).await?;
+    // Note: EPUB structure parsing is done on-demand (caching disabled)
+    let all_conversion_chapters = load_chapters_from_database(&app, &book_id).await?;
     
     // Load and prepare book data
     let book_data = load_and_prepare_book(&app, &source_path, &voice_id, &all_conversion_chapters).await?;
@@ -187,30 +184,12 @@ fn load_epub_from_file_system(source_path: &str) -> AppResult<Vec<u8>> {
     Ok(epub_data)
 }
 
-/// Cache EPUB structure (OPF path and base path) to avoid repeated parsing
-fn cache_epub_structure(epub_data: &[u8]) -> AppResult<CachedEpubStructure> {
-    use crate::epub::parser::{find_opf_path, derive_base_path_from_opf};
-    use std::io::Cursor;
-    use zip::ZipArchive;
-    
-    let epub_slice: &[u8] = epub_data;
-    let mut temp_archive = ZipArchive::new(Cursor::new(epub_slice))
-        .map_err(|e| AppError::EpubParse(format!("Failed to open EPUB for OPF search: {}", e)))?;
-    let opf_path = find_opf_path(&mut temp_archive)
-        .map_err(|e| AppError::EpubParse(format!("Failed to find OPF path: {}", e)))?;
-    let base_path = derive_base_path_from_opf(&opf_path);
-    
-    Ok(CachedEpubStructure {
-        opf_path,
-        base_path,
-    })
-}
+// EPUB structure caching disabled - structure is parsed on-demand when needed
 
 /// Load chapters from database and convert to ConversionChapter format
 async fn load_chapters_from_database(
     app: &AppHandle,
     book_id: &str,
-    _epub_structure: &CachedEpubStructure,
 ) -> AppResult<Vec<ConversionChapter>> {
     use crate::book_service::repositories::ChapterRepository;
     use crate::epub::converter::ConversionChapter;

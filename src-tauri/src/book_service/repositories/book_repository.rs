@@ -467,13 +467,16 @@ impl BookRepository {
                 .collect();
             
             // Insert with upsert (on_conflict) - all within the transaction
+            // Handle unique constraint on (book_id, href)
             for track_model in track_models {
                 audio_track::Entity::insert(track_model)
                     .on_conflict(
-                        sea_orm::sea_query::OnConflict::column(audio_track::Column::Id)
+                        sea_orm::sea_query::OnConflict::columns([
+                            audio_track::Column::BookId,
+                            audio_track::Column::Href,
+                        ])
                             .update_columns([
                                 audio_track::Column::Title,
-                                audio_track::Column::Href,
                                 audio_track::Column::Url,
                                 audio_track::Column::Duration,
                                 audio_track::Column::TrackOrder,

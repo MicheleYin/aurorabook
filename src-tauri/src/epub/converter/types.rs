@@ -70,6 +70,7 @@ pub struct ConversionOptions {
 /// * `chapter_title` - The title of the chapter that was just completed
 /// * `audio_generated` - Whether audio was actually generated for this chapter
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChapterCompletedEvent {
     pub book_id: String,
     pub source_path: String,
@@ -88,6 +89,7 @@ pub struct ChapterCompletedEvent {
 /// * `book_id` - The book ID of the book being converted
 /// * `source_path` - The source path of the book being converted (kept for backward compatibility)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConversionCancelledEvent {
     pub book_id: String,
     pub source_path: String,

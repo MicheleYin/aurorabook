@@ -73,10 +73,12 @@ impl AudioRepository {
         let active_model = Self::model_to_active_model(book_id, model);
         audio_track::Entity::insert(active_model)
             .on_conflict(
-                sea_orm::sea_query::OnConflict::column(audio_track::Column::Id)
+                sea_orm::sea_query::OnConflict::columns([
+                    audio_track::Column::BookId,
+                    audio_track::Column::Href,
+                ])
                     .update_columns([
                         audio_track::Column::Title,
-                        audio_track::Column::Href,
                         audio_track::Column::Url,
                         audio_track::Column::Duration,
                         audio_track::Column::TrackOrder,

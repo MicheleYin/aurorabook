@@ -222,6 +222,11 @@ impl HybridStore {
     
     /// Load book into memory (with eviction if needed)
     pub async fn load_book(&self, book: Book) {
+        // Skip caching if limit is 0 (caching disabled)
+        if self.max_books_in_memory == 0 {
+            return;
+        }
+        
         // Check if we need to evict
         if self.books_count() >= self.max_books_in_memory {
             self.evict_least_recently_used_book().await;
@@ -241,6 +246,11 @@ impl HybridStore {
     
     /// Load chapters into memory (with eviction if needed)
     pub async fn load_chapters(&self, book_id: String, chapters: Vec<Chapter>) {
+        // Skip caching if limit is 0 (caching disabled)
+        if self.max_chapters_in_memory == 0 {
+            return;
+        }
+        
         // Check if we need to evict
         if self.chapters_count() >= self.max_chapters_in_memory {
             self.evict_least_recently_used_chapters().await;
@@ -260,6 +270,11 @@ impl HybridStore {
     
     /// Load audio tracks into memory (with eviction if needed)
     pub async fn load_audio_tracks(&self, book_id: String, tracks: Vec<AudioTrack>) {
+        // Skip caching if limit is 0 (caching disabled)
+        if self.max_audio_tracks_in_memory == 0 {
+            return;
+        }
+        
         // Check if we need to evict
         if self.audio_tracks_count() >= self.max_audio_tracks_in_memory {
             self.evict_least_recently_used_audio_tracks().await;
@@ -423,40 +438,48 @@ impl HybridStore {
     
     /// Save image (updates memory, queues for SQLite)
     pub async fn save_image(&self, book_id: String, href: String, mime_type: String, data: Vec<u8>) {
-        let key = format!("{}:{}", book_id, href);
-        
-        // Check if we need to evict
-        if self.images.len() >= self.max_images_in_memory {
-            self.evict_least_recently_used_image().await;
+        // Skip in-memory caching if limit is 0 (caching disabled)
+        if self.max_images_in_memory > 0 {
+            let key = format!("{}:{}", book_id, href);
+            
+            // Check if we need to evict
+            if self.images.len() >= self.max_images_in_memory {
+                self.evict_least_recently_used_image().await;
+            }
+            
+            self.images.insert(key.clone(), (mime_type.clone(), data.clone()));
+            self.image_access.insert(key, AccessInfo {
+                last_accessed: Instant::now(),
+                access_count: 1,
+                size_bytes: data.len(),
+            });
         }
         
-        self.images.insert(key.clone(), (mime_type.clone(), data.clone()));
-        self.image_access.insert(key, AccessInfo {
-            last_accessed: Instant::now(),
-            access_count: 1,
-            size_bytes: data.len(),
-        });
-        
+        // Always queue for SQLite sync (even if caching is disabled)
         let mut queue = self.write_queue.write().await;
         queue.push(WriteOperation::SaveImage { book_id, href, mime_type, data });
     }
     
     /// Save audio data (updates memory, queues for SQLite)
     pub async fn save_audio_data(&self, book_id: String, href: String, data: Vec<u8>) {
-        let key = format!("{}:{}", book_id, href);
-        
-        // Check if we need to evict
-        if self.audio_data.len() >= self.max_audio_data_in_memory {
-            self.evict_least_recently_used_audio_data().await;
+        // Skip in-memory caching if limit is 0 (caching disabled)
+        if self.max_audio_data_in_memory > 0 {
+            let key = format!("{}:{}", book_id, href);
+            
+            // Check if we need to evict
+            if self.audio_data.len() >= self.max_audio_data_in_memory {
+                self.evict_least_recently_used_audio_data().await;
+            }
+            
+            self.audio_data.insert(key.clone(), data.clone());
+            self.audio_data_access.insert(key, AccessInfo {
+                last_accessed: Instant::now(),
+                access_count: 1,
+                size_bytes: data.len(),
+            });
         }
         
-        self.audio_data.insert(key.clone(), data.clone());
-        self.audio_data_access.insert(key, AccessInfo {
-            last_accessed: Instant::now(),
-            access_count: 1,
-            size_bytes: data.len(),
-        });
-        
+        // Always queue for SQLite sync (even if caching is disabled)
         let mut queue = self.write_queue.write().await;
         queue.push(WriteOperation::SaveAudioData { book_id, href, data });
     }
@@ -477,6 +500,11 @@ impl HybridStore {
     
     /// Load image into memory
     pub async fn load_image(&self, book_id: String, href: String, mime_type: String, data: Vec<u8>) {
+        // Skip caching if limit is 0 (caching disabled)
+        if self.max_images_in_memory == 0 {
+            return;
+        }
+        
         let key = format!("{}:{}", book_id, href);
         
         if self.images.len() >= self.max_images_in_memory {
@@ -493,6 +521,11 @@ impl HybridStore {
     
     /// Load audio data into memory
     pub async fn load_audio_data(&self, book_id: String, href: String, data: Vec<u8>) {
+        // Skip caching if limit is 0 (caching disabled)
+        if self.max_audio_data_in_memory == 0 {
+            return;
+        }
+        
         let key = format!("{}:{}", book_id, href);
         
         if self.audio_data.len() >= self.max_audio_data_in_memory {

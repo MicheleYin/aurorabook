@@ -68,11 +68,11 @@ pub async fn init_db_connection(app: &AppHandle) -> Result<(), String> {
         .map_err(|_| "Database connection already initialized".to_string())?;
     
     // Initialize hybrid store with eviction limits
-    // Configuration: keep 50 books, 100 chapter lists, 100 audio track lists in memory
+    // Configuration: Caching disabled (all limits set to 0)
     let hybrid_store = Arc::new(HybridStore::new(
-        50,  // max_books_in_memory
-        100, // max_chapters_in_memory
-        100, // max_audio_tracks_in_memory
+        0,  // max_books_in_memory (disabled)
+        0,  // max_chapters_in_memory (disabled)
+        0,  // max_audio_tracks_in_memory (disabled)
         Duration::from_secs(5), // sync_interval: 5 seconds
     ));
     
@@ -305,9 +305,9 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
     db.execute_unprepared("PRAGMA synchronous=NORMAL").await
         .map_err(|e| format!("Failed to set synchronous mode: {}", e))?;
     
-    // Set cache size to 64MB (negative value means KB, so -64000 = 64MB)
-    db.execute_unprepared("PRAGMA cache_size=-64000").await
-        .map_err(|e| format!("Failed to set cache size: {}", e))?;
+    // Cache disabled - using default SQLite cache size
+    // db.execute_unprepared("PRAGMA cache_size=-64000").await
+    //     .map_err(|e| format!("Failed to set cache size: {}", e))?;
     
     // Enable foreign key constraints (should be on by default, but explicit is better)
     db.execute_unprepared("PRAGMA foreign_keys=ON").await

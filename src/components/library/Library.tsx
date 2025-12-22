@@ -51,6 +51,7 @@ export function Library() {
       // Use ref to access the latest books state
       const bookToRefresh = booksRef.current.find((book) => book.id === bookId);
 
+      console.log("bookToRefresh", bookToRefresh, bookId, booksRef.current);
       if (!bookToRefresh) {
         // If not found, reload all books
         await loadBooks();
@@ -61,6 +62,7 @@ export function Library() {
       const updatedBook = await invoke<Book | null>("read_one_book", {
         bookId: bookToRefresh.id,
       });
+      console.log("updatedBook", updatedBook);
 
       if (updatedBook) {
         // Update the book in the books array

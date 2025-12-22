@@ -51,6 +51,18 @@ const BookDetailContent = ({ book }: { book: Book }) => {
     return `${mb.toFixed(2)} MB`;
   };
 
+  const formatDuration = (seconds: number) => {
+    if (!seconds || seconds === 0) return "Unknown";
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+    }
+    return `${minutes}:${secs.toString().padStart(2, "0")}`;
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex gap-6">
@@ -185,6 +197,56 @@ const BookDetailContent = ({ book }: { book: Book }) => {
           </div>
         </>
       )}
+
+      {book.audioTracks && book.audioTracks.length > 0 && (
+        <>
+          <Separator />
+          <div>
+            <p className="text-sm font-medium mb-2">Audiobook</p>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  Audio Tracks
+                </span>
+                <span className="text-sm font-medium">
+                  {book.audioTracks.length}
+                </span>
+              </div>
+              {book.audioTracks.some((track) => track.durationSeconds) && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">
+                    Total Duration
+                  </span>
+                  <span className="text-sm font-medium">
+                    {formatDuration(
+                      book.audioTracks.reduce(
+                        (total, track) => total + (track.durationSeconds || 0),
+                        0
+                      )
+                    )}
+                  </span>
+                </div>
+              )}
+
+              {book.audioTracks.some((track) => track.fileSizeBytes) && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">
+                    Audio Size
+                  </span>
+                  <span className="text-sm font-medium">
+                    {formatFileSize(
+                      book.audioTracks.reduce(
+                        (total, track) => total + (track.fileSizeBytes || 0),
+                        0
+                      )
+                    )}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };
@@ -243,12 +305,16 @@ export function BookDetailDialog({
                 </Button>
               )}
               {book.conversionStatus === "notStarted" && (
-                <Button variant="outline" onClick={onConvert} className="gap-2">
+                <Button
+                  variant="outline"
+                  onClick={onConvert}
+                  className="gap-2"
+                  disabled={isConverting}
+                >
                   <Play className="h-4 w-4" />
                   {isConverting ? "Converting..." : "Convert to Audiobook"}
                 </Button>
               )}
-
               <Button
                 variant="destructive"
                 onClick={handleDeleteClick}
