@@ -16,6 +16,7 @@ interface ConversionProgress {
 }
 
 interface ChapterCompletedEvent {
+  bookId: string;
   sourcePath: string;
   chapterIndex: number;
   totalChapters: number;
@@ -130,14 +131,15 @@ export function useBookConversion(options?: UseBookConversionOptions) {
       chapterCompletedUnlisten = await listen<ChapterCompletedEvent>(
         "chapter-completed",
         (event) => {
-          const { chapterTitle, chapterIndex, totalChapters, sourcePath } =
+          const { bookId, chapterTitle, chapterIndex, totalChapters } =
             event.payload;
+          console.log("Chapter completed:", event.payload);
           toast.success(
             `Chapter ${chapterIndex}/${totalChapters} completed: ${chapterTitle}`,
             { duration: 3000 }
           );
-          // Refresh book metadata when a chapter is completed
-          onChapterCompletedRef.current?.(sourcePath);
+          // Refresh book metadata when a chapter is completed - use bookId from event
+          onChapterCompletedRef.current?.(bookId);
         }
       );
 

@@ -232,31 +232,33 @@ pub(crate) async fn rebuild_and_save_epub(
             use crate::book_service::database::get_db_connection;
             use crate::book_service::repositories::BookRepository;
             use crate::book_service::models::ConversionStatus;
+            let mut book_id_opt: Option<String> = None;
             if let Ok(db) = get_db_connection(app_ref).await {
                 if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path_ref).await {
-                // Get the chapter href for this chapter
-                if chapter_index < chapter_hrefs.len() {
-                    let chapter_href = &chapter_hrefs[chapter_index];
-                    if !book.completed_chapters.contains(chapter_href) {
-                        book.completed_chapters.push(chapter_href.clone());
-                        log::debug!("Marked chapter {} as completed", chapter_href);
-                        
-                        // Check if all chapters with text content are completed
-                        // Only count chapters that have text content (word_count > 0)
-                        let chapters_with_text: usize = book.chapters.iter()
-                            .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
-                            .count();
-                        
-                        if book.completed_chapters.len() >= chapters_with_text {
-                            book.conversion_status = ConversionStatus::Done;
-                            log::info!("All chapters with text content completed ({} of {} total chapters), marking conversion as done", 
-                                book.completed_chapters.len(), book.chapters.len());
-                        }
-                        
-                        // Save the updated book
-                        if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
-                            log::warn!("Failed to save completed chapter: {}", e);
-                        }
+                    book_id_opt = Some(book.id.clone());
+                    // Get the chapter href for this chapter
+                    if chapter_index < chapter_hrefs.len() {
+                        let chapter_href = &chapter_hrefs[chapter_index];
+                        if !book.completed_chapters.contains(chapter_href) {
+                            book.completed_chapters.push(chapter_href.clone());
+                            log::debug!("Marked chapter {} as completed", chapter_href);
+                            
+                            // Check if all chapters with text content are completed
+                            // Only count chapters that have text content (word_count > 0)
+                            let chapters_with_text: usize = book.chapters.iter()
+                                .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
+                                .count();
+                            
+                            if book.completed_chapters.len() >= chapters_with_text {
+                                book.conversion_status = ConversionStatus::Done;
+                                log::info!("All chapters with text content completed ({} of {} total chapters), marking conversion as done", 
+                                    book.completed_chapters.len(), book.chapters.len());
+                            }
+                            
+                            // Save the updated book
+                            if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
+                                log::warn!("Failed to save completed chapter: {}", e);
+                            }
                         }
                     }
                 }
@@ -270,7 +272,9 @@ pub(crate) async fn rebuild_and_save_epub(
             // Emit event to frontend to refetch the book
             use crate::epub::converter::types::ChapterCompletedEvent;
             let chapter_title_str = chapter_title.unwrap_or(&format!("Chapter {}", chapter_index + 1)).to_string();
+            let book_id = book_id_opt.unwrap_or_else(|| String::new());
             let event = ChapterCompletedEvent {
+                book_id: book_id.clone(),
                 source_path: source_path_ref.to_string(),
                 chapter_index: chapter_index + 1,
                 total_chapters,
@@ -278,15 +282,15 @@ pub(crate) async fn rebuild_and_save_epub(
                 audio_generated,
             };
             
-            log::info!("[EpubBuilder] Preparing to emit chapter-completed event: source_path='{}', chapter_index={}, chapter_title='{}', audio_generated={}", 
-                source_path_ref, chapter_index + 1, chapter_title_str, audio_generated);
+            log::info!("[EpubBuilder] Preparing to emit chapter-completed event: book_id='{}', source_path='{}', chapter_index={}, chapter_title='{}', audio_generated={}", 
+                book_id, source_path_ref, chapter_index + 1, chapter_title_str, audio_generated);
             
             if let Err(e) = app_ref.emit("chapter-completed", event) {
-                log::error!("[EpubBuilder] ✗ Failed to emit chapter-completed event: source_path='{}', chapter_index={}, error={}", 
-                    source_path_ref, chapter_index + 1, e);
+                log::error!("[EpubBuilder] ✗ Failed to emit chapter-completed event: book_id='{}', source_path='{}', chapter_index={}, error={}", 
+                    book_id, source_path_ref, chapter_index + 1, e);
             } else {
-                log::info!("[EpubBuilder] ✓ Successfully emitted chapter-completed event: source_path='{}', chapter_index={}, chapter_title='{}', audio_generated={}", 
-                    source_path_ref, chapter_index + 1, chapter_title_str, audio_generated);
+                log::info!("[EpubBuilder] ✓ Successfully emitted chapter-completed event: book_id='{}', source_path='{}', chapter_index={}, chapter_title='{}', audio_generated={}", 
+                    book_id, source_path_ref, chapter_index + 1, chapter_title_str, audio_generated);
             }
         }
     }

@@ -63,13 +63,15 @@ pub struct ConversionOptions {
 /// so the user can listen to the book as soon as one chapter is ready.
 ///
 /// # Fields
-/// * `source_path` - The source path of the book being converted
+/// * `book_id` - The book ID of the book being converted
+/// * `source_path` - The source path of the book being converted (kept for backward compatibility)
 /// * `chapter_index` - The chapter number that was just completed (1-indexed)
 /// * `total_chapters` - Total number of chapters in the book
 /// * `chapter_title` - The title of the chapter that was just completed
 /// * `audio_generated` - Whether audio was actually generated for this chapter
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChapterCompletedEvent {
+    pub book_id: String,
     pub source_path: String,
     pub chapter_index: usize,
     pub total_chapters: usize,
