@@ -219,7 +219,7 @@ export function Settings() {
 
   return (
     <div className="flex h-full flex-col overflow-auto">
-      <div className="container mx-auto max-w-4xl p-6 space-y-6">
+      <div className="p-6 space-y-6">
         <div className="space-y-2">
           <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
           <p className="text-muted-foreground">

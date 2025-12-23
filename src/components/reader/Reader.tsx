@@ -4,6 +4,7 @@ import { BookOpen } from "lucide-react";
 import type { Chapter } from "../../types/book";
 import { useAppContext } from "../../App";
 import { useReaderSettings } from "../../hooks/useReaderSettings";
+import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { ReaderContent } from "./ReaderContent";
 import { ReaderHeader } from "./ReaderHeader";
@@ -20,6 +21,7 @@ export function Reader() {
 
     loadChapterContent,
     containerRef,
+    restoreProgress,
   } = useAppContext();
 
   const [isTocOpen, setIsTocOpen] = useState(false);
@@ -87,7 +89,14 @@ export function Reader() {
 
   return (
     <div className="flex h-full flex-col">
-      {isHeaderVisible && (
+      <div
+        className={cn(
+          "transition-all duration-300 ease-out",
+          isHeaderVisible
+            ? "opacity-100 translate-y-0 pointer-events-auto"
+            : "opacity-0 -translate-y-full pointer-events-none h-0 p-0 m-0"
+        )}
+      >
         <ReaderHeader
           book={currentBook}
           currentChapter={currentChapter}
@@ -97,24 +106,31 @@ export function Reader() {
           onBack={handleBack}
           onSettingsClick={() => setIsSettingsOpen(true)}
         />
-      )}
+      </div>
       <ReaderContent
         ref={containerRef}
         book={currentBook}
         isLoading={isLoadingChapter}
         currentChapter={currentChapter}
-        onRestoreProgress={(book) => {}}
+        onRestoreProgress={restoreProgress}
         onContentClick={handleContentClick}
         settings={readerSettings}
       />
-      {isHeaderVisible && (
+      <div
+        className={cn(
+          "relative transition-all duration-300 ease-out",
+          isHeaderVisible
+            ? "opacity-100 translate-y-0 pointer-events-auto"
+            : "opacity-0 translate-y-full pointer-events-none"
+        )}
+      >
         <ReaderNavigation
           book={currentBook}
           currentChapter={currentChapter}
           onPrevious={handlePreviousChapter}
           onNext={handleNextChapter}
         />
-      )}
+      </div>
       <ReaderSettings
         settings={readerSettings}
         onSettingsChange={setReaderSettings}

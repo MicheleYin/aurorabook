@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useRef } from "react";
 
-import type { Book, Chapter } from "../../types/book";
+import type { Book, ChapterWithContent } from "../../types/book";
 import type { ReaderSettings } from "./ReaderSettings";
 import { cn } from "../../lib/utils";
 import { LoadingScreen } from "../app/LoadingScreen";
@@ -8,7 +8,7 @@ import { LoadingScreen } from "../app/LoadingScreen";
 interface ReaderContentProps {
   book: Book | null;
   isLoading: boolean;
-  currentChapter: Chapter & { contentHtml?: string };
+  currentChapter: ChapterWithContent;
   onRestoreProgress: (book: Book | null) => void;
   onContentClick?: () => void;
   settings?: ReaderSettings;
@@ -34,6 +34,7 @@ export const ReaderContent = forwardRef<HTMLDivElement, ReaderContentProps>(
         book &&
         currentChapter &&
         scrollContainerRef &&
+        !isLoading &&
         typeof scrollContainerRef !== "function" &&
         scrollContainerRef.current
       ) {
@@ -42,7 +43,13 @@ export const ReaderContent = forwardRef<HTMLDivElement, ReaderContentProps>(
         }, 200);
         return () => clearTimeout(timeoutId);
       }
-    }, [book, currentChapter, onRestoreProgress, scrollContainerRef]);
+    }, [
+      book,
+      currentChapter,
+      onRestoreProgress,
+      scrollContainerRef,
+      isLoading,
+    ]);
 
     const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
       // Only trigger if clicking directly on the content area, not on links or interactive elements

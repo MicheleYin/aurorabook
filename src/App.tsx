@@ -48,6 +48,7 @@ interface AppContextType {
   setIsLoadingChapter: Dispatch<SetStateAction<boolean>>;
   loadChapterContent: (bookId: string, chapter: Chapter) => Promise<void>;
   containerRef: React.RefObject<HTMLDivElement | null>;
+  restoreProgress: (book: Book | null) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -137,6 +138,42 @@ function App() {
     },
     [currentBook, setCurrentBook, library, setLibrary]
   );
+
+  const restoreProgress = useCallback((bookToRestore: Book | null) => {
+    if (
+      !bookToRestore?.progress ||
+      !containerRef.current ||
+      !currentChapter ||
+      currentChapter.id !== bookToRestore.progress.currentChapterId
+    )
+      return;
+
+    const progress = bookToRestore.progress;
+
+    // Restore scroll position
+    if (progress?.currentChapterScrollTop !== undefined) {
+      containerRef.current.scrollTop = progress.currentChapterScrollTop;
+    }
+
+    // Restore element position if available
+    const contentRef = containerRef.current.querySelector(
+      ".prose"
+    ) as HTMLElement;
+    if (progress?.currentChapterElementId && contentRef) {
+      const element = contentRef.querySelector(
+        `#${progress.currentChapterElementId}`
+      );
+      console.log(
+        "Restoring element position:",
+        progress.currentChapterElementId,
+        element
+      );
+      if (element) {
+        element.scrollIntoView({ behavior: "auto", block: "start" });
+      }
+    }
+  }, []);
+
   const changeCurrentTab = useCallback(
     (tab: TabValue) => {
       setCurrentTab(tab);
@@ -160,6 +197,7 @@ function App() {
       // Determine which chapter to load
       let chapterToLoad: Chapter | null = null;
 
+      console.log("Restoring progress for book:", book.id, book.progress);
       if (book.progress?.currentChapterId) {
         // Load last opened chapter
         chapterToLoad =
@@ -203,6 +241,7 @@ function App() {
       setIsLoadingChapter,
       loadChapterContent,
       containerRef,
+      restoreProgress,
     }),
     [
       currentTab,
@@ -219,6 +258,7 @@ function App() {
       changeCurrentTab,
       containerRef,
       changeCurrentBook,
+      restoreProgress,
     ]
   );
 

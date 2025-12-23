@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import type { Book } from "../../types/book";
 import { useAppContext } from "../../App";
 import { useBookConversion } from "../../hooks/useBookConversion";
+import { staggerDelay } from "../../lib/animations";
+import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardFooter } from "../ui/card";
 import { Input } from "../ui/input";
@@ -38,6 +40,12 @@ export function Library() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isAddingBook, setIsAddingBook] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [filterKey, setFilterKey] = useState(0);
+
+  // Trigger re-animation when filter changes
+  useEffect(() => {
+    setFilterKey((prev) => prev + 1);
+  }, [searchQuery, viewMode]);
 
   const handleOpenBook = (book: Book, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -309,11 +317,14 @@ export function Library() {
             </div>
           </div>
         ) : viewMode === "grid" ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            {filteredBooks.map((book) => (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 library-grid-transition">
+            {filteredBooks.map((book, index) => (
               <Card
-                key={book.id}
-                className="cursor-pointer hover:shadow-lg transition-shadow"
+                key={`${book.id}-${filterKey}`}
+                className={cn(
+                  "cursor-pointer hover:shadow-lg transition-shadow library-item-enter",
+                  staggerDelay(index, 30)
+                )}
                 onClick={() => handleBookClick(book)}
               >
                 <CardContent className="p-0">
@@ -372,10 +383,13 @@ export function Library() {
           </div>
         ) : (
           <div className="space-y-2">
-            {filteredBooks.map((book) => (
+            {filteredBooks.map((book, index) => (
               <Card
-                key={book.id}
-                className="cursor-pointer hover:bg-muted/50 transition-colors"
+                key={`${book.id}-${filterKey}`}
+                className={cn(
+                  "cursor-pointer hover:bg-muted/50 transition-colors library-item-enter",
+                  staggerDelay(index, 30)
+                )}
                 onClick={() => handleBookClick(book)}
               >
                 <CardContent className="p-4">
