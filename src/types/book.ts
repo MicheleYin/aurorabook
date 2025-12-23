@@ -63,3 +63,7 @@ export interface Book {
   wordsProcessed?: number;
   lastOpenedTime?: string;
 }
+
+export interface ChapterWithContent extends Chapter {
+  contentHtml?: string;
+}
