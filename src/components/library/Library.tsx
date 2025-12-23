@@ -5,24 +5,33 @@ import { BookOpen, Grid3x3, List, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 
 import type { Book } from "../../types/book";
+import { useAppContext } from "../../App";
 import { useBookConversion } from "../../hooks/useBookConversion";
 import { Button } from "../ui/button";
-import { Card, CardContent } from "../ui/card";
+import { Card, CardContent, CardFooter } from "../ui/card";
 import { Input } from "../ui/input";
 import { BookDetailDialog } from "./BookDetailDialog";
 
 type ViewMode = "grid" | "list";
 
 export function Library() {
-  const [books, setBooks] = useState<Book[]>([]);
+  const {
+    setCurrentTab,
+    setCurrentBook,
+    library: books,
+    setLibrary: setBooks,
+    isLoadingLibrary: isLoading,
+
+    loadBooks,
+  } = useAppContext();
+
   const booksRef = useRef(books);
-  console.log("books", books);
 
   // Keep ref in sync with state
   useEffect(() => {
     booksRef.current = books;
   }, [books]);
-  const [isLoading, setIsLoading] = useState(true);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
@@ -30,19 +39,10 @@ export function Library() {
   const [isAddingBook, setIsAddingBook] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const loadBooks = async () => {
-    try {
-      setIsLoading(true);
-      const loadedBooks = await invoke<Book[]>("read_all_books", {
-        filter: null,
-      });
-      setBooks(loadedBooks);
-    } catch (err) {
-      console.error("Failed to load books:", err);
-      toast.error("Failed to load books");
-    } finally {
-      setIsLoading(false);
-    }
+  const handleOpenBook = (book: Book, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setCurrentBook(book);
+    setCurrentTab("reader");
   };
 
   const refreshBookById = async (bookId: string | null) => {
@@ -101,10 +101,6 @@ export function Library() {
     onConversionStarted: handleSetStarted,
     onChapterCompleted: refreshBookById,
   });
-
-  useEffect(() => {
-    loadBooks();
-  }, []);
 
   const ingestBook = async (epubPath: string) => {
     try {
@@ -344,21 +340,33 @@ export function Library() {
                       </div>
                     )}
                   </div>
-                  <div className="p-3 space-y-1">
-                    <p
-                      className="font-medium text-sm line-clamp-2"
-                      title={book.title}
-                    >
-                      {book.title}
-                    </p>
-                    <p
-                      className="text-xs text-muted-foreground line-clamp-1"
-                      title={book.author}
-                    >
-                      {book.author}
-                    </p>
+                  <div className="p-3 space-y-2">
+                    <div className="space-y-1">
+                      <p
+                        className="font-medium text-sm line-clamp-2"
+                        title={book.title}
+                      >
+                        {book.title}
+                      </p>
+                      <p
+                        className="text-xs text-muted-foreground line-clamp-1"
+                        title={book.author}
+                      >
+                        {book.author}
+                      </p>
+                    </div>
                   </div>
                 </CardContent>
+                <CardFooter className="p-4">
+                  <Button
+                    size="sm"
+                    className="w-full"
+                    variant="ghost"
+                    onClick={(e) => handleOpenBook(book, e)}
+                  >
+                    Open Book
+                  </Button>
+                </CardFooter>
               </Card>
             ))}
           </div>
@@ -371,7 +379,7 @@ export function Library() {
                 onClick={() => handleBookClick(book)}
               >
                 <CardContent className="p-4">
-                  <div className="flex items-start gap-4">
+                  <div className="flex items-center gap-4">
                     <div className="w-16 h-24 bg-muted rounded shrink-0 overflow-hidden">
                       {book.coverUrl ? (
                         <img
@@ -417,6 +425,14 @@ export function Library() {
                         </div>
                       )}
                     </div>
+                    <Button
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      variant="ghost"
+                      onClick={(e) => handleOpenBook(book, e)}
+                    >
+                      Open
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
@@ -433,6 +449,7 @@ export function Library() {
           onConvert={handleConvert}
           onCancel={handleCancelConversion}
           onDelete={handleDelete}
+          onOpenBook={handleOpenBook}
           isConverting={isConverting}
           isDeleting={isDeleting}
         />

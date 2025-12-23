@@ -1,5 +1,7 @@
 import { forwardRef, memo } from "react";
 
+import { cn } from "../lib/utils";
+
 export type HiddenFileInputProps = Omit<
   React.InputHTMLAttributes<HTMLInputElement>,
   "type"
@@ -9,12 +11,7 @@ const HiddenFileInputComponent = forwardRef<
   HTMLInputElement,
   HiddenFileInputProps
 >(({ className, ...props }, ref) => (
-  <input
-    ref={ref}
-    type="file"
-    className={["hidden", className].filter(Boolean).join(" ")}
-    {...props}
-  />
+  <input ref={ref} type="file" className={cn("hidden", className)} {...props} />
 ));
 
 HiddenFileInputComponent.displayName = "HiddenFileInput";

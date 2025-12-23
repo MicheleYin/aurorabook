@@ -40,6 +40,7 @@ interface BookDetailDialogProps {
   onConvert: () => void;
   onCancel: () => void;
   onDelete: () => void;
+  onOpenBook: (book: Book) => void;
   isConverting: boolean;
   isDeleting: boolean;
 }
@@ -152,8 +153,8 @@ const BookDetailContent = ({ book }: { book: Book }) => {
           <div>
             <p className="text-sm font-medium mb-2">Subjects</p>
             <div className="flex flex-wrap gap-2">
-              {book.subjects.map((subject, index) => (
-                <Badge key={index} variant="secondary">
+              {book.subjects.map((subject) => (
+                <Badge key={subject} variant="secondary">
                   {subject}
                 </Badge>
               ))}
@@ -258,6 +259,7 @@ export function BookDetailDialog({
   onConvert,
   onCancel,
   onDelete,
+  onOpenBook,
   isConverting,
   isDeleting,
 }: BookDetailDialogProps) {
@@ -293,6 +295,16 @@ export function BookDetailDialog({
               <BookDetailContent book={book} />
             </div>
             <DialogFooter className="flex-shrink-0 gap-2">
+              <Button
+                onClick={() => {
+                  onOpenBook(book);
+                  onOpenChange(false);
+                }}
+                className="gap-2"
+              >
+                <BookOpen className="h-4 w-4" />
+                Open Book
+              </Button>
               {book.conversionStatus === "started" && (
                 <Button
                   variant="outline"
@@ -341,7 +353,17 @@ export function BookDetailDialog({
             <div className="flex-1 overflow-y-auto px-6 pb-6">
               <BookDetailContent book={book} />
             </div>
-            <DrawerFooter className="flex-shrink-0 gap-2">
+            <DrawerFooter className="flex-shrink-0 gap-2 p-4">
+              <Button
+                onClick={() => {
+                  onOpenBook(book);
+                  onOpenChange(false);
+                }}
+                className="gap-2"
+              >
+                <BookOpen className="h-4 w-4" />
+                Open Book
+              </Button>
               {book.conversionStatus === "started" && (
                 <Button
                   variant="outline"
@@ -389,8 +411,9 @@ export function BookDetailDialog({
               <DialogTitle>Delete Book</DialogTitle>
             </div>
             <DialogDescription>
-              Are you sure you want to delete <strong>"{book.title}"</strong>?
-              This action cannot be undone.
+              Are you sure you want to delete{" "}
+              <strong>&ldquo;{book.title}&rdquo;</strong>? This action cannot be
+              undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2">

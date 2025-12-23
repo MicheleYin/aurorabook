@@ -33,11 +33,6 @@ export function Settings() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
 
-  // Load settings from backend
-  useEffect(() => {
-    loadSettings();
-  }, []);
-
   const loadSettings = async () => {
     try {
       setIsLoading(true);
@@ -63,6 +58,10 @@ export function Settings() {
       setIsLoading(false);
     }
   };
+  // Load settings from backend
+  useEffect(() => {
+    loadSettings();
+  }, []);
 
   const saveSettings = async (updates: Partial<AppSettings>) => {
     if (!settings) return;
