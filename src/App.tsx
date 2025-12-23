@@ -139,40 +139,43 @@ function App() {
     [currentBook, setCurrentBook, library, setLibrary]
   );
 
-  const restoreProgress = useCallback((bookToRestore: Book | null) => {
-    if (
-      !bookToRestore?.progress ||
-      !containerRef.current ||
-      !currentChapter ||
-      currentChapter.id !== bookToRestore.progress.currentChapterId
-    )
-      return;
+  const restoreProgress = useCallback(
+    (bookToRestore: Book | null) => {
+      if (
+        !bookToRestore?.progress ||
+        !containerRef.current ||
+        !currentChapter ||
+        currentChapter.id !== bookToRestore.progress.currentChapterId
+      )
+        return;
 
-    const progress = bookToRestore.progress;
+      const progress = bookToRestore.progress;
 
-    // Restore scroll position
-    if (progress?.currentChapterScrollTop !== undefined) {
-      containerRef.current.scrollTop = progress.currentChapterScrollTop;
-    }
-
-    // Restore element position if available
-    const contentRef = containerRef.current.querySelector(
-      ".prose"
-    ) as HTMLElement;
-    if (progress?.currentChapterElementId && contentRef) {
-      const element = contentRef.querySelector(
-        `#${progress.currentChapterElementId}`
-      );
-      console.log(
-        "Restoring element position:",
-        progress.currentChapterElementId,
-        element
-      );
-      if (element) {
-        element.scrollIntoView({ behavior: "auto", block: "start" });
+      // Restore scroll position
+      if (progress?.currentChapterScrollTop !== undefined) {
+        containerRef.current.scrollTop = progress.currentChapterScrollTop;
       }
-    }
-  }, []);
+
+      // Restore element position if available
+      const contentRef = containerRef.current.querySelector(
+        ".prose"
+      ) as HTMLElement;
+      if (progress?.currentChapterElementId && contentRef) {
+        const element = contentRef.querySelector(
+          `#${progress.currentChapterElementId}`
+        );
+        console.log(
+          "Restoring element position:",
+          progress.currentChapterElementId,
+          element
+        );
+        if (element) {
+          element.scrollIntoView({ behavior: "auto", block: "start" });
+        }
+      }
+    },
+    [currentChapter]
+  );
 
   const changeCurrentTab = useCallback(
     (tab: TabValue) => {
@@ -310,6 +313,7 @@ function App() {
               </TabsList>
             </div>
           </Tabs>
+          {/* <FloatingAudioPlayer /> */}
           <Toaster richColors position="top-center" />
         </div>
       </AppContext.Provider>
