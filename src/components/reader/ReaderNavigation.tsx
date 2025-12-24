@@ -15,7 +15,7 @@ export function ReaderNavigation({
   currentChapter,
   onPrevious,
   onNext,
-}: ReaderNavigationProps) {
+}: Readonly<ReaderNavigationProps>) {
   const currentChapterIndex = book.chapters.findIndex(
     (ch) => ch.id === currentChapter.id
   );
@@ -23,16 +23,16 @@ export function ReaderNavigation({
   const hasNext = currentChapterIndex < book.chapters.length - 1;
 
   return (
-    <div className="absolute bottom-0 left-0 right-0 z-10 flex-shrink-0">
+    <div className="absolute left-0 right-0 z-10 flex-shrink-0 bottom-0 safe-area-bottom">
       <div className="flex items-center justify-between p-4">
         <Button
           variant="outline"
           onClick={onPrevious}
+          className="rounded-full gap-2 shadow-md"
           disabled={!hasPrevious}
-          className="gap-2"
         >
           <ChevronLeft className="h-4 w-4" />
-          Previous
+          <span className="hidden md:block">Previous</span>
         </Button>
         <div className="text-sm text-muted-foreground">
           Chapter {currentChapterIndex + 1} of {book.chapters.length}
@@ -41,9 +41,9 @@ export function ReaderNavigation({
           variant="outline"
           onClick={onNext}
           disabled={!hasNext}
-          className="gap-2"
+          className="rounded-full gap-2 shadow-md"
         >
-          Next
+          <span className="hidden md:block">Next</span>
           <ChevronRight className="h-4 w-4" />
         </Button>
       </div>
