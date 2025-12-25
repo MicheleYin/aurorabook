@@ -175,21 +175,32 @@ export function useAudioTextSync(
     ) => {
       const containerRect = container.getBoundingClientRect();
       const elementRect = element.getBoundingClientRect();
-      const { topOffset } = calculateOffsets();
+      const { topOffset, bottomOffset } = calculateOffsets();
 
+      // Check if element is fully visible within the available viewport
+      // (accounting for header at top and audio player at bottom)
       const isVisible =
         elementRect.top >= containerRect.top + topOffset &&
-        elementRect.bottom <= containerRect.bottom &&
+        elementRect.bottom <= containerRect.bottom - bottomOffset &&
         elementRect.left >= containerRect.left &&
         elementRect.right <= containerRect.right;
 
       if (!isVisible) {
         const elementOffsetTop = element.offsetTop - container.offsetTop;
-        const oneRem = 16;
+        const oneRem = 8;
+        // Position element 1rem below header, ensuring it's above audio player
         const targetScrollTop = elementOffsetTop - topOffset - oneRem;
 
+        // Ensure we don't scroll past the bottom (accounting for audio player)
+        const maxScrollTop =
+          container.scrollHeight - containerRect.height + bottomOffset;
+        const clampedScrollTop = Math.min(
+          Math.max(0, targetScrollTop),
+          maxScrollTop
+        );
+
         container.scrollTo({
-          top: Math.max(0, targetScrollTop),
+          top: clampedScrollTop,
           behavior: "smooth",
         });
       }
