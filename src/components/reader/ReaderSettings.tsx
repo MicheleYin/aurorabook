@@ -126,7 +126,7 @@ export function ReaderSettings({
     // Small delay to ensure drawer is fully rendered
     const timeoutId = setTimeout(scrollToSelected, 100);
     return () => clearTimeout(timeoutId);
-  }, [isOpen, settings]);
+  }, [isOpen]);
 
   return (
     <Drawer open={isOpen} onOpenChange={onOpenChange}>
@@ -149,12 +149,14 @@ export function ReaderSettings({
                 )}
                 onClick={() => handleThemeChange("light")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-1">
+                <CardContent className="p-4 flex flex-col items-center gap-1 h-20">
                   <Sun className="h-3 w-3" />
                   <span className="text-xs font-medium">Light</span>
-                  {settings.theme === "light" && (
-                    <Check className="h-3 w-3 text-primary" />
-                  )}
+                  <div className="h-3 w-3 flex items-center justify-center">
+                    {settings.theme === "light" && (
+                      <Check className="h-3 w-3 text-primary" />
+                    )}
+                  </div>
                 </CardContent>
               </Card>
               <Card
@@ -166,12 +168,14 @@ export function ReaderSettings({
                 )}
                 onClick={() => handleThemeChange("dark")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-1">
+                <CardContent className="p-4 flex flex-col items-center gap-1 h-20">
                   <Moon className="h-3 w-3" />
                   <span className="text-xs font-medium">Dark</span>
-                  {settings.theme === "dark" && (
-                    <Check className="h-3 w-3 text-primary" />
-                  )}
+                  <div className="h-3 w-3 flex items-center justify-center">
+                    {settings.theme === "dark" && (
+                      <Check className="h-3 w-3 text-primary" />
+                    )}
+                  </div>
                 </CardContent>
               </Card>
               <Card
@@ -183,12 +187,14 @@ export function ReaderSettings({
                 )}
                 onClick={() => handleThemeChange("system")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-1">
+                <CardContent className="p-4 flex flex-col items-center gap-1 h-20">
                   <Monitor className="h-3 w-3" />
                   <span className="text-xs font-medium">System</span>
-                  {settings.theme === "system" && (
-                    <Check className="h-3 w-3 text-primary" />
-                  )}
+                  <div className="h-3 w-3 flex items-center justify-center">
+                    {settings.theme === "system" && (
+                      <Check className="h-3 w-3 text-primary" />
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -207,13 +213,15 @@ export function ReaderSettings({
                 )}
                 onClick={() => handleFontFamilyChange("merriweather")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-2">
+                <CardContent className="p-4 flex flex-col items-center gap-2 h-32">
                   <div className="text-2xl font-serif">Aa</div>
                   <span className="text-xs text-center">Merriweather</span>
                   <span className="text-xs text-muted-foreground">Serif</span>
-                  {settings.fontFamily === "merriweather" && (
-                    <Check className="h-4 w-4 text-primary" />
-                  )}
+                  <div className="h-4 w-4 flex items-center justify-center">
+                    {settings.fontFamily === "merriweather" && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </div>
                 </CardContent>
               </Card>
               <Card
@@ -225,15 +233,17 @@ export function ReaderSettings({
                 )}
                 onClick={() => handleFontFamilyChange("inter")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-2">
+                <CardContent className="p-4 flex flex-col items-center gap-2 h-32">
                   <div className="text-2xl font-sans">Aa</div>
                   <span className="text-xs text-center">Inter</span>
                   <span className="text-xs text-muted-foreground">
                     Sans Serif
                   </span>
-                  {settings.fontFamily === "inter" && (
-                    <Check className="h-4 w-4 text-primary" />
-                  )}
+                  <div className="h-4 w-4 flex items-center justify-center">
+                    {settings.fontFamily === "inter" && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </div>
                 </CardContent>
               </Card>
               <Card
@@ -245,13 +255,15 @@ export function ReaderSettings({
                 )}
                 onClick={() => handleFontFamilyChange("monospace")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-2">
+                <CardContent className="p-4 flex flex-col items-center gap-2 h-32">
                   <div className="text-2xl font-mono">Aa</div>
                   <span className="text-xs text-center">Monospace</span>
                   <span className="text-xs text-muted-foreground">Fixed</span>
-                  {settings.fontFamily === "monospace" && (
-                    <Check className="h-4 w-4 text-primary" />
-                  )}
+                  <div className="h-4 w-4 flex items-center justify-center">
+                    {settings.fontFamily === "monospace" && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -270,12 +282,14 @@ export function ReaderSettings({
                 )}
                 onClick={() => handleFontSizeChange("small")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-2">
+                <CardContent className="p-4 flex flex-col items-center gap-2 h-24">
                   <div className="text-sm">Aa</div>
                   <span className="text-xs font-medium">Small</span>
-                  {settings.fontSize === "small" && (
-                    <Check className="h-4 w-4 text-primary" />
-                  )}
+                  <div className="h-4 w-4 flex items-center justify-center">
+                    {settings.fontSize === "small" && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </div>
                 </CardContent>
               </Card>
               <Card
@@ -287,12 +301,14 @@ export function ReaderSettings({
                 )}
                 onClick={() => handleFontSizeChange("medium")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-2">
+                <CardContent className="p-4 flex flex-col items-center gap-2 h-24">
                   <div className="text-base">Aa</div>
                   <span className="text-xs font-medium">Medium</span>
-                  {settings.fontSize === "medium" && (
-                    <Check className="h-4 w-4 text-primary" />
-                  )}
+                  <div className="h-4 w-4 flex items-center justify-center">
+                    {settings.fontSize === "medium" && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </div>
                 </CardContent>
               </Card>
               <Card
@@ -304,12 +320,14 @@ export function ReaderSettings({
                 )}
                 onClick={() => handleFontSizeChange("large")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-2">
+                <CardContent className="p-4 flex flex-col items-center gap-2 h-24">
                   <div className="text-lg">Aa</div>
                   <span className="text-xs font-medium">Large</span>
-                  {settings.fontSize === "large" && (
-                    <Check className="h-4 w-4 text-primary" />
-                  )}
+                  <div className="h-4 w-4 flex items-center justify-center">
+                    {settings.fontSize === "large" && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </div>
                 </CardContent>
               </Card>
               <Card
@@ -321,12 +339,14 @@ export function ReaderSettings({
                 )}
                 onClick={() => handleFontSizeChange("xlarge")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-2">
+                <CardContent className="p-4 flex flex-col items-center gap-2 h-24">
                   <div className="text-xl">Aa</div>
                   <span className="text-xs font-medium">Extra Large</span>
-                  {settings.fontSize === "xlarge" && (
-                    <Check className="h-4 w-4 text-primary" />
-                  )}
+                  <div className="h-4 w-4 flex items-center justify-center">
+                    {settings.fontSize === "xlarge" && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -345,14 +365,16 @@ export function ReaderSettings({
                 )}
                 onClick={() => handlePaddingChange("compact")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-2">
+                <CardContent className="p-4 flex flex-col items-center gap-2 h-36">
                   <div className="w-full h-16 rounded border-2 border-dashed border-muted-foreground/30 flex items-center justify-center">
                     <div className="w-3/4 h-8 bg-muted rounded"></div>
                   </div>
                   <span className="text-xs font-medium">Compact</span>
-                  {settings.contentPadding === "compact" && (
-                    <Check className="h-4 w-4 text-primary" />
-                  )}
+                  <div className="h-4 w-4 flex items-center justify-center">
+                    {settings.contentPadding === "compact" && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </div>
                 </CardContent>
               </Card>
               <Card
@@ -364,14 +386,16 @@ export function ReaderSettings({
                 )}
                 onClick={() => handlePaddingChange("comfortable")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-2">
+                <CardContent className="p-4 flex flex-col items-center gap-2 h-36">
                   <div className="w-full h-16 rounded border-2 border-dashed border-muted-foreground/30 flex items-center justify-center">
                     <div className="w-2/3 h-8 bg-muted rounded"></div>
                   </div>
                   <span className="text-xs font-medium">Comfortable</span>
-                  {settings.contentPadding === "comfortable" && (
-                    <Check className="h-4 w-4 text-primary" />
-                  )}
+                  <div className="h-4 w-4 flex items-center justify-center">
+                    {settings.contentPadding === "comfortable" && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </div>
                 </CardContent>
               </Card>
               <Card
@@ -383,14 +407,16 @@ export function ReaderSettings({
                 )}
                 onClick={() => handlePaddingChange("spacious")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-2">
+                <CardContent className="p-4 flex flex-col items-center gap-2 h-36">
                   <div className="w-full h-16 rounded border-2 border-dashed border-muted-foreground/30 flex items-center justify-center">
                     <div className="w-1/2 h-8 bg-muted rounded"></div>
                   </div>
                   <span className="text-xs font-medium">Spacious</span>
-                  {settings.contentPadding === "spacious" && (
-                    <Check className="h-4 w-4 text-primary" />
-                  )}
+                  <div className="h-4 w-4 flex items-center justify-center">
+                    {settings.contentPadding === "spacious" && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             </div>
