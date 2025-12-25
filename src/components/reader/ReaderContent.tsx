@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import type { Book, ChapterWithContent } from "../../types/book";
 import type { ReaderSettings } from "./ReaderSettings";
+import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { useAudioTextSync } from "../../hooks/useAudioTextSync";
 import { logger } from "../../lib/logger";
 import { cn } from "../../lib/utils";
@@ -33,6 +34,9 @@ export function ReaderContent({
   const contentRef = useRef<HTMLDivElement>(null);
   const previousHeaderVisibleRef = useRef<boolean | undefined>(isHeaderVisible);
   const scrollPositionRef = useRef<number>(0);
+  const { currentAudioTrack } = useAudioProgressContext();
+  const previousAudioTrackRef =
+    useRef<typeof currentAudioTrack>(currentAudioTrack);
 
   // Preserve scroll position when header visibility changes
   useEffect(() => {
@@ -77,6 +81,31 @@ export function ReaderContent({
       return () => clearTimeout(timeoutId);
     }
   }, [isHeaderVisible, scrollContainerRef, headerRef]);
+
+  // Preserve scroll position when audio player opens/closes
+  useEffect(() => {
+    if (!scrollContainerRef?.current) return;
+
+    const container = scrollContainerRef.current;
+    const audioTrackChanged =
+      previousAudioTrackRef.current !== currentAudioTrack;
+
+    if (audioTrackChanged) {
+      // Save current scroll position before audio player state changes
+      scrollPositionRef.current = container.scrollTop;
+
+      // Restore scroll position after a short delay to allow re-render to complete
+      const timeoutId = setTimeout(() => {
+        if (container && scrollPositionRef.current !== undefined) {
+          container.scrollTop = scrollPositionRef.current;
+        }
+      }, 50); // Small delay to allow DOM to update
+
+      previousAudioTrackRef.current = currentAudioTrack;
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [currentAudioTrack, scrollContainerRef]);
 
   // Audio-text sync
   logger.log("[ReaderContent] Calling useAudioTextSync", {
