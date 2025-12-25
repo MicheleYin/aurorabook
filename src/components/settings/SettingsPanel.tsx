@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { Pause, Play } from "lucide-react";
 
-import type { AppSettings } from "../../types/settings";
+import { useSettingsContext } from "@/context/SettingsContext";
+
 import type { UITheme } from "../../types/ui";
 import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
 import { logger } from "../../lib/logger";
@@ -32,78 +32,18 @@ import {
 import { Separator } from "../ui/separator";
 
 export function Settings() {
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    settings,
+    isLoading,
+    isSaving,
+    error,
+    saveSettings,
+    reloadSettings,
+    applyTheme,
+  } = useSettingsContext();
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
-
-  const loadSettings = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const appSettings = await invoke<AppSettings>("get_app_settings");
-      setSettings(appSettings);
-
-      // Apply theme from backend settings
-      if (appSettings.theme) {
-        applyTheme(appSettings.theme as UITheme);
-      }
-    } catch (err) {
-      logger.error("Failed to load settings:", err);
-      setError(err instanceof Error ? err.message : "Failed to load settings");
-      // Fallback to default settings
-      setSettings({
-        theme: "system",
-        ttsVoiceId: "af_heart",
-        autoScrollEnabled: true,
-        audioPlaybackSpeed: 1.0,
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-  // Load settings from backend
-  useEffect(() => {
-    loadSettings();
-  }, [loadSettings]);
-
-  const saveSettings = async (updates: Partial<AppSettings>) => {
-    if (!settings) return;
-
-    try {
-      setIsSaving(true);
-      setError(null);
-      const updatedSettings: AppSettings = { ...settings, ...updates };
-      const savedSettings = await invoke<AppSettings>("update_app_settings", {
-        settings: updatedSettings,
-      });
-      setSettings(savedSettings);
-    } catch (err) {
-      logger.error("Failed to save settings:", err);
-      setError(err instanceof Error ? err.message : "Failed to save settings");
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const applyTheme = useCallback((newTheme: UITheme) => {
-    const root = document.documentElement;
-
-    if (newTheme === "system") {
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-        .matches
-        ? "dark"
-        : "light";
-      root.classList.remove("light", "dark");
-      root.classList.add(systemTheme);
-    } else {
-      root.classList.remove("light", "dark");
-      root.classList.add(newTheme);
-    }
-  }, []);
 
   const handleThemeChange = useCallback(
     async (newTheme: UITheme) => {
@@ -136,6 +76,7 @@ export function Settings() {
 
       try {
         // Load the audio file from resources
+        const { invoke } = await import("@tauri-apps/api/core");
         const audioData = await invoke<number[]>("read_resource_file", {
           resourcePath: sampleUrl,
         });
@@ -176,12 +117,12 @@ export function Settings() {
         setPlayingVoiceId(null);
       }
     },
-    [playingVoiceId, audioRef, blobUrlRef]
+    [playingVoiceId]
   );
 
   const handleVoiceChange = useCallback(
     async (voiceId: string) => {
-      saveSettings({ ttsVoiceId: voiceId });
+      await saveSettings({ ttsVoiceId: voiceId });
     },
     [saveSettings]
   );
@@ -227,7 +168,7 @@ export function Settings() {
         <div className="text-center space-y-2">
           <p className="text-sm text-destructive">Failed to load settings</p>
           <button
-            onClick={loadSettings}
+            onClick={reloadSettings}
             className="text-sm text-primary hover:underline"
           >
             Retry
@@ -274,7 +215,7 @@ export function Settings() {
                 </div>
                 <div className="flex items-center justify-center sm:justify-end">
                   <ThemeSwitcher
-                    value={(settings.theme as UITheme) || "system"}
+                    value={(settings?.theme as UITheme) || "system"}
                     onChange={handleThemeChange}
                   />
                 </div>
@@ -296,7 +237,7 @@ export function Settings() {
                 <div className="flex-1">
                   <p className="font-medium mb-2">Default Voice</p>
                   <Select
-                    value={settings.ttsVoiceId || "af_heart"}
+                    value={settings?.ttsVoiceId || "af_heart"}
                     onValueChange={handleVoiceChange}
                   >
                     <SelectTrigger>

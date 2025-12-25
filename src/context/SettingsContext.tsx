@@ -1,0 +1,168 @@
+import {
+  createContext,
+  ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { invoke } from "@tauri-apps/api/core";
+
+import type { AppSettings } from "../types/settings";
+import type { UITheme } from "../types/ui";
+import { logger } from "../lib/logger";
+
+export interface SettingsContextType {
+  settings: AppSettings | null;
+  isLoading: boolean;
+  isSaving: boolean;
+  error: string | null;
+  saveSettings: (updates: Partial<AppSettings>) => Promise<void>;
+  reloadSettings: () => Promise<void>;
+  applyTheme: (theme: UITheme) => void;
+}
+
+export const SettingsContext = createContext<SettingsContextType | undefined>(
+  undefined
+);
+
+export function useSettingsContext() {
+  const context = useContext(SettingsContext);
+  if (!context) {
+    throw new Error("useSettingsContext must be used within SettingsProvider");
+  }
+  return context;
+}
+
+interface SettingsProviderProps {
+  readonly children: ReactNode;
+}
+
+export function SettingsProvider({ children }: SettingsProviderProps) {
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const hasAppliedThemeRef = useRef(false);
+
+  // Apply theme to document
+  const applyTheme = useCallback((newTheme: UITheme) => {
+    const root = document.documentElement;
+
+    if (newTheme === "system") {
+      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
+        .matches
+        ? "dark"
+        : "light";
+      root.classList.remove("light", "dark");
+      root.classList.add(systemTheme);
+    } else {
+      root.classList.remove("light", "dark");
+      root.classList.add(newTheme);
+    }
+  }, []);
+
+  // Load settings from backend
+  const loadSettings = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const appSettings = await invoke<AppSettings>("get_app_settings");
+      setSettings(appSettings);
+
+      // Apply theme from backend settings (only once on initial load)
+      if (!hasAppliedThemeRef.current && appSettings.theme) {
+        applyTheme(appSettings.theme as UITheme);
+        hasAppliedThemeRef.current = true;
+      }
+    } catch (err) {
+      logger.error("Failed to load settings:", err);
+      setError(err instanceof Error ? err.message : "Failed to load settings");
+      // Fallback to default settings
+      const defaultSettings: AppSettings = {
+        theme: "system",
+        ttsVoiceId: "af_heart",
+        autoScrollEnabled: true,
+        audioPlaybackSpeed: 1.0,
+      };
+      setSettings(defaultSettings);
+
+      // Apply default theme
+      if (!hasAppliedThemeRef.current) {
+        applyTheme("system");
+        hasAppliedThemeRef.current = true;
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, [applyTheme]);
+
+  // Load settings on mount
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
+
+  // Save settings to backend
+  const saveSettings = useCallback(
+    async (updates: Partial<AppSettings>) => {
+      if (!settings) return;
+
+      try {
+        setIsSaving(true);
+        setError(null);
+        const updatedSettings: AppSettings = { ...settings, ...updates };
+        const savedSettings = await invoke<AppSettings>("update_app_settings", {
+          settings: updatedSettings,
+        });
+        setSettings(savedSettings);
+
+        // Apply theme if it changed
+        if (updates.theme) {
+          applyTheme(updates.theme as UITheme);
+        }
+      } catch (err) {
+        logger.error("Failed to save settings:", err);
+        setError(
+          err instanceof Error ? err.message : "Failed to save settings"
+        );
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [settings, applyTheme]
+  );
+
+  // Reload settings from backend
+  const reloadSettings = useCallback(async () => {
+    await loadSettings();
+  }, [loadSettings]);
+
+  const contextValue = useMemo(
+    () => ({
+      settings,
+      isLoading,
+      isSaving,
+      error,
+      saveSettings,
+      reloadSettings,
+      applyTheme,
+    }),
+    [
+      settings,
+      isLoading,
+      isSaving,
+      error,
+      saveSettings,
+      reloadSettings,
+      applyTheme,
+    ]
+  );
+
+  return (
+    <SettingsContext.Provider value={contextValue}>
+      {children}
+    </SettingsContext.Provider>
+  );
+}

@@ -18,6 +18,7 @@ import {
   ChapterProgressProvider,
   useChapterProgressContext,
 } from "./context/ChapterProgressContext";
+import { SettingsProvider } from "./context/SettingsContext";
 
 function AppContent() {
   const { currentTab, setCurrentTab, currentBook } = useAppContext();
@@ -122,13 +123,15 @@ function AppWithProviders() {
 function App() {
   return (
     <ErrorBoundary>
-      <AudioSyncProvider>
-        <ChapterProgressProvider>
-          <AudioProgressProvider>
-            <AppWithProviders />
-          </AudioProgressProvider>
-        </ChapterProgressProvider>
-      </AudioSyncProvider>
+      <SettingsProvider>
+        <AudioSyncProvider>
+          <ChapterProgressProvider>
+            <AudioProgressProvider>
+              <AppWithProviders />
+            </AudioProgressProvider>
+          </ChapterProgressProvider>
+        </AudioSyncProvider>
+      </SettingsProvider>
     </ErrorBoundary>
   );
 }

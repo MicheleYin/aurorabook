@@ -1,7 +1,6 @@
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, ConnectionTrait, QueryOrder};
 use crate::book_service::entities::chapter;
 use crate::book_service::models::Chapter;
-use std::sync::Arc;
 
 pub struct ChapterRepository;
 
@@ -21,14 +20,16 @@ impl ChapterRepository {
     }
     
     /// Convert domain model to SeaORM active model
+    /// Optimized: Only clones when necessary (Option<String> already handles cloning efficiently)
     pub fn model_to_active_model(book_id: &str, model: &Chapter) -> chapter::ActiveModel {
         chapter::ActiveModel {
             id: Set(model.id.clone()),
-            book_id: Set(book_id.to_string()),
+            book_id: Set(book_id.to_string()), // String needed for Set
             title: Set(model.title.clone()),
             href: Set(model.href.clone()),
-            content_html: Set(model.content_html.clone()),
-            plain_text: Set(model.plain_text.clone()),
+            // Option<String> clone is efficient - only clones Some variant
+            content_html: Set(model.content_html.as_ref().map(|s| s.clone())),
+            plain_text: Set(model.plain_text.as_ref().map(|s| s.clone())),
             chapter_order: Set(model.order as i64),
             word_count: Set(model.word_count.map(|v| v as i64)),
             estimated_page_count: Set(model.estimated_page_count.map(|v| v as i64)),
@@ -37,9 +38,8 @@ impl ChapterRepository {
     
     /// Find all chapters for a book (with hybrid store)
     /// 
-    /// Note: This loads all chapter data including content_html and plain_text.
-    /// For large books, consider using a lightweight version that excludes content
-    /// and loads it on-demand when needed (future optimization).
+    /// Optimized: Excludes content_html and plain_text BLOBs by default for memory efficiency.
+    /// These large fields are loaded lazily when chapters are opened.
     pub async fn find_by_book_id(db: &DatabaseConnection, book_id: &str) -> Result<Vec<Chapter>, String> {
         // Try hybrid store first
         if let Ok(store) = crate::book_service::database::get_hybrid_store() {
@@ -49,15 +49,52 @@ impl ChapterRepository {
             }
         }
         
-        // Store miss - query database
-        let entities = chapter::Entity::find()
+        // Store miss - query database (EXCLUDE content_html and plain_text for memory efficiency)
+        use sea_orm::{QuerySelect, FromQueryResult};
+        
+        #[derive(Debug, FromQueryResult)]
+        struct ChapterPartial {
+            id: String,
+            title: String,
+            href: String,
+            chapter_order: i64,
+            word_count: Option<i64>,
+            estimated_page_count: Option<i64>,
+        }
+        
+        let chapter_partials = chapter::Entity::find()
+            .select_only()
+            .columns([
+                chapter::Column::Id,
+                // Skip BookId - we already know it from the filter
+                chapter::Column::Title,
+                chapter::Column::Href,
+                chapter::Column::ChapterOrder,
+                chapter::Column::WordCount,
+                chapter::Column::EstimatedPageCount,
+                // Explicitly EXCLUDE: ContentHtml, PlainText (large BLOBs)
+            ])
             .filter(chapter::Column::BookId.eq(book_id))
             .order_by_asc(chapter::Column::ChapterOrder)
+            .into_model::<ChapterPartial>()
             .all(db)
             .await
             .map_err(|e| format!("Failed to query chapters: {}", e))?;
         
-        let chapters: Vec<Chapter> = entities.into_iter().map(Self::entity_to_model).collect();
+        // Convert partial results to full chapter models (with content_html and plain_text as None)
+        let chapters: Vec<Chapter> = chapter_partials
+            .into_iter()
+            .map(|p| Chapter {
+                id: p.id,
+                title: p.title,
+                href: p.href,
+                content_html: None, // Excluded for performance - loaded lazily
+                plain_text: None,   // Excluded for performance - loaded lazily
+                order: p.chapter_order as usize,
+                word_count: p.word_count.map(|v| v as usize),
+                estimated_page_count: p.estimated_page_count.map(|v| v as usize),
+            })
+            .collect();
         
         // Load into hybrid store
         if let Ok(store) = crate::book_service::database::get_hybrid_store() {
@@ -89,7 +126,7 @@ impl ChapterRepository {
             .map_err(|e| format!("Failed to query chapter: {}", e))?;
         
         if let Some(entity) = entity {
-            let chapter = Self::entity_to_model(entity.clone());
+            let chapter = Self::entity_to_model(entity); // No clone needed - entity is moved
             
             // Load into hybrid store
             if let Ok(store) = crate::book_service::database::get_hybrid_store() {

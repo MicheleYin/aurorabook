@@ -1045,10 +1045,14 @@ pub async fn ingest_epub(
         return Err(AppError::EpubParse("Invalid EPUB file: not a valid ZIP archive".to_string()));
     }
     
+    // Wrap EPUB data in Arc to avoid multiple clones (saves significant memory)
+    use std::sync::Arc;
+    let epub_data_arc = Arc::new(epub_data);
+    
     // Parse EPUB in a blocking task
-    let epub_data_clone = epub_data.clone();
+    let epub_data_clone = Arc::clone(&epub_data_arc);
     let (chapters, _stats) = tokio::task::spawn_blocking(move || {
-        extract_chapters_from_epub(&epub_data_clone)
+        extract_chapters_from_epub(epub_data_clone.as_slice())
     })
     .await
     .map_err(|e| AppError::EpubParse(format!("Failed to parse EPUB: {}", e)))?
@@ -1061,14 +1065,14 @@ pub async fn ingest_epub(
     // Extract metadata and parse OPF to get media-overlay attributes
     // We need to parse the OPF directly to get media-overlay attributes which are required
     // for matching audio tracks to chapters via the media-overlay chain
-    let epub_data_for_metadata = epub_data.clone();
+    let epub_data_for_metadata = Arc::clone(&epub_data_arc);
     let (metadata, manifest_items, spine_items, opf_path) = tokio::task::spawn_blocking(move || {
         use std::io::{Cursor, Read};
         use zip::ZipArchive;
         use crate::epub::parser::{find_opf_path, parse_opf_content};
         
         // Open EPUB as ZIP to read OPF
-        let epub_slice: &[u8] = &epub_data_for_metadata;
+        let epub_slice: &[u8] = epub_data_for_metadata.as_slice();
         let mut archive = ZipArchive::new(Cursor::new(epub_slice))
             .map_err(|e| format!("Failed to open EPUB archive: {}", e))?;
         
@@ -1098,11 +1102,11 @@ pub async fn ingest_epub(
     
     // Extract cover image as data URL if found
     let cover_url = if let Some(href) = cover_href {
-        let epub_data_for_cover = epub_data.clone();
+        let epub_data_for_cover = Arc::clone(&epub_data_arc);
         let opf_path_for_cover = opf_path.clone();
         tokio::task::spawn_blocking(move || {
             crate::epub::parser::extract_cover_image_as_data_url(
-                &epub_data_for_cover,
+                epub_data_for_cover.as_slice(),
                 &href,
                 &opf_path_for_cover,
             )
@@ -1146,14 +1150,14 @@ pub async fn ingest_epub(
     
     // Compute durations for audio tracks
     if !audio_tracks.is_empty() {
-        let epub_data_for_durations = epub_data.clone();
+        let epub_data_for_durations = Arc::clone(&epub_data_arc);
         let opf_path_for_durations = opf_path.clone();
         let audio_tracks_clone = audio_tracks.clone();
         audio_tracks = match tokio::task::spawn_blocking(move || {
             use crate::epub::parser::compute_audio_track_durations;
             let mut tracks = audio_tracks_clone;
             compute_audio_track_durations(
-                &epub_data_for_durations,
+                epub_data_for_durations.as_slice(),
                 &mut tracks,
                 &opf_path_for_durations,
             );
@@ -1174,14 +1178,15 @@ pub async fn ingest_epub(
     // Build audio sync map from SMIL files if audio tracks exist
     let audio_sync_map = if !audio_tracks.is_empty() {
         log::info!("Building audio sync map for book with {} audio tracks", audio_tracks.len());
-        let epub_data_for_smil = epub_data.clone();
+        let epub_data_for_smil = Arc::clone(&epub_data_arc);
         let chapters_for_smil = chapters.clone();
         tokio::task::spawn_blocking(move || {
             use std::io::Cursor;
             use zip::ZipArchive;
             use crate::epub::converter::smil::build_audio_sync_map;
             
-            let mut archive = ZipArchive::new(Cursor::new(epub_data_for_smil.as_slice()))
+            let epub_slice = epub_data_for_smil.as_slice();
+            let mut archive = ZipArchive::new(Cursor::new(epub_slice))
                 .map_err(|e| format!("Failed to open EPUB for SMIL parsing: {}", e))?;
             
             build_audio_sync_map(&mut archive, &chapters_for_smil)
@@ -1225,7 +1230,7 @@ pub async fn ingest_epub(
     log::info!("Extracting chapter content, images, and audio during ingestion...");
     
     // Extract chapter content HTML for all chapters
-    let epub_data_for_content = epub_data.clone();
+    let epub_data_for_content = Arc::clone(&epub_data_arc);
     let chapters_for_content = chapters.clone();
     let opf_path_for_content = opf_path.clone();
     let chapters_with_content = tokio::task::spawn_blocking(move || {
@@ -1235,7 +1240,7 @@ pub async fn ingest_epub(
         use crate::utils::path_validation::validate_epub_path;
         use log::warn;
         
-        let epub_slice: &[u8] = &epub_data_for_content;
+        let epub_slice: &[u8] = epub_data_for_content.as_slice();
         let mut archive = ZipArchive::new(Cursor::new(epub_slice))
             .map_err(|e| format!("Failed to open EPUB: {}", e))?;
         
@@ -1289,7 +1294,7 @@ pub async fn ingest_epub(
     .map_err(|e| AppError::EpubParse(e))?;
     
     // Extract all images from chapters and store them
-    let epub_data_for_images = epub_data.clone();
+    let epub_data_for_images = Arc::clone(&epub_data_arc);
     let chapters_for_images = chapters_with_content.clone();
     let opf_path_for_images = opf_path.clone();
     let images_extracted = tokio::task::spawn_blocking(move || {
@@ -1299,7 +1304,7 @@ pub async fn ingest_epub(
         use scraper::{Html, Selector};
         use log::debug;
         
-        let epub_slice: &[u8] = &epub_data_for_images;
+        let epub_slice: &[u8] = epub_data_for_images.as_slice();
         let mut archive = ZipArchive::new(Cursor::new(epub_slice))
             .map_err(|e| format!("Failed to open EPUB: {}", e))?;
         
@@ -1374,7 +1379,7 @@ pub async fn ingest_epub(
     .map_err(|e| AppError::EpubParse(e))?;
     
     // Extract audio track data
-    let epub_data_for_audio = epub_data.clone();
+    let epub_data_for_audio = Arc::clone(&epub_data_arc);
     let audio_tracks_for_extraction = audio_tracks.clone();
     let opf_path_for_audio = opf_path.clone();
     let audio_extracted = tokio::task::spawn_blocking(move || {
@@ -1383,7 +1388,7 @@ pub async fn ingest_epub(
         use crate::epub::parser::derive_base_path_from_opf;
         use log::{debug, warn};
         
-        let epub_slice: &[u8] = &epub_data_for_audio;
+        let epub_slice: &[u8] = epub_data_for_audio.as_slice();
         let mut archive = ZipArchive::new(Cursor::new(epub_slice))
             .map_err(|e| format!("Failed to open EPUB: {}", e))?;
         
@@ -1467,7 +1472,7 @@ pub async fn ingest_epub(
         } else {
             Some(metadata.subjects)
         },
-        file_size_bytes: Some(epub_data.len()),
+        file_size_bytes: Some(epub_data_arc.len()),
         audio_tracks,
         audio_state: None,
         audio_sync_map,
@@ -1491,12 +1496,12 @@ pub async fn ingest_epub(
     
     // Store original EPUB data in database
     use repositories::EpubRepository;
-    log::info!("Storing original EPUB data ({} bytes)...", epub_data.len());
-    if let Err(e) = EpubRepository::save(db.as_ref(), &source_path, &book_id, &epub_data).await {
+    log::info!("Storing original EPUB data ({} bytes)...", epub_data_arc.len());
+    if let Err(e) = EpubRepository::save(db.as_ref(), &source_path, &book_id, epub_data_arc.as_slice()).await {
         log::error!("Failed to store original EPUB data: {}", e);
         // Don't fail ingestion if EPUB storage fails, but log it
     } else {
-        log::debug!("Successfully stored original EPUB data ({} bytes)", epub_data.len());
+        log::debug!("Successfully stored original EPUB data ({} bytes)", epub_data_arc.len());
     }
     
     // Store all images AFTER book save (since book save deletes them first)

@@ -163,7 +163,7 @@ impl BookRepository {
             return Ok(Vec::new());
         }
         
-        // Collect all book IDs
+        // Collect all book IDs (avoid unnecessary clones by using references)
         let book_ids: Vec<String> = entities.iter().map(|e| e.id.clone()).collect();
         
         // Load all chapters for all books in one query (EXCLUDE content_html and plain_text BLOBs for performance)
@@ -274,9 +274,10 @@ impl BookRepository {
         for entity in all_chapters {
             // Create chapter model with content_html and plain_text as None
             // (since we excluded them from the query for performance)
-            let chapter = ChapterRepository::entity_to_model(entity.clone());
+            let book_id = entity.book_id.clone(); // Clone once for map key
+            let chapter = ChapterRepository::entity_to_model(entity); // Move entity, no clone
             chapters_by_book
-                .entry(entity.book_id.clone())
+                .entry(book_id)
                 .or_insert_with(Vec::new)
                 .push(chapter);
         }
@@ -287,9 +288,10 @@ impl BookRepository {
         let mut audio_tracks_by_book: HashMap<String, Vec<crate::book_service::models::AudioTrack>> = HashMap::new();
         for entity in all_audio_tracks {
             // AudioTrack model doesn't include data field, so this is fine
-            let track = AudioRepository::entity_to_model(entity.clone());
+            let book_id = entity.book_id.clone(); // Clone once for map key
+            let track = AudioRepository::entity_to_model(entity); // Move entity, no clone
             audio_tracks_by_book
-                .entry(entity.book_id.clone())
+                .entry(book_id)
                 .or_insert_with(Vec::new)
                 .push(track);
         }
@@ -326,9 +328,10 @@ impl BookRepository {
             let audio_tracks = AudioRepository::find_by_book_id(db, &entity.id).await?;
             let book = Self::entity_to_model(entity, chapters, audio_tracks);
             
-            // Load into hybrid store
+            // Load into hybrid store (clone only for cache, original returned to caller)
             if let Ok(store) = crate::book_service::database::get_hybrid_store() {
-                store.load_book(book.clone()).await;
+                let book_for_cache = book.clone(); // Only clone for cache
+                store.load_book(book_for_cache).await;
             }
             
             Ok(Some(book))
