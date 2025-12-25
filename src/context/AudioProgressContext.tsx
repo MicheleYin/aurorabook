@@ -24,6 +24,7 @@ export interface AudioProgressContextType {
   blobUrlRef: React.RefObject<string | null>;
   loadAudioTrack: (bookId: string, track: AudioTrack) => Promise<void>;
   loadLastOpenedAudioTrack: (book: Book) => void;
+  closeAudioPlayer: () => void;
 }
 
 export const AudioProgressContext = createContext<
@@ -136,6 +137,24 @@ export function AudioProgressProvider({
     [loadAudioTrack]
   );
 
+  const closeAudioPlayer = useCallback(() => {
+    // Stop playback
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current.src = "";
+    }
+
+    // Clean up blob URL
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
+    }
+
+    // Clear current track
+    setCurrentAudioTrack(null);
+  }, []);
+
   // Cleanup blob URL on unmount
   useEffect(() => {
     return () => {
@@ -156,12 +175,14 @@ export function AudioProgressProvider({
       blobUrlRef,
       loadAudioTrack,
       loadLastOpenedAudioTrack,
+      closeAudioPlayer,
     }),
     [
       currentAudioTrack,
       isLoadingAudio,
       loadAudioTrack,
       loadLastOpenedAudioTrack,
+      closeAudioPlayer,
     ]
   );
 

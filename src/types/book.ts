@@ -32,11 +32,24 @@ export interface Chapter {
   estimatedPageCount?: number;
 }
 
+export interface AudioSyncSegment {
+  textElementId: string;
+  chapterHref: string;
+  audioTrackHref: string;
+  clipBegin: number;
+  clipEnd: number;
+}
+
+export interface AudioSyncMap {
+  segments: AudioSyncSegment[];
+}
+
 export interface AudioTrack {
   id: string;
   bookId: string;
   chapterHref: string;
   filePath: string;
+  title?: string;
   durationSeconds?: number;
   fileSizeBytes?: number;
   order: number;
@@ -55,6 +68,7 @@ export interface Book {
   fileSizeBytes?: number;
   audioTracks: AudioTrack[];
   audioState?: BookAudioState;
+  audioSyncMap?: AudioSyncMap;
   progress?: BookProgress;
   pageCount?: number;
   conversionStatus: ConversionStatus;

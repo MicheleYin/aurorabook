@@ -7,12 +7,14 @@ import {
   Rewind,
   SkipBack,
   SkipForward,
+  X,
 } from "lucide-react";
 
 import { useAppContext } from "@/context/AppContext";
 import { useAudioProgressContext } from "@/context/AudioProgressContext";
 
-import { cn } from "../../lib/utils";
+import type { AudioTrack } from "../../types/book";
+import { cn, formatTime } from "../../lib/utils";
 import { Button } from "../ui/button";
 import {
   Select,
@@ -22,23 +24,23 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Slider } from "../ui/slider";
-
-const formatTime = (seconds: number) => {
-  const hours = Math.floor(seconds / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${hours}:${mins}:${secs.toString().padStart(2, "0")}`;
-};
+import { AudioTracksButton, AudioTracksDrawer } from "./AudioTracksDrawer";
 
 export function FloatingAudioPlayer() {
-  const { audioRef, currentAudioTrack, isLoadingAudio, loadAudioTrack } =
-    useAudioProgressContext();
+  const {
+    audioRef,
+    currentAudioTrack,
+    isLoadingAudio,
+    loadAudioTrack,
+    closeAudioPlayer,
+  } = useAudioProgressContext();
 
   // Local state for UI updates (only this component re-renders)
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [isTracksOpen, setIsTracksOpen] = useState(false);
   const { currentBook } = useAppContext();
 
   // Get current audio track index (needed for event handlers)
@@ -232,13 +234,33 @@ export function FloatingAudioPlayer() {
     }
   }, [audioRef, currentBook, currentTrackIndex, hasNextTrack, loadAudioTrack]);
 
+  const handleTrackSelect = useCallback(
+    async (track: AudioTrack) => {
+      console.warn("handleTrackSelect", track);
+      if (!currentBook) return;
+
+      // Save playing state before pausing
+      const wasPlaying = audioRef.current && !audioRef.current.paused;
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      await loadAudioTrack(currentBook.id, track);
+      // Resume playback if it was playing
+      if (wasPlaying && audioRef.current) {
+        try {
+          await audioRef.current.play();
+        } catch (err) {
+          console.error("Failed to play selected track:", err);
+        }
+      }
+    },
+    [audioRef, currentBook, loadAudioTrack]
+  );
+
   // Get chapter title for current track
-  const chapterTitle = useMemo(
-    () =>
-      currentBook?.chapters.find(
-        (ch) => ch.href === currentAudioTrack?.chapterHref
-      )?.title || "Unknown Chapter",
-    [currentBook, currentAudioTrack]
+  const audioTrackTitle = useMemo(
+    () => currentAudioTrack?.title || "Unknown Audio Track",
+    [currentAudioTrack]
   );
 
   if ((!currentBook || !currentAudioTrack) && !isLoadingAudio) {
@@ -265,9 +287,19 @@ export function FloatingAudioPlayer() {
               {currentBook?.title || "Unknown Book"}
             </p>
             <p className="text-xs text-muted-foreground truncate">
-              {chapterTitle}
+              {audioTrackTitle}
             </p>
           </div>
+          {/* Close Button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={closeAudioPlayer}
+            title="Close audio player"
+          >
+            <X className="h-4 w-4" />
+          </Button>
         </div>
 
         {/* Progress Bar */}
@@ -296,7 +328,7 @@ export function FloatingAudioPlayer() {
             disabled={!hasPreviousTrack || isLoadingAudio}
             title="Previous track"
           >
-            <SkipBack className="h-5 w-5" />
+            <SkipBack className="h-5 w-5 shrink-0" />
           </Button>
 
           <Button
@@ -307,18 +339,18 @@ export function FloatingAudioPlayer() {
             disabled={isLoadingAudio}
             title="Skip backward 10 seconds"
           >
-            <Rewind className="h-5 w-5" />
+            <Rewind className="h-5 w-5 shrink-0" />
           </Button>
 
           <Button
             variant="ghost"
             size="icon"
-            className="h-12 w-12"
+            className="h-12 w-12 shrink-0"
             onClick={handlePlayPause}
             disabled={isLoadingAudio}
           >
             {isLoadingAudio ? (
-              <Loader2 className="h-6 w-6 animate-spin" />
+              <Loader2 className="h-6 w-6 animate-spin shrink-0   " />
             ) : isPlaying ? (
               <Pause className="h-6 w-6" />
             ) : (
@@ -334,7 +366,7 @@ export function FloatingAudioPlayer() {
             disabled={isLoadingAudio}
             title="Skip forward 10 seconds"
           >
-            <FastForward className="h-5 w-5" />
+            <FastForward className="h-5 w-5 shrink-0" />
           </Button>
 
           <Button
@@ -345,8 +377,13 @@ export function FloatingAudioPlayer() {
             disabled={!hasNextTrack || isLoadingAudio}
             title="Next track"
           >
-            <SkipForward className="h-5 w-5" />
+            <SkipForward className="h-5 w-5 shrink-0" />
           </Button>
+
+          <AudioTracksButton
+            onClick={() => setIsTracksOpen(true)}
+            disabled={isLoadingAudio || !currentBook}
+          />
 
           <Select
             value={playbackRate.toString()}
@@ -367,6 +404,15 @@ export function FloatingAudioPlayer() {
           </Select>
         </div>
       </div>
+      {currentBook && (
+        <AudioTracksDrawer
+          book={currentBook}
+          currentTrackId={currentAudioTrack?.id ?? null}
+          isOpen={isTracksOpen}
+          onOpenChange={setIsTracksOpen}
+          onTrackSelect={handleTrackSelect}
+        />
+      )}
     </div>
   );
 }

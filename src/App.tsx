@@ -19,7 +19,7 @@ import {
 } from "./context/ChapterProgressContext";
 
 function AppContent() {
-  const { currentTab, setCurrentTab, currentBookId } = useAppContext();
+  const { currentTab, setCurrentTab, currentBook } = useAppContext();
 
   return (
     <div className="flex h-screen flex-col relative">
@@ -51,7 +51,7 @@ function AppContent() {
             </TabsTrigger>
             <TabsTrigger
               value="reader"
-              disabled={!currentBookId}
+              disabled={!currentBook}
               className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
             >
               Reader
