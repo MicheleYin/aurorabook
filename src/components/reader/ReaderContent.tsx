@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import type { Book, ChapterWithContent } from "../../types/book";
 import type { ReaderSettings } from "./ReaderSettings";
+import { useAudioTextSync } from "../../hooks/useAudioTextSync";
 import { cn } from "../../lib/utils";
 import { LoadingScreen } from "../app/LoadingScreen";
 
@@ -13,6 +14,8 @@ interface ReaderContentProps {
   onContentClick?: () => void;
   settings?: ReaderSettings;
   scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
+  headerRef: React.RefObject<HTMLDivElement | null> | undefined;
+  isHeaderVisible?: boolean;
 }
 
 export function ReaderContent({
@@ -23,8 +26,69 @@ export function ReaderContent({
   onContentClick,
   settings,
   scrollContainerRef,
+  headerRef,
+  isHeaderVisible,
 }: Readonly<ReaderContentProps>) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const previousHeaderVisibleRef = useRef<boolean | undefined>(isHeaderVisible);
+  const scrollPositionRef = useRef<number>(0);
+
+  // Preserve scroll position when header visibility changes
+  useEffect(() => {
+    if (!scrollContainerRef?.current) return;
+
+    const container = scrollContainerRef.current;
+    const headerVisibleChanged =
+      previousHeaderVisibleRef.current !== isHeaderVisible;
+
+    if (headerVisibleChanged) {
+      // Save current scroll position before header changes
+      scrollPositionRef.current = container.scrollTop;
+
+      // Wait for transition to complete, then restore scroll position
+      const timeoutId = setTimeout(() => {
+        if (container && scrollPositionRef.current !== undefined) {
+          // Get the header height difference
+          let previousHeaderHeight = 0;
+          if (headerRef?.current && previousHeaderVisibleRef.current) {
+            previousHeaderHeight =
+              headerRef.current.getBoundingClientRect().height;
+          }
+
+          let currentHeaderHeight = 0;
+          if (headerRef?.current && isHeaderVisible) {
+            currentHeaderHeight =
+              headerRef.current.getBoundingClientRect().height;
+          }
+
+          const headerHeightDiff = currentHeaderHeight - previousHeaderHeight;
+
+          // Adjust scroll position by the header height difference
+          const adjustedScrollTop =
+            scrollPositionRef.current + headerHeightDiff;
+
+          container.scrollTop = Math.max(0, adjustedScrollTop);
+        }
+      }, 350); // Wait for transition (300ms) + small buffer
+
+      previousHeaderVisibleRef.current = isHeaderVisible;
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [isHeaderVisible, scrollContainerRef, headerRef]);
+
+  // Audio-text sync
+  console.log("[ReaderContent] Calling useAudioTextSync", {
+    hasBook: !!book,
+    bookId: book?.id,
+    hasScrollContainerRef: !!scrollContainerRef,
+  });
+  useAudioTextSync(
+    book,
+    scrollContainerRef ?? null,
+    headerRef,
+    isHeaderVisible
+  );
 
   // Restore progress when chapter content is loaded
   useEffect(() => {

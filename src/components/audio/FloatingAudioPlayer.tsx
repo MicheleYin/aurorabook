@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   FastForward,
+  Link2,
   // Link2,
   Loader2,
   Pause,
@@ -13,10 +14,9 @@ import {
 
 import { useAppContext } from "@/context/AppContext";
 import { useAudioProgressContext } from "@/context/AudioProgressContext";
+import { useAudioSyncContext } from "@/context/AudioSyncContext";
 
 import type { AudioTrack } from "../../types/book";
-// import { useAudioSync } from "@/hooks/useAudioSync";
-
 import { cn, formatTime } from "../../lib/utils";
 import { Button } from "../ui/button";
 import {
@@ -49,7 +49,7 @@ export function FloatingAudioPlayer() {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isTracksOpen, setIsTracksOpen] = useState(false);
   const { currentBook } = useAppContext();
-  // const { isSyncEnabled, toggleSync } = useAudioSync();
+  const { isSyncEnabled, toggleSync } = useAudioSyncContext();
 
   // Get current audio track index (needed for event handlers)
   const currentTrackIndex = useMemo(
@@ -476,16 +476,19 @@ export function FloatingAudioPlayer() {
             disabled={isLoadingAudio || !currentBook}
           />
 
-          {/* <Button
-            variant={isSyncEnabled ? "default" : "ghost"}
+          <Button
+            variant={isSyncEnabled ? "secondary" : "ghost"}
             size="icon"
-            className="h-10 w-10"
+            className={cn(
+              "h-10 w-10",
+              isSyncEnabled && "bg-primary/10 hover:bg-primary/20"
+            )}
             onClick={toggleSync}
             disabled={isLoadingAudio || !currentBook}
             title={isSyncEnabled ? "Disable text sync" : "Enable text sync"}
           >
             <Link2 className="h-5 w-5 shrink-0" />
-          </Button> */}
+          </Button>
 
           <Select
             value={playbackRate.toString()}

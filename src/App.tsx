@@ -13,6 +13,7 @@ import {
   AudioProgressProvider,
   useAudioProgressContext,
 } from "./context/AudioProgressContext";
+import { AudioSyncProvider } from "./context/AudioSyncContext";
 import {
   ChapterProgressProvider,
   useChapterProgressContext,
@@ -121,11 +122,13 @@ function AppWithProviders() {
 function App() {
   return (
     <ErrorBoundary>
-      <ChapterProgressProvider>
-        <AudioProgressProvider>
-          <AppWithProviders />
-        </AudioProgressProvider>
-      </ChapterProgressProvider>
+      <AudioSyncProvider>
+        <ChapterProgressProvider>
+          <AudioProgressProvider>
+            <AppWithProviders />
+          </AudioProgressProvider>
+        </ChapterProgressProvider>
+      </AudioSyncProvider>
     </ErrorBoundary>
   );
 }

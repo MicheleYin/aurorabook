@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { BookOpen } from "lucide-react";
 
+import { useAudioSyncContext } from "@/context/AudioSyncContext";
 import { useChapterProgressContext } from "@/context/ChapterProgressContext";
 
 import type { Chapter } from "../../types/book";
@@ -27,6 +28,8 @@ export function Reader() {
   const [isHeaderVisible, setIsHeaderVisible] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const { readerSettings, setReaderSettings } = useReaderSettings();
+  const { isSyncEnabled, toggleSync } = useAudioSyncContext();
+  const headerRef = useRef<HTMLDivElement>(null);
 
   const handlePreviousChapter = async () => {
     if (!currentBook || !currentChapter) return;
@@ -43,6 +46,9 @@ export function Reader() {
 
   const handleNextChapter = async () => {
     if (!currentBook || !currentChapter) return;
+    if (isSyncEnabled) {
+      toggleSync();
+    }
     const currentIndex = currentBook.chapters.findIndex(
       (ch) => ch.id === currentChapter.id
     );
@@ -56,6 +62,10 @@ export function Reader() {
   const handleChapterSelect = async (chapter: Chapter) => {
     if (!currentBook) return;
 
+    if (isSyncEnabled) {
+      toggleSync();
+    }
+
     // Load selected chapter
     await loadChapterContent(currentBook.id, chapter);
     setIsTocOpen(false);
@@ -63,7 +73,9 @@ export function Reader() {
 
   const handleBack = () => {
     if (!currentBook || !currentChapter || !containerRef.current) return;
-
+    if (isSyncEnabled) {
+      toggleSync();
+    }
     setCurrentTab("library");
   };
 
@@ -96,6 +108,7 @@ export function Reader() {
   return (
     <div className="flex h-full flex-col">
       <div
+        ref={headerRef}
         className={cn(
           "transition-all duration-300 ease-out",
           isHeaderVisible
@@ -115,6 +128,8 @@ export function Reader() {
       </div>
       <ReaderContent
         scrollContainerRef={containerRef}
+        headerRef={headerRef}
+        isHeaderVisible={isHeaderVisible}
         book={currentBook}
         isLoading={isLoadingChapter}
         currentChapter={currentChapter}
