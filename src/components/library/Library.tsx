@@ -42,11 +42,38 @@ export function Library() {
   const [isAddingBook, setIsAddingBook] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [filterKey, setFilterKey] = useState(0);
+  const previousFilteredBooksRef = useRef<string[]>([]);
 
-  // Trigger re-animation when filter changes
+  // Calculate filtered books
+  const filteredBooks = !searchQuery.trim()
+    ? books
+    : books.filter((book) => {
+        const query = searchQuery.toLowerCase();
+        return (
+          book.title.toLowerCase().includes(query) ||
+          book.author.toLowerCase().includes(query) ||
+          book.publisher?.toLowerCase().includes(query) ||
+          book.subjects?.some((subject) =>
+            subject.toLowerCase().includes(query)
+          )
+        );
+      });
+
+  // Trigger re-animation only when filtered results actually change
   useEffect(() => {
-    setFilterKey((prev) => prev + 1);
-  }, [searchQuery, viewMode]);
+    const currentBookIds = filteredBooks.map((book) => book.id).sort();
+    const previousBookIds = previousFilteredBooksRef.current.sort();
+
+    // Check if the filtered books have actually changed
+    const hasChanged =
+      currentBookIds.length !== previousBookIds.length ||
+      currentBookIds.some((id, index) => id !== previousBookIds[index]);
+
+    if (hasChanged) {
+      setFilterKey((prev) => prev + 1);
+      previousFilteredBooksRef.current = currentBookIds;
+    }
+  }, [filteredBooks]);
 
   const handleOpenBook = (book: Book, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -171,20 +198,6 @@ export function Library() {
     }
   };
 
-  const filteredBooks = !searchQuery.trim()
-    ? books
-    : books.filter((book) => {
-        const query = searchQuery.toLowerCase();
-        return (
-          book.title.toLowerCase().includes(query) ||
-          book.author.toLowerCase().includes(query) ||
-          book.publisher?.toLowerCase().includes(query) ||
-          book.subjects?.some((subject) =>
-            subject.toLowerCase().includes(query)
-          )
-        );
-      });
-
   const handleBookClick = (book: Book) => {
     setSelectedBookId(book.id);
     setIsDialogOpen(true);
@@ -278,7 +291,6 @@ export function Library() {
             placeholder="Search books by title, author, or subject..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10"
           />
           <div className="flex items-center gap-1">
             <Button
