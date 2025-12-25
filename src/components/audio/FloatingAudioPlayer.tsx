@@ -59,6 +59,24 @@ export function FloatingAudioPlayer() {
     () => currentAudioTrack?.order ?? -1,
     [currentAudioTrack]
   );
+  const saveSettings = useCallback(async (updates: Partial<AppSettings>) => {
+    try {
+      const currentSettings = await invoke<AppSettings>("get_app_settings");
+      const updatedSettings: AppSettings = { ...currentSettings, ...updates };
+      await invoke<AppSettings>("update_app_settings", {
+        settings: updatedSettings,
+      });
+    } catch (err) {
+      console.error("Failed to save settings:", err);
+    }
+  }, []);
+  const handleSetPlaybackRate = useCallback(
+    (rate: number) => {
+      setPlaybackRate(rate);
+      saveSettings({ audioPlaybackSpeed: rate });
+    },
+    [saveSettings]
+  );
 
   // Load playback speed from backend on mount
   useEffect(() => {
@@ -400,7 +418,7 @@ export function FloatingAudioPlayer() {
         <audio ref={audioRef} preload="metadata">
           <track kind="captions" />
         </audio>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {/* Track Info */}
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium truncate">
@@ -410,6 +428,44 @@ export function FloatingAudioPlayer() {
               {audioTrackTitle}
             </p>
           </div>
+
+          <Button
+            variant={isSyncEnabled ? "secondary" : "ghost"}
+            size="icon"
+            className={cn(
+              "h-10 w-10",
+              isSyncEnabled && "bg-primary/10 hover:bg-primary/20"
+            )}
+            onClick={toggleSync}
+            disabled={isLoadingAudio || !currentBook}
+            title={isSyncEnabled ? "Disable text sync" : "Enable text sync"}
+          >
+            <Link2 className="h-5 w-5 shrink-0" />
+          </Button>
+
+          <Select
+            value={playbackRate.toString()}
+            onValueChange={(value) =>
+              handleSetPlaybackRate(Number.parseFloat(value))
+            }
+          >
+            <SelectTrigger className="h-10 w-20">
+              <SelectValue placeholder="1x" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="0.5">0.5x</SelectItem>
+              <SelectItem value="0.75">0.75x</SelectItem>
+              <SelectItem value="1">1x</SelectItem>
+              <SelectItem value="1.25">1.25x</SelectItem>
+              <SelectItem value="1.5">1.5x</SelectItem>
+              <SelectItem value="1.75">1.75x</SelectItem>
+              <SelectItem value="2">2x</SelectItem>
+            </SelectContent>
+          </Select>
+          <AudioTracksButton
+            onClick={() => setIsTracksOpen(true)}
+            disabled={isLoadingAudio || !currentBook}
+          />
           {/* Close Button */}
           <Button
             variant="ghost"
@@ -511,43 +567,6 @@ export function FloatingAudioPlayer() {
           >
             <SkipForward className="h-5 w-5 shrink-0" />
           </Button>
-
-          <AudioTracksButton
-            onClick={() => setIsTracksOpen(true)}
-            disabled={isLoadingAudio || !currentBook}
-          />
-
-          <Button
-            variant={isSyncEnabled ? "secondary" : "ghost"}
-            size="icon"
-            className={cn(
-              "h-10 w-10",
-              isSyncEnabled && "bg-primary/10 hover:bg-primary/20"
-            )}
-            onClick={toggleSync}
-            disabled={isLoadingAudio || !currentBook}
-            title={isSyncEnabled ? "Disable text sync" : "Enable text sync"}
-          >
-            <Link2 className="h-5 w-5 shrink-0" />
-          </Button>
-
-          <Select
-            value={playbackRate.toString()}
-            onValueChange={(value) => setPlaybackRate(Number.parseFloat(value))}
-          >
-            <SelectTrigger className="h-10 w-20">
-              <SelectValue placeholder="1x" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="0.5">0.5x</SelectItem>
-              <SelectItem value="0.75">0.75x</SelectItem>
-              <SelectItem value="1">1x</SelectItem>
-              <SelectItem value="1.25">1.25x</SelectItem>
-              <SelectItem value="1.5">1.5x</SelectItem>
-              <SelectItem value="1.75">1.75x</SelectItem>
-              <SelectItem value="2">2x</SelectItem>
-            </SelectContent>
-          </Select>
         </div>
       </div>
       {currentBook && (
