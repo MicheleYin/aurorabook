@@ -63,7 +63,6 @@ export function ReaderSettings({
   };
 
   // Scroll to selected items when drawer opens
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!isOpen) return;
 
@@ -127,6 +126,8 @@ export function ReaderSettings({
     // Small delay to ensure drawer is fully rendered
     const timeoutId = setTimeout(scrollToSelected, 100);
     return () => clearTimeout(timeoutId);
+    // Only scroll when drawer opens, not when settings change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   return (
