@@ -262,7 +262,7 @@ export function BookDetailDialog({
   onOpenBook,
   isConverting,
   isDeleting,
-}: BookDetailDialogProps) {
+}: Readonly<BookDetailDialogProps>) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const isMobile = useIsMobile();
 

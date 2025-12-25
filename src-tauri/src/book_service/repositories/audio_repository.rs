@@ -1,7 +1,6 @@
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, ConnectionTrait, QueryOrder};
 use crate::book_service::entities::audio_track;
 use crate::book_service::models::AudioTrack;
-use std::sync::Arc;
 
 pub struct AudioRepository;
 
@@ -174,6 +173,42 @@ impl AudioRepository {
                 store.load_audio_data(book_id.to_string(), href.to_string(), data.clone()).await;
             }
             Ok(Some(data))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    /// Get audio track data by track id (with hybrid store)
+    /// Returns (data, href) if found, where href can be used for MIME type detection
+    pub async fn find_data_by_id(db: &DatabaseConnection, book_id: &str, track_id: &str) -> Result<Option<(Vec<u8>, String)>, String> {
+        // Query database to get track entity (includes href for hybrid store lookup)
+        let entity = audio_track::Entity::find_by_id(track_id)
+            .filter(audio_track::Column::BookId.eq(book_id))
+            .one(db)
+            .await
+            .map_err(|e| format!("Failed to query audio track by id: {}", e))?;
+        
+        if let Some(track) = entity {
+            let href = track.href.clone();
+            
+            // Try hybrid store first
+            if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+                if let Some(data) = store.get_audio_data(book_id, &href) {
+                    log::debug!("Hybrid store hit for audio data: {} / {} (track_id: {})", book_id, href, track_id);
+                    return Ok(Some((data, href)));
+                }
+            }
+            
+            // Store miss - use data from entity
+            if let Some(data) = track.data {
+                // Load into hybrid store
+                if let Ok(store) = crate::book_service::database::get_hybrid_store() {
+                    store.load_audio_data(book_id.to_string(), href.clone(), data.clone()).await;
+                }
+                Ok(Some((data, href)))
+            } else {
+                Ok(None)
+            }
         } else {
             Ok(None)
         }

@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { BookOpen } from "lucide-react";
 
+import { useChapterProgressContext } from "@/context/ChapterProgressContext";
+
 import type { Chapter } from "../../types/book";
-import { useAppContext } from "../../App";
+import { useAppContext } from "../../context/AppContext";
 import { useReaderSettings } from "../../hooks/useReaderSettings";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -12,17 +14,14 @@ import { ReaderNavigation } from "./ReaderNavigation";
 import { ReaderSettings } from "./ReaderSettings";
 
 export function Reader() {
+  const { currentBook, setCurrentTab } = useAppContext();
   const {
-    currentBook,
-    setCurrentTab,
     currentChapter,
-
     isLoadingChapter,
-
     loadChapterContent,
     containerRef,
     restoreProgress,
-  } = useAppContext();
+  } = useChapterProgressContext();
 
   const [isTocOpen, setIsTocOpen] = useState(false);
   const [isHeaderVisible, setIsHeaderVisible] = useState(true);
@@ -44,13 +43,12 @@ export function Reader() {
 
   const handleNextChapter = async () => {
     if (!currentBook || !currentChapter) return;
-
-    // Find next chapter
     const currentIndex = currentBook.chapters.findIndex(
       (ch) => ch.id === currentChapter.id
     );
-    if (currentIndex < currentBook.chapters.length - 1) {
-      const nextChapter = currentBook.chapters[currentIndex + 1];
+
+    const nextChapter = currentBook.chapters[currentIndex + 1];
+    if (nextChapter) {
       await loadChapterContent(currentBook.id, nextChapter);
     }
   };
@@ -86,6 +84,14 @@ export function Reader() {
       </div>
     );
   }
+  console.warn(
+    "currentChapter",
+    currentChapter,
+    "currentBook",
+    currentBook.id,
+    "isLoadingChapter",
+    isLoadingChapter
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -108,7 +114,7 @@ export function Reader() {
         />
       </div>
       <ReaderContent
-        ref={containerRef}
+        scrollContainerRef={containerRef}
         book={currentBook}
         isLoading={isLoadingChapter}
         currentChapter={currentChapter}

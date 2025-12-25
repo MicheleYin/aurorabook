@@ -654,83 +654,32 @@ pub async fn load_epub_image(
 #[tauri::command]
 pub async fn load_epub_audio(
     book_id: String,
-    audio_href: String,
+    track_id: String,
     app: tauri::AppHandle,
 ) -> AppResult<Option<String>> {
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
     
-    // Try multiple variations of the audio href to find a match
-    // During ingestion, audio tracks are stored with their original href from the manifest
-    let mut href_variations = Vec::new();
+    log::debug!("Trying to load audio track '{}' for book '{}'", track_id, book_id);
     
-    // Add the exact href as-is (most likely to match since it's stored with original href)
-    href_variations.push(audio_href.clone());
-    
-    // Try with/without leading slash
-    if audio_href.starts_with('/') {
-        href_variations.push(audio_href[1..].to_string());
-    } else {
-        href_variations.push(format!("/{}", audio_href));
-    }
-    
-    // Try trimmed version (remove leading/trailing whitespace)
-    let trimmed = audio_href.trim();
-    if trimmed != audio_href {
-        href_variations.push(trimmed.to_string());
-        if trimmed.starts_with('/') {
-            href_variations.push(trimmed[1..].to_string());
-        } else {
-            href_variations.push(format!("/{}", trimmed));
+    match AudioRepository::find_data_by_id(db.as_ref(), &book_id, &track_id).await {
+        Ok(Some((audio_data, href))) => {
+            // Detect MIME type from extension
+            let mime_type = detect_audio_mime_type(&href, &href);
+            let data_url = create_data_url(&mime_type, &audio_data);
+            log::info!("✓ Found audio track '{}' (href: '{}', {} bytes, type: {})", 
+                track_id, href, audio_data.len(), mime_type);
+            Ok(Some(data_url))
+        }
+        Ok(None) => {
+            log::warn!("✗ Audio track not found in database: '{}' for book '{}'", track_id, book_id);
+            Ok(None)
+        }
+        Err(e) => {
+            log::warn!("Error querying audio track '{}': {}", track_id, e);
+            Err(AppError::Store(e))
         }
     }
-    
-    // Try OEBPS variations (similar to chapter loading)
-    if !audio_href.starts_with("OEBPS/") {
-        href_variations.push(format!("OEBPS/{}", audio_href.trim_start_matches('/')));
-    }
-    if audio_href.starts_with("OEBPS/") {
-        href_variations.push(audio_href.trim_start_matches("OEBPS/").to_string());
-    }
-    
-    // Remove duplicates while preserving order
-    let mut seen = std::collections::HashSet::new();
-    let mut unique_variations = Vec::new();
-    for href in href_variations {
-        if seen.insert(href.clone()) {
-            unique_variations.push(href);
-        }
-    }
-    
-    log::debug!("Trying to load audio '{}' for book '{}' with {} variations", 
-        audio_href, book_id, unique_variations.len());
-    
-    // Try to get audio from database with each variation
-    for (idx, href) in unique_variations.iter().enumerate() {
-        match AudioRepository::find_data_by_href(db.as_ref(), &book_id, href).await {
-            Ok(Some(audio_data)) => {
-                // Detect MIME type from extension
-                let mime_type = detect_audio_mime_type(href, &audio_href);
-                let data_url = create_data_url(&mime_type, &audio_data);
-                log::info!("✓ Found audio with href variation #{}: '{}' (original: '{}', {} bytes, type: {})", 
-                    idx + 1, href, audio_href, audio_data.len(), mime_type);
-                return Ok(Some(data_url));
-            }
-            Ok(None) => {
-                log::trace!("  Variation #{} '{}' not found", idx + 1, href);
-            }
-            Err(e) => {
-                log::warn!("Error querying audio with href '{}': {}", href, e);
-            }
-        }
-    }
-    
-    log::warn!("✗ Audio not found in database: '{}' for book '{}' (tried {} variations: {:?})", 
-        audio_href, book_id, unique_variations.len(), unique_variations);
-    
-    // Audio should already be in database from ingestion
-    // If not found, return None (audio should have been extracted during ingestion)
-    Ok(None)
 }
 
 /// Load an audio track from database and return as raw bytes with MIME type
@@ -738,82 +687,31 @@ pub async fn load_epub_audio(
 #[tauri::command]
 pub async fn load_epub_audio_bytes(
     book_id: String,
-    audio_href: String,
+    track_id: String,
     app: tauri::AppHandle,
 ) -> AppResult<Option<(Vec<u8>, String)>> {
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
     
-    // Try multiple variations of the audio href to find a match
-    // During ingestion, audio tracks are stored with their original href from the manifest
-    let mut href_variations = Vec::new();
+    log::debug!("Trying to load audio track bytes '{}' for book '{}'", track_id, book_id);
     
-    // Add the exact href as-is (most likely to match since it's stored with original href)
-    href_variations.push(audio_href.clone());
-    
-    // Try with/without leading slash
-    if audio_href.starts_with('/') {
-        href_variations.push(audio_href[1..].to_string());
-    } else {
-        href_variations.push(format!("/{}", audio_href));
-    }
-    
-    // Try trimmed version (remove leading/trailing whitespace)
-    let trimmed = audio_href.trim();
-    if trimmed != audio_href {
-        href_variations.push(trimmed.to_string());
-        if trimmed.starts_with('/') {
-            href_variations.push(trimmed[1..].to_string());
-        } else {
-            href_variations.push(format!("/{}", trimmed));
+    match AudioRepository::find_data_by_id(db.as_ref(), &book_id, &track_id).await {
+        Ok(Some((audio_data, href))) => {
+            // Detect MIME type from extension
+            let mime_type = detect_audio_mime_type(&href, &href);
+            log::info!("✓ Found audio track bytes '{}' (href: '{}', {} bytes, type: {})", 
+                track_id, href, audio_data.len(), mime_type);
+            Ok(Some((audio_data, mime_type.to_string())))
+        }
+        Ok(None) => {
+            log::warn!("✗ Audio track not found in database: '{}' for book '{}'", track_id, book_id);
+            Ok(None)
+        }
+        Err(e) => {
+            log::warn!("Error querying audio track '{}': {}", track_id, e);
+            Err(AppError::Store(e))
         }
     }
-    
-    // Try OEBPS variations (similar to chapter loading)
-    if !audio_href.starts_with("OEBPS/") {
-        href_variations.push(format!("OEBPS/{}", audio_href.trim_start_matches('/')));
-    }
-    if audio_href.starts_with("OEBPS/") {
-        href_variations.push(audio_href.trim_start_matches("OEBPS/").to_string());
-    }
-    
-    // Remove duplicates while preserving order
-    let mut seen = std::collections::HashSet::new();
-    let mut unique_variations = Vec::new();
-    for href in href_variations {
-        if seen.insert(href.clone()) {
-            unique_variations.push(href);
-        }
-    }
-    
-    log::debug!("Trying to load audio bytes '{}' for book '{}' with {} variations", 
-        audio_href, book_id, unique_variations.len());
-    
-    // Try to get audio from database with each variation
-    for (idx, href) in unique_variations.iter().enumerate() {
-        match AudioRepository::find_data_by_href(db.as_ref(), &book_id, href).await {
-            Ok(Some(audio_data)) => {
-                // Detect MIME type from extension
-                let mime_type = detect_audio_mime_type(href, &audio_href);
-                log::info!("✓ Found audio bytes with href variation #{}: '{}' (original: '{}', {} bytes, type: {})", 
-                    idx + 1, href, audio_href, audio_data.len(), mime_type);
-                return Ok(Some((audio_data, mime_type.to_string())));
-            }
-            Ok(None) => {
-                log::trace!("  Variation #{} '{}' not found", idx + 1, href);
-            }
-            Err(e) => {
-                log::warn!("Error querying audio with href '{}': {}", href, e);
-            }
-        }
-    }
-    
-    log::warn!("✗ Audio not found in database: '{}' for book '{}' (tried {} variations: {:?})", 
-        audio_href, book_id, unique_variations.len(), unique_variations);
-    
-    // Audio should already be in database from ingestion
-    // If not found, return None (audio should have been extracted during ingestion)
-    Ok(None)
 }
 
 /// Load chapter content as bytes (for blob URL creation)

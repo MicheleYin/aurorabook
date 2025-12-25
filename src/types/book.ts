@@ -39,6 +39,7 @@ export interface AudioTrack {
   filePath: string;
   durationSeconds?: number;
   fileSizeBytes?: number;
+  order: number;
 }
 
 export interface Book {
@@ -66,4 +67,9 @@ export interface Book {
 
 export interface ChapterWithContent extends Chapter {
   contentHtml?: string;
+}
+
+export interface AudioTrackWithData extends AudioTrack {
+  data: number[];
+  mimeType: string;
 }

@@ -1,13 +1,11 @@
-import type { VoiceId } from "../types/reader";
-
 export const DEFAULT_KOKORO_MODEL_ID = "onnx-community/Kokoro-82M-v1.0-ONNX";
-export const DEFAULT_KOKORO_VOICE_ID: VoiceId = "af_heart";
+export const DEFAULT_KOKORO_VOICE_ID = "af_heart";
 export const KOKORO_MODEL_CARD_URL = `https://huggingface.co/${DEFAULT_KOKORO_MODEL_ID}`;
 export const KOKORO_VOICE_DATASET_URL =
   "https://huggingface.co/datasets/hexgrad/Kokoro-voices";
 
 export type KokoroVoiceOption = {
-  id: VoiceId;
+  id: string;
   name: string;
   gender: "Female" | "Male";
   languageTag: string;

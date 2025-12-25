@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { BookOpen, Grid3x3, List, Plus, Search } from "lucide-react";
+import { BookOpen, Grid2x2, List, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import type { Book } from "../../types/book";
-import { useAppContext } from "../../App";
+import { useAppContext } from "../../context/AppContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
 import { staggerDelay } from "../../lib/animations";
 import { cn } from "../../lib/utils";
+import { LoadingScreen } from "../app/LoadingScreen";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardFooter } from "../ui/card";
 import { Input } from "../ui/input";
@@ -19,7 +20,7 @@ type ViewMode = "grid" | "list";
 export function Library() {
   const {
     setCurrentTab,
-    setCurrentBook,
+    setCurrentBookWithLoading,
     library: books,
     setLibrary: setBooks,
     isLoadingLibrary: isLoading,
@@ -49,7 +50,7 @@ export function Library() {
 
   const handleOpenBook = (book: Book, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    setCurrentBook(book);
+    setCurrentBookWithLoading(book);
     setCurrentTab("reader");
   };
 
@@ -242,7 +243,7 @@ export function Library() {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-2">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+          <LoadingScreen />
           <p className="text-sm text-muted-foreground">Loading library...</p>
         </div>
       </div>
@@ -269,28 +270,9 @@ export function Library() {
               <Plus className="h-4 w-4" />
               {isAddingBook ? "Adding..." : "Add Book"}
             </Button>
-            <div className="flex items-center gap-1">
-              <Button
-                variant={viewMode === "grid" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setViewMode("grid")}
-                className="h-9 w-9 p-0"
-              >
-                <Grid3x3 className="h-4 w-4" />
-              </Button>
-              <Button
-                variant={viewMode === "list" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setViewMode("list")}
-                className="h-9 w-9 p-0"
-              >
-                <List className="h-4 w-4" />
-              </Button>
-            </div>
           </div>
         </div>
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <div className="flex items-center gap-2">
           <Input
             type="text"
             placeholder="Search books by title, author, or subject..."
@@ -298,6 +280,24 @@ export function Library() {
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-10"
           />
+          <div className="flex items-center gap-1">
+            <Button
+              variant={viewMode === "grid" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setViewMode("grid")}
+              className="h-9 w-9 p-0"
+            >
+              <Grid2x2 className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={viewMode === "list" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setViewMode("list")}
+              className="h-9 w-9 p-0"
+            >
+              <List className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
 
