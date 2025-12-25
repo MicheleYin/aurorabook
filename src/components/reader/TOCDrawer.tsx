@@ -1,8 +1,10 @@
-import { useEffect, useRef } from "react";
-import { BookOpen } from "lucide-react";
+import { useEffect, useMemo, useRef } from "react";
+import { BookOpen, Volume2 } from "lucide-react";
 
 import type { Book, Chapter } from "../../types/book";
+import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { cn } from "../../lib/utils";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
   Drawer,
@@ -29,6 +31,63 @@ export function TOCDrawer({
   onChapterSelect,
 }: Readonly<TOCDrawerProps>) {
   const currentChapterRef = useRef<HTMLButtonElement | null>(null);
+  const { currentAudioTrack } = useAudioProgressContext();
+
+  // Create a map of chapter href to audio track titles
+  const chapterAudioTracks = useMemo(() => {
+    const map = new Map<string, string[]>();
+
+    if (!book.audioSyncMap?.segments || !book.audioTracks) {
+      return map;
+    }
+
+    // Group segments by chapter href
+    const chapterSegments = new Map<string, Set<string>>();
+    book.audioSyncMap.segments.forEach((segment) => {
+      if (!chapterSegments.has(segment.chapterHref)) {
+        chapterSegments.set(segment.chapterHref, new Set());
+      }
+      chapterSegments.get(segment.chapterHref)?.add(segment.audioTrackHref);
+    });
+
+    // Find audio track titles for each chapter
+    chapterSegments.forEach((trackHrefs, chapterHref) => {
+      const trackTitles: string[] = [];
+      trackHrefs.forEach((trackHref) => {
+        const track = book.audioTracks.find(
+          (t) => t.href === trackHref || t.filePath === trackHref
+        );
+        if (track?.title) {
+          trackTitles.push(track.title);
+        }
+      });
+      if (trackTitles.length > 0) {
+        map.set(chapterHref, trackTitles);
+      }
+    });
+
+    return map;
+  }, [book.audioSyncMap, book.audioTracks]);
+
+  // Determine which chapter is currently playing based on audio sync map
+  const playingChapterHref = useMemo(() => {
+    if (!currentAudioTrack || !book.audioSyncMap?.segments) {
+      return null;
+    }
+
+    // Get current track href (support both href and filePath)
+    const trackHref = currentAudioTrack.href || currentAudioTrack.filePath;
+    if (!trackHref) {
+      return null;
+    }
+
+    // Find the first segment that matches the current track
+    const matchingSegment = book.audioSyncMap.segments.find(
+      (segment) => segment.audioTrackHref === trackHref
+    );
+
+    return matchingSegment?.chapterHref || null;
+  }, [currentAudioTrack, book.audioSyncMap]);
 
   // Scroll to current chapter when drawer opens
   useEffect(() => {
@@ -71,16 +130,34 @@ export function TOCDrawer({
                 className={cn(
                   "w-full text-left px-3 py-2 rounded-md text-sm transition-colors",
                   chapter.id === currentChapter.id
-                    ? "bg-primary text-primary-foreground"
+                    ? "bg-primary/10 hover:bg-primary/20 text-foreground"
                     : "hover:bg-muted"
                 )}
               >
-                <div className="font-medium">{chapter.title}</div>
-                {chapter.estimatedPageCount && (
-                  <div className="text-xs opacity-70 mt-0.5">
-                    {chapter.estimatedPageCount} pages
-                  </div>
-                )}
+                <div className="flex items-center gap-2">
+                  <div className="font-medium flex-1">{chapter.title}</div>
+                  {playingChapterHref === chapter.href && (
+                    <Badge
+                      variant="secondary"
+                      className="h-5 px-1.5 text-[10px] shrink-0"
+                    >
+                      <Volume2 className="h-3 w-3 mr-1" />
+                      Playing
+                    </Badge>
+                  )}
+                </div>
+                <div className="flex flex-col gap-0.5 mt-0.5">
+                  {chapter.estimatedPageCount && (
+                    <div className="text-xs opacity-70">
+                      {chapter.estimatedPageCount} pages
+                    </div>
+                  )}
+                  {chapterAudioTracks.has(chapter.href) && (
+                    <div className="text-xs opacity-70 text-primary">
+                      {chapterAudioTracks.get(chapter.href)?.join(", ")}
+                    </div>
+                  )}
+                </div>
               </button>
             ))}
           </div>

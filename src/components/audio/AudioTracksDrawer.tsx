@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { List } from "lucide-react";
 
 import type { AudioTrack, Book } from "../../types/book";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { cn } from "../../lib/utils";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent } from "../ui/dialog";
 import {
@@ -32,6 +33,36 @@ export function AudioTracksDrawer({
 }: Readonly<AudioTracksDrawerProps>) {
   const isMobile = useIsMobile();
   const currentTrackRef = useRef<HTMLButtonElement | null>(null);
+
+  // Create a map of track href to chapter title
+  const trackChapters = useMemo(() => {
+    const map = new Map<string, string>();
+
+    if (!book.audioSyncMap?.segments || !book.chapters) {
+      return map;
+    }
+
+    // Find unique chapter hrefs for each track
+    const trackChapterMap = new Map<string, Set<string>>();
+    book.audioSyncMap.segments.forEach((segment) => {
+      if (!trackChapterMap.has(segment.audioTrackHref)) {
+        trackChapterMap.set(segment.audioTrackHref, new Set());
+      }
+      trackChapterMap.get(segment.audioTrackHref)?.add(segment.chapterHref);
+    });
+
+    // Map track hrefs to chapter titles
+    trackChapterMap.forEach((chapterHrefs, trackHref) => {
+      // Get the first chapter that matches (most tracks belong to one chapter)
+      const chapterHref = Array.from(chapterHrefs)[0];
+      const chapter = book.chapters.find((ch) => ch.href === chapterHref);
+      if (chapter) {
+        map.set(trackHref, chapter.title);
+      }
+    });
+
+    return map;
+  }, [book.audioSyncMap, book.chapters]);
 
   // Scroll to current track when drawer/dialog opens
   useEffect(() => {
@@ -71,6 +102,8 @@ export function AudioTracksDrawer({
           {book.audioTracks.map((track) => {
             const isCurrentTrack = track.id === currentTrackId;
             const trackName = track.title || `Track ${track.order + 1}`;
+            const trackHref = track.href || track.filePath;
+            const chapterTitle = trackHref ? trackChapters.get(trackHref) : null;
 
             return (
               <button
@@ -80,11 +113,26 @@ export function AudioTracksDrawer({
                 className={cn(
                   "w-full text-left px-3 py-2 rounded-md text-sm transition-colors",
                   isCurrentTrack
-                    ? "bg-primary text-primary-foreground"
+                    ? "bg-primary/10 hover:bg-primary/20 text-foreground"
                     : "hover:bg-muted"
                 )}
               >
-                <div className="font-medium">{trackName}</div>
+                <div className="flex items-center gap-2">
+                  <div className="font-medium flex-1">{trackName}</div>
+                  {isCurrentTrack && (
+                    <Badge
+                      variant="secondary"
+                      className="h-5 px-1.5 text-[10px] shrink-0"
+                    >
+                      Playing
+                    </Badge>
+                  )}
+                </div>
+                {chapterTitle && (
+                  <div className="text-xs opacity-70 mt-0.5 text-primary">
+                    {chapterTitle}
+                  </div>
+                )}
               </button>
             );
           })}
