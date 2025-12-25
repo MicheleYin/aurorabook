@@ -290,25 +290,36 @@ export function AudioProgressProvider({
 
   const loadLastOpenedAudioTrack = useCallback(
     async (book: Book) => {
+      setIsLoadingAudio(true);
       let audioTrackToLoad: AudioTrack | null = null;
-      if (book.audioState?.currentTrackId) {
+      // load from be
+      const loadedBook = await invoke<Book | null>("read_one_book", {
+        bookId: book.id,
+      });
+      if (loadedBook?.audioState?.currentTrackId) {
         audioTrackToLoad =
-          book.audioTracks.find(
-            (track) => track.id === book.audioState!.currentTrackId
+          loadedBook.audioTracks.find(
+            (track) => track.id === loadedBook.audioState!.currentTrackId
           ) || null;
       }
-      if (!audioTrackToLoad && book.audioTracks.length > 0) {
+      if (
+        !audioTrackToLoad &&
+        loadedBook?.audioTracks?.length &&
+        loadedBook.audioTracks.length > 0
+      ) {
         audioTrackToLoad = book.audioTracks[0];
       }
       if (audioTrackToLoad) {
-        await loadAudioTrack(book.id, audioTrackToLoad, book);
+        await loadAudioTrack(book.id, audioTrackToLoad, loadedBook || book);
         // Restore progress after track is loaded
-        restoreAudioProgress(book, audioTrackToLoad);
+        restoreAudioProgress(loadedBook || book, audioTrackToLoad);
         logger.log("loaded last opened audio track", audioTrackToLoad, book);
       } else {
         toast.error("No audio tracks available in this book");
       }
+      setIsLoadingAudio(false);
     },
+
     [loadAudioTrack, restoreAudioProgress]
   );
 
