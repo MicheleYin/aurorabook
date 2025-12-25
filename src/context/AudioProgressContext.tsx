@@ -285,7 +285,7 @@ export function AudioProgressProvider({
         setIsLoadingAudio(false);
       }
     },
-    [audioRef]
+    [audioRef, playbackRate]
   );
 
   const loadLastOpenedAudioTrack = useCallback(
