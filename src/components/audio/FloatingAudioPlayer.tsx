@@ -407,13 +407,16 @@ export function FloatingAudioPlayer() {
             className="h-8 w-8 shrink-0"
             onClick={() => {
               if (currentBook) {
-                const progress = calculateAudioProgress();
+                const audioState = calculateAudioProgress();
+
                 closeAudioPlayer(currentBook);
+                const newbook = {
+                  ...currentBook,
+                  audioState: audioState ?? undefined,
+                };
                 setLibrary(
                   library.map((book) =>
-                    book.id === currentBook.id
-                      ? { ...book, audioState: progress ?? undefined }
-                      : book
+                    book.id === currentBook.id ? newbook : book
                   )
                 );
               }

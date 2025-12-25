@@ -84,8 +84,6 @@ export function Reader() {
     setIsHeaderVisible((prev) => !prev);
   };
 
-  // // Sav
-
   if (!currentBook || !currentChapter) {
     return (
       <div className="flex h-full items-center justify-center">

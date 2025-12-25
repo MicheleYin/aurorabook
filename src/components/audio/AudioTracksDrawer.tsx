@@ -3,7 +3,7 @@ import { List } from "lucide-react";
 
 import type { AudioTrack, Book } from "../../types/book";
 import { useIsMobile } from "../../hooks/useIsMobile";
-import { cn } from "../../lib/utils";
+import { cn, formatTime } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent } from "../ui/dialog";
@@ -103,7 +103,15 @@ export function AudioTracksDrawer({
             const isCurrentTrack = track.id === currentTrackId;
             const trackName = track.title || `Track ${track.order + 1}`;
             const trackHref = track.href || track.filePath;
-            const chapterTitle = trackHref ? trackChapters.get(trackHref) : null;
+            const chapterTitle = trackHref
+              ? trackChapters.get(trackHref)
+              : null;
+            const duration =
+              "duration" in track &&
+              typeof track.duration === "number" &&
+              track.duration > 0
+                ? formatTime(track.duration)
+                : null;
 
             return (
               <button
@@ -119,6 +127,11 @@ export function AudioTracksDrawer({
               >
                 <div className="flex items-center gap-2">
                   <div className="font-medium flex-1">{trackName}</div>
+                  {duration && (
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      {duration}
+                    </span>
+                  )}
                   {isCurrentTrack && (
                     <Badge
                       variant="secondary"

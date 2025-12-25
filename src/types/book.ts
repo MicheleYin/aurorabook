@@ -51,7 +51,7 @@ export interface AudioTrack {
   filePath: string;
   href?: string; // Backend uses 'href', frontend may use 'filePath' - support both
   title?: string;
-  durationSeconds?: number;
+  duration?: number; // Duration in seconds
   fileSizeBytes?: number;
   order: number;
 }

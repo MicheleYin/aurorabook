@@ -3,7 +3,7 @@ import { BookOpen, Volume2 } from "lucide-react";
 
 import type { Book, Chapter } from "../../types/book";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
-import { cn } from "../../lib/utils";
+import { cn, formatTime } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -33,7 +33,7 @@ export function TOCDrawer({
   const currentChapterRef = useRef<HTMLButtonElement | null>(null);
   const { currentAudioTrack } = useAudioProgressContext();
 
-  // Create a map of chapter href to audio track titles
+  // Create a map of chapter href to audio track titles and durations
   const chapterAudioTracks = useMemo(() => {
     const map = new Map<string, string[]>();
 
@@ -63,6 +63,47 @@ export function TOCDrawer({
       });
       if (trackTitles.length > 0) {
         map.set(chapterHref, trackTitles);
+      }
+    });
+
+    return map;
+  }, [book.audioSyncMap, book.audioTracks]);
+
+  // Create a map of chapter href to total audio duration
+  const chapterAudioDurations = useMemo(() => {
+    const map = new Map<string, number>();
+
+    if (!book.audioSyncMap?.segments || !book.audioTracks) {
+      return map;
+    }
+
+    // Group segments by chapter href
+    const chapterSegments = new Map<string, Set<string>>();
+    book.audioSyncMap.segments.forEach((segment) => {
+      if (!chapterSegments.has(segment.chapterHref)) {
+        chapterSegments.set(segment.chapterHref, new Set());
+      }
+      chapterSegments.get(segment.chapterHref)?.add(segment.audioTrackHref);
+    });
+
+    // Calculate total duration for each chapter
+    chapterSegments.forEach((trackHrefs, chapterHref) => {
+      let totalDuration = 0;
+      trackHrefs.forEach((trackHref) => {
+        const track = book.audioTracks.find(
+          (t) => t.href === trackHref || t.filePath === trackHref
+        );
+        if (
+          track &&
+          "duration" in track &&
+          typeof track.duration === "number" &&
+          track.duration > 0
+        ) {
+          totalDuration += track.duration;
+        }
+      });
+      if (totalDuration > 0) {
+        map.set(chapterHref, totalDuration);
       }
     });
 
@@ -155,6 +196,11 @@ export function TOCDrawer({
                   {chapterAudioTracks.has(chapter.href) && (
                     <div className="text-xs opacity-70 text-primary">
                       {chapterAudioTracks.get(chapter.href)?.join(", ")}
+                    </div>
+                  )}
+                  {chapterAudioDurations.has(chapter.href) && (
+                    <div className="text-xs opacity-70 text-primary">
+                      {formatTime(chapterAudioDurations.get(chapter.href)!)}
                     </div>
                   )}
                 </div>

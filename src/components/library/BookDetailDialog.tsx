@@ -213,7 +213,7 @@ const BookDetailContent = ({ book }: { book: Book }) => {
                   {book.audioTracks.length}
                 </span>
               </div>
-              {book.audioTracks.some((track) => track.durationSeconds) && (
+              {book.audioTracks.some((track) => track.duration) && (
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
                     Total Duration
@@ -221,7 +221,7 @@ const BookDetailContent = ({ book }: { book: Book }) => {
                   <span className="text-sm font-medium">
                     {formatDuration(
                       book.audioTracks.reduce(
-                        (total, track) => total + (track.durationSeconds || 0),
+                        (total, track) => total + (track.duration || 0),
                         0
                       )
                     )}

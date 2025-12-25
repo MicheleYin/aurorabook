@@ -1,6 +1,8 @@
+import { useCallback } from "react";
 import { ArrowLeft, Headphones, Settings } from "lucide-react";
 
 import type { Book, Chapter } from "../../types/book";
+import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { Button } from "../ui/button";
 import { TOCDrawer } from "./TOCDrawer";
 
@@ -12,7 +14,6 @@ interface ReaderHeaderProps {
   onChapterSelect: (chapter: Chapter) => void;
   onBack: () => void;
   onSettingsClick?: () => void;
-  onAudioShowClick?: () => void;
 }
 
 export function ReaderHeader({
@@ -23,8 +24,12 @@ export function ReaderHeader({
   onChapterSelect,
   onBack,
   onSettingsClick,
-  onAudioShowClick,
 }: Readonly<ReaderHeaderProps>) {
+  const { loadLastOpenedAudioTrack, currentAudioTrack, isLoadingAudio } =
+    useAudioProgressContext();
+  const onAudioShowClick = useCallback(() => {
+    loadLastOpenedAudioTrack(book);
+  }, [loadLastOpenedAudioTrack, book]);
   return (
     <div className="flex-shrink-0 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="flex items-center justify-between p-4">
@@ -42,8 +47,13 @@ export function ReaderHeader({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {onAudioShowClick && (
-            <Button variant="ghost" size="icon" onClick={onAudioShowClick}>
+          {onAudioShowClick && !currentAudioTrack && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onAudioShowClick}
+              disabled={isLoadingAudio}
+            >
               <Headphones className="h-5 w-5" />
             </Button>
           )}
