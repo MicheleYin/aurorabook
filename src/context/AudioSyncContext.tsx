@@ -8,9 +8,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
-const SYNC_ENABLED_KEY = "audio-sync-enabled";
+import type { AppSettings } from "../types/settings";
 
 export interface AudioSyncContextType {
   isSyncEnabled: boolean;
@@ -36,22 +37,58 @@ interface AudioSyncProviderProps {
 }
 
 export function AudioSyncProvider({ children }: AudioSyncProviderProps) {
-  const [isSyncEnabled, setIsSyncEnabled] = useState(() => {
-    // Load from localStorage on mount
-    const stored = localStorage.getItem(SYNC_ENABLED_KEY);
-    return stored === "true";
-  });
-
+  const [isSyncEnabled, setIsSyncEnabled] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const isInitialMountRef = useRef(true);
   const previousValueRef = useRef(isSyncEnabled);
 
-  // Sync localStorage with state changes
+  // Load settings from backend on mount
   useEffect(() => {
-    localStorage.setItem(SYNC_ENABLED_KEY, String(isSyncEnabled));
-  }, [isSyncEnabled]);
+    const loadSettings = async () => {
+      try {
+        const settings = await invoke<AppSettings>("get_app_settings");
+        setIsSyncEnabled(settings.autoScrollEnabled ?? false);
+        previousValueRef.current = settings.autoScrollEnabled ?? false;
+      } catch (err) {
+        console.error("Failed to load sync settings:", err);
+        // Default to false on error
+        setIsSyncEnabled(false);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadSettings();
+  }, []);
 
-  // Show toast when sync state changes (but not on initial mount)
+  // Save to backend when sync state changes
   useEffect(() => {
+    if (isLoading) return; // Don't save on initial load
+
+    const saveSettings = async () => {
+      try {
+        const currentSettings = await invoke<AppSettings>("get_app_settings");
+        const updatedSettings: AppSettings = {
+          ...currentSettings,
+          autoScrollEnabled: isSyncEnabled,
+        };
+        await invoke<AppSettings>("update_app_settings", {
+          settings: updatedSettings,
+        });
+      } catch (err) {
+        console.error("Failed to save sync settings:", err);
+      }
+    };
+    saveSettings();
+  }, [isSyncEnabled, isLoading]);
+
+  // Show toast when sync state changes (but not on initial mount or during loading)
+  useEffect(() => {
+    if (isLoading) {
+      // Update ref during loading but don't show toast
+      previousValueRef.current = isSyncEnabled;
+      return;
+    }
+
     if (isInitialMountRef.current) {
       isInitialMountRef.current = false;
       previousValueRef.current = isSyncEnabled;
@@ -67,7 +104,7 @@ export function AudioSyncProvider({ children }: AudioSyncProviderProps) {
       }
       previousValueRef.current = isSyncEnabled;
     }
-  }, [isSyncEnabled]);
+  }, [isSyncEnabled, isLoading]);
 
   const toggleSync = useCallback(() => {
     setIsSyncEnabled((prev) => {

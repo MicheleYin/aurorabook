@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   FastForward,
   Link2,
@@ -17,6 +18,7 @@ import { useAudioProgressContext } from "@/context/AudioProgressContext";
 import { useAudioSyncContext } from "@/context/AudioSyncContext";
 
 import type { AudioTrack } from "../../types/book";
+import type { AppSettings } from "../../types/settings";
 import { cn, formatTime } from "../../lib/utils";
 import { Button } from "../ui/button";
 import {
@@ -48,6 +50,7 @@ export function FloatingAudioPlayer() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isTracksOpen, setIsTracksOpen] = useState(false);
+  const [isLoadingPlaybackSpeed, setIsLoadingPlaybackSpeed] = useState(true);
   const { currentBook } = useAppContext();
   const { isSyncEnabled, toggleSync } = useAudioSyncContext();
 
@@ -56,6 +59,44 @@ export function FloatingAudioPlayer() {
     () => currentAudioTrack?.order ?? -1,
     [currentAudioTrack]
   );
+
+  // Load playback speed from backend on mount
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const settings = await invoke<AppSettings>("get_app_settings");
+        if (settings.audioPlaybackSpeed) {
+          setPlaybackRate(settings.audioPlaybackSpeed);
+        }
+      } catch (err) {
+        console.error("Failed to load playback speed:", err);
+      } finally {
+        setIsLoadingPlaybackSpeed(false);
+      }
+    };
+    loadSettings();
+  }, []);
+
+  // Save playback speed to backend when it changes
+  useEffect(() => {
+    if (isLoadingPlaybackSpeed) return; // Don't save on initial load
+
+    const saveSettings = async () => {
+      try {
+        const currentSettings = await invoke<AppSettings>("get_app_settings");
+        const updatedSettings: AppSettings = {
+          ...currentSettings,
+          audioPlaybackSpeed: playbackRate,
+        };
+        await invoke<AppSettings>("update_app_settings", {
+          settings: updatedSettings,
+        });
+      } catch (err) {
+        console.error("Failed to save playback speed:", err);
+      }
+    };
+    saveSettings();
+  }, [playbackRate, isLoadingPlaybackSpeed]);
 
   // Update playback rate when it changes
   useEffect(() => {

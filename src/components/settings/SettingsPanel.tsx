@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Pause, Play } from "lucide-react";
 
@@ -33,7 +33,7 @@ export function Settings() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
 
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     try {
       setIsLoading(true);
       setError(null);
@@ -57,11 +57,11 @@ export function Settings() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
   // Load settings from backend
   useEffect(() => {
     loadSettings();
-  }, []);
+  }, [loadSettings]);
 
   const saveSettings = async (updates: Partial<AppSettings>) => {
     if (!settings) return;
@@ -82,7 +82,7 @@ export function Settings() {
     }
   };
 
-  const applyTheme = (newTheme: UITheme) => {
+  const applyTheme = useCallback((newTheme: UITheme) => {
     const root = document.documentElement;
 
     if (newTheme === "system") {
@@ -96,79 +96,88 @@ export function Settings() {
       root.classList.remove("light", "dark");
       root.classList.add(newTheme);
     }
-  };
+  }, []);
 
-  const handleThemeChange = async (newTheme: UITheme) => {
-    applyTheme(newTheme);
-    await saveSettings({ theme: newTheme });
-  };
+  const handleThemeChange = useCallback(
+    async (newTheme: UITheme) => {
+      applyTheme(newTheme);
+      await saveSettings({ theme: newTheme });
+    },
+    [applyTheme, saveSettings]
+  );
 
-  const handlePlaySample = async (voiceId: string, sampleUrl: string) => {
-    // If clicking the same voice that's playing, pause it
-    if (playingVoiceId === voiceId && audioRef.current) {
-      audioRef.current.pause();
-      setPlayingVoiceId(null);
-      return;
-    }
-
-    // Stop any currently playing audio
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
-
-    // Clean up previous blob URL
-    if (blobUrlRef.current) {
-      URL.revokeObjectURL(blobUrlRef.current);
-      blobUrlRef.current = null;
-    }
-
-    try {
-      // Load the audio file from resources
-      const audioData = await invoke<number[]>("read_resource_file", {
-        resourcePath: sampleUrl,
-      });
-
-      // Convert Uint8Array to Blob
-      const audioBytes = new Uint8Array(audioData);
-      const blob = new Blob([audioBytes], { type: "audio/mpeg" });
-      const blobUrl = URL.createObjectURL(blob);
-      blobUrlRef.current = blobUrl;
-
-      // Create and play audio
-      const audio = new Audio(blobUrl);
-      audioRef.current = audio;
-      setPlayingVoiceId(voiceId);
-
-      audio.onended = () => {
+  const handlePlaySample = useCallback(
+    async (voiceId: string, sampleUrl: string) => {
+      // If clicking the same voice that's playing, pause it
+      if (playingVoiceId === voiceId && audioRef.current) {
+        audioRef.current.pause();
         setPlayingVoiceId(null);
-        audioRef.current = null;
-        if (blobUrlRef.current) {
-          URL.revokeObjectURL(blobUrlRef.current);
-          blobUrlRef.current = null;
-        }
-      };
+        return;
+      }
 
-      audio.onerror = () => {
-        console.error("Failed to play audio sample");
+      // Stop any currently playing audio
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+
+      // Clean up previous blob URL
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
+
+      try {
+        // Load the audio file from resources
+        const audioData = await invoke<number[]>("read_resource_file", {
+          resourcePath: sampleUrl,
+        });
+
+        // Convert Uint8Array to Blob
+        const audioBytes = new Uint8Array(audioData);
+        const blob = new Blob([audioBytes], { type: "audio/mpeg" });
+        const blobUrl = URL.createObjectURL(blob);
+        blobUrlRef.current = blobUrl;
+
+        // Create and play audio
+        const audio = new Audio(blobUrl);
+        audioRef.current = audio;
+        setPlayingVoiceId(voiceId);
+
+        audio.onended = () => {
+          setPlayingVoiceId(null);
+          audioRef.current = null;
+          if (blobUrlRef.current) {
+            URL.revokeObjectURL(blobUrlRef.current);
+            blobUrlRef.current = null;
+          }
+        };
+
+        audio.onerror = () => {
+          console.error("Failed to play audio sample");
+          setPlayingVoiceId(null);
+          audioRef.current = null;
+          if (blobUrlRef.current) {
+            URL.revokeObjectURL(blobUrlRef.current);
+            blobUrlRef.current = null;
+          }
+        };
+
+        await audio.play();
+      } catch (err) {
+        console.error("Failed to load voice sample:", err);
         setPlayingVoiceId(null);
-        audioRef.current = null;
-        if (blobUrlRef.current) {
-          URL.revokeObjectURL(blobUrlRef.current);
-          blobUrlRef.current = null;
-        }
-      };
+      }
+    },
+    [playingVoiceId, audioRef, blobUrlRef]
+  );
 
-      await audio.play();
-    } catch (err) {
-      console.error("Failed to load voice sample:", err);
-      setPlayingVoiceId(null);
-    }
-  };
-
-  const handleVoiceChange = async (voiceId: string) => {
-    await saveSettings({ ttsVoiceId: voiceId });
-  };
+  const handleVoiceChange = useCallback(
+    async (voiceId: string) => {
+      saveSettings({ ttsVoiceId: voiceId });
+    },
+    [saveSettings]
+  );
 
   // Cleanup audio on unmount
   useEffect(() => {
@@ -185,9 +194,13 @@ export function Settings() {
   }, []);
 
   // Get all voices from groups
-  const allVoices = KOKORO_VOICE_GROUPS.flatMap((group) => group.voices);
-  const selectedVoice = allVoices.find(
-    (voice) => voice.id === settings?.ttsVoiceId
+  const allVoices = useMemo(
+    () => KOKORO_VOICE_GROUPS.flatMap((group) => group.voices),
+    []
+  );
+  const selectedVoice = useMemo(
+    () => allVoices.find((voice) => voice.id === settings?.ttsVoiceId),
+    [allVoices, settings?.ttsVoiceId]
   );
 
   if (isLoading) {
