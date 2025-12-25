@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { getName } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
@@ -27,7 +28,11 @@ export interface AudioProgressContextType {
   setIsLoadingAudio: Dispatch<SetStateAction<boolean>>;
   audioRef: React.RefObject<HTMLAudioElement | null>;
   blobUrlRef: React.RefObject<string | null>;
-  loadAudioTrack: (bookId: string, track: AudioTrack) => Promise<void>;
+  loadAudioTrack: (
+    bookId: string,
+    track: AudioTrack,
+    book: Book
+  ) => Promise<void>;
   loadLastOpenedAudioTrack: (book: Book) => void;
   closeAudioPlayer: (book: Book) => Promise<void>;
   calculateAudioProgress: () => BookAudioState | null;
@@ -119,7 +124,7 @@ export function AudioProgressProvider({
   );
 
   const loadAudioTrack = useCallback(
-    async (bookId: string, track: AudioTrack) => {
+    async (bookId: string, track: AudioTrack, book: Book) => {
       setIsLoadingAudio(true);
       try {
         const result = await invoke<[number[], string] | null>(
@@ -162,6 +167,66 @@ export function AudioProgressProvider({
             data: bytes,
             mimeType,
           });
+
+          // Set MediaSession metadata for OS media controls
+          if ("mediaSession" in navigator && book) {
+            const trackTitle = track.title || `Track ${track.order + 1}`;
+
+            // Find chapter name for this track using audio sync map (same as TOC)
+            let chapterTitle: string | undefined;
+            const trackHref = track.href || track.filePath;
+            if (trackHref && book.audioSyncMap?.segments) {
+              // Find the first segment that matches this track
+              const matchingSegment = book.audioSyncMap.segments.find(
+                (segment) => segment.audioTrackHref === trackHref
+              );
+
+              if (matchingSegment) {
+                const chapter = book.chapters.find(
+                  (ch) => ch.href === matchingSegment.chapterHref
+                );
+                if (chapter) {
+                  chapterTitle = chapter.title;
+                }
+              }
+            }
+
+            // Append chapter name to track title if available
+            const fullTrackTitle = chapterTitle
+              ? `${trackTitle} - ${chapterTitle}`
+              : trackTitle;
+
+            const artwork: MediaImage[] = [];
+
+            if (book.coverUrl) {
+              artwork.push({
+                src: book.coverUrl,
+                sizes: "512x512",
+                type: "image/jpeg",
+              });
+            }
+
+            // Get app name asynchronously
+            getName()
+              .then((appName) => {
+                navigator.mediaSession.metadata = new MediaMetadata({
+                  title: fullTrackTitle,
+                  artist: book.author,
+                  album: `${book.title} - ${appName}`,
+                  artwork,
+                });
+              })
+              .catch((err) => {
+                console.error("Failed to get app name:", err);
+                // Fallback without app name
+                navigator.mediaSession.metadata = new MediaMetadata({
+                  title: fullTrackTitle,
+                  artist: book.author,
+                  album: book.title,
+                  artwork,
+                });
+              });
+          }
         }
       } catch (err) {
         console.error("Failed to load audio track:", err);
@@ -186,7 +251,7 @@ export function AudioProgressProvider({
         audioTrackToLoad = book.audioTracks[0];
       }
       if (audioTrackToLoad) {
-        await loadAudioTrack(book.id, audioTrackToLoad);
+        await loadAudioTrack(book.id, audioTrackToLoad, book);
         // Restore progress after track is loaded
         restoreAudioProgress(book, audioTrackToLoad);
         console.log("loaded last opened audio track", audioTrackToLoad, book);
@@ -224,6 +289,11 @@ export function AudioProgressProvider({
 
       // Clear current track
       setCurrentAudioTrack(null);
+
+      // Clear MediaSession metadata
+      if ("mediaSession" in navigator) {
+        navigator.mediaSession.metadata = null;
+      }
     },
     [currentAudioTrack, saveAudioProgress]
   );

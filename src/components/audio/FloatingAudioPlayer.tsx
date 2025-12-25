@@ -176,7 +176,7 @@ export function FloatingAudioPlayer() {
         if (nextIndex < currentBook.audioTracks.length) {
           const nextTrack = currentBook.audioTracks[nextIndex];
           if (nextTrack) {
-            await loadAudioTrack(currentBook.id, nextTrack);
+            await loadAudioTrack(currentBook.id, nextTrack, currentBook);
             // Restore progress for next track
             if (currentBook) {
               restoreAudioProgress(currentBook, nextTrack);
@@ -296,7 +296,7 @@ export function FloatingAudioPlayer() {
       if (audioRef.current) {
         audioRef.current.pause();
       }
-      await loadAudioTrack(currentBook.id, previousTrack);
+      await loadAudioTrack(currentBook.id, previousTrack, currentBook);
       // Resume playback if it was playing
       if (wasPlaying && audioRef.current) {
         try {
@@ -336,7 +336,7 @@ export function FloatingAudioPlayer() {
       if (audioRef.current) {
         audioRef.current.pause();
       }
-      await loadAudioTrack(currentBook.id, nextTrack);
+      await loadAudioTrack(currentBook.id, nextTrack, currentBook);
       // Resume playback if it was playing
       if (wasPlaying && audioRef.current) {
         try {
@@ -375,7 +375,7 @@ export function FloatingAudioPlayer() {
       if (audioRef.current) {
         audioRef.current.pause();
       }
-      await loadAudioTrack(currentBook.id, track);
+      await loadAudioTrack(currentBook.id, track, currentBook);
 
       // Resume playback if it was playing
       if (wasPlaying && audioRef.current) {

@@ -55,7 +55,11 @@ interface AppProviderProps {
   calculateBookProgress: (book: Book) => BookProgress | null;
   // audio progress
   loadLastOpenedAudioTrack: (book: Book) => void;
-  loadAudioTrack: (bookId: string, track: AudioTrack) => Promise<void>;
+  loadAudioTrack: (
+    bookId: string,
+    track: AudioTrack,
+    book: Book
+  ) => Promise<void>;
   calculateAudioProgress: (book: Book) => BookAudioState | null;
   saveAudioProgress: (book: Book) => Promise<void>;
 }
