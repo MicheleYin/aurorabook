@@ -63,6 +63,7 @@ export function AudioProgressProvider({
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
 
   const calculateAudioProgress = useCallback(() => {
+    if (!currentAudioTrack) return null;
     return {
       currentTrackId: currentAudioTrack?.id,
       currentTrackHref: currentAudioTrack?.href,

@@ -111,19 +111,22 @@ export function AppProvider({
         const audioState = calculateAudioProgress(currentBook);
         saveChapterProgress(currentBook);
         saveAudioProgress(currentBook);
+        let newBook = currentBook;
         if (progress) {
-          setLibrary(
-            library.map((book) =>
-              book.id === currentBook.id
-                ? {
-                    ...book,
-                    progress: progress,
-                    audioState: audioState ?? undefined,
-                  }
-                : book
-            )
-          );
+          newBook = {
+            ...newBook,
+            progress: progress,
+          };
         }
+        if (audioState) {
+          newBook = {
+            ...newBook,
+            audioState: audioState,
+          };
+        }
+        setLibrary(
+          library.map((book) => (book.id === currentBook.id ? newBook : book))
+        );
       }
     },
     [

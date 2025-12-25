@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   FastForward,
+  // Link2,
   Loader2,
   Pause,
   Play,
@@ -14,6 +15,8 @@ import { useAppContext } from "@/context/AppContext";
 import { useAudioProgressContext } from "@/context/AudioProgressContext";
 
 import type { AudioTrack } from "../../types/book";
+// import { useAudioSync } from "@/hooks/useAudioSync";
+
 import { cn, formatTime } from "../../lib/utils";
 import { Button } from "../ui/button";
 import {
@@ -46,6 +49,7 @@ export function FloatingAudioPlayer() {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isTracksOpen, setIsTracksOpen] = useState(false);
   const { currentBook } = useAppContext();
+  // const { isSyncEnabled, toggleSync } = useAudioSync();
 
   // Get current audio track index (needed for event handlers)
   const currentTrackIndex = useMemo(
@@ -157,32 +161,6 @@ export function FloatingAudioPlayer() {
     currentAudioTrack,
   ]);
 
-  // Save progress every 2 seconds when playing
-  useEffect(() => {
-    if (!isPlaying || !currentBook || !currentAudioTrack || !audioRef.current) {
-      return;
-    }
-
-    const interval = setInterval(async () => {
-      if (
-        audioRef.current &&
-        currentAudioTrack &&
-        currentBook &&
-        !Number.isNaN(audioRef.current.currentTime)
-      ) {
-        saveAudioProgress(currentBook);
-      }
-    }, 2000); // Every 2 seconds
-
-    return () => clearInterval(interval);
-  }, [
-    isPlaying,
-    currentBook,
-    currentAudioTrack,
-    audioRef,
-    saveAudioProgress,
-    calculateAudioProgress,
-  ]);
   const hasNextTrack = useMemo(
     () =>
       currentBook &&
@@ -288,11 +266,7 @@ export function FloatingAudioPlayer() {
       currentAudioTrack &&
       !Number.isNaN(audioRef.current.currentTime)
     ) {
-      await saveAudioProgress(
-        currentBook.id,
-        currentAudioTrack,
-        audioRef.current.currentTime
-      );
+      await saveAudioProgress(currentBook);
     }
 
     const nextIndex = currentTrackIndex + 1;
@@ -334,11 +308,7 @@ export function FloatingAudioPlayer() {
         currentAudioTrack &&
         !Number.isNaN(audioRef.current.currentTime)
       ) {
-        await saveAudioProgress(
-          currentBook.id,
-          currentAudioTrack,
-          audioRef.current.currentTime
-        );
+        await saveAudioProgress(currentBook);
       }
 
       // Save playing state before pausing
@@ -505,6 +475,17 @@ export function FloatingAudioPlayer() {
             onClick={() => setIsTracksOpen(true)}
             disabled={isLoadingAudio || !currentBook}
           />
+
+          {/* <Button
+            variant={isSyncEnabled ? "default" : "ghost"}
+            size="icon"
+            className="h-10 w-10"
+            onClick={toggleSync}
+            disabled={isLoadingAudio || !currentBook}
+            title={isSyncEnabled ? "Disable text sync" : "Enable text sync"}
+          >
+            <Link2 className="h-5 w-5 shrink-0" />
+          </Button> */}
 
           <Select
             value={playbackRate.toString()}
