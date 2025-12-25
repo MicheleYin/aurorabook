@@ -49,6 +49,7 @@ export interface AudioTrack {
   bookId: string;
   chapterHref: string;
   filePath: string;
+  href?: string; // Backend uses 'href', frontend may use 'filePath' - support both
   title?: string;
   durationSeconds?: number;
   fileSizeBytes?: number;

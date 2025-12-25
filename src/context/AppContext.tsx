@@ -12,7 +12,12 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
-import type { AudioTrack, Book, BookProgress } from "../types/book";
+import type {
+  AudioTrack,
+  Book,
+  BookAudioState,
+  BookProgress,
+} from "../types/book";
 
 export type TabValue = "library" | "reader" | "settings";
 
@@ -51,6 +56,8 @@ interface AppProviderProps {
   // audio progress
   loadLastOpenedAudioTrack: (book: Book) => void;
   loadAudioTrack: (bookId: string, track: AudioTrack) => Promise<void>;
+  calculateAudioProgress: (book: Book) => BookAudioState | null;
+  saveAudioProgress: (book: Book) => Promise<void>;
 }
 
 export function AppProvider({
@@ -59,6 +66,8 @@ export function AppProvider({
   loadLastOpenedChapter,
   loadLastOpenedAudioTrack,
   calculateBookProgress,
+  calculateAudioProgress,
+  saveAudioProgress,
 }: Readonly<AppProviderProps>) {
   const [currentTab, setCurrentTab] = useState<TabValue>("library");
   const [currentBook, setCurrentBook] = useState<Book | null>(null);
@@ -84,24 +93,33 @@ export function AppProvider({
     (book: Book) => {
       setCurrentBook(book);
 
+      // saving the audio progress
+      saveAudioProgress(book);
+
       // also load the chapter content
       loadLastOpenedChapter(book);
       // also load the audio track
       loadLastOpenedAudioTrack(book);
     },
-    [loadLastOpenedChapter, loadLastOpenedAudioTrack]
+    [loadLastOpenedChapter, loadLastOpenedAudioTrack, saveAudioProgress]
   );
   const changeCurrentTab = useCallback(
     (tab: TabValue) => {
       setCurrentTab(tab);
       if (currentBook) {
         const progress = calculateBookProgress(currentBook);
+        const audioState = calculateAudioProgress(currentBook);
         saveChapterProgress(currentBook);
+        saveAudioProgress(currentBook);
         if (progress) {
           setLibrary(
             library.map((book) =>
               book.id === currentBook.id
-                ? { ...book, progress: progress }
+                ? {
+                    ...book,
+                    progress: progress,
+                    audioState: audioState ?? undefined,
+                  }
                 : book
             )
           );
@@ -109,11 +127,12 @@ export function AppProvider({
       }
     },
     [
-      setCurrentTab,
       currentBook,
-      saveChapterProgress,
-      library,
       calculateBookProgress,
+      calculateAudioProgress,
+      saveChapterProgress,
+      saveAudioProgress,
+      library,
     ]
   );
 

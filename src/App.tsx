@@ -79,8 +79,12 @@ function AppWithProviders() {
     loadLastOpenedChapter,
     calculateBookProgress,
   } = useChapterProgressContext();
-  const { loadLastOpenedAudioTrack, loadAudioTrack } =
-    useAudioProgressContext();
+  const {
+    loadLastOpenedAudioTrack,
+    loadAudioTrack,
+    calculateAudioProgress,
+    saveAudioProgress,
+  } = useAudioProgressContext();
 
   // Wrap saveProgress to match AppProvider's expected signature
   const saveChapterProgress = useCallback(
@@ -106,6 +110,8 @@ function AppWithProviders() {
       restoreChapterProgress={restoreChapterProgress}
       loadLastOpenedChapter={loadLastOpenedChapter}
       loadLastOpenedAudioTrack={loadLastOpenedAudioTrack}
+      calculateAudioProgress={calculateAudioProgress}
+      saveAudioProgress={saveAudioProgress}
     >
       <AppContent />
     </AppProvider>

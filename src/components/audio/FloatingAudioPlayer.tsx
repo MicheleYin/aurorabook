@@ -33,7 +33,11 @@ export function FloatingAudioPlayer() {
     isLoadingAudio,
     loadAudioTrack,
     closeAudioPlayer,
+    calculateAudioProgress,
+    saveAudioProgress,
+    restoreAudioProgress,
   } = useAudioProgressContext();
+  const { library, setLibrary } = useAppContext();
 
   // Local state for UI updates (only this component re-renders)
   const [currentTime, setCurrentTime] = useState(0);
@@ -79,10 +83,29 @@ export function FloatingAudioPlayer() {
     const handleTimeUpdate = () => setCurrentTime(audio.currentTime);
     const handleLoadedMetadata = () => setDuration(audio.duration);
     const handlePlay = () => setIsPlaying(true);
-    const handlePause = () => setIsPlaying(false);
+    const handlePause = async () => {
+      setIsPlaying(false);
+      // Save progress on pause
+      if (
+        currentBook &&
+        currentAudioTrack &&
+        !Number.isNaN(audio.currentTime)
+      ) {
+        saveAudioProgress(currentBook);
+      }
+    };
     const handleEnded = async () => {
       setIsPlaying(false);
       setCurrentTime(0);
+
+      // Save progress before moving to next track
+      if (
+        currentBook &&
+        currentAudioTrack &&
+        !Number.isNaN(audio.currentTime)
+      ) {
+        saveAudioProgress(currentBook);
+      }
 
       // Auto-load next track if available
       if (currentBook && currentTrackIndex >= 0) {
@@ -91,6 +114,10 @@ export function FloatingAudioPlayer() {
           const nextTrack = currentBook.audioTracks[nextIndex];
           if (nextTrack) {
             await loadAudioTrack(currentBook.id, nextTrack);
+            // Restore progress for next track
+            if (currentBook) {
+              restoreAudioProgress(currentBook, nextTrack);
+            }
             // Auto-play the next track
             if (audioRef.current) {
               try {
@@ -121,10 +148,40 @@ export function FloatingAudioPlayer() {
     };
   }, [
     audioRef,
-    currentAudioTrack,
+    calculateAudioProgress,
     currentBook,
     currentTrackIndex,
     loadAudioTrack,
+    saveAudioProgress,
+    restoreAudioProgress,
+    currentAudioTrack,
+  ]);
+
+  // Save progress every 2 seconds when playing
+  useEffect(() => {
+    if (!isPlaying || !currentBook || !currentAudioTrack || !audioRef.current) {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      if (
+        audioRef.current &&
+        currentAudioTrack &&
+        currentBook &&
+        !Number.isNaN(audioRef.current.currentTime)
+      ) {
+        saveAudioProgress(currentBook);
+      }
+    }, 2000); // Every 2 seconds
+
+    return () => clearInterval(interval);
+  }, [
+    isPlaying,
+    currentBook,
+    currentAudioTrack,
+    audioRef,
+    saveAudioProgress,
+    calculateAudioProgress,
   ]);
   const hasNextTrack = useMemo(
     () =>
@@ -185,6 +242,15 @@ export function FloatingAudioPlayer() {
   const handlePreviousTrack = useCallback(async () => {
     if (!currentBook || !hasPreviousTrack) return;
 
+    // Save progress before changing track
+    if (
+      audioRef.current &&
+      currentAudioTrack &&
+      !Number.isNaN(audioRef.current.currentTime)
+    ) {
+      saveAudioProgress(currentBook);
+    }
+
     const previousIndex = currentTrackIndex - 1;
     const previousTrack = currentBook.audioTracks[previousIndex];
     if (previousTrack) {
@@ -204,15 +270,30 @@ export function FloatingAudioPlayer() {
       }
     }
   }, [
-    audioRef,
     currentBook,
-    currentTrackIndex,
     hasPreviousTrack,
+    audioRef,
+    currentAudioTrack,
+    currentTrackIndex,
+    saveAudioProgress,
     loadAudioTrack,
   ]);
 
   const handleNextTrack = useCallback(async () => {
     if (!currentBook || !hasNextTrack) return;
+
+    // Save progress before changing track
+    if (
+      audioRef.current &&
+      currentAudioTrack &&
+      !Number.isNaN(audioRef.current.currentTime)
+    ) {
+      await saveAudioProgress(
+        currentBook.id,
+        currentAudioTrack,
+        audioRef.current.currentTime
+      );
+    }
 
     const nextIndex = currentTrackIndex + 1;
     const nextTrack = currentBook.audioTracks[nextIndex];
@@ -232,12 +313,33 @@ export function FloatingAudioPlayer() {
         }
       }
     }
-  }, [audioRef, currentBook, currentTrackIndex, hasNextTrack, loadAudioTrack]);
+  }, [
+    audioRef,
+    currentBook,
+    currentTrackIndex,
+    hasNextTrack,
+    loadAudioTrack,
+    currentAudioTrack,
+    saveAudioProgress,
+  ]);
 
   const handleTrackSelect = useCallback(
     async (track: AudioTrack) => {
       console.warn("handleTrackSelect", track);
       if (!currentBook) return;
+
+      // Save progress before changing track
+      if (
+        audioRef.current &&
+        currentAudioTrack &&
+        !Number.isNaN(audioRef.current.currentTime)
+      ) {
+        await saveAudioProgress(
+          currentBook.id,
+          currentAudioTrack,
+          audioRef.current.currentTime
+        );
+      }
 
       // Save playing state before pausing
       const wasPlaying = audioRef.current && !audioRef.current.paused;
@@ -245,6 +347,7 @@ export function FloatingAudioPlayer() {
         audioRef.current.pause();
       }
       await loadAudioTrack(currentBook.id, track);
+
       // Resume playback if it was playing
       if (wasPlaying && audioRef.current) {
         try {
@@ -254,7 +357,13 @@ export function FloatingAudioPlayer() {
         }
       }
     },
-    [audioRef, currentBook, loadAudioTrack]
+    [
+      audioRef,
+      currentBook,
+      loadAudioTrack,
+      currentAudioTrack,
+      saveAudioProgress,
+    ]
   );
 
   // Get chapter title for current track
@@ -295,7 +404,19 @@ export function FloatingAudioPlayer() {
             variant="ghost"
             size="icon"
             className="h-8 w-8 shrink-0"
-            onClick={closeAudioPlayer}
+            onClick={() => {
+              if (currentBook) {
+                const progress = calculateAudioProgress();
+                closeAudioPlayer(currentBook);
+                setLibrary(
+                  library.map((book) =>
+                    book.id === currentBook.id
+                      ? { ...book, audioState: progress ?? undefined }
+                      : book
+                  )
+                );
+              }
+            }}
             title="Close audio player"
           >
             <X className="h-4 w-4" />
