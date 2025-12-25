@@ -7,6 +7,12 @@ import type { UITheme } from "../../types/ui";
 import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
 import { logger } from "../../lib/logger";
 import { ThemeSwitcher } from "../ThemeSwitcher";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "../ui/accordion";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -371,6 +377,120 @@ export function Settings() {
                   Saving...
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          {/* FAQ Section */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Frequently Asked Questions</CardTitle>
+              <CardDescription>
+                Common questions about the application
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Accordion type="single" collapsible className="w-full">
+                <AccordionItem value="how-it-works">
+                  <AccordionTrigger>How does the app work?</AccordionTrigger>
+                  <AccordionContent>
+                    <p className="text-sm text-muted-foreground">
+                      The app uses Kokoro and eSpeak, powerful text-to-speech
+                      (TTS) technologies, to convert your EPUB books into
+                      high-quality audio. Kokoro provides natural-sounding
+                      voices, while eSpeak offers additional language support
+                      and pronunciation accuracy.
+                    </p>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="why-slow">
+                  <AccordionTrigger>Why is it so slow?</AccordionTrigger>
+                  <AccordionContent>
+                    <p className="text-sm text-muted-foreground">
+                      Text-to-speech conversion is computationally expensive.
+                      Generating high-quality audio from text requires
+                      significant processing power, especially for longer books.
+                      The app processes each chapter sequentially to ensure
+                      quality and manage system resources efficiently.
+                    </p>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="wait-for-completion">
+                  <AccordionTrigger>
+                    Do I have to wait until everything is done?
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <p className="text-sm text-muted-foreground">
+                      No! You can start listening as soon as the first chapter
+                      completes. The app allows you to begin playback while
+                      conversion continues in the background. You&apos;ll be
+                      able to listen to completed chapters while others are
+                      still being processed.
+                    </p>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="can-stop">
+                  <AccordionTrigger>
+                    Can I stop the conversion?
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <p className="text-sm text-muted-foreground">
+                      Yes, you can stop the conversion at any time and resume
+                      later. The app saves your progress, so when you restart,
+                      it will continue from where you left off. Any chapters
+                      that were already converted will remain available for
+                      playback.
+                    </p>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="audio-sync">
+                  <AccordionTrigger>
+                    What is audio-text synchronization?
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <p className="text-sm text-muted-foreground">
+                      Audio-text synchronization automatically highlights the
+                      text being read as the audio plays. When enabled, the
+                      reader will scroll to and highlight the current text
+                      segment, making it easy to follow along. You can toggle
+                      this feature on or off using the sync button in the audio
+                      player.
+                    </p>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="multiple-books">
+                  <AccordionTrigger>
+                    Can I convert multiple books at once?
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <p className="text-sm text-muted-foreground">
+                      Currently, the app processes one book at a time to ensure
+                      optimal performance and resource management. You can queue
+                      books by starting conversions sequentially, and each will
+                      process after the previous one completes.
+                    </p>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="voice-selection">
+                  <AccordionTrigger>
+                    Can I change the voice for a book?
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <p className="text-sm text-muted-foreground">
+                      Voice selection is set when you start the conversion
+                      process. If you want to use a different voice, you&apos;ll
+                      need to delete the existing audio tracks and start a new
+                      conversion with your preferred voice. The default voice
+                      can be changed in settings.
+                    </p>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
             </CardContent>
           </Card>
         </div>
