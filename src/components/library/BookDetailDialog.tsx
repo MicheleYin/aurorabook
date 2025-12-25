@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import {
   AlertTriangle,
   BookOpen,
@@ -33,6 +33,23 @@ import {
 } from "../ui/drawer";
 import { Separator } from "../ui/separator";
 
+const formatFileSize = (bytes?: number) => {
+  if (!bytes) return "Unknown";
+  const mb = bytes / (1024 * 1024);
+  return `${mb.toFixed(2)} MB`;
+};
+
+const formatDuration = (seconds: number) => {
+  if (!seconds || seconds === 0) return "Unknown";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  }
+  return `${minutes}:${secs.toString().padStart(2, "0")}`;
+};
 interface BookDetailDialogProps {
   book: Book | null;
   isOpen: boolean;
@@ -46,24 +63,6 @@ interface BookDetailDialogProps {
 }
 
 const BookDetailContent = ({ book }: { book: Book }) => {
-  const formatFileSize = (bytes?: number) => {
-    if (!bytes) return "Unknown";
-    const mb = bytes / (1024 * 1024);
-    return `${mb.toFixed(2)} MB`;
-  };
-
-  const formatDuration = (seconds: number) => {
-    if (!seconds || seconds === 0) return "Unknown";
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = Math.floor(seconds % 60);
-
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-    }
-    return `${minutes}:${secs.toString().padStart(2, "0")}`;
-  };
-
   return (
     <div className="space-y-6">
       <div className="flex gap-6">
@@ -266,20 +265,16 @@ export function BookDetailDialog({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const isMobile = useIsMobile();
 
-  if (!book) return null;
+  const handleDeleteClick = useCallback(() => setShowDeleteConfirm(true), []);
 
-  const handleDeleteClick = () => {
-    setShowDeleteConfirm(true);
-  };
-
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = useCallback(() => {
     setShowDeleteConfirm(false);
     onDelete();
-  };
+  }, [onDelete]);
 
-  const handleDeleteCancel = () => {
-    setShowDeleteConfirm(false);
-  };
+  const handleDeleteCancel = useCallback(() => setShowDeleteConfirm(false), []);
+  console.log("isConverting", isConverting);
+  if (!book) return null;
 
   return (
     <>
@@ -305,7 +300,7 @@ export function BookDetailDialog({
                 <BookOpen className="h-4 w-4" />
                 Open Book
               </Button>
-              {book.conversionStatus === "started" && (
+              {book.conversionStatus === "started" && isConverting && (
                 <Button
                   variant="outline"
                   onClick={onCancel}
@@ -316,12 +311,23 @@ export function BookDetailDialog({
                   Cancel Conversion
                 </Button>
               )}
+              {book.conversionStatus === "started" && !isConverting && (
+                <Button
+                  variant="outline"
+                  onClick={onConvert}
+                  disabled={isConverting || isDeleting}
+                  className="gap-2"
+                >
+                  <Play className="h-4 w-4" />
+                  Resume Conversion
+                </Button>
+              )}
               {book.conversionStatus === "notStarted" && (
                 <Button
                   variant="outline"
                   onClick={onConvert}
                   className="gap-2"
-                  disabled={isConverting}
+                  disabled={isConverting || isDeleting}
                 >
                   <Play className="h-4 w-4" />
                   {isConverting ? "Converting..." : "Convert to Audiobook"}
@@ -330,7 +336,7 @@ export function BookDetailDialog({
               <Button
                 variant="destructive"
                 onClick={handleDeleteClick}
-                disabled={isDeleting}
+                disabled={isDeleting || isConverting}
                 className="gap-2"
               >
                 <Trash2 className="h-4 w-4" />
@@ -364,7 +370,7 @@ export function BookDetailDialog({
                 <BookOpen className="h-4 w-4" />
                 Open Book
               </Button>
-              {book.conversionStatus === "started" && (
+              {book.conversionStatus === "started" && isConverting && (
                 <Button
                   variant="outline"
                   onClick={onCancel}
@@ -373,6 +379,17 @@ export function BookDetailDialog({
                 >
                   <X className="h-4 w-4" />
                   Cancel Conversion
+                </Button>
+              )}
+              {book.conversionStatus === "started" && !isConverting && (
+                <Button
+                  variant="outline"
+                  onClick={onConvert}
+                  disabled={isDeleting || isConverting}
+                  className="gap-2"
+                >
+                  <Play className="h-4 w-4" />
+                  Resume Conversion
                 </Button>
               )}
               {book.conversionStatus === "notStarted" && (
@@ -389,7 +406,7 @@ export function BookDetailDialog({
               <Button
                 variant="destructive"
                 onClick={handleDeleteClick}
-                disabled={isDeleting}
+                disabled={isDeleting || isConverting}
                 className="gap-2"
               >
                 <Trash2 className="h-4 w-4" />

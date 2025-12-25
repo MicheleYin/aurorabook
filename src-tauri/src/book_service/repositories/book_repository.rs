@@ -1,8 +1,7 @@
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, Set, ActiveModelTrait};
-use crate::book_service::entities::book;
+use crate::book_service::entities::{book, chapter};
 use crate::book_service::models::{Book, BookProgress, BookAudioState, AudioSyncMap, ConversionStatus};
 use crate::book_service::repositories::{ChapterRepository, AudioRepository};
-use std::sync::Arc;
 
 pub struct BookRepository;
 
@@ -418,6 +417,28 @@ impl BookRepository {
             .await
             .map_err(|e| format!("Failed to save book: {}", e))?;
         
+        // Preserve existing chapter content_html before deleting chapters
+        // This is important because chapters might be saved without content_html (for performance),
+        // but we don't want to lose the existing content_html in the database
+        let existing_chapters = if !model.chapters.is_empty() {
+            // Load existing chapters with content_html to preserve it
+            let existing = chapter::Entity::find()
+                .filter(chapter::Column::BookId.eq(&model.id))
+                .all(&txn)
+                .await
+                .map_err(|e| format!("Failed to load existing chapters: {}", e))?;
+            
+            // Create a map of href -> content_html for quick lookup
+            use std::collections::HashMap;
+            let mut content_map: HashMap<String, Option<String>> = HashMap::new();
+            for ch in existing {
+                content_map.insert(ch.href.clone(), ch.content_html.clone());
+            }
+            Some(content_map)
+        } else {
+            None
+        };
+        
         // Delete existing chapters (always replace chapters)
         // NOTE: We do NOT delete images or audio tracks here because:
         // 1. They are saved separately after book save during ingestion
@@ -430,7 +451,23 @@ impl BookRepository {
             use crate::book_service::entities::chapter;
             const BATCH_SIZE: usize = 500; // SQLite limit is ~1000, use 500 for safety
             
-            let chapter_models: Vec<chapter::ActiveModel> = model.chapters.iter()
+            // Preserve content_html from existing chapters if not present in model
+            let mut chapters_to_save = model.chapters.clone();
+            if let Some(ref content_map) = existing_chapters {
+                for chapter in &mut chapters_to_save {
+                    // If chapter doesn't have content_html, preserve it from existing chapters
+                    if chapter.content_html.is_none() {
+                        if let Some(existing_content) = content_map.get(&chapter.href) {
+                            chapter.content_html = existing_content.clone();
+                            log::debug!("Preserved content_html for chapter '{}' ({} bytes)", 
+                                chapter.href, 
+                                existing_content.as_ref().map(|c| c.len()).unwrap_or(0));
+                        }
+                    }
+                }
+            }
+            
+            let chapter_models: Vec<chapter::ActiveModel> = chapters_to_save.iter()
                 .map(|ch| ChapterRepository::model_to_active_model(&model.id, ch))
                 .collect();
             

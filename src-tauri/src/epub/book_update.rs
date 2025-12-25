@@ -756,10 +756,20 @@ async fn update_book_in_library(
             .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
             .count();
         
-        if book.completed_chapters.len() >= chapters_with_text {
+        // Only set status to Done if we've completed ALL chapters with text
+        // Use strict equality to avoid false positives during partial conversions
+        if book.completed_chapters.len() == chapters_with_text && chapters_with_text > 0 {
             book.conversion_status = ConversionStatus::Done;
             log::info!("All chapters with text content completed ({} of {} total chapters), marking conversion as done", 
                 book.completed_chapters.len(), book.chapters.len());
+        } else {
+            // Ensure status remains Started if not all chapters are done
+            // This prevents false "Done" status during partial conversions
+            if book.conversion_status == ConversionStatus::Done && book.completed_chapters.len() < chapters_with_text {
+                log::warn!("Conversion status was Done but only {}/{} chapters are completed, resetting to Started", 
+                    book.completed_chapters.len(), chapters_with_text);
+                book.conversion_status = ConversionStatus::Started;
+            }
         }
         
         log::info!("Updated audio tracks for book '{}' ({} tracks), audio sync map ({} segments), and file size ({} bytes)", 

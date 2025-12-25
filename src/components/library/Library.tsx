@@ -322,7 +322,7 @@ export function Library() {
               <Card
                 key={`${book.id}-${filterKey}`}
                 className={cn(
-                  "cursor-pointer hover:shadow-lg transition-shadow library-item-enter",
+                  "cursor-pointer hover:shadow-lg transition-shadow library-item-enter flex flex-col justify-between",
                   staggerDelay(index, 30)
                 )}
                 onClick={() => handleBookClick(book)}
@@ -375,7 +375,7 @@ export function Library() {
                     variant="ghost"
                     onClick={(e) => handleOpenBook(book, e)}
                   >
-                    Open Book
+                    Open
                   </Button>
                 </CardFooter>
               </Card>
