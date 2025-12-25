@@ -63,6 +63,7 @@ export function ReaderSettings({
   };
 
   // Scroll to selected items when drawer opens
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!isOpen) return;
 
