@@ -1,5 +1,3 @@
-import { getName } from "@tauri-apps/api/app";
-import { invoke } from "@tauri-apps/api/core";
 import {
   createContext,
   Dispatch,
@@ -12,9 +10,11 @@ import {
   useRef,
   useState,
 } from "react";
+import { getName } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
-import { logger } from "../lib/logger";
+import { AppSettings } from "@/types/settings";
 
 import type {
   AudioTrack,
@@ -22,6 +22,7 @@ import type {
   Book,
   BookAudioState,
 } from "../types/book";
+import { logger } from "../lib/logger";
 
 export interface AudioProgressContextType {
   currentAudioTrack: AudioTrackWithData | null;
@@ -40,6 +41,8 @@ export interface AudioProgressContextType {
   calculateAudioProgress: () => BookAudioState | null;
   saveAudioProgress: (book: Book) => Promise<void>;
   restoreAudioProgress: (book: Book, track: AudioTrack) => void;
+  playbackRate: number;
+  setPlaybackRate: (rate: number) => void;
 }
 
 export const AudioProgressContext = createContext<
@@ -68,7 +71,7 @@ export function AudioProgressProvider({
   const [currentAudioTrack, setCurrentAudioTrack] =
     useState<AudioTrackWithData | null>(null);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
-
+  const [playbackRate, setPlaybackRate] = useState(1);
   const calculateAudioProgress = useCallback(() => {
     if (!currentAudioTrack) return null;
     return {
@@ -97,6 +100,50 @@ export function AudioProgressProvider({
     [calculateAudioProgress]
   );
 
+  const saveSettings = useCallback(async (updates: Partial<AppSettings>) => {
+    try {
+      const currentSettings = await invoke<AppSettings>("get_app_settings");
+      const updatedSettings: AppSettings = { ...currentSettings, ...updates };
+      await invoke<AppSettings>("update_app_settings", {
+        settings: updatedSettings,
+      });
+    } catch (err) {
+      logger.error("Failed to save settings:", err);
+    }
+  }, []);
+  const handleSetPlaybackRate = useCallback(
+    (rate: number) => {
+      setPlaybackRate(rate);
+      if (audioRef.current) {
+        audioRef.current.playbackRate = rate;
+      }
+      saveSettings({ audioPlaybackSpeed: rate });
+    },
+    [audioRef, saveSettings]
+  );
+
+  // Load playback speed from backend on mount
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const settings = await invoke<AppSettings>("get_app_settings");
+        console.log("settings", settings);
+        if (settings.audioPlaybackSpeed) {
+          setPlaybackRate(settings.audioPlaybackSpeed);
+          console.log(
+            "settings.audioPlaybackSpeed",
+            settings.audioPlaybackSpeed
+          );
+          if (audioRef.current) {
+            audioRef.current.playbackRate = settings.audioPlaybackSpeed;
+          }
+        }
+      } catch (err) {
+        logger.error("Failed to load playback speed:", err);
+      }
+    };
+    loadSettings();
+  }, [audioRef]);
   const restoreAudioProgress = useCallback(
     (book: Book, track: AudioTrack) => {
       // Restore audio progress if this is the last played track
@@ -159,6 +206,7 @@ export function AudioProgressProvider({
 
             // Reset playback state when track changes (will be restored if needed)
             audioRef.current.currentTime = 0;
+            audioRef.current.playbackRate = playbackRate;
             if (!audioRef.current.paused) {
               audioRef.current.pause();
             }
@@ -324,6 +372,8 @@ export function AudioProgressProvider({
       saveAudioProgress,
       restoreAudioProgress,
       calculateAudioProgress,
+      playbackRate,
+      setPlaybackRate: handleSetPlaybackRate,
     }),
     [
       currentAudioTrack,
@@ -334,6 +384,8 @@ export function AudioProgressProvider({
       saveAudioProgress,
       restoreAudioProgress,
       calculateAudioProgress,
+      playbackRate,
+      handleSetPlaybackRate,
     ]
   );
 

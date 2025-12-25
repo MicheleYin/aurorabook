@@ -1,4 +1,4 @@
-import { ArrowLeft, Settings } from "lucide-react";
+import { ArrowLeft, Headphones, Settings } from "lucide-react";
 
 import type { Book, Chapter } from "../../types/book";
 import { Button } from "../ui/button";
@@ -12,6 +12,7 @@ interface ReaderHeaderProps {
   onChapterSelect: (chapter: Chapter) => void;
   onBack: () => void;
   onSettingsClick?: () => void;
+  onAudioShowClick?: () => void;
 }
 
 export function ReaderHeader({
@@ -22,6 +23,7 @@ export function ReaderHeader({
   onChapterSelect,
   onBack,
   onSettingsClick,
+  onAudioShowClick,
 }: Readonly<ReaderHeaderProps>) {
   return (
     <div className="flex-shrink-0 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -40,6 +42,11 @@ export function ReaderHeader({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {onAudioShowClick && (
+            <Button variant="ghost" size="icon" onClick={onAudioShowClick}>
+              <Headphones className="h-5 w-5" />
+            </Button>
+          )}
           <TOCDrawer
             book={book}
             currentChapter={currentChapter}
