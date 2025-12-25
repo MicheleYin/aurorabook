@@ -20,6 +20,7 @@ import type {
   Chapter,
   ChapterWithContent,
 } from "../types/book";
+import { logger } from "../lib/logger";
 
 export interface ChapterProgressContextType {
   currentChapter: ChapterWithContent | null;
@@ -80,7 +81,7 @@ export function ChapterProgressProvider({
           toast.error("Failed to load chapter content");
         }
       } catch (err) {
-        console.error("Failed to load chapter content:", err);
+        logger.error("Failed to load chapter content:", err);
         toast.error("Failed to load chapter content");
       } finally {
         setIsLoadingChapter(false);
@@ -138,7 +139,7 @@ export function ChapterProgressProvider({
         const element = contentRef.querySelector(
           `#${progress.currentChapterElementId}`
         );
-        console.log(
+        logger.log(
           "Restoring element position:",
           progress.currentChapterElementId,
           element
@@ -158,7 +159,7 @@ export function ChapterProgressProvider({
       // Determine which chapter to load
       let chapterToLoad: Chapter | null = null;
 
-      console.log("Restoring progress for book:", book.id, book.progress);
+      logger.log("Restoring progress for book:", book.id, book.progress);
       if (book.progress?.currentChapterId) {
         // Load last opened chapter
         chapterToLoad =

@@ -20,6 +20,7 @@ try {
     </React.StrictMode>
   );
 } catch (error) {
+  // Use console.error directly in main.tsx as it's critical for error reporting
   console.error("Failed to render app:", error);
   rootElement.innerHTML = `
     <div style="padding: 2rem; font-family: system-ui; color: red;">

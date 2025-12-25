@@ -18,6 +18,7 @@ import type {
   BookAudioState,
   BookProgress,
 } from "../types/book";
+import { logger } from "../lib/logger";
 
 export type TabValue = "library" | "reader" | "settings";
 
@@ -86,7 +87,7 @@ export function AppProvider({
       });
       setLibrary(loadedBooks);
     } catch (err) {
-      console.error("Failed to load books:", err);
+      logger.error("Failed to load books:", err);
       toast.error("Failed to load books");
     } finally {
       setIsLoadingLibrary(false);

@@ -12,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
 import type { AppSettings } from "../types/settings";
+import { logger } from "../lib/logger";
 
 export interface AudioSyncContextType {
   isSyncEnabled: boolean;
@@ -50,7 +51,7 @@ export function AudioSyncProvider({ children }: AudioSyncProviderProps) {
         setIsSyncEnabled(settings.autoScrollEnabled ?? false);
         previousValueRef.current = settings.autoScrollEnabled ?? false;
       } catch (err) {
-        console.error("Failed to load sync settings:", err);
+        logger.error("Failed to load sync settings:", err);
         // Default to false on error
         setIsSyncEnabled(false);
       } finally {
@@ -75,7 +76,7 @@ export function AudioSyncProvider({ children }: AudioSyncProviderProps) {
           settings: updatedSettings,
         });
       } catch (err) {
-        console.error("Failed to save sync settings:", err);
+        logger.error("Failed to save sync settings:", err);
       }
     };
     saveSettings();
@@ -109,7 +110,7 @@ export function AudioSyncProvider({ children }: AudioSyncProviderProps) {
   const toggleSync = useCallback(() => {
     setIsSyncEnabled((prev) => {
       const newValue = !prev;
-      console.log("[AudioSync] Sync toggled", {
+      logger.log("[AudioSync] Sync toggled", {
         enabled: newValue,
         previousValue: prev,
       });

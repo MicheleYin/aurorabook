@@ -5,6 +5,7 @@ import { Pause, Play } from "lucide-react";
 import type { AppSettings } from "../../types/settings";
 import type { UITheme } from "../../types/ui";
 import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
+import { logger } from "../../lib/logger";
 import { ThemeSwitcher } from "../ThemeSwitcher";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -45,7 +46,7 @@ export function Settings() {
         applyTheme(appSettings.theme as UITheme);
       }
     } catch (err) {
-      console.error("Failed to load settings:", err);
+      logger.error("Failed to load settings:", err);
       setError(err instanceof Error ? err.message : "Failed to load settings");
       // Fallback to default settings
       setSettings({
@@ -75,7 +76,7 @@ export function Settings() {
       });
       setSettings(savedSettings);
     } catch (err) {
-      console.error("Failed to save settings:", err);
+      logger.error("Failed to save settings:", err);
       setError(err instanceof Error ? err.message : "Failed to save settings");
     } finally {
       setIsSaving(false);
@@ -154,7 +155,7 @@ export function Settings() {
         };
 
         audio.onerror = () => {
-          console.error("Failed to play audio sample");
+          logger.error("Failed to play audio sample");
           setPlayingVoiceId(null);
           audioRef.current = null;
           if (blobUrlRef.current) {
@@ -165,7 +166,7 @@ export function Settings() {
 
         await audio.play();
       } catch (err) {
-        console.error("Failed to load voice sample:", err);
+        logger.error("Failed to load voice sample:", err);
         setPlayingVoiceId(null);
       }
     },

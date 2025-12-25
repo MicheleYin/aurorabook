@@ -19,6 +19,7 @@ import { useAudioSyncContext } from "@/context/AudioSyncContext";
 
 import type { AudioTrack } from "../../types/book";
 import type { AppSettings } from "../../types/settings";
+import { logger } from "../../lib/logger";
 import { cn, formatTime } from "../../lib/utils";
 import { Button } from "../ui/button";
 import {
@@ -67,7 +68,7 @@ export function FloatingAudioPlayer() {
         settings: updatedSettings,
       });
     } catch (err) {
-      console.error("Failed to save settings:", err);
+      logger.error("Failed to save settings:", err);
     }
   }, []);
   const handleSetPlaybackRate = useCallback(
@@ -87,7 +88,7 @@ export function FloatingAudioPlayer() {
           setPlaybackRate(settings.audioPlaybackSpeed);
         }
       } catch (err) {
-        console.error("Failed to load playback speed:", err);
+        logger.error("Failed to load playback speed:", err);
       } finally {
         setIsLoadingPlaybackSpeed(false);
       }
@@ -110,7 +111,7 @@ export function FloatingAudioPlayer() {
           settings: updatedSettings,
         });
       } catch (err) {
-        console.error("Failed to save playback speed:", err);
+        logger.error("Failed to save playback speed:", err);
       }
     };
     saveSettings();
@@ -186,7 +187,7 @@ export function FloatingAudioPlayer() {
               try {
                 await audioRef.current.play();
               } catch (err) {
-                console.error("Failed to auto-play next track:", err);
+                logger.error("Failed to auto-play next track:", err);
               }
             }
           }
@@ -241,7 +242,7 @@ export function FloatingAudioPlayer() {
       try {
         await audioRef.current.play();
       } catch (err) {
-        console.error("Failed to play audio:", err);
+        logger.error("Failed to play audio:", err);
       }
     }
   }, [audioRef, isPlaying]);
@@ -302,7 +303,7 @@ export function FloatingAudioPlayer() {
         try {
           await audioRef.current.play();
         } catch (err) {
-          console.error("Failed to play previous track:", err);
+          logger.error("Failed to play previous track:", err);
         }
       }
     }
@@ -325,7 +326,7 @@ export function FloatingAudioPlayer() {
       currentAudioTrack &&
       !Number.isNaN(audioRef.current.currentTime)
     ) {
-      await saveAudioProgress(currentBook);
+      saveAudioProgress(currentBook);
     }
 
     const nextIndex = currentTrackIndex + 1;
@@ -342,7 +343,7 @@ export function FloatingAudioPlayer() {
         try {
           await audioRef.current.play();
         } catch (err) {
-          console.error("Failed to play next track:", err);
+          logger.error("Failed to play next track:", err);
         }
       }
     }
@@ -358,7 +359,7 @@ export function FloatingAudioPlayer() {
 
   const handleTrackSelect = useCallback(
     async (track: AudioTrack) => {
-      console.warn("handleTrackSelect", track);
+      logger.warn("handleTrackSelect", track);
       if (!currentBook) return;
 
       // Save progress before changing track
@@ -367,7 +368,7 @@ export function FloatingAudioPlayer() {
         currentAudioTrack &&
         !Number.isNaN(audioRef.current.currentTime)
       ) {
-        await saveAudioProgress(currentBook);
+        saveAudioProgress(currentBook);
       }
 
       // Save playing state before pausing
@@ -382,7 +383,7 @@ export function FloatingAudioPlayer() {
         try {
           await audioRef.current.play();
         } catch (err) {
-          console.error("Failed to play selected track:", err);
+          logger.error("Failed to play selected track:", err);
         }
       }
     },

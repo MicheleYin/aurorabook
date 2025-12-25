@@ -4,6 +4,7 @@ import type { Book } from "../types/book";
 import { useAudioProgressContext } from "../context/AudioProgressContext";
 import { useAudioSyncContext } from "../context/AudioSyncContext";
 import { useChapterProgressContext } from "../context/ChapterProgressContext";
+import { logger } from "../lib/logger";
 
 const HIGHLIGHT_CLASS = "audio-highlight";
 const HIGHLIGHT_ENTER_CLASS = "audio-highlight-enter";
@@ -94,7 +95,7 @@ export function useAudioTextSync(
 
     // Early return if sync is disabled
     if (!isSyncEnabled) {
-      console.log("[AudioSync] Sync disabled, removing highlights");
+      logger.log("[AudioSync] Sync disabled, removing highlights");
       removeAllHighlights();
       return;
     }
@@ -107,7 +108,7 @@ export function useAudioTextSync(
       scrollContainerRef?.current;
 
     if (!hasAllRequirements) {
-      console.log("[AudioSync] Sync enabled but missing requirements:", {
+      logger.log("[AudioSync] Sync enabled but missing requirements:", {
         hasBook: !!book,
         hasTrack: !!currentAudioTrack,
         hasAudioRef: !!audioRef.current,
@@ -121,14 +122,14 @@ export function useAudioTextSync(
 
     // Check for sync map
     if (!audioSyncMap?.segments || audioSyncMap.segments.length === 0) {
-      console.warn("[AudioSync] No audio sync map available");
+      logger.warn("[AudioSync] No audio sync map available");
       return;
     }
 
     // Get track href
     const trackHref = currentAudioTrack.href || currentAudioTrack.filePath;
     if (!trackHref) {
-      console.warn("[AudioSync] No track href found");
+      logger.warn("[AudioSync] No track href found");
       return;
     }
 
@@ -138,11 +139,11 @@ export function useAudioTextSync(
     );
 
     if (trackSegments.length === 0) {
-      console.warn("[AudioSync] No segments found for current track");
+      logger.warn("[AudioSync] No segments found for current track");
       return;
     }
 
-    console.log("[AudioSync] Starting sync", {
+    logger.log("[AudioSync] Starting sync", {
       bookId: book.id,
       trackId: currentAudioTrack.id,
       segmentsCount: trackSegments.length,
@@ -285,7 +286,7 @@ export function useAudioTextSync(
         );
         if (targetChapter) {
           loadChapterContent(book.id, targetChapter).catch((err) => {
-            console.error("[AudioSync] Failed to load chapter:", err);
+            logger.error("[AudioSync] Failed to load chapter:", err);
           });
         }
         return;

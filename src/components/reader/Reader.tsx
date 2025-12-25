@@ -7,6 +7,7 @@ import { useChapterProgressContext } from "@/context/ChapterProgressContext";
 import type { Chapter } from "../../types/book";
 import { useAppContext } from "../../context/AppContext";
 import { useReaderSettings } from "../../hooks/useReaderSettings";
+import { logger } from "../../lib/logger";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { ReaderContent } from "./ReaderContent";
@@ -96,7 +97,7 @@ export function Reader() {
       </div>
     );
   }
-  console.warn(
+  logger.warn(
     "currentChapter",
     currentChapter,
     "currentBook",

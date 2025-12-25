@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { Book, ChapterWithContent } from "../../types/book";
 import type { ReaderSettings } from "./ReaderSettings";
 import { useAudioTextSync } from "../../hooks/useAudioTextSync";
+import { logger } from "../../lib/logger";
 import { cn } from "../../lib/utils";
 import { LoadingScreen } from "../app/LoadingScreen";
 
@@ -78,7 +79,7 @@ export function ReaderContent({
   }, [isHeaderVisible, scrollContainerRef, headerRef]);
 
   // Audio-text sync
-  console.log("[ReaderContent] Calling useAudioTextSync", {
+  logger.log("[ReaderContent] Calling useAudioTextSync", {
     hasBook: !!book,
     bookId: book?.id,
     hasScrollContainerRef: !!scrollContainerRef,

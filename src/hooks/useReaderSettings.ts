@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
 import type { ReaderSettings } from "../components/reader/ReaderSettings";
+import { logger } from "../lib/logger";
 
 const defaultSettings: ReaderSettings = {
   theme: "system",
@@ -24,7 +25,7 @@ export function useReaderSettings() {
         );
         setReaderSettings(preferences);
       } catch (err) {
-        console.error("Failed to load reader preferences:", err);
+        logger.error("Failed to load reader preferences:", err);
         toast.error("Failed to load reader preferences");
       }
     };
@@ -39,7 +40,7 @@ export function useReaderSettings() {
         preferences: settings,
       });
     } catch (err) {
-      console.error("Failed to save reader preferences:", err);
+      logger.error("Failed to save reader preferences:", err);
       toast.error("Failed to save reader preferences");
     }
   }, []);

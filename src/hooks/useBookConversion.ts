@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
 import type { AppSettings } from "../types/settings";
+import { logger } from "../lib/logger";
 
 interface ConversionProgress {
   currentChapter: number;
@@ -75,7 +76,7 @@ export function useBookConversion(options?: UseBookConversionOptions) {
         const settings = await invoke<AppSettings>("get_app_settings");
         setDefaultVoiceId(settings.ttsVoiceId || "af_heart");
       } catch (err) {
-        console.error("Failed to load default voice:", err);
+        logger.error("Failed to load default voice:", err);
       }
     };
     loadDefaultVoice();
@@ -133,7 +134,7 @@ export function useBookConversion(options?: UseBookConversionOptions) {
         (event) => {
           const { bookId, chapterTitle, chapterIndex, totalChapters } =
             event.payload;
-          console.log("Chapter completed:", event.payload);
+          logger.log("Chapter completed:", event.payload);
           toast.success(
             `Chapter ${chapterIndex}/${totalChapters} completed: ${chapterTitle}`,
             { duration: 3000 }
@@ -191,7 +192,7 @@ export function useBookConversion(options?: UseBookConversionOptions) {
         // Don't dismiss the toast here - let the progress events handle it
         // The conversion might complete immediately or continue in background
       } catch (err) {
-        console.error("Failed to convert book:", err);
+        logger.error("Failed to convert book:", err);
         toast.error(
           err instanceof Error ? err.message : "Failed to convert book",
           { id: progressToastId || undefined }
@@ -213,7 +214,7 @@ export function useBookConversion(options?: UseBookConversionOptions) {
       toast.info("Cancellation requested...");
       onConversionCancelledRef.current?.(bookId);
     } catch (err) {
-      console.error("Failed to cancel conversion:", err);
+      logger.error("Failed to cancel conversion:", err);
       toast.error(
         err instanceof Error ? err.message : "Failed to cancel conversion"
       );

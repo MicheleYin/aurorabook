@@ -8,6 +8,7 @@ import type { Book } from "../../types/book";
 import { useAppContext } from "../../context/AppContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
 import { staggerDelay } from "../../lib/animations";
+import { logger } from "../../lib/logger";
 import { cn } from "../../lib/utils";
 import { LoadingScreen } from "../app/LoadingScreen";
 import { Button } from "../ui/button";
@@ -87,7 +88,7 @@ export function Library() {
       // Use ref to access the latest books state
       const bookToRefresh = booksRef.current.find((book) => book.id === bookId);
 
-      console.log("bookToRefresh", bookToRefresh, bookId, booksRef.current);
+      logger.log("bookToRefresh", bookToRefresh, bookId, booksRef.current);
       if (!bookToRefresh) {
         // If not found, reload all books
         await loadBooks();
@@ -98,7 +99,7 @@ export function Library() {
       const updatedBook = await invoke<Book | null>("read_one_book", {
         bookId: bookToRefresh.id,
       });
-      console.log("updatedBook", updatedBook);
+      logger.log("updatedBook", updatedBook);
 
       if (updatedBook) {
         // Update the book in the books array
@@ -109,7 +110,7 @@ export function Library() {
         );
       }
     } catch (err) {
-      console.error("Failed to refresh book:", err);
+      logger.error("Failed to refresh book:", err);
       // Fallback to reloading all books on error
       await loadBooks();
     }
@@ -156,7 +157,7 @@ export function Library() {
       // Reload books to show the new one
       await loadBooks();
     } catch (err) {
-      console.error("Failed to ingest book:", err);
+      logger.error("Failed to ingest book:", err);
       toast.error(
         err instanceof Error ? err.message : "Failed to add book to library",
         { id: "ingest-book" }
@@ -191,7 +192,7 @@ export function Library() {
         }
       }
     } catch (err) {
-      console.error("Failed to add book:", err);
+      logger.error("Failed to add book:", err);
       toast.error(err instanceof Error ? err.message : "Failed to add book");
     } finally {
       setIsAddingBook(false);
@@ -242,7 +243,7 @@ export function Library() {
       setIsDialogOpen(false);
       setIsDeleting(false);
     } catch (err) {
-      console.error("Failed to delete book:", err);
+      logger.error("Failed to delete book:", err);
       toast.error(
         err instanceof Error ? err.message : "Failed to delete book",
         { id: "delete-book" }

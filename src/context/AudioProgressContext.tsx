@@ -1,3 +1,5 @@
+import { getName } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import {
   createContext,
   Dispatch,
@@ -10,9 +12,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { getName } from "@tauri-apps/api/app";
-import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
+
+import { logger } from "../lib/logger";
 
 import type {
   AudioTrack,
@@ -87,7 +89,7 @@ export function AudioProgressProvider({
             audioState,
           });
         } catch (err) {
-          console.error("Failed to save audio progress:", err);
+          logger.error("Failed to save audio progress:", err);
           // Don't show toast for save errors to avoid spam
         }
       }
@@ -217,7 +219,7 @@ export function AudioProgressProvider({
                 });
               })
               .catch((err) => {
-                console.error("Failed to get app name:", err);
+                logger.error("Failed to get app name:", err);
                 // Fallback without app name
                 navigator.mediaSession.metadata = new MediaMetadata({
                   title: fullTrackTitle,
@@ -229,7 +231,7 @@ export function AudioProgressProvider({
           }
         }
       } catch (err) {
-        console.error("Failed to load audio track:", err);
+        logger.error("Failed to load audio track:", err);
         toast.error("Failed to load audio track");
       } finally {
         setIsLoadingAudio(false);
@@ -254,7 +256,7 @@ export function AudioProgressProvider({
         await loadAudioTrack(book.id, audioTrackToLoad, book);
         // Restore progress after track is loaded
         restoreAudioProgress(book, audioTrackToLoad);
-        console.log("loaded last opened audio track", audioTrackToLoad, book);
+        logger.log("loaded last opened audio track", audioTrackToLoad, book);
       } else {
         toast.error("No audio tracks available in this book");
       }

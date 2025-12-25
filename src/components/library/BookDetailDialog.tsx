@@ -12,6 +12,7 @@ import {
 
 import type { Book } from "../../types/book";
 import { useIsMobile } from "../../hooks/useIsMobile";
+import { logger } from "../../lib/logger";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -273,7 +274,7 @@ export function BookDetailDialog({
   }, [onDelete]);
 
   const handleDeleteCancel = useCallback(() => setShowDeleteConfirm(false), []);
-  console.log("isConverting", isConverting);
+  logger.log("isConverting", isConverting);
   if (!book) return null;
 
   return (
