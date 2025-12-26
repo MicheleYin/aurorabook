@@ -132,7 +132,7 @@ export function ReaderSettings({
 
   return (
     <Drawer open={isOpen} onOpenChange={onOpenChange}>
-      <DrawerContent>
+      <DrawerContent className="max-h-[80vh] flex flex-col">
         <DrawerHandle />
         <DrawerHeader className="pb-4">
           <DrawerTitle>Reader Settings</DrawerTitle>

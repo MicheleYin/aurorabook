@@ -155,7 +155,7 @@ export function TOCDrawer({
           <BookOpen className="h-5 w-5" />
         </Button>
       </DrawerTrigger>
-      <DrawerContent className="w-80 max-w-[85vw] !max-h-full top-0 bottom-0 left-0 right-auto rounded-r-none rounded-t-none rounded-l-none safe-area-top">
+      <DrawerContent className="w-80 max-w-[85vw] !max-h-screen top-0 bottom-0 left-0 right-auto rounded-r-none rounded-t-none rounded-l-none safe-area-top">
         <DrawerHeader className="pb-4">
           <DrawerTitle>Table of Contents</DrawerTitle>
         </DrawerHeader>

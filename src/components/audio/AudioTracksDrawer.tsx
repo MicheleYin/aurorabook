@@ -157,7 +157,7 @@ export function AudioTracksDrawer({
   if (isMobile) {
     return (
       <Drawer open={isOpen} onOpenChange={onOpenChange} direction="bottom">
-        <DrawerContent>
+        <DrawerContent className="max-h-[80vh] flex flex-col">
           <DrawerHandle />
           {content}
         </DrawerContent>

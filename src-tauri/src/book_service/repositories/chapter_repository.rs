@@ -36,6 +36,29 @@ impl ChapterRepository {
         }
     }
     
+    /// Find all chapters for a book WITH content_html (for conversion)
+    /// 
+    /// This method includes content_html and plain_text, which is needed for conversion.
+    /// Use find_by_book_id() for regular operations to save memory.
+    pub async fn find_by_book_id_with_content(db: &DatabaseConnection, book_id: &str) -> Result<Vec<Chapter>, String> {
+        // Query database with all fields including content_html
+        let entities = chapter::Entity::find()
+            .filter(chapter::Column::BookId.eq(book_id))
+            .order_by_asc(chapter::Column::ChapterOrder)
+            .all(db)
+            .await
+            .map_err(|e| format!("Failed to query chapters with content: {}", e))?;
+        
+        let chapters: Vec<Chapter> = entities
+            .into_iter()
+            .map(|e| Self::entity_to_model(e))
+            .collect();
+        
+        log::info!("Loaded {} chapters with content for book_id: {}", chapters.len(), book_id);
+        
+        Ok(chapters)
+    }
+    
     /// Find all chapters for a book (with hybrid store)
     /// 
     /// Optimized: Excludes content_html and plain_text BLOBs by default for memory efficiency.

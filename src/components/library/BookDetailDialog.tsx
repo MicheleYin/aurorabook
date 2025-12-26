@@ -351,7 +351,7 @@ export function BookDetailDialog({
       {/* Mobile Drawer */}
       {isMobile && (
         <Drawer open={isOpen} onOpenChange={onOpenChange}>
-          <DrawerContent className="max-h-[90vh] flex flex-col">
+          <DrawerContent className="max-h-[80vh] flex flex-col">
             <DrawerHandle />
             <DrawerHeader>
               <DrawerTitle>{book.title}</DrawerTitle>

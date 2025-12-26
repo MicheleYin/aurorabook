@@ -209,8 +209,8 @@ async fn load_chapters_from_database(
         message: "Loading chapters from database...".to_string(),
     });
     
-    // Load chapters from database
-    let db_chapters = ChapterRepository::find_by_book_id(db.as_ref(), book_id).await
+    // Load chapters from database WITH content_html (needed for conversion)
+    let db_chapters = ChapterRepository::find_by_book_id_with_content(db.as_ref(), book_id).await
         .map_err(|e| AppError::Store(format!("Failed to load chapters from database: {}", e)))?;
     
     if db_chapters.is_empty() {
@@ -219,12 +219,18 @@ async fn load_chapters_from_database(
     
     // Convert database chapters to ConversionChapter format
     let mut conversion_chapters = Vec::new();
+    let mut chapters_without_content = 0;
     for chapter in db_chapters {
         // Use content_html from database, or empty string if not available
         let content_html = chapter.content_html.unwrap_or_else(|| {
-            log::warn!("Chapter '{}' has no content_html in database", chapter.href);
+            chapters_without_content += 1;
+            log::warn!("Chapter '{}' (href: '{}') has no content_html in database", chapter.title, chapter.href);
             String::new()
         });
+        
+        if !content_html.is_empty() {
+            log::debug!("Loaded chapter '{}' with {} bytes of content", chapter.title, content_html.len());
+        }
         
         // Calculate word count if not already set, or use existing
         let word_count = chapter.word_count.unwrap_or_else(|| {
@@ -240,7 +246,12 @@ async fn load_chapters_from_database(
         });
     }
     
-    log::info!("Loaded {} chapters from database", conversion_chapters.len());
+    if chapters_without_content > 0 {
+        log::warn!("Loaded {} chapters from database, but {} chapters have no content_html", 
+            conversion_chapters.len(), chapters_without_content);
+    } else {
+        log::info!("Loaded {} chapters from database with content", conversion_chapters.len());
+    }
     
     Ok(conversion_chapters)
 }
