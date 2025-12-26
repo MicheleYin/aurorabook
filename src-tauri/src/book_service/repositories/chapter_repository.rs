@@ -165,6 +165,37 @@ impl ChapterRepository {
         Ok(())
     }
     
+    /// Load only content_html and plain_text for a chapter (lazy loading)
+    /// This is used when chapter metadata is already loaded but content is needed
+    pub async fn load_content_only(
+        db: &DatabaseConnection,
+        book_id: &str,
+        chapter_id: &str,
+    ) -> Result<Option<(Option<String>, Option<String>)>, String> {
+        use sea_orm::{QuerySelect, FromQueryResult};
+        
+        #[derive(Debug, FromQueryResult)]
+        struct ContentOnly {
+            content_html: Option<String>,
+            plain_text: Option<String>,
+        }
+        
+        let content = chapter::Entity::find()
+            .select_only()
+            .columns([
+                chapter::Column::ContentHtml,
+                chapter::Column::PlainText,
+            ])
+            .filter(chapter::Column::BookId.eq(book_id))
+            .filter(chapter::Column::Id.eq(chapter_id))
+            .into_model::<ContentOnly>()
+            .one(db)
+            .await
+            .map_err(|e| format!("Failed to query chapter content: {}", e))?;
+        
+        Ok(content.map(|c| (c.content_html, c.plain_text)))
+    }
+    
     /// Update chapter content
     pub async fn update_content(db: &DatabaseConnection, book_id: &str, chapter_id: &str, content_html: &str, plain_text: Option<&str>) -> Result<(), String> {
         let mut chapter: chapter::ActiveModel = chapter::Entity::find()

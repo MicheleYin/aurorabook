@@ -1,7 +1,6 @@
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, Set, ConnectionTrait};
 use crate::book_service::entities::image;
 use sha2::{Sha256, Digest};
-use std::sync::Arc;
 
 pub struct ImageRepository;
 
@@ -62,11 +61,12 @@ impl ImageRepository {
             .map_err(|e| format!("Failed to query image: {}", e))?;
         
         if let Some(entity) = entity {
+            // Clone data for return value
             let result = (entity.mime_type.clone(), entity.data.clone());
             
-            // Load into hybrid store
+            // Load into hybrid store (uses cloned data)
             if let Ok(store) = crate::book_service::database::get_hybrid_store() {
-                store.load_image(book_id.to_string(), href.to_string(), entity.mime_type, entity.data).await;
+                store.load_image(book_id.to_string(), href.to_string(), result.0.clone(), result.1.clone()).await;
             }
             
             Ok(Some(result))

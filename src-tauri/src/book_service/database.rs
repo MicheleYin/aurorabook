@@ -278,15 +278,25 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
     db.execute_unprepared(&stmt.to_string()).await
         .map_err(|e| format!("Failed to create reader_preferences table: {}", e))?;
     
-    // Create indexes
+    // Create indexes for common query patterns
+    // Indexes improve query performance and reduce memory usage by enabling efficient lookups
     let indexes = vec![
+        // Chapters indexes (for book lookups and href lookups)
         "CREATE INDEX IF NOT EXISTS idx_chapters_book_id ON chapters(book_id)",
         "CREATE INDEX IF NOT EXISTS idx_chapters_book_id_href ON chapters(book_id, href)",
+        "CREATE INDEX IF NOT EXISTS idx_chapters_book_id_order ON chapters(book_id, chapter_order)",
+        // Images indexes (for book lookups and href lookups)
         "CREATE INDEX IF NOT EXISTS idx_images_book_id ON images(book_id)",
         "CREATE INDEX IF NOT EXISTS idx_images_book_id_href ON images(book_id, href)",
+        // Audio tracks indexes (for book lookups, href lookups, and ordering)
         "CREATE INDEX IF NOT EXISTS idx_audio_tracks_book_id ON audio_tracks(book_id)",
         "CREATE INDEX IF NOT EXISTS idx_audio_tracks_book_id_href ON audio_tracks(book_id, href)",
+        "CREATE INDEX IF NOT EXISTS idx_audio_tracks_book_id_order ON audio_tracks(book_id, track_order)",
+        // Books indexes (for source_path lookups and sorting)
         "CREATE INDEX IF NOT EXISTS idx_books_source_path ON books(source_path)",
+        "CREATE INDEX IF NOT EXISTS idx_books_last_opened ON books(last_opened_time)",
+        "CREATE INDEX IF NOT EXISTS idx_books_conversion_status ON books(conversion_status)",
+        // EPUB data indexes
         "CREATE INDEX IF NOT EXISTS idx_epub_data_book_id ON epub_data(book_id)",
     ];
     
@@ -305,15 +315,35 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
     db.execute_unprepared("PRAGMA synchronous=NORMAL").await
         .map_err(|e| format!("Failed to set synchronous mode: {}", e))?;
     
-    // Cache disabled - using default SQLite cache size
-    // db.execute_unprepared("PRAGMA cache_size=-64000").await
-    //     .map_err(|e| format!("Failed to set cache size: {}", e))?;
+    // Optimize cache size for memory efficiency (negative = KB, positive = pages)
+    // -2000KB = 2MB cache (reasonable for desktop apps, reduces memory usage)
+    db.execute_unprepared("PRAGMA cache_size=-2000").await
+        .map_err(|e| format!("Failed to set cache size: {}", e))?;
+    
+    // Set page size to 4KB (default, but explicit for clarity)
+    // Smaller page size = less memory per page, better for smaller queries
+    db.execute_unprepared("PRAGMA page_size=4096").await
+        .map_err(|e| format!("Failed to set page size: {}", e))?;
+    
+    // Optimize temp store to use memory efficiently
+    // 2 = use memory-mapped temp files (reduces memory pressure)
+    db.execute_unprepared("PRAGMA temp_store=2").await
+        .map_err(|e| format!("Failed to set temp store: {}", e))?;
+    
+    // Enable mmap for large database files (reduces memory usage)
+    // 268435456 = 256MB (SQLite will use mmap for files larger than this)
+    db.execute_unprepared("PRAGMA mmap_size=268435456").await
+        .map_err(|e| format!("Failed to set mmap size: {}", e))?;
+    
+    // Enable query planner optimizations
+    db.execute_unprepared("PRAGMA optimize").await
+        .map_err(|e| format!("Failed to optimize database: {}", e))?;
     
     // Enable foreign key constraints (should be on by default, but explicit is better)
     db.execute_unprepared("PRAGMA foreign_keys=ON").await
         .map_err(|e| format!("Failed to enable foreign keys: {}", e))?;
     
-    log::info!("Database schema initialized with optimizations (WAL mode, indexes)");
+    log::info!("Database schema initialized with optimizations (WAL mode, indexes, memory-efficient PRAGMA settings)");
     
     Ok(())
 }

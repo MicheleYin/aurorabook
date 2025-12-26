@@ -163,8 +163,10 @@ impl BookRepository {
             return Ok(Vec::new());
         }
         
-        // Collect all book IDs (avoid unnecessary clones by using references)
-        let book_ids: Vec<String> = entities.iter().map(|e| e.id.clone()).collect();
+        // Collect all book IDs with pre-allocated capacity
+        let book_ids: Vec<String> = entities.iter()
+            .map(|e| e.id.clone())
+            .collect();
         
         // Load all chapters for all books in one query (EXCLUDE content_html and plain_text BLOBs for performance)
         // These large fields will be loaded lazily when chapters are opened
@@ -270,7 +272,10 @@ impl BookRepository {
         // Group chapters by book_id
         // Note: content_html and plain_text are None (excluded for performance)
         // They will be loaded lazily when chapters are opened
-        let mut chapters_by_book: HashMap<String, Vec<crate::book_service::models::Chapter>> = HashMap::new();
+        // Pre-allocate HashMap with estimated capacity
+        let estimated_books = entities.len();
+        let mut chapters_by_book: HashMap<String, Vec<crate::book_service::models::Chapter>> = 
+            HashMap::with_capacity(estimated_books);
         for entity in all_chapters {
             // Create chapter model with content_html and plain_text as None
             // (since we excluded them from the query for performance)
@@ -285,7 +290,9 @@ impl BookRepository {
         // Group audio tracks by book_id
         // Note: data is None (excluded for performance)
         // It will be loaded lazily when tracks are played
-        let mut audio_tracks_by_book: HashMap<String, Vec<crate::book_service::models::AudioTrack>> = HashMap::new();
+        // Pre-allocate HashMap with estimated capacity
+        let mut audio_tracks_by_book: HashMap<String, Vec<crate::book_service::models::AudioTrack>> = 
+            HashMap::with_capacity(estimated_books);
         for entity in all_audio_tracks {
             // AudioTrack model doesn't include data field, so this is fine
             let book_id = entity.book_id.clone(); // Clone once for map key
@@ -296,8 +303,8 @@ impl BookRepository {
                 .push(track);
         }
         
-        // Build books
-        let mut books = Vec::new();
+        // Build books with pre-allocated capacity
+        let mut books = Vec::with_capacity(entities.len());
         for entity in entities {
             let chapters = chapters_by_book.remove(&entity.id).unwrap_or_default();
             let audio_tracks = audio_tracks_by_book.remove(&entity.id).unwrap_or_default();
@@ -452,9 +459,25 @@ impl BookRepository {
         // Batch insert chapters (optimized - much faster than individual inserts)
         if !model.chapters.is_empty() {
             use crate::book_service::entities::chapter;
-            const BATCH_SIZE: usize = 500; // SQLite limit is ~1000, use 500 for safety
+            // Dynamic batch size based on chapter count and estimated content size
+            // Smaller batches for chapters with large content_html to reduce memory pressure
+            let estimated_avg_content_size = model.chapters.iter()
+                .map(|ch| ch.content_html.as_ref().map(|s| s.len()).unwrap_or(0))
+                .sum::<usize>()
+                .checked_div(model.chapters.len())
+                .unwrap_or(0);
+            
+            // Use smaller batches if average content size is large (>50KB per chapter)
+            let batch_size = if estimated_avg_content_size > 50_000 {
+                100  // Smaller batches for large content
+            } else if estimated_avg_content_size > 10_000 {
+                250  // Medium batches for medium content
+            } else {
+                500  // Larger batches for small content
+            };
             
             // Preserve content_html from existing chapters if not present in model
+            // Clone chapters (necessary to modify them)
             let mut chapters_to_save = model.chapters.clone();
             if let Some(ref content_map) = existing_chapters {
                 for chapter in &mut chapters_to_save {
@@ -470,12 +493,13 @@ impl BookRepository {
                 }
             }
             
+            // Pre-allocate with known capacity
             let chapter_models: Vec<chapter::ActiveModel> = chapters_to_save.iter()
                 .map(|ch| ChapterRepository::model_to_active_model(&model.id, ch))
                 .collect();
             
-            // Insert in batches
-            for chunk in chapter_models.chunks(BATCH_SIZE) {
+            // Insert in batches (using dynamic batch_size calculated above)
+            for chunk in chapter_models.chunks(batch_size) {
                 chapter::Entity::insert_many(chunk.to_vec())
                     .exec(&txn)
                     .await
@@ -501,7 +525,7 @@ impl BookRepository {
                 log::debug!("  Track #{}: href='{}', order={}", idx, track.href, track.order);
             }
             
-            // Prepare all track models
+            // Prepare all track models (Vec::collect will pre-allocate based on iterator size hint)
             let track_models: Vec<audio_track::ActiveModel> = model.audio_tracks.iter()
                 .map(|t| AudioRepository::model_to_active_model(&model.id, t))
                 .collect();
