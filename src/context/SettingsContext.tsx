@@ -104,6 +104,33 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     loadSettings();
   }, [loadSettings]);
 
+  // Listen for system theme changes when theme is set to "system"
+  useEffect(() => {
+    if (!settings || settings.theme !== "system") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    
+    const handleSystemThemeChange = () => {
+      applyTheme("system");
+    };
+
+    // Modern browsers support addEventListener
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener("change", handleSystemThemeChange);
+      return () => {
+        mediaQuery.removeEventListener("change", handleSystemThemeChange);
+      };
+    } else {
+      // Fallback for older browsers
+      mediaQuery.addListener(handleSystemThemeChange);
+      return () => {
+        mediaQuery.removeListener(handleSystemThemeChange);
+      };
+    }
+  }, [settings, applyTheme]);
+
   // Save settings to backend
   const saveSettings = useCallback(
     async (updates: Partial<AppSettings>) => {
