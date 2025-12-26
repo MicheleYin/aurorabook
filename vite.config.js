@@ -62,43 +62,39 @@ export default defineConfig(async () => ({
   build: {
     // Reduce memory usage by processing chunks sequentially
     chunkSizeWarningLimit: 1000,
+    // Enable source maps in production for debugging (can disable later if needed)
+    sourcemap: true,
     // Limit parallel processing to reduce memory pressure
     rollupOptions: {
       output: {
-        // Manual chunk splitting to control memory usage
+        // Simplified chunk splitting - less aggressive to avoid loading issues
         manualChunks: (id) => {
-          // Split node_modules into smaller chunks
+          // Only split node_modules, keep it simple
           if (id.includes("node_modules")) {
-            // Split large dependencies into separate chunks
-            if (id.includes("react") || id.includes("react-dom")) {
-              return "react-vendor";
-            }
-            if (id.includes("@radix-ui")) {
-              return "radix-vendor";
-            }
-            if (id.includes("epubjs")) {
-              return "epub-vendor";
-            }
-            // Group other node_modules
+            // Group all vendor code together to avoid chunk loading issues
             return "vendor";
           }
         },
-        // Limit chunk size to reduce memory usage during build
+        // Ensure consistent asset paths for Tauri
         chunkFileNames: "assets/js/[name]-[hash].js",
         entryFileNames: "assets/js/[name]-[hash].js",
         assetFileNames: "assets/[ext]/[name]-[hash].[ext]",
+        // Ensure proper chunk format for better compatibility
+        format: "es",
       },
     },
     // Use esbuild (default) for memory-efficient minification
     // esbuild is more memory-efficient than terser
     minify: "esbuild",
-    // Reduce sourcemap generation memory usage
-    sourcemap: false,
     // Limit CSS code splitting to reduce memory
     cssCodeSplit: true,
     // Report compressed size instead of gzipped to reduce memory
     reportCompressedSize: false,
     // Limit the number of assets inlined as base64 to reduce memory
     assetsInlineLimit: 4096,
+    // Ensure assets are properly referenced (important for Tauri)
+    assetsDir: "assets",
+    // Target modern browsers for better compatibility
+    target: "esnext",
   },
 }));

@@ -340,12 +340,12 @@ export function Library() {
             </div>
           </div>
         ) : viewMode === "grid" ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 library-grid-transition">
+          <div className="max-2xl:grid max-2xl:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:flex 2xl:flex-wrap 2xl:justify-start gap-4 library-grid-transition">
             {filteredBooks.map((book, index) => (
               <Card
                 key={`${book.id}-${filterKey}`}
                 className={cn(
-                  "cursor-pointer hover:shadow-lg transition-shadow library-item-enter flex flex-col justify-between",
+                  "cursor-pointer hover:shadow-lg transition-shadow library-item-enter flex flex-col justify-between 2xl:w-60",
                   staggerDelay(index, 30)
                 )}
                 onClick={() => handleBookClick(book)}
@@ -415,7 +415,7 @@ export function Library() {
                 )}
                 onClick={() => handleBookClick(book)}
               >
-                <CardContent className="p-4">
+                <CardContent className="p-4 ">
                   <div className="flex items-center gap-4">
                     <div className="w-16 h-24 bg-muted rounded shrink-0 overflow-hidden">
                       {book.coverUrl ? (

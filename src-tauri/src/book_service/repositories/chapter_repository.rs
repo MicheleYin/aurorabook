@@ -8,9 +8,10 @@ impl ChapterRepository {
     /// Convert database row to domain model (assumes all columns including content_html/plain_text are present)
     /// For queries that exclude content_html/plain_text, use inline conversion instead
     pub fn row_to_model(row: SqliteRow) -> Result<Chapter, String> {
-        // Try to get content_html and plain_text, but handle case where they might not be in the query
-        let content_html = row.try_get::<Option<String>, _>("content_html").ok().flatten();
-        let plain_text = row.try_get::<Option<String>, _>("plain_text").ok().flatten();
+        // Get content_html and plain_text - these should be present when using SELECT *
+        // Use get() directly since we know the columns exist in the query
+        let content_html: Option<String> = row.get("content_html");
+        let plain_text: Option<String> = row.get("plain_text");
         
         Ok(Chapter {
             id: row.get("id"),

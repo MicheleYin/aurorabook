@@ -1,5 +1,6 @@
 import { Component, ReactNode } from "react";
 
+import { logger } from "../lib/logger";
 import { Button } from "./ui/button";
 
 interface Props {
@@ -24,11 +25,10 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    // ErrorBoundary needs to work even if logger fails, so use console.error directly
-    // but only in dev mode to avoid production noise
-    if (import.meta.env.DEV) {
-      console.error("ErrorBoundary caught:", error, errorInfo);
-    }
+    // Always log errors in production for debugging
+    // Use both console.error (always works) and logger (for consistency)
+    console.error("ErrorBoundary caught:", error, errorInfo);
+    logger.error("ErrorBoundary caught:", error, errorInfo);
   }
 
   handleReset = () => {
