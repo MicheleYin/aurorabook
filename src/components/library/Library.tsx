@@ -464,7 +464,7 @@ export function Library() {
                     </div>
                     <Button
                       size="sm"
-                      className="w-full sm:w-auto"
+                      className="w-auto"
                       variant="ghost"
                       onClick={(e) => handleOpenBook(book, e)}
                     >
