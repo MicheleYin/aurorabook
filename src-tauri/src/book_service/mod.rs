@@ -2,6 +2,7 @@ pub mod models;
 pub mod filters;
 pub mod database;
 pub mod repositories;
+pub mod audio_stream;
 
 pub use models::*;
 use filters::*;

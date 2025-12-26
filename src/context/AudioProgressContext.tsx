@@ -176,32 +176,22 @@ export function AudioProgressProvider({
     async (bookId: string, track: AudioTrack, book: Book) => {
       setIsLoadingAudio(true);
       try {
-        const result = await invoke<[number[], string] | null>(
-          "load_epub_audio_bytes",
-          {
-            bookId,
-            trackId: track.id,
-          }
-        );
+        // Get streaming URL from backend
+        const streamUrl = await invoke<string>("get_audio_stream_url", {
+          bookId,
+          trackId: track.id,
+        });
 
-        if (result) {
-          const [bytes, mimeType] = result;
-
-          // Clean up previous blob URL
+        if (streamUrl) {
+          // Clean up previous blob URL (if any)
           if (blobUrlRef.current) {
             URL.revokeObjectURL(blobUrlRef.current);
             blobUrlRef.current = null;
           }
 
-          // Convert number[] to Uint8Array and create blob
-          const audioBytes = new Uint8Array(bytes);
-          const blob = new Blob([audioBytes], { type: mimeType });
-          const blobUrl = URL.createObjectURL(blob);
-          blobUrlRef.current = blobUrl;
-
-          // Set up audio element
+          // Set up audio element with streaming URL
           if (audioRef.current) {
-            audioRef.current.src = blobUrl;
+            audioRef.current.src = streamUrl;
             audioRef.current.load();
 
             // Reset playback state when track changes (will be restored if needed)
@@ -212,9 +202,19 @@ export function AudioProgressProvider({
             }
           }
 
+          // Get MIME type from track href for metadata
+          const mimeType = track.href?.endsWith(".mp3")
+            ? "audio/mpeg"
+            : track.href?.endsWith(".m4a")
+              ? "audio/mp4"
+              : track.href?.endsWith(".ogg")
+                ? "audio/ogg"
+                : track.href?.endsWith(".wav")
+                  ? "audio/wav"
+                  : "audio/mpeg"; // default
+
           setCurrentAudioTrack({
             ...track,
-            data: bytes,
             mimeType,
           });
 

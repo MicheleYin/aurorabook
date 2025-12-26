@@ -74,6 +74,30 @@ pub fn run() {
                 e
             })?;
             
+            // Start audio streaming HTTP server in the background
+            // Use the runtime handle to spawn the task
+            let app_handle_for_server = app.handle().clone();
+            let handle = rt.handle().clone();
+            
+            // Spawn the server task - the handle keeps the runtime alive
+            handle.spawn(async move {
+                // Small delay to ensure everything is initialized
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                log::info!("Attempting to start audio streaming server...");
+                match book_service::audio_stream::start_audio_server(app_handle_for_server).await {
+                    Ok(_) => {
+                        log::info!("Audio streaming server startup completed");
+                    }
+                    Err(e) => {
+                        log::error!("Failed to start audio streaming server: {}", e);
+                    }
+                }
+            });
+            
+            // Keep the runtime alive by leaking it (it will run for the app lifetime)
+            // This is safe because the runtime will be cleaned up when the app exits
+            std::mem::forget(rt);
+            
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
@@ -113,6 +137,7 @@ pub fn run() {
             book_service::get_reader_preferences,
             book_service::update_reader_preferences,
             book_service::update_book_last_opened_time,
+            book_service::audio_stream::get_audio_stream_url,
         ])
         .manage(epub::CancellationTokens::new())
         .build(tauri::generate_context!())
