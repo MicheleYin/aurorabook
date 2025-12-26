@@ -207,21 +207,19 @@ async fn process_images_in_html(
     
     // Now resolve images asynchronously (document is no longer in scope)
     let mut processed_html = html.to_string();
-    // Pre-allocate replacements vector with estimated capacity
-    let estimated_image_count = image_sources.len();
-    let mut replacements: Vec<(String, String)> = Vec::with_capacity(estimated_image_count);
+    let mut replacements: Vec<(String, String)> = Vec::new();
     
     for src in image_sources {
         // Try to load image from database
-        // Pre-allocate with known capacity (3 variations)
-        let mut href_variations = Vec::with_capacity(3);
-        href_variations.push(src.clone());
-        href_variations.push(src.trim_start_matches('/').to_string());
-        if src.starts_with('/') {
-            href_variations.push(src[1..].to_string());
-        } else {
-            href_variations.push(format!("/{}", src));
-        }
+        let href_variations = vec![
+            src.clone(),
+            src.trim_start_matches('/').to_string(),
+            if src.starts_with('/') {
+                src[1..].to_string()
+            } else {
+                format!("/{}", src)
+            },
+        ];
         
         let mut image_data_url: Option<String> = None;
         for href in &href_variations {
@@ -1028,12 +1026,14 @@ pub async fn ingest_epub(
     use std::fs;
 
     // Read EPUB from file system
-    // Normalize path (remove file:// prefix and decode URL-encoded characters)
-    // This is important on iOS where file picker returns URL-encoded paths
-    use crate::utils::path_resolver::ResourcePathResolver;
-    let actual_path = ResourcePathResolver::normalize_file_path(&epub_path);
-    
-    log::info!("Reading EPUB from file system: {}", actual_path);
+        // Handle file:// URL prefix
+        let actual_path = if epub_path.starts_with("file://") {
+            epub_path.replacen("file://", "", 1)
+        } else {
+            epub_path.clone()
+        };
+        
+        log::info!("Reading EPUB from file system: {}", actual_path);
     let epub_data = fs::read(&actual_path)
         .map_err(|e| AppError::Io(e).with_context(format!("Failed to read EPUB file from path '{}'", actual_path)))?;
     
