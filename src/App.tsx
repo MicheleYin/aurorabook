@@ -24,7 +24,7 @@ function AppContent() {
   const { currentTab, setCurrentTab, currentBook } = useAppContext();
 
   return (
-    <div className="flex h-screen flex-col relative">
+    <div className="flex h-full flex-col relative">
       <Tabs
         value={currentTab}
         onValueChange={(value) => {

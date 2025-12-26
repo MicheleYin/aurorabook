@@ -169,15 +169,25 @@ export function Library() {
     try {
       setIsAddingBook(true);
 
+      // On iOS, file type filters are not supported, so we don't use them
+      // The user can select any file, and we'll validate it's an EPUB on the backend
+      // Detect iOS using user agent
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
       // Open file dialog to select EPUB file
       const selected = await open({
         multiple: false,
-        filters: [
-          {
-            name: "EPUB Files",
-            extensions: ["epub"],
-          },
-        ],
+        // Only use filters on non-iOS platforms (iOS doesn't support file type filters)
+        ...(isIOS
+          ? {}
+          : {
+              filters: [
+                {
+                  name: "EPUB Files",
+                  extensions: ["epub"],
+                },
+              ],
+            }),
       });
 
       if (!selected || typeof selected === "string") {

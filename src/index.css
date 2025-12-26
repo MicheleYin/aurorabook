@@ -84,12 +84,27 @@
     @apply border-border;
   }
 
+  html,
   body {
     @apply bg-background text-foreground;
+    /* Prevent body scroll on mobile - app handles all scrolling internally */
+    overflow: hidden;
+    height: 100%;
+    width: 100%;
+    position: fixed;
+  }
+
+  body {
     font-size: 16px;
     font-feature-settings:
       "rlig" 1,
       "calt" 1;
+  }
+
+  #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
   }
 
   /* Prevent text selection on all elements except input text elements */
