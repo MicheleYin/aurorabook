@@ -1,11 +1,7 @@
 pub mod models;
 pub mod filters;
 pub mod database;
-pub mod entities;
 pub mod repositories;
-pub mod hybrid_store;
-pub mod hybrid_store_sync;
-pub mod hybrid_repository;
 
 pub use models::*;
 use filters::*;
@@ -178,7 +174,7 @@ pub async fn load_chapter_content(
 
 /// Process images in HTML content by resolving them to data URLs
 async fn process_images_in_html(
-    db: &sea_orm::DatabaseConnection,
+    db: &sqlx::SqlitePool,
     book_id: &str,
     html: &str,
     chapter_href: &str,
@@ -963,15 +959,7 @@ pub async fn update_book_progress(
     BookRepository::update_progress_only(db.as_ref(), &book_id, &progress).await
         .map_err(|e| AppError::Store(e))?;
     
-    // Try to get updated book from hybrid store first
-    if let Ok(store) = crate::book_service::database::get_hybrid_store() {
-        if let Some(book) = store.get_book(&book_id) {
-            log::debug!("Returning updated book from hybrid store after progress update");
-            return Ok(book);
-        }
-    }
-    
-    // Fallback: re-fetch if not in store (should rarely happen)
+    // Re-fetch updated book
     let book = BookRepository::find_by_id(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))?
         .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
@@ -996,15 +984,7 @@ pub async fn update_book_audio_state(
     BookRepository::update_audio_state_only(db.as_ref(), &book_id, &audio_state).await
         .map_err(|e| AppError::Store(e))?;
     
-    // Try to get updated book from hybrid store first
-    if let Ok(store) = crate::book_service::database::get_hybrid_store() {
-        if let Some(book) = store.get_book(&book_id) {
-            log::debug!("Returning updated book from hybrid store after audio state update");
-            return Ok(book);
-        }
-    }
-    
-    // Fallback: re-fetch if not in store (should rarely happen)
+    // Re-fetch updated book
     let book = BookRepository::find_by_id(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))?
         .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
@@ -1650,23 +1630,13 @@ pub async fn update_book_last_opened_time(
         .to_string();
     
     // Update only the last_opened_time field
-    use crate::book_service::entities::book;
-    use sea_orm::EntityTrait;
-    let mut book_entity = book::Entity::find_by_id(&book_id)
-        .one(db.as_ref())
-        .await
-        .map_err(|e| AppError::Store(format!("Failed to find book: {}", e)))?
-        .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
-    
-    book_entity.last_opened_time = Some(timestamp);
-    
-    let active_model: book::ActiveModel = book_entity.into();
-    book::Entity::update(active_model)
-        .exec(db.as_ref())
+    sqlx::query("UPDATE books SET last_opened_time = ? WHERE id = ?")
+        .bind(&timestamp)
+        .bind(&book_id)
+        .execute(db.as_ref())
         .await
         .map_err(|e| AppError::Store(format!("Failed to update last_opened_time: {}", e)))?;
     
-    // Book update is handled via write queue in hybrid store
     
     Ok(())
 }

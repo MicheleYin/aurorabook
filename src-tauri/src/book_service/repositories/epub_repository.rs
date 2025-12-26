@@ -1,12 +1,11 @@
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, Set, ConnectionTrait};
-use crate::book_service::entities::epub_data;
+use sqlx::{SqlitePool, Executor, Row};
 
 pub struct EpubRepository;
 
 impl EpubRepository {
     /// Save EPUB data by source_path
-    pub async fn save<C: ConnectionTrait>(
-        db: &C,
+    pub async fn save<'e, E: Executor<'e, Database = sqlx::Sqlite>>(
+        executor: E,
         source_path: &str,
         book_id: &str,
         data: &[u8],
@@ -18,42 +17,40 @@ impl EpubRepository {
             .as_secs()
             .to_string();
         
-        let active_model = epub_data::ActiveModel {
-            source_path: Set(source_path.to_string()),
-            book_id: Set(book_id.to_string()),
-            data: Set(data.to_vec()),
-            updated_at: Set(updated_at),
-        };
-        
-        epub_data::Entity::insert(active_model)
-            .on_conflict(
-                sea_orm::sea_query::OnConflict::column(epub_data::Column::SourcePath)
-                    .update_columns([
-                        epub_data::Column::BookId,
-                        epub_data::Column::Data,
-                        epub_data::Column::UpdatedAt,
-                    ])
-                    .to_owned()
-            )
-            .exec(db)
-            .await
-            .map_err(|e| format!("Failed to save EPUB data: {}", e))?;
+        sqlx::query(
+            r#"
+            INSERT INTO epub_data (source_path, book_id, data, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(source_path) DO UPDATE SET
+                book_id = excluded.book_id,
+                data = excluded.data,
+                updated_at = excluded.updated_at
+            "#
+        )
+        .bind(source_path)
+        .bind(book_id)
+        .bind(data)
+        .bind(&updated_at)
+        .execute(executor)
+        .await
+        .map_err(|e| format!("Failed to save EPUB data: {}", e))?;
         
         Ok(())
     }
     
     /// Get EPUB data by source_path
     pub async fn find_by_source_path(
-        db: &DatabaseConnection,
+        pool: &SqlitePool,
         source_path: &str,
     ) -> Result<Option<Vec<u8>>, String> {
-        let entity = epub_data::Entity::find_by_id(source_path)
-            .one(db)
+        let row = sqlx::query("SELECT data FROM epub_data WHERE source_path = ?")
+            .bind(source_path)
+            .fetch_optional(pool)
             .await
             .map_err(|e| format!("Failed to query EPUB data: {}", e))?;
         
-        if let Some(entity) = entity {
-            Ok(Some(entity.data))
+        if let Some(row) = row {
+            Ok(Some(row.get("data")))
         } else {
             Ok(None)
         }
@@ -61,29 +58,30 @@ impl EpubRepository {
     
     /// Get EPUB data by book_id
     pub async fn find_by_book_id(
-        db: &DatabaseConnection,
+        pool: &SqlitePool,
         book_id: &str,
     ) -> Result<Option<Vec<u8>>, String> {
-        let entity = epub_data::Entity::find()
-            .filter(epub_data::Column::BookId.eq(book_id))
-            .one(db)
+        let row = sqlx::query("SELECT data FROM epub_data WHERE book_id = ?")
+            .bind(book_id)
+            .fetch_optional(pool)
             .await
             .map_err(|e| format!("Failed to query EPUB data: {}", e))?;
         
-        if let Some(entity) = entity {
-            Ok(Some(entity.data))
+        if let Some(row) = row {
+            Ok(Some(row.get("data")))
         } else {
             Ok(None)
         }
     }
     
     /// Delete EPUB data by source_path
-    pub async fn delete_by_source_path<C: ConnectionTrait>(
-        db: &C,
+    pub async fn delete_by_source_path<'e, E: Executor<'e, Database = sqlx::Sqlite>>(
+        executor: E,
         source_path: &str,
     ) -> Result<(), String> {
-        epub_data::Entity::delete_by_id(source_path)
-            .exec(db)
+        sqlx::query("DELETE FROM epub_data WHERE source_path = ?")
+            .bind(source_path)
+            .execute(executor)
             .await
             .map_err(|e| format!("Failed to delete EPUB data: {}", e))?;
         
@@ -91,17 +89,16 @@ impl EpubRepository {
     }
     
     /// Delete EPUB data by book_id
-    pub async fn delete_by_book_id<C: ConnectionTrait>(
-        db: &C,
+    pub async fn delete_by_book_id<'e, E: Executor<'e, Database = sqlx::Sqlite>>(
+        executor: E,
         book_id: &str,
     ) -> Result<(), String> {
-        epub_data::Entity::delete_many()
-            .filter(epub_data::Column::BookId.eq(book_id))
-            .exec(db)
+        sqlx::query("DELETE FROM epub_data WHERE book_id = ?")
+            .bind(book_id)
+            .execute(executor)
             .await
             .map_err(|e| format!("Failed to delete EPUB data: {}", e))?;
         
         Ok(())
     }
 }
-

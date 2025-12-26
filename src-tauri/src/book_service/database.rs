@@ -1,18 +1,10 @@
-use sea_orm::{Database, DatabaseConnection};
+use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use tauri::AppHandle;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
-use std::time::Duration;
-use crate::book_service::hybrid_store::HybridStore;
 
-/// Global database connection (initialized once)
-static DB_CONNECTION: OnceCell<Arc<DatabaseConnection>> = OnceCell::const_new();
-
-/// Global hybrid in-memory store (initialized once)
-static HYBRID_STORE: OnceCell<Arc<HybridStore>> = OnceCell::const_new();
-
-/// Background sync task handle
-static SYNC_HANDLE: OnceCell<tokio::task::JoinHandle<()>> = OnceCell::const_new();
+/// Global database connection pool (initialized once)
+static DB_POOL: OnceCell<Arc<SqlitePool>> = OnceCell::const_new();
 
 /// Initialize database connection and store it globally
 /// This should be called once during app setup
@@ -50,82 +42,47 @@ pub async fn init_db_connection(app: &AppHandle) -> Result<(), String> {
         }
     }
     
-    // Create SQLite connection string
-    let db_url = format!("sqlite://{}?mode=rwc", db_path_str);
+    // Create SQLite connection string for SQLx
+    let db_url = format!("sqlite:{}", db_path_str);
     
-    // Connect to database (this creates a connection pool)
-    let db = Database::connect(&db_url)
+    // Create connection pool with minimal connections for memory efficiency
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1) // Single connection for maximum memory efficiency
+        .connect(&db_url)
         .await
         .map_err(|e| format!("Failed to connect to database at {:?}: {}", db_path, e))?;
     
     // Initialize schema
-    init_database_schema(&db).await?;
+    init_database_schema(&pool).await?;
     
-    // Store connection globally (wrap in Arc)
-    let db_arc = Arc::new(db);
-    DB_CONNECTION
-        .set(db_arc.clone())
+    // Store pool globally (wrap in Arc)
+    let pool_arc = Arc::new(pool);
+    DB_POOL
+        .set(pool_arc.clone())
         .map_err(|_| "Database connection already initialized".to_string())?;
     
-    // Initialize hybrid store with eviction limits
-    // Configuration: Caching disabled (all limits set to 0)
-    let hybrid_store = Arc::new(HybridStore::new(
-        0,  // max_books_in_memory (disabled)
-        0,  // max_chapters_in_memory (disabled)
-        0,  // max_audio_tracks_in_memory (disabled)
-        Duration::from_secs(5), // sync_interval: 5 seconds
-    ));
-    
-    // Start background sync task
-    let sync_handle = HybridStore::start_sync_task(
-        hybrid_store.clone(),
-        db_arc.clone(),
-    );
-    
-    HYBRID_STORE
-        .set(hybrid_store)
-        .map_err(|_| "Hybrid store already initialized".to_string())?;
-    
-    SYNC_HANDLE
-        .set(sync_handle)
-        .map_err(|_| "Sync handle already initialized".to_string())?;
-    
-    log::info!("Database connection and hybrid store initialized successfully");
+    log::info!("Database connection initialized successfully");
     
     Ok(())
 }
 
-/// Get database connection from global state
+/// Get database connection pool from global state
 /// Returns a reference to the shared connection pool
-/// The connection is initialized once and reused across all calls
-/// This ensures all database operations use the same shared session
-pub async fn get_db_connection(_app: &AppHandle) -> Result<Arc<DatabaseConnection>, String> {
-    // Get the connection from the global state
-    // Return Arc directly to ensure explicit sharing of the same connection pool
-    let db_arc = DB_CONNECTION
+/// The pool is initialized once and reused across all calls
+pub async fn get_db_connection(_app: &AppHandle) -> Result<Arc<SqlitePool>, String> {
+    // Get the pool from the global state
+    let pool_arc = DB_POOL
         .get()
         .ok_or_else(|| "Database connection not initialized. Call init_db_connection first.".to_string())?;
     
     // Return the Arc directly to ensure all code uses the same shared connection pool
-    Ok(db_arc.clone())
-}
-
-/// Get hybrid store from global state
-/// Returns a reference to the shared hybrid store
-pub fn get_hybrid_store() -> Result<Arc<HybridStore>, String> {
-    HYBRID_STORE
-        .get()
-        .ok_or_else(|| "Hybrid store not initialized. Call init_db_connection first.".to_string())
-        .map(|store| store.clone())
+    Ok(pool_arc.clone())
 }
 
 /// Initialize database schema - creates tables if they don't exist
-async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
-    use sea_orm::{Statement, ConnectionTrait};
-    
+async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
     // Create books table
-    let stmt = Statement::from_string(
-        sea_orm::DatabaseBackend::Sqlite,
+    sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS books (
             id TEXT PRIMARY KEY,
@@ -162,14 +119,14 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
             words_processed INTEGER,
             last_opened_time TEXT
         )
-        "#.to_string(),
-    );
-    db.execute_unprepared(&stmt.to_string()).await
-        .map_err(|e| format!("Failed to create books table: {}", e))?;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create books table: {}", e))?;
     
     // Create chapters table
-    let stmt = Statement::from_string(
-        sea_orm::DatabaseBackend::Sqlite,
+    sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS chapters (
             id TEXT PRIMARY KEY,
@@ -184,14 +141,14 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
             FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
             UNIQUE(book_id, href)
         )
-        "#.to_string(),
-    );
-    db.execute_unprepared(&stmt.to_string()).await
-        .map_err(|e| format!("Failed to create chapters table: {}", e))?;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create chapters table: {}", e))?;
     
     // Create images table
-    let stmt = Statement::from_string(
-        sea_orm::DatabaseBackend::Sqlite,
+    sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS images (
             id TEXT PRIMARY KEY,
@@ -202,14 +159,14 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
             FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
             UNIQUE(book_id, href)
         )
-        "#.to_string(),
-    );
-    db.execute_unprepared(&stmt.to_string()).await
-        .map_err(|e| format!("Failed to create images table: {}", e))?;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create images table: {}", e))?;
     
     // Create audio_tracks table
-    let stmt = Statement::from_string(
-        sea_orm::DatabaseBackend::Sqlite,
+    sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS audio_tracks (
             id TEXT PRIMARY KEY,
@@ -223,14 +180,14 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
             FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
             UNIQUE(book_id, href)
         )
-        "#.to_string(),
-    );
-    db.execute_unprepared(&stmt.to_string()).await
-        .map_err(|e| format!("Failed to create audio_tracks table: {}", e))?;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create audio_tracks table: {}", e))?;
     
     // Create epub_data table
-    let stmt = Statement::from_string(
-        sea_orm::DatabaseBackend::Sqlite,
+    sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS epub_data (
             source_path TEXT PRIMARY KEY,
@@ -239,14 +196,14 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
             updated_at TEXT NOT NULL,
             FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
         )
-        "#.to_string(),
-    );
-    db.execute_unprepared(&stmt.to_string()).await
-        .map_err(|e| format!("Failed to create epub_data table: {}", e))?;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create epub_data table: {}", e))?;
     
     // Create app_settings table (singleton - only one row)
-    let stmt = Statement::from_string(
-        sea_orm::DatabaseBackend::Sqlite,
+    sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS app_settings (
             id TEXT PRIMARY KEY DEFAULT 'default',
@@ -256,14 +213,14 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
             audio_playback_speed REAL NOT NULL DEFAULT 1.0,
             updated_at TEXT NOT NULL
         )
-        "#.to_string(),
-    );
-    db.execute_unprepared(&stmt.to_string()).await
-        .map_err(|e| format!("Failed to create app_settings table: {}", e))?;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create app_settings table: {}", e))?;
     
     // Create reader_preferences table (singleton - only one row)
-    let stmt = Statement::from_string(
-        sea_orm::DatabaseBackend::Sqlite,
+    sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS reader_preferences (
             id TEXT PRIMARY KEY DEFAULT 'default',
@@ -273,10 +230,11 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
             font_size TEXT NOT NULL DEFAULT 'medium',
             updated_at TEXT NOT NULL
         )
-        "#.to_string(),
-    );
-    db.execute_unprepared(&stmt.to_string()).await
-        .map_err(|e| format!("Failed to create reader_preferences table: {}", e))?;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create reader_preferences table: {}", e))?;
     
     // Create indexes for common query patterns
     // Indexes improve query performance and reduce memory usage by enabling efficient lookups
@@ -301,46 +259,61 @@ async fn init_database_schema(db: &DatabaseConnection) -> Result<(), String> {
     ];
     
     for index_sql in indexes {
-        let stmt = Statement::from_string(sea_orm::DatabaseBackend::Sqlite, index_sql.to_string());
-        if let Err(e) = db.execute_unprepared(&stmt.to_string()).await {
+        if let Err(e) = sqlx::query(index_sql).execute(pool).await {
             log::warn!("Failed to create index: {}", e);
         }
     }
     
     // Enable WAL mode for better concurrency and performance
-    db.execute_unprepared("PRAGMA journal_mode=WAL").await
+    sqlx::query("PRAGMA journal_mode=WAL")
+        .execute(pool)
+        .await
         .map_err(|e| format!("Failed to enable WAL mode: {}", e))?;
     
     // Set synchronous mode to NORMAL (faster than FULL, still safe with WAL)
-    db.execute_unprepared("PRAGMA synchronous=NORMAL").await
+    sqlx::query("PRAGMA synchronous=NORMAL")
+        .execute(pool)
+        .await
         .map_err(|e| format!("Failed to set synchronous mode: {}", e))?;
     
     // Optimize cache size for memory efficiency (negative = KB, positive = pages)
     // -2000KB = 2MB cache (reasonable for desktop apps, reduces memory usage)
-    db.execute_unprepared("PRAGMA cache_size=-2000").await
+    sqlx::query("PRAGMA cache_size=-2000")
+        .execute(pool)
+        .await
         .map_err(|e| format!("Failed to set cache size: {}", e))?;
     
     // Set page size to 4KB (default, but explicit for clarity)
     // Smaller page size = less memory per page, better for smaller queries
-    db.execute_unprepared("PRAGMA page_size=4096").await
+    sqlx::query("PRAGMA page_size=4096")
+        .execute(pool)
+        .await
         .map_err(|e| format!("Failed to set page size: {}", e))?;
     
     // Optimize temp store to use memory efficiently
     // 2 = use memory-mapped temp files (reduces memory pressure)
-    db.execute_unprepared("PRAGMA temp_store=2").await
+    sqlx::query("PRAGMA temp_store=2")
+        .execute(pool)
+        .await
         .map_err(|e| format!("Failed to set temp store: {}", e))?;
     
     // Enable mmap for large database files (reduces memory usage)
     // 268435456 = 256MB (SQLite will use mmap for files larger than this)
-    db.execute_unprepared("PRAGMA mmap_size=268435456").await
+    sqlx::query("PRAGMA mmap_size=268435456")
+        .execute(pool)
+        .await
         .map_err(|e| format!("Failed to set mmap size: {}", e))?;
     
     // Enable query planner optimizations
-    db.execute_unprepared("PRAGMA optimize").await
+    sqlx::query("PRAGMA optimize")
+        .execute(pool)
+        .await
         .map_err(|e| format!("Failed to optimize database: {}", e))?;
     
     // Enable foreign key constraints (should be on by default, but explicit is better)
-    db.execute_unprepared("PRAGMA foreign_keys=ON").await
+    sqlx::query("PRAGMA foreign_keys=ON")
+        .execute(pool)
+        .await
         .map_err(|e| format!("Failed to enable foreign keys: {}", e))?;
     
     log::info!("Database schema initialized with optimizations (WAL mode, indexes, memory-efficient PRAGMA settings)");

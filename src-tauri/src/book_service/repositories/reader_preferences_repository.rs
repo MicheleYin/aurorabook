@@ -1,25 +1,40 @@
-use sea_orm::{DatabaseConnection, EntityTrait, Set};
-use crate::book_service::entities::reader_preferences;
+use sqlx::{SqlitePool, Row};
 use crate::book_service::models::ReaderPreferences;
-use std::sync::Arc;
 
 const PREFERENCES_ID: &str = "default";
 
 pub struct ReaderPreferencesRepository;
 
 impl ReaderPreferencesRepository {
-    /// Convert SeaORM entity to domain model
-    pub fn entity_to_model(entity: reader_preferences::Model) -> ReaderPreferences {
-        ReaderPreferences {
-            theme: entity.theme,
-            font_family: entity.font_family,
-            content_padding: entity.content_padding,
-            font_size: entity.font_size,
+    /// Get reader preferences
+    pub async fn get(pool: &SqlitePool) -> Result<ReaderPreferences, String> {
+        let row = sqlx::query("SELECT * FROM reader_preferences WHERE id = ?")
+            .bind(PREFERENCES_ID)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("Failed to query reader preferences: {}", e))?;
+        
+        if let Some(row) = row {
+            Ok(ReaderPreferences {
+                theme: row.get("theme"),
+                font_family: row.get("font_family"),
+                content_padding: row.get("content_padding"),
+                font_size: row.get("font_size"),
+            })
+        } else {
+            // Return default preferences if not found
+            log::info!("Reader preferences not found, returning defaults");
+            Ok(ReaderPreferences {
+                theme: "system".to_string(),
+                font_family: "merriweather".to_string(),
+                content_padding: "comfortable".to_string(),
+                font_size: "medium".to_string(),
+            })
         }
     }
     
-    /// Convert domain model to SeaORM active model
-    pub fn model_to_active_model(model: &ReaderPreferences) -> reader_preferences::ActiveModel {
+    /// Save reader preferences
+    pub async fn save(pool: &SqlitePool, model: &ReaderPreferences) -> Result<(), String> {
         use std::time::{SystemTime, UNIX_EPOCH};
         let updated_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -27,80 +42,28 @@ impl ReaderPreferencesRepository {
             .as_secs()
             .to_string();
         
-        reader_preferences::ActiveModel {
-            id: Set(PREFERENCES_ID.to_string()),
-            theme: Set(model.theme.clone()),
-            font_family: Set(model.font_family.clone()),
-            content_padding: Set(model.content_padding.clone()),
-            font_size: Set(model.font_size.clone()),
-            updated_at: Set(updated_at),
-        }
-    }
-    
-    /// Get reader preferences (with hybrid store)
-    pub async fn get(db: &DatabaseConnection) -> Result<ReaderPreferences, String> {
-        // Try hybrid store first
-        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
-            if let Some(preferences) = store.get_reader_preferences() {
-                log::debug!("Hybrid store hit for reader preferences");
-                return Ok(preferences);
-            }
-        }
-        
-        // Store miss - query database
-        let entity = reader_preferences::Entity::find_by_id(PREFERENCES_ID)
-            .one(db)
-            .await
-            .map_err(|e| format!("Failed to query reader preferences: {}", e))?;
-        
-        let preferences = if let Some(entity) = entity {
-            Self::entity_to_model(entity)
-        } else {
-            // Return default preferences if not found
-            log::info!("Reader preferences not found, returning defaults");
-            ReaderPreferences {
-                theme: "system".to_string(),
-                font_family: "merriweather".to_string(),
-                content_padding: "comfortable".to_string(),
-                font_size: "medium".to_string(),
-            }
-        };
-        
-        // Load into hybrid store
-        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
-            store.load_reader_preferences(preferences.clone());
-        }
-        
-        Ok(preferences)
-    }
-    
-    /// Save reader preferences
-    pub async fn save(db: &DatabaseConnection, model: &ReaderPreferences) -> Result<(), String> {
-        let active_model = Self::model_to_active_model(model);
-        
-        // Use upsert (insert or update)
-        reader_preferences::Entity::insert(active_model.clone())
-            .on_conflict(
-                sea_orm::sea_query::OnConflict::column(reader_preferences::Column::Id)
-                    .update_columns([
-                        reader_preferences::Column::Theme,
-                        reader_preferences::Column::FontFamily,
-                        reader_preferences::Column::ContentPadding,
-                        reader_preferences::Column::FontSize,
-                        reader_preferences::Column::UpdatedAt,
-                    ])
-                    .to_owned()
-            )
-            .exec(db)
-            .await
-            .map_err(|e| format!("Failed to save reader preferences: {}", e))?;
-        
-        // Update hybrid store
-        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
-            store.save_reader_preferences(model.clone()).await;
-        }
+        sqlx::query(
+            r#"
+            INSERT INTO reader_preferences (id, theme, font_family, content_padding, font_size, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                theme = excluded.theme,
+                font_family = excluded.font_family,
+                content_padding = excluded.content_padding,
+                font_size = excluded.font_size,
+                updated_at = excluded.updated_at
+            "#
+        )
+        .bind(PREFERENCES_ID)
+        .bind(&model.theme)
+        .bind(&model.font_family)
+        .bind(&model.content_padding)
+        .bind(&model.font_size)
+        .bind(&updated_at)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to save reader preferences: {}", e))?;
         
         Ok(())
     }
 }
-

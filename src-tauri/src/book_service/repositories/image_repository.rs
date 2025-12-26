@@ -1,5 +1,4 @@
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, Set, ConnectionTrait};
-use crate::book_service::entities::image;
+use sqlx::{SqlitePool, Executor, Row};
 use sha2::{Sha256, Digest};
 
 pub struct ImageRepository;
@@ -14,76 +13,64 @@ impl ImageRepository {
     }
     
     /// Save image
-    pub async fn save<C: ConnectionTrait>(db: &C, book_id: &str, href: &str, mime_type: &str, data: &[u8]) -> Result<(), String> {
+    pub async fn save<'e, E: Executor<'e, Database = sqlx::Sqlite>>(
+        executor: E,
+        book_id: &str,
+        href: &str,
+        mime_type: &str,
+        data: &[u8],
+    ) -> Result<(), String> {
         let id = Self::generate_id(book_id, href);
-        let active_model = image::ActiveModel {
-            id: Set(id),
-            book_id: Set(book_id.to_string()),
-            href: Set(href.to_string()),
-            mime_type: Set(mime_type.to_string()),
-            data: Set(data.to_vec()),
-        };
-        
-        image::Entity::insert(active_model)
-            .on_conflict(
-                sea_orm::sea_query::OnConflict::column(image::Column::Id)
-                    .update_columns([
-                        image::Column::MimeType,
-                        image::Column::Data,
-                    ])
-                    .to_owned()
-            )
-            .exec(db)
-            .await
-            .map_err(|e| format!("Failed to save image: {}", e))?;
-        
-        // Image is saved via write queue in hybrid store
+        sqlx::query(
+            r#"
+            INSERT INTO images (id, book_id, href, mime_type, data)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                mime_type = excluded.mime_type,
+                data = excluded.data
+            "#
+        )
+        .bind(&id)
+        .bind(book_id)
+        .bind(href)
+        .bind(mime_type)
+        .bind(data)
+        .execute(executor)
+        .await
+        .map_err(|e| format!("Failed to save image: {}", e))?;
         
         Ok(())
     }
     
-    /// Get image (with hybrid store)
-    pub async fn find_by_href(db: &DatabaseConnection, book_id: &str, href: &str) -> Result<Option<(String, Vec<u8>)>, String> {
-        // Try hybrid store first
-        if let Ok(store) = crate::book_service::database::get_hybrid_store() {
-            if let Some(image) = store.get_image(book_id, href) {
-                log::debug!("Hybrid store hit for image: {} / {}", book_id, href);
-                return Ok(Some(image));
-            }
-        }
-        
-        // Store miss - query database
-        let entity = image::Entity::find()
-            .filter(image::Column::BookId.eq(book_id))
-            .filter(image::Column::Href.eq(href))
-            .one(db)
+    /// Get image
+    pub async fn find_by_href(pool: &SqlitePool, book_id: &str, href: &str) -> Result<Option<(String, Vec<u8>)>, String> {
+        let row = sqlx::query("SELECT mime_type, data FROM images WHERE book_id = ? AND href = ?")
+            .bind(book_id)
+            .bind(href)
+            .fetch_optional(pool)
             .await
             .map_err(|e| format!("Failed to query image: {}", e))?;
         
-        if let Some(entity) = entity {
-            // Clone data for return value
-            let result = (entity.mime_type.clone(), entity.data.clone());
-            
-            // Load into hybrid store (uses cloned data)
-            if let Ok(store) = crate::book_service::database::get_hybrid_store() {
-                store.load_image(book_id.to_string(), href.to_string(), result.0.clone(), result.1.clone()).await;
-            }
-            
-            Ok(Some(result))
+        if let Some(row) = row {
+            let mime_type: String = row.get("mime_type");
+            let data: Vec<u8> = row.get("data");
+            Ok(Some((mime_type, data)))
         } else {
             Ok(None)
         }
     }
     
     /// Delete all images for a book
-    pub async fn delete_by_book_id<C: ConnectionTrait>(db: &C, book_id: &str) -> Result<(), String> {
-        image::Entity::delete_many()
-            .filter(image::Column::BookId.eq(book_id))
-            .exec(db)
+    pub async fn delete_by_book_id<'e, E: Executor<'e, Database = sqlx::Sqlite>>(
+        executor: E,
+        book_id: &str,
+    ) -> Result<(), String> {
+        sqlx::query("DELETE FROM images WHERE book_id = ?")
+            .bind(book_id)
+            .execute(executor)
             .await
             .map_err(|e| format!("Failed to delete images: {}", e))?;
         
         Ok(())
     }
 }
-
