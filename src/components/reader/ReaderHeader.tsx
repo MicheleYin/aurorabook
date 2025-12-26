@@ -1,5 +1,7 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { ArrowLeft, Headphones, Settings } from "lucide-react";
+
+import { useAppContext } from "@/context/AppContext";
 
 import type { Book, Chapter } from "../../types/book";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
@@ -27,6 +29,12 @@ export function ReaderHeader({
 }: Readonly<ReaderHeaderProps>) {
   const { loadLastOpenedAudioTrack, currentAudioTrack, isLoadingAudio } =
     useAudioProgressContext();
+  const { currentBook } = useAppContext();
+  const hasAudio = useMemo(() => {
+    return !!(
+      currentBook?.audioTracks.length && currentBook.audioTracks.length > 0
+    );
+  }, [currentBook]);
   const onAudioShowClick = useCallback(() => {
     loadLastOpenedAudioTrack(book);
   }, [loadLastOpenedAudioTrack, book]);
@@ -47,7 +55,7 @@ export function ReaderHeader({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {onAudioShowClick && !currentAudioTrack && (
+          {hasAudio && onAudioShowClick && !currentAudioTrack && (
             <Button
               variant="ghost"
               size="icon"
