@@ -121,7 +121,8 @@ impl ResourcePathResolver {
     /// Normalize a file path by removing URL scheme prefix and decoding URL-encoded characters.
     ///
     /// On iOS, file pickers return paths with `file://` prefix and URL-encoded characters.
-    /// This function handles:
+    /// Paths with whitespace can cause issues on iOS if not properly handled. This function
+    /// ensures proper normalization:
     /// - Removing `file://` or `file:///` prefix (iOS uses `file:///` for local files)
     /// - Decoding all percent-encoded characters:
     ///   - Spaces: `%20` → ` ` (space)
@@ -129,6 +130,9 @@ impl ResourcePathResolver {
     ///   - Unicode characters: `%E2%80%93` → `–` (en dash)
     ///   - Emoji: `%F0%9F%98%80` → `😀` (grinning face)
     ///   - All other URL-encoded sequences
+    ///
+    /// **Important for iOS**: After normalization, use `normalize_to_pathbuf()` to convert
+    /// to `PathBuf` for file operations, as `PathBuf` properly handles whitespace in paths.
     ///
     /// # Arguments
     /// * `path` - The file path to normalize (may include `file://` prefix and URL encoding)
@@ -171,6 +175,28 @@ impl ResourcePathResolver {
             .to_string()
     }
 
+    /// Convert a path to a PathBuf, ensuring proper handling of whitespace on iOS.
+    ///
+    /// On iOS, paths with spaces can cause issues if not properly handled.
+    /// This function ensures paths are normalized and converted to PathBuf,
+    /// which handles whitespace correctly in Rust file operations.
+    ///
+    /// # Arguments
+    /// * `path` - The file path (may include `file://` prefix and URL encoding)
+    ///
+    /// # Returns
+    /// A `PathBuf` with the normalized path, ready for file system operations.
+    ///
+    /// # Examples
+    /// ```rust
+    /// let path_buf = ResourcePathResolver::normalize_to_pathbuf("file:///path/to/file%20with%20spaces.epub");
+    /// // PathBuf handles spaces correctly in file operations
+    /// ```
+    pub fn normalize_to_pathbuf(path: &str) -> PathBuf {
+        let normalized = Self::normalize_file_path(path);
+        PathBuf::from(normalized)
+    }
+
     /// Validate and canonicalize a file path.
     ///
     /// This function validates that a path exists, resolves symlinks and
@@ -197,7 +223,6 @@ impl ResourcePathResolver {
     pub fn validate_path(path: &str, allowed_base: Option<&Path>) -> AppResult<PathBuf> {
         // Normalize the path (remove file:// prefix and decode URL encoding)
         let clean_path = Self::normalize_file_path(path);
-
         let path_buf = PathBuf::from(&clean_path);
         
         // Check if path exists

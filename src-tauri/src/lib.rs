@@ -127,9 +127,14 @@ pub fn run() {
                     let url_string = url.to_string();
                     let normalized_path = utils::path_resolver::ResourcePathResolver::normalize_file_path(&url_string);
                     
-                    // Only process EPUB files
-                    if normalized_path.to_lowercase().ends_with(".epub") {
-                        log::info!("File opened from OS: {}", normalized_path);
+                    // Check if file is an EPUB by extension or content type
+                    // On iOS, we need to be more lenient since file type detection may vary
+                    let is_epub = normalized_path.to_lowercase().ends_with(".epub") ||
+                        url_string.contains("epub") ||
+                        url_string.contains("org.idpf.epub-container");
+                    
+                    if is_epub {
+                        log::info!("File opened from OS: {} (detected as EPUB)", normalized_path);
                         
                         // Emit event to frontend to trigger ingestion
                         let app_handle_clone = app_handle.clone();
@@ -146,7 +151,7 @@ pub fn run() {
                             log::warn!("Main window not available yet, file will be processed when window is ready: {}", path_clone);
                         }
                     } else {
-                        log::warn!("Opened file is not an EPUB: {}", normalized_path);
+                        log::warn!("Opened file is not an EPUB: {} (url: {})", normalized_path, url_string);
                     }
                 }
             }
