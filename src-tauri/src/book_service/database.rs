@@ -125,6 +125,99 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
     .await
     .map_err(|e| format!("Failed to create books table: {}", e))?;
     
+    // Migration: Remove unique constraint on source_path if it exists
+    // SQLite implements UNIQUE constraints as unique indexes
+    // We need to find and drop any unique indexes on books.source_path
+    use sqlx::Row;
+    
+    // First, get the CREATE TABLE statement to check if source_path has UNIQUE in the definition
+    let table_sql_result = sqlx::query(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='books'"
+    )
+    .fetch_optional(pool)
+    .await;
+    
+    let has_unique_in_table = if let Ok(Some(row)) = table_sql_result {
+        if let Ok(Some(sql)) = row.try_get::<Option<String>, _>("sql") {
+            // Check if source_path has UNIQUE constraint in table definition
+            sql.contains("source_path") && (sql.contains("UNIQUE") || sql.contains("unique"))
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    
+    // Find all indexes on the books table
+    let indexes_result = sqlx::query(
+        r#"
+        SELECT name, sql FROM sqlite_master 
+        WHERE type='index' 
+        AND tbl_name='books'
+        "#
+    )
+    .fetch_all(pool)
+    .await;
+    
+    if let Ok(rows) = indexes_result {
+        for row in rows {
+            let index_name: String = row.get("name");
+            
+            // Skip primary key autoindex
+            if index_name == "sqlite_autoindex_books_1" {
+                continue;
+            }
+            
+            let sql: Option<String> = row.get("sql");
+            let should_drop = if let Some(ref sql_str) = sql {
+                // Explicit unique index on source_path
+                (sql_str.contains("UNIQUE") || sql_str.contains("unique")) 
+                && sql_str.contains("source_path")
+            } else if index_name.starts_with("sqlite_autoindex_books_") {
+                // Autoindex - if table has UNIQUE on source_path, this might be it
+                // We'll try dropping non-primary-key autoindexes if table has unique constraint
+                has_unique_in_table
+            } else {
+                false
+            };
+            
+            if should_drop {
+                let drop_sql = format!("DROP INDEX IF EXISTS {}", index_name);
+                match sqlx::query(&drop_sql).execute(pool).await {
+                    Ok(_) => log::info!("Dropped unique index on source_path: {}", index_name),
+                    Err(e) => log::warn!("Failed to drop unique index {}: {}", index_name, e),
+                }
+            }
+        }
+    }
+    
+    // If the unique constraint was in the table definition itself, try to drop autoindexes
+    // SQLite creates autoindexes for UNIQUE constraints in table definitions
+    if has_unique_in_table {
+        log::info!("Found UNIQUE constraint on source_path in table definition. Attempting to drop associated autoindexes...");
+        // Try to drop all autoindexes except the primary key one
+        // SQLite autoindexes for UNIQUE constraints can be dropped, which removes the constraint
+        let autoindexes = sqlx::query(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='books' AND name LIKE 'sqlite_autoindex_books_%'"
+        )
+        .fetch_all(pool)
+        .await;
+        
+        if let Ok(rows) = autoindexes {
+            for row in rows {
+                let autoindex_name: String = row.get("name");
+                // Skip the primary key autoindex (usually _1)
+                if autoindex_name != "sqlite_autoindex_books_1" {
+                    let drop_sql = format!("DROP INDEX IF EXISTS {}", autoindex_name);
+                    match sqlx::query(&drop_sql).execute(pool).await {
+                        Ok(_) => log::info!("Dropped autoindex {} (removed unique constraint on source_path)", autoindex_name),
+                        Err(e) => log::warn!("Failed to drop autoindex {}: {}", autoindex_name, e),
+                    }
+                }
+            }
+        }
+    }
+    
     // Create chapters table
     sqlx::query(
         r#"

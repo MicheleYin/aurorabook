@@ -68,8 +68,6 @@ function AppContent() {
         </div>
       </Tabs>
       <FloatingAudioPlayer />
-
-      <Toaster richColors position="top-center" />
     </div>
   );
 }
@@ -132,6 +130,7 @@ function App() {
           </ChapterProgressProvider>
         </AudioSyncProvider>
       </SettingsProvider>
+      <Toaster richColors position="top-center" className="max-w-sm" />
     </ErrorBoundary>
   );
 }
