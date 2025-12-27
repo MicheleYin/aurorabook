@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { BookOpen, Grid2x2, List, Plus } from "lucide-react";
@@ -49,19 +49,23 @@ export function Library() {
   const previousFilteredBooksRef = useRef<string[]>([]);
 
   // Calculate filtered books
-  const filteredBooks = !searchQuery.trim()
-    ? books
-    : books.filter((book) => {
-        const query = searchQuery.toLowerCase();
-        return (
-          book.title.toLowerCase().includes(query) ||
-          book.author.toLowerCase().includes(query) ||
-          book.publisher?.toLowerCase().includes(query) ||
-          book.subjects?.some((subject) =>
-            subject.toLowerCase().includes(query)
-          )
-        );
-      });
+  const filteredBooks = useMemo(
+    () =>
+      !searchQuery.trim()
+        ? books
+        : books.filter((book) => {
+            const query = searchQuery.toLowerCase();
+            return (
+              book.title.toLowerCase().includes(query) ||
+              book.author.toLowerCase().includes(query) ||
+              book.publisher?.toLowerCase().includes(query) ||
+              book.subjects?.some((subject) =>
+                subject.toLowerCase().includes(query)
+              )
+            );
+          }),
+    [books, searchQuery]
+  );
 
   // Trigger re-animation only when filtered results actually change
   useEffect(() => {
@@ -103,6 +107,7 @@ export function Library() {
       const updatedBook = await invoke<Book | null>("read_one_book", {
         bookId: bookToRefresh.id,
       });
+
       const wasPlaying = audioRef.current && !audioRef.current.paused;
       logger.log("updatedBook", updatedBook);
       saveAudioProgress(updatedBook || bookToRefresh);
@@ -129,6 +134,20 @@ export function Library() {
       await loadBooks();
     }
   };
+  const refreshByCompleted = async (convertedBook: Book | null) => {
+    logger.warn("refreshByCompleted", convertedBook);
+    if (!convertedBook) return;
+    logger.log("setting the books", convertedBook);
+    setBooks((prevBooks) =>
+      prevBooks.map((book) =>
+        book.id === convertedBook.id ? convertedBook : book
+      )
+    );
+    if (selectedBookId === convertedBook.id) {
+      logger.log("setting the current book with loading", convertedBook);
+      setCurrentBookWithLoading(convertedBook, false);
+    }
+  };
   const handleSetStarted = async (bookId: string | null) => {
     if (!bookId) return;
     // Use functional update to access the latest books state
@@ -147,7 +166,7 @@ export function Library() {
   };
 
   const { convertBook, cancelConversion, isConverting } = useBookConversion({
-    onConversionComplete: refreshBookById,
+    onConversionComplete: refreshByCompleted,
     onConversionCancelled: refreshBookById,
     onConversionStarted: handleSetStarted,
     onChapterCompleted: refreshBookById,

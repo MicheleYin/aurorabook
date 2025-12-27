@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
+import { Book } from "@/types/book";
+
 import type { AppSettings } from "../types/settings";
 import { logger } from "../lib/logger";
 
@@ -31,7 +33,7 @@ interface ConversionCancelledEvent {
 }
 
 interface UseBookConversionOptions {
-  onConversionComplete?: (bookId: string | null) => Promise<void>;
+  onConversionComplete?: (book: Book | null) => Promise<void>;
   onConversionStarted?: (bookId: string | null) => Promise<void>;
   onConversionCancelled?: (bookId: string | null) => Promise<void>;
   onChapterCompleted?: (bookId: string | null) => Promise<void>;
@@ -46,6 +48,7 @@ export function useBookConversion(options?: UseBookConversionOptions) {
   // Use refs to track current state without causing re-renders
   const progressToastIdRef = useRef<string | null>(null);
   const convertingBookIdRef = useRef<string | null>(null);
+  const chapterToastIdRef = useRef<string | null>(null);
   const onConversionCompleteRef = useRef(options?.onConversionComplete);
   const onConversionStartedRef = useRef(options?.onConversionStarted);
   const onConversionCancelledRef = useRef(options?.onConversionCancelled);
@@ -119,7 +122,8 @@ export function useBookConversion(options?: UseBookConversionOptions) {
             setProgressToastId(null);
             progressToastIdRef.current = null;
             convertingBookIdRef.current = null;
-            onConversionCompleteRef.current?.(convertingBookIdRef.current);
+            chapterToastIdRef.current = null;
+            // Note: onConversionComplete is called from convertBook when it has the Book object
           } else {
             toast.loading(
               `${progress.message}\nChapter ${progress.currentChapter}/${progress.totalChapters} - ${percent}%`,
@@ -135,9 +139,17 @@ export function useBookConversion(options?: UseBookConversionOptions) {
           const { bookId, chapterTitle, chapterIndex, totalChapters } =
             event.payload;
           logger.log("Chapter completed:", event.payload);
+
+          // Use a consistent toast ID to prevent duplicates - replace previous chapter toast
+          const chapterToastId = `chapter-completed-${bookId}`;
+          chapterToastIdRef.current = chapterToastId;
+
           toast.success(
             `Chapter ${chapterIndex}/${totalChapters} completed: ${chapterTitle}`,
-            { duration: 3000 }
+            {
+              id: chapterToastId,
+              duration: 3000,
+            }
           );
           // Refresh book metadata when a chapter is completed - use bookId from event
           onChapterCompletedRef.current?.(bookId);
@@ -155,6 +167,7 @@ export function useBookConversion(options?: UseBookConversionOptions) {
           setProgressToastId(null);
           progressToastIdRef.current = null;
           convertingBookIdRef.current = null;
+          chapterToastIdRef.current = null;
           // Call the cancellation callback with the bookId from the event
           onConversionCancelledRef.current?.(bookId);
         }
@@ -172,22 +185,34 @@ export function useBookConversion(options?: UseBookConversionOptions) {
 
   const convertBook = useCallback(
     async (bookId: string, bookTitle: string) => {
+      // Prevent duplicate conversions
+      if (isConverting && convertingBookId === bookId) {
+        logger.log("Conversion already in progress for this book");
+        return;
+      }
+
       try {
         setIsConverting(true);
         setConvertingBookId(bookId);
+        convertingBookIdRef.current = bookId;
         const toastId = `conversion-${bookId}`;
         setProgressToastId(toastId);
+        progressToastIdRef.current = toastId;
 
         toast.loading(`Starting conversion of "${bookTitle}"...`, {
           id: toastId,
         });
         onConversionStartedRef.current?.(bookId);
 
-        await invoke("convert_epub_to_audiobook_command", {
-          bookId,
-          voiceId: defaultVoiceId,
-        });
-        options?.onConversionComplete?.(bookId);
+        const book = await invoke<Book | null>(
+          "convert_epub_to_audiobook_command",
+          {
+            bookId,
+            voiceId: defaultVoiceId,
+          }
+        );
+
+        options?.onConversionComplete?.(book);
 
         // Don't dismiss the toast here - let the progress events handle it
         // The conversion might complete immediately or continue in background
@@ -200,9 +225,12 @@ export function useBookConversion(options?: UseBookConversionOptions) {
         setIsConverting(false);
         setConvertingBookId(null);
         setProgressToastId(null);
+        progressToastIdRef.current = null;
+        convertingBookIdRef.current = null;
+        chapterToastIdRef.current = null;
       }
     },
-    [defaultVoiceId, progressToastId]
+    [defaultVoiceId, progressToastId, isConverting, convertingBookId]
   );
 
   const cancelConversion = useCallback(async (bookId: string | null) => {

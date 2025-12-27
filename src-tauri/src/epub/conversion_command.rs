@@ -570,12 +570,13 @@ async fn save_converted_epub_and_update_book(
     }
     
     // Extract audio tracks from converted EPUB and update book in library
-    let updated_book = update_book_audio_tracks(converted_epub, source_path, app).await
+    update_book_audio_tracks(converted_epub, source_path, app).await
         .map_err(|e| AppError::Store(format!("Failed to update book audio tracks: {}", e)))?;
     
     // Explicitly check and set conversion status to Done if all chapters are completed
     // This ensures the status is properly set even if update_book_in_library didn't catch it
-    if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await {
+    // Then reload the book from database to return the updated version
+    let final_book = if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await {
         // Try to count chapters with text content first
         let chapters_with_text: usize = book.chapters.iter()
             .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
@@ -611,8 +612,14 @@ async fn save_converted_epub_and_update_book(
             log::warn!("Conversion not complete yet: {}/{} chapters are completed (status: {:?})", 
                 book.completed_chapters.len(), expected_completed, book.conversion_status);
         }
-    }
+        
+        // Reload the book from database to get the latest status
+        BookRepository::find_by_source_path(db.as_ref(), source_path).await
+            .map_err(|e| AppError::Store(format!("Failed to reload book after status update: {}", e)))?
+    } else {
+        None
+    };
     
-    Ok(updated_book)
+    Ok(final_book)
 }
 
