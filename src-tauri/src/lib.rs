@@ -143,42 +143,135 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
-            // Handle file open events (when app is opened with a file)
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            if let tauri::RunEvent::Opened { urls } = event {
-                for url in urls {
-                    // Convert URL to string and normalize the file path
-                    // (remove file:// prefix and decode URL encoding)
-                    let url_string = url.to_string();
-                    let normalized_path = utils::path_resolver::ResourcePathResolver::normalize_file_path(&url_string);
+            match event {
+                // Handle app close events (when app is about to close)
+                tauri::RunEvent::ExitRequested { code, .. } => {
+                    log::info!("App is closing with exit code: {:?}", code);
                     
-                    // Check if file is an EPUB by extension or content type
-                    // On iOS, we need to be more lenient since file type detection may vary
-                    let is_epub = normalized_path.to_lowercase().ends_with(".epub") ||
-                        url_string.contains("epub") ||
-                        url_string.contains("org.idpf.epub-container");
-                    
-                    if is_epub {
-                        log::info!("File opened from OS: {} (detected as EPUB)", normalized_path);
-                        
-                        // Emit event to frontend to trigger ingestion
-                        let app_handle_clone = app_handle.clone();
-                        let path_clone = normalized_path.clone();
-                        
-                        // Try to emit immediately
-                        if let Some(window) = app_handle_clone.get_webview_window("main") {
-                            if let Err(e) = window.emit("file-opened", &path_clone) {
-                                log::warn!("Failed to emit file-opened event: {}", e);
-                            }
+                    // Emit event to frontend to save progress before closing
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        if let Err(e) = window.emit("app-closing", ()) {
+                            log::warn!("Failed to emit app-closing event: {}", e);
                         } else {
-                            // If window doesn't exist yet, store the path for later
-                            // The frontend will check for pending files on mount
-                            log::warn!("Main window not available yet, file will be processed when window is ready: {}", path_clone);
+                            log::info!("Emitted app-closing event to frontend");
+                            // Give frontend a moment to save progress
+                            std::thread::sleep(std::time::Duration::from_millis(500));
                         }
-                    } else {
-                        log::warn!("Opened file is not an EPUB: {} (url: {})", normalized_path, url_string);
+                    }
+                    
+                    // Cancel any ongoing conversion operations
+                    {
+                        let tokens_map_opt = if let Some(tokens_state) = app_handle.try_state::<epub::CancellationTokens>() {
+                            let cancellation_tokens = tokens_state.inner();
+                            let arc = cancellation_tokens.get();
+                            Some(arc)
+                        } else {
+                            None
+                        };
+                        
+                        if let Some(tokens_map) = tokens_map_opt {
+                            match tokens_map.lock() {
+                                Ok(tokens_guard) => {
+                                    let count = tokens_guard.len();
+                                    for (book_id, cancel_token) in tokens_guard.iter() {
+                                        cancel_token.store(true, std::sync::atomic::Ordering::Relaxed);
+                                        log::debug!("Cancelled conversion for book_id: {}", book_id);
+                                    }
+                                    if count > 0 {
+                                        log::info!("Cancelled {} ongoing conversion(s)", count);
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!("Failed to lock cancellation tokens: {}", e);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Add your cleanup code here
+                    // For example:
+                    // - book_service::database::close_connection(&app_handle).await;
+                    // - book_service::audio_stream::stop_audio_server().await;
+                    
+                    log::info!("Cleanup completed, app will now close");
+                }
+                
+                // Handle app lifecycle events (especially important on iOS)
+                #[cfg(target_os = "ios")]
+                tauri::RunEvent::Ready => {
+                    log::info!("App is ready, ensuring audio server is running...");
+                    let app_handle_clone = app_handle.clone();
+                    // Use Tauri's runtime if available
+                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                        handle.spawn(async move {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                            // Check if server is running, restart if not
+                            if !book_service::audio_stream::check_server_running().await {
+                                log::info!("Audio server not running, starting it...");
+                                if let Err(e) = book_service::audio_stream::restart_audio_server(app_handle_clone).await {
+                                    log::error!("Failed to restart audio server: {}", e);
+                                }
+                            }
+                        });
                     }
                 }
+                
+                #[cfg(target_os = "ios")]
+                tauri::RunEvent::Resumed => {
+                    log::info!("App resumed from background, restarting audio server...");
+                    let app_handle_clone = app_handle.clone();
+                    // Always restart server when app resumes on iOS
+                    // iOS may have killed the server when app was backgrounded
+                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                        handle.spawn(async move {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                            log::info!("Restarting audio server after app resume...");
+                            if let Err(e) = book_service::audio_stream::restart_audio_server(app_handle_clone).await {
+                                log::error!("Failed to restart audio server after resume: {}", e);
+                            }
+                        });
+                    }
+                }
+                
+                // Handle file open events (when app is opened with a file)
+                #[cfg(any(target_os = "macos", target_os = "ios"))]
+                tauri::RunEvent::Opened { urls } => {
+                    for url in urls {
+                        // Convert URL to string and normalize the file path
+                        // (remove file:// prefix and decode URL encoding)
+                        let url_string = url.to_string();
+                        let normalized_path = utils::path_resolver::ResourcePathResolver::normalize_file_path(&url_string);
+                        
+                        // Check if file is an EPUB by extension or content type
+                        // On iOS, we need to be more lenient since file type detection may vary
+                        let is_epub = normalized_path.to_lowercase().ends_with(".epub") ||
+                            url_string.contains("epub") ||
+                            url_string.contains("org.idpf.epub-container");
+                        
+                        if is_epub {
+                            log::info!("File opened from OS: {} (detected as EPUB)", normalized_path);
+                            
+                            // Emit event to frontend to trigger ingestion
+                            let app_handle_clone = app_handle.clone();
+                            let path_clone = normalized_path.clone();
+                            
+                            // Try to emit immediately
+                            if let Some(window) = app_handle_clone.get_webview_window("main") {
+                                if let Err(e) = window.emit("file-opened", &path_clone) {
+                                    log::warn!("Failed to emit file-opened event: {}", e);
+                                }
+                            } else {
+                                // If window doesn't exist yet, store the path for later
+                                // The frontend will check for pending files on mount
+                                log::warn!("Main window not available yet, file will be processed when window is ready: {}", path_clone);
+                            }
+                        } else {
+                            log::warn!("Opened file is not an EPUB: {} (url: {})", normalized_path, url_string);
+                        }
+                    }
+                }
+                
+                _ => {}
             }
         });
 }

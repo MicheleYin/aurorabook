@@ -115,16 +115,16 @@ export function FloatingAudioPlayer() {
             await loadAudioTrack(currentBook.id, nextTrack, currentBook);
             // Restore progress for next track
             if (currentBook) {
-              restoreAudioProgress(currentBook, nextTrack);
+              restoreAudioProgress(currentBook, nextTrack, true);
             }
-            // Auto-play the next track
-            if (audioRef.current) {
-              try {
-                await audioRef.current.play();
-              } catch (err) {
-                logger.error("Failed to auto-play next track:", err);
-              }
-            }
+            // // Auto-play the next track
+            // if (audioRef.current) {
+            //   try {
+            //     await audioRef.current.play();
+            //   } catch (err) {
+            //     logger.error("Failed to auto-play next track:", err);
+            //   }
+            // }
           }
         }
       }
@@ -155,6 +155,26 @@ export function FloatingAudioPlayer() {
     restoreAudioProgress,
     currentAudioTrack,
   ]);
+
+  // Auto-save progress every 2 seconds
+  useEffect(() => {
+    if (!currentBook || !currentAudioTrack || !audioRef.current) return;
+
+    const saveProgressInterval = setInterval(() => {
+      if (
+        audioRef.current &&
+        currentAudioTrack &&
+        !Number.isNaN(audioRef.current.currentTime) &&
+        audioRef.current.currentTime > 0
+      ) {
+        saveAudioProgress(currentBook);
+      }
+    }, 2000); // Save every 2 seconds
+
+    return () => {
+      clearInterval(saveProgressInterval);
+    };
+  }, [currentBook, currentAudioTrack, audioRef, saveAudioProgress]);
 
   const hasNextTrack = useMemo(
     () =>

@@ -573,6 +573,46 @@ async fn save_converted_epub_and_update_book(
     let updated_book = update_book_audio_tracks(converted_epub, source_path, app).await
         .map_err(|e| AppError::Store(format!("Failed to update book audio tracks: {}", e)))?;
     
+    // Explicitly check and set conversion status to Done if all chapters are completed
+    // This ensures the status is properly set even if update_book_in_library didn't catch it
+    if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await {
+        // Try to count chapters with text content first
+        let chapters_with_text: usize = book.chapters.iter()
+            .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
+            .count();
+        
+        // If no chapters with word_count found, use total chapters as fallback
+        // (this can happen if chapters were reloaded from EPUB without word_count)
+        let expected_completed = if chapters_with_text > 0 {
+            chapters_with_text
+        } else {
+            // Fallback: use total chapters if word_count is not available
+            // This is safe because we only convert chapters with text content
+            book.chapters.len()
+        };
+        
+        log::debug!("Final conversion status check: completed_chapters={}, chapters_with_text={}, total_chapters={}, expected_completed={}, current_status={:?}", 
+            book.completed_chapters.len(), chapters_with_text, book.chapters.len(), expected_completed, book.conversion_status);
+        
+        // Check if all expected chapters are completed
+        if book.completed_chapters.len() == expected_completed && expected_completed > 0 {
+            if book.conversion_status != ConversionStatus::Done {
+                book.conversion_status = ConversionStatus::Done;
+                log::info!("Conversion completed - all {} chapters are done, setting status to Done", expected_completed);
+                if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
+                    log::warn!("Failed to save conversion status as Done: {}", e);
+                } else {
+                    log::info!("Successfully set conversion status to Done");
+                }
+            } else {
+                log::debug!("Conversion status already set to Done");
+            }
+        } else {
+            log::warn!("Conversion not complete yet: {}/{} chapters are completed (status: {:?})", 
+                book.completed_chapters.len(), expected_completed, book.conversion_status);
+        }
+    }
+    
     Ok(updated_book)
 }
 

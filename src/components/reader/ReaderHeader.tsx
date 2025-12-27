@@ -36,7 +36,7 @@ export function ReaderHeader({
     );
   }, [currentBook]);
   const onAudioShowClick = useCallback(() => {
-    loadLastOpenedAudioTrack(book);
+    loadLastOpenedAudioTrack(book, false);
   }, [loadLastOpenedAudioTrack, book]);
   return (
     <div className="flex-shrink-0 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">

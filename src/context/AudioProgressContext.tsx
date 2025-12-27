@@ -36,11 +36,15 @@ export interface AudioProgressContextType {
     track: AudioTrack,
     book: Book
   ) => Promise<void>;
-  loadLastOpenedAudioTrack: (book: Book) => void;
+  loadLastOpenedAudioTrack: (book: Book, autoPlayAudio: boolean) => void;
   closeAudioPlayer: (book: Book) => Promise<void>;
   calculateAudioProgress: () => BookAudioState | null;
   saveAudioProgress: (book: Book) => Promise<void>;
-  restoreAudioProgress: (book: Book, track: AudioTrack) => void;
+  restoreAudioProgress: (
+    book: Book,
+    track: AudioTrack,
+    autoPlayAudio: boolean
+  ) => void;
   playbackRate: number;
   setPlaybackRate: (rate: number) => void;
 }
@@ -145,7 +149,7 @@ export function AudioProgressProvider({
     loadSettings();
   }, [audioRef]);
   const restoreAudioProgress = useCallback(
-    (book: Book, track: AudioTrack) => {
+    (book: Book, track: AudioTrack, autoPlayAudio: boolean) => {
       // Restore audio progress if this is the last played track
       if (
         book.audioState?.currentTrackId === track.id &&
@@ -167,6 +171,9 @@ export function AudioProgressProvider({
           "loadedmetadata",
           handleLoadedMetadata
         );
+      }
+      if (autoPlayAudio) {
+        audioRef.current?.play();
       }
     },
     [audioRef]
@@ -289,7 +296,7 @@ export function AudioProgressProvider({
   );
 
   const loadLastOpenedAudioTrack = useCallback(
-    async (book: Book) => {
+    async (book: Book, autoPlayAudio: boolean) => {
       setIsLoadingAudio(true);
       let audioTrackToLoad: AudioTrack | null = null;
       // load from be
@@ -312,7 +319,11 @@ export function AudioProgressProvider({
       if (audioTrackToLoad) {
         await loadAudioTrack(book.id, audioTrackToLoad, loadedBook || book);
         // Restore progress after track is loaded
-        restoreAudioProgress(loadedBook || book, audioTrackToLoad);
+        restoreAudioProgress(
+          loadedBook || book,
+          audioTrackToLoad,
+          autoPlayAudio
+        );
         logger.log("loaded last opened audio track", audioTrackToLoad, book);
       } else {
         toast.error("No audio tracks available in this book");

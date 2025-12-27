@@ -4,6 +4,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { BookOpen, Grid2x2, List, Plus } from "lucide-react";
 import { toast } from "sonner";
 
+import { useAudioProgressContext } from "@/context/AudioProgressContext";
+
 import type { Book } from "../../types/book";
 import { useAppContext } from "../../context/AppContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
@@ -28,6 +30,7 @@ export function Library() {
 
     loadBooks,
   } = useAppContext();
+  const { saveAudioProgress, audioRef } = useAudioProgressContext();
 
   const booksRef = useRef(books);
 
@@ -78,13 +81,14 @@ export function Library() {
 
   const handleOpenBook = (book: Book, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    setCurrentBookWithLoading(book);
+    setCurrentBookWithLoading(book, false);
     setCurrentTab("reader");
   };
 
   const refreshBookById = async (bookId: string | null) => {
     if (!bookId) return;
     try {
+      // save the current book
       // Use ref to access the latest books state
       const bookToRefresh = booksRef.current.find((book) => book.id === bookId);
 
@@ -99,9 +103,19 @@ export function Library() {
       const updatedBook = await invoke<Book | null>("read_one_book", {
         bookId: bookToRefresh.id,
       });
+      const wasPlaying = audioRef.current && !audioRef.current.paused;
       logger.log("updatedBook", updatedBook);
+      saveAudioProgress(updatedBook || bookToRefresh);
 
       if (updatedBook) {
+        // save to the selected book
+        // if the selected book is the same as the updated book, update the current book
+        if (selectedBookId === updatedBook.id) {
+          setCurrentBookWithLoading(updatedBook, wasPlaying || false);
+          logger.log(
+            "selectedBookId is the same as the updated book, updating the current book"
+          );
+        }
         // Update the book in the books array
         setBooks((prevBooks) =>
           prevBooks.map((book) =>

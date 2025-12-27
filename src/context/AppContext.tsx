@@ -28,7 +28,7 @@ export interface AppContextType {
 
   currentBook: Book | null;
   setCurrentBook: Dispatch<SetStateAction<Book | null>>;
-  setCurrentBookWithLoading: (book: Book) => void;
+  setCurrentBookWithLoading: (book: Book, autoPlayAudio: boolean) => void;
 
   library: Book[];
   setLibrary: Dispatch<SetStateAction<Book[]>>;
@@ -55,7 +55,7 @@ interface AppProviderProps {
   loadLastOpenedChapter: (book: Book) => void;
   calculateBookProgress: (book: Book) => BookProgress | null;
   // audio progress
-  loadLastOpenedAudioTrack: (book: Book) => void;
+  loadLastOpenedAudioTrack: (book: Book, autoPlayAudio: boolean) => void;
   loadAudioTrack: (
     bookId: string,
     track: AudioTrack,
@@ -95,7 +95,7 @@ export function AppProvider({
   }, []);
 
   const changeCurrentBook = useCallback(
-    (book: Book) => {
+    (book: Book, autoPlayAudio: boolean) => {
       setCurrentBook(book);
 
       // saving the audio progress
@@ -104,7 +104,7 @@ export function AppProvider({
       // also load the chapter content
       loadLastOpenedChapter(book);
       // also load the audio track
-      loadLastOpenedAudioTrack(book);
+      loadLastOpenedAudioTrack(book, autoPlayAudio);
     },
     [loadLastOpenedChapter, loadLastOpenedAudioTrack, saveAudioProgress]
   );
