@@ -70,4 +70,3 @@ export function updateLoadingToastToError(message: string, id: string): void {
     currentLoadingToastId = null;
   }
 }
-

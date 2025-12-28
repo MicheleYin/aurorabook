@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import {
   createContext,
   Dispatch,
@@ -9,18 +10,17 @@ import {
   useRef,
   useState,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
 import { calculateBookProgress } from "@/lib/reader-utils";
 
+import { logger } from "../lib/logger";
 import type {
   Book,
   BookProgress,
   Chapter,
   ChapterWithContent,
 } from "../types/book";
-import { logger } from "../lib/logger";
 
 export interface ChapterProgressContextType {
   currentChapter: ChapterWithContent | null;
