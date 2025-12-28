@@ -165,12 +165,13 @@ export function Library() {
     });
   };
 
-  const { convertBook, cancelConversion, isConverting } = useBookConversion({
-    onConversionComplete: refreshByCompleted,
-    onConversionCancelled: refreshBookById,
-    onConversionStarted: handleSetStarted,
-    onChapterCompleted: refreshBookById,
-  });
+  const { convertBook, cancelConversion, isConverting, convertingBookId } =
+    useBookConversion({
+      onConversionComplete: refreshByCompleted,
+      onConversionCancelled: refreshBookById,
+      onConversionStarted: handleSetStarted,
+      onChapterCompleted: refreshBookById,
+    });
 
   const ingestBook = async (epubPath: string) => {
     try {
@@ -521,6 +522,7 @@ export function Library() {
           onDelete={handleDelete}
           onOpenBook={handleOpenBook}
           isConverting={isConverting}
+          isConvertingThisBook={selectedBookId === convertingBookId}
           isDeleting={isDeleting}
         />
       )}

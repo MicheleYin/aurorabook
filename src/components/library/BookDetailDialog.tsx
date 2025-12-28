@@ -1,14 +1,18 @@
 import { useCallback, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import {
   AlertTriangle,
   BookOpen,
   Calendar,
+  Download,
   FileText,
   Play,
   Trash2,
   User,
   X,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import type { Book } from "../../types/book";
 import { useIsMobile } from "../../hooks/useIsMobile";
@@ -60,6 +64,7 @@ interface BookDetailDialogProps {
   onDelete: () => void;
   onOpenBook: (book: Book) => void;
   isConverting: boolean;
+  isConvertingThisBook: boolean;
   isDeleting: boolean;
 }
 
@@ -261,6 +266,7 @@ export function BookDetailDialog({
   onDelete,
   onOpenBook,
   isConverting,
+  isConvertingThisBook,
   isDeleting,
 }: Readonly<BookDetailDialogProps>) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -274,7 +280,41 @@ export function BookDetailDialog({
   }, [onDelete]);
 
   const handleDeleteCancel = useCallback(() => setShowDeleteConfirm(false), []);
-  logger.log("isConverting", isConverting);
+
+  const handleExport = useCallback(async () => {
+    if (!book) return;
+
+    try {
+      // Open save dialog
+      const filePath = await save({
+        defaultPath: `${book.title}.epub`,
+        filters: [
+          {
+            name: "EPUB Files",
+            extensions: ["epub"],
+          },
+        ],
+      });
+
+      if (!filePath) {
+        // User cancelled
+        return;
+      }
+
+      // Call backend to export EPUB
+      await invoke("export_epub_to_file", {
+        bookId: book.id,
+        outputPath: filePath,
+      });
+
+      toast.success("Book exported successfully");
+    } catch (err) {
+      logger.error("Failed to export book:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to export book");
+    }
+  }, [book]);
+
+  logger.log("isConvertingThisBook", isConvertingThisBook);
   if (!book) return null;
 
   return (
@@ -301,7 +341,16 @@ export function BookDetailDialog({
                 <BookOpen className="h-4 w-4" />
                 Open Book
               </Button>
-              {book.conversionStatus === "started" && isConverting && (
+              <Button
+                variant="outline"
+                onClick={handleExport}
+                disabled={isDeleting || isConvertingThisBook}
+                className="gap-2"
+              >
+                <Download className="h-4 w-4" />
+                Export EPUB
+              </Button>
+              {book.conversionStatus === "started" && isConvertingThisBook && (
                 <Button
                   variant="outline"
                   onClick={onCancel}
@@ -312,11 +361,11 @@ export function BookDetailDialog({
                   Cancel Conversion
                 </Button>
               )}
-              {book.conversionStatus === "started" && !isConverting && (
+              {book.conversionStatus === "started" && !isConvertingThisBook && (
                 <Button
                   variant="outline"
                   onClick={onConvert}
-                  disabled={isConverting || isDeleting}
+                  disabled={isDeleting || isConverting}
                   className="gap-2"
                 >
                   <Play className="h-4 w-4" />
@@ -328,16 +377,16 @@ export function BookDetailDialog({
                   variant="outline"
                   onClick={onConvert}
                   className="gap-2"
-                  disabled={isConverting || isDeleting}
+                  disabled={isDeleting || isConverting}
                 >
                   <Play className="h-4 w-4" />
-                  {isConverting ? "Converting..." : "Convert to Audiobook"}
+                  Convert to Audiobook
                 </Button>
               )}
               <Button
                 variant="destructive"
                 onClick={handleDeleteClick}
-                disabled={isDeleting || isConverting}
+                disabled={isDeleting || isConvertingThisBook}
                 className="gap-2"
               >
                 <Trash2 className="h-4 w-4" />
@@ -371,7 +420,16 @@ export function BookDetailDialog({
                 <BookOpen className="h-4 w-4" />
                 Open Book
               </Button>
-              {book.conversionStatus === "started" && isConverting && (
+              <Button
+                variant="outline"
+                onClick={handleExport}
+                disabled={isDeleting || isConvertingThisBook}
+                className="gap-2"
+              >
+                <Download className="h-4 w-4" />
+                Export EPUB
+              </Button>
+              {book.conversionStatus === "started" && isConvertingThisBook && (
                 <Button
                   variant="outline"
                   onClick={onCancel}
@@ -382,7 +440,7 @@ export function BookDetailDialog({
                   Cancel Conversion
                 </Button>
               )}
-              {book.conversionStatus === "started" && !isConverting && (
+              {book.conversionStatus === "started" && !isConvertingThisBook && (
                 <Button
                   variant="outline"
                   onClick={onConvert}
@@ -397,17 +455,17 @@ export function BookDetailDialog({
                 <Button
                   variant="outline"
                   onClick={onConvert}
-                  disabled={isConverting}
                   className="gap-2"
+                  disabled={isDeleting || isConverting}
                 >
                   <Play className="h-4 w-4" />
-                  {isConverting ? "Converting..." : "Convert to Audiobook"}
+                  Convert to Audiobook
                 </Button>
               )}
               <Button
                 variant="destructive"
                 onClick={handleDeleteClick}
-                disabled={isDeleting || isConverting}
+                disabled={isDeleting || isConvertingThisBook}
                 className="gap-2"
               >
                 <Trash2 className="h-4 w-4" />

@@ -204,19 +204,27 @@
     line-height: inherit !important;
   }
 
-  /* Remove underline from anchor tags in reader content */
+  /* Remove underline and disable links in reader content */
   .reader-prose a,
+  .prose a,
   [data-reader-chapter-content="true"] a {
     text-decoration: none !important;
+    pointer-events: none !important;
+    cursor: default !important;
   }
 
   .reader-prose a:hover,
   .reader-prose a:focus,
   .reader-prose a:visited,
+  .prose a:hover,
+  .prose a:focus,
+  .prose a:visited,
   [data-reader-chapter-content="true"] a:hover,
   [data-reader-chapter-content="true"] a:focus,
   [data-reader-chapter-content="true"] a:visited {
     text-decoration: none !important;
+    pointer-events: none !important;
+    cursor: default !important;
   }
 
   /* Audio highlight animations - animate background color alpha, text opacity stays 1 */

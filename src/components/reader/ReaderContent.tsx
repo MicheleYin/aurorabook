@@ -137,6 +137,26 @@ export function ReaderContent({
     }
   }, [book, currentChapter, onRestoreProgress, scrollContainerRef, isLoading]);
 
+  // Disable all links in reader content
+  useEffect(() => {
+    if (!contentRef.current) return;
+
+    const handleLinkClick = (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "A" || target.closest("a")) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    const container = contentRef.current;
+    container.addEventListener("click", handleLinkClick, true);
+
+    return () => {
+      container.removeEventListener("click", handleLinkClick, true);
+    };
+  }, [currentChapter]);
+
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       // Only trigger if clicking directly on the content area, not on links or interactive elements
