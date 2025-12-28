@@ -1,36 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
 import { Book } from "@/types/book";
 
 import type { AppSettings } from "../types/settings";
+import { useConversionEvents } from "../context/ConversionEventContext";
 import { logger } from "../lib/logger";
-
-interface ConversionProgress {
-  currentChapter: number;
-  totalChapters: number;
-  wordsProcessed: number;
-  totalWords: number;
-  wordsInCurrentChapter: number;
-  currentStep: string;
-  message: string;
-}
-
-interface ChapterCompletedEvent {
-  bookId: string;
-  sourcePath: string;
-  chapterIndex: number;
-  totalChapters: number;
-  chapterTitle: string;
-  audioGenerated: boolean;
-}
-
-interface ConversionCancelledEvent {
-  bookId: string;
-  sourcePath: string;
-}
+import { dismissLoadingToast, showLoadingToast } from "../lib/toast-utils";
 
 interface UseBookConversionOptions {
   onConversionComplete?: (book: Book | null) => Promise<void>;
@@ -85,169 +62,95 @@ export function useBookConversion(options?: UseBookConversionOptions) {
     loadDefaultVoice();
   }, []);
 
-  // Listen for conversion progress events - set up once
+  const {
+    subscribeToProgress,
+    subscribeToChapterCompleted,
+    subscribeToCancelled,
+  } = useConversionEvents();
+
+  // Subscribe to conversion events - handlers can be reset by re-subscribing
   useEffect(() => {
-    let progressUnlisten: (() => void) | null = null;
-    let chapterCompletedUnlisten: (() => void) | null = null;
-    let cancelledUnlisten: (() => void) | null = null;
-    let isMounted = true;
-    let setupComplete = false;
+    // Subscribe to progress events
+    const unsubscribeProgress = subscribeToProgress((progress) => {
+      const percent =
+        progress.totalWords > 0
+          ? Math.round((progress.wordsProcessed / progress.totalWords) * 100)
+          : 0;
 
-    const setupListeners = async () => {
-      try {
-        // Set up all listeners in parallel for faster initialization
-        const [progressListener, chapterListener, cancelledListener] = await Promise.all([
-          listen<ConversionProgress>(
-            "conversion-progress",
-            (event) => {
-              if (!isMounted) return;
-              const progress = event.payload;
-              const percent =
-                progress.totalWords > 0
-                  ? Math.round(
-                      (progress.wordsProcessed / progress.totalWords) * 100
-                    )
-                  : 0;
-
-              const toastId =
-                progressToastIdRef.current ||
-                `conversion-${convertingBookIdRef.current}`;
-              if (!progressToastIdRef.current && convertingBookIdRef.current) {
-                setProgressToastId(toastId);
-                progressToastIdRef.current = toastId;
-              }
-
-              // Check if conversion is complete
-              if (
-                progress.currentChapter >= progress.totalChapters &&
-                percent >= 100
-              ) {
-                toast.success(`Conversion complete!`, { id: toastId });
-                setIsConverting(false);
-                setConvertingBookId(null);
-                setProgressToastId(null);
-                progressToastIdRef.current = null;
-                convertingBookIdRef.current = null;
-                chapterToastIdRef.current = null;
-                // Note: onConversionComplete is called from convertBook when it has the Book object
-              } else {
-                toast.loading(
-                  `${progress.message}\nChapter ${progress.currentChapter}/${progress.totalChapters} - ${percent}%`,
-                  { id: toastId }
-                );
-              }
-            }
-          ),
-          listen<ChapterCompletedEvent>(
-            "chapter-completed",
-            (event) => {
-              if (!isMounted) return;
-              const { bookId, chapterTitle, chapterIndex, totalChapters } =
-                event.payload;
-              logger.log("Chapter completed:", event.payload);
-
-              // Use a consistent toast ID to prevent duplicates - replace previous chapter toast
-              const chapterToastId = `chapter-completed-${bookId}`;
-              chapterToastIdRef.current = chapterToastId;
-
-              toast.success(
-                `Chapter ${chapterIndex}/${totalChapters} completed: ${chapterTitle}`,
-                {
-                  id: chapterToastId,
-                  duration: 3000,
-                }
-              );
-              // Refresh book metadata when a chapter is completed - use bookId from event
-              onChapterCompletedRef.current?.(bookId);
-            }
-          ),
-          listen<ConversionCancelledEvent>(
-            "conversion-cancelled",
-            (event) => {
-              if (!isMounted) return;
-              const { bookId } = event.payload;
-              const toastId = progressToastIdRef.current;
-              toast.error("Conversion cancelled", { id: toastId || undefined });
-              setIsConverting(false);
-              setConvertingBookId(null);
-              setProgressToastId(null);
-              progressToastIdRef.current = null;
-              convertingBookIdRef.current = null;
-              chapterToastIdRef.current = null;
-              // Call the cancellation callback with the bookId from the event
-              onConversionCancelledRef.current?.(bookId);
-            }
-          ),
-        ]);
-
-        if (isMounted) {
-          progressUnlisten = progressListener;
-          chapterCompletedUnlisten = chapterListener;
-          cancelledUnlisten = cancelledListener;
-          setupComplete = true;
-          logger.log("Event listeners set up successfully");
-        } else {
-          // Component unmounted during setup, clean up immediately
-          progressListener();
-          chapterListener();
-          cancelledListener();
-        }
-      } catch (error) {
-        logger.error("Failed to set up event listeners:", error);
-        // Retry setup after a short delay
-        setTimeout(() => {
-          if (isMounted && !setupComplete) {
-            logger.log("Retrying event listener setup...");
-            setupListeners();
-          }
-        }, 1000);
+      const toastId =
+        progressToastIdRef.current ||
+        `conversion-${convertingBookIdRef.current}`;
+      if (!progressToastIdRef.current && convertingBookIdRef.current) {
+        setProgressToastId(toastId);
+        progressToastIdRef.current = toastId;
       }
-    };
 
-    setupListeners();
-
-    return () => {
-      isMounted = false;
-      // Wait a bit for setup to complete if it's still in progress
-      const cleanup = () => {
-        if (progressUnlisten) {
-          try {
-            progressUnlisten();
-          } catch (e) {
-            logger.error("Error unlistening from conversion-progress:", e);
-          }
-        }
-        if (chapterCompletedUnlisten) {
-          try {
-            chapterCompletedUnlisten();
-          } catch (e) {
-            logger.error("Error unlistening from chapter-completed:", e);
-          }
-        }
-        if (cancelledUnlisten) {
-          try {
-            cancelledUnlisten();
-          } catch (e) {
-            logger.error("Error unlistening from conversion-cancelled:", e);
-          }
-        }
-      };
-
-      if (setupComplete) {
-        cleanup();
+      // Check if conversion is complete
+      if (progress.currentChapter >= progress.totalChapters && percent >= 100) {
+        toast.success(`Conversion complete!`, { id: toastId });
+        dismissLoadingToast(toastId);
+        setIsConverting(false);
+        setConvertingBookId(null);
+        setProgressToastId(null);
+        progressToastIdRef.current = null;
+        convertingBookIdRef.current = null;
+        chapterToastIdRef.current = null;
+        // Note: onConversionComplete is called from convertBook when it has the Book object
       } else {
-        // Wait for setup to complete before cleaning up
-        const checkAndCleanup = () => {
-          if (setupComplete) {
-            cleanup();
-          } else {
-            setTimeout(checkAndCleanup, 50);
-          }
-        };
-        checkAndCleanup();
+        showLoadingToast(
+          `${progress.message}\nChapter ${progress.currentChapter}/${progress.totalChapters} - ${percent}%`,
+          toastId
+        );
       }
+    });
+
+    // Subscribe to chapter completed events
+    const unsubscribeChapterCompleted = subscribeToChapterCompleted((event) => {
+      const { bookId, chapterTitle, chapterIndex, totalChapters } = event;
+      logger.log("Chapter completed:", event);
+
+      // Use a consistent toast ID to prevent duplicates - replace previous chapter toast
+      const chapterToastId = `chapter-completed-${bookId}`;
+      chapterToastIdRef.current = chapterToastId;
+
+      toast.success(
+        `Chapter ${chapterIndex}/${totalChapters} completed: ${chapterTitle}`,
+        {
+          id: chapterToastId,
+          duration: 3000,
+        }
+      );
+      // Refresh book metadata when a chapter is completed - use bookId from event
+      onChapterCompletedRef.current?.(bookId);
+    });
+
+    // Subscribe to cancelled events
+    const unsubscribeCancelled = subscribeToCancelled((event) => {
+      const { bookId } = event;
+      const toastId = progressToastIdRef.current;
+      if (toastId) {
+        toast.error("Conversion cancelled", { id: toastId });
+        dismissLoadingToast(toastId);
+      } else {
+        toast.error("Conversion cancelled");
+      }
+      setIsConverting(false);
+      setConvertingBookId(null);
+      setProgressToastId(null);
+      progressToastIdRef.current = null;
+      convertingBookIdRef.current = null;
+      chapterToastIdRef.current = null;
+      // Call the cancellation callback with the bookId from the event
+      onConversionCancelledRef.current?.(bookId);
+    });
+
+    // Cleanup subscriptions on unmount
+    return () => {
+      unsubscribeProgress();
+      unsubscribeChapterCompleted();
+      unsubscribeCancelled();
     };
-  }, []); // Empty deps - set up listeners only once
+  }, [subscribeToProgress, subscribeToChapterCompleted, subscribeToCancelled]); // Re-subscribe when handlers change (allows reset)
 
   const convertBook = useCallback(
     async (bookId: string, bookTitle: string) => {
@@ -265,9 +168,7 @@ export function useBookConversion(options?: UseBookConversionOptions) {
         setProgressToastId(toastId);
         progressToastIdRef.current = toastId;
 
-        toast.loading(`Starting conversion of "${bookTitle}"...`, {
-          id: toastId,
-        });
+        showLoadingToast(`Starting conversion of "${bookTitle}"...`, toastId);
         onConversionStartedRef.current?.(bookId);
 
         const book = await invoke<Book | null>(
@@ -284,10 +185,18 @@ export function useBookConversion(options?: UseBookConversionOptions) {
         // The conversion might complete immediately or continue in background
       } catch (err) {
         logger.error("Failed to convert book:", err);
-        toast.error(
-          err instanceof Error ? err.message : "Failed to convert book",
-          { id: progressToastId || undefined }
-        );
+        const toastId = progressToastId || progressToastIdRef.current;
+        if (toastId) {
+          toast.error(
+            err instanceof Error ? err.message : "Failed to convert book",
+            { id: toastId }
+          );
+          dismissLoadingToast(toastId);
+        } else {
+          toast.error(
+            err instanceof Error ? err.message : "Failed to convert book"
+          );
+        }
         setIsConverting(false);
         setConvertingBookId(null);
         setProgressToastId(null);

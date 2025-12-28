@@ -11,6 +11,11 @@ import { useAppContext } from "../../context/AppContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
 import { staggerDelay } from "../../lib/animations";
 import { logger } from "../../lib/logger";
+import {
+  showLoadingToast,
+  updateLoadingToastToError,
+  updateLoadingToastToSuccess,
+} from "../../lib/toast-utils";
 import { cn } from "../../lib/utils";
 import { LoadingScreen } from "../app/LoadingScreen";
 import { Button } from "../ui/button";
@@ -175,7 +180,7 @@ export function Library() {
 
   const ingestBook = async (epubPath: string) => {
     try {
-      toast.loading("Adding book to library...", { id: "ingest-book" });
+      showLoadingToast("Adding book to library...", "ingest-book");
 
       // Use the same path for both epub_path and source_path
       // The backend will handle the file:// prefix if needed
@@ -184,17 +189,18 @@ export function Library() {
         sourcePath: epubPath,
       });
 
-      toast.success(`"${book.title}" added to library!`, {
-        id: "ingest-book",
-      });
+      updateLoadingToastToSuccess(
+        `"${book.title}" added to library!`,
+        "ingest-book"
+      );
 
       // Reload books to show the new one
       await loadBooks();
     } catch (err) {
       logger.error("Failed to ingest book:", err);
-      toast.error(
+      updateLoadingToastToError(
         err instanceof Error ? err.message : "Failed to add book to library",
-        { id: "ingest-book" }
+        "ingest-book"
       );
     }
   };
@@ -267,7 +273,7 @@ export function Library() {
 
     try {
       setIsDeleting(true);
-      toast.loading("Deleting book...", { id: "delete-book" });
+      showLoadingToast("Deleting book...", "delete-book");
 
       // Get book title before deleting for toast message
       const book = booksRef.current.find((book) => book.id === selectedBookId);
@@ -277,7 +283,7 @@ export function Library() {
         bookId: selectedBookId,
       });
 
-      toast.success(`"${bookTitle}" deleted`, { id: "delete-book" });
+      updateLoadingToastToSuccess(`"${bookTitle}" deleted`, "delete-book");
 
       // Remove the book from the list using functional update
       setBooks((prevBooks) =>
@@ -288,9 +294,9 @@ export function Library() {
       setIsDeleting(false);
     } catch (err) {
       logger.error("Failed to delete book:", err);
-      toast.error(
+      updateLoadingToastToError(
         err instanceof Error ? err.message : "Failed to delete book",
-        { id: "delete-book" }
+        "delete-book"
       );
     } finally {
       setIsDeleting(false);

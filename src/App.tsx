@@ -18,6 +18,7 @@ import {
   ChapterProgressProvider,
   useChapterProgressContext,
 } from "./context/ChapterProgressContext";
+import { ConversionEventProvider } from "./context/ConversionEventContext";
 import { SettingsProvider } from "./context/SettingsContext";
 
 function AppContent() {
@@ -121,16 +122,18 @@ function AppWithProviders() {
 function App() {
   return (
     <ErrorBoundary>
-      <SettingsProvider>
-        <AudioSyncProvider>
-          <ChapterProgressProvider>
-            <AudioProgressProvider>
-              <AppWithProviders />
-            </AudioProgressProvider>
-          </ChapterProgressProvider>
-        </AudioSyncProvider>
-      </SettingsProvider>
-      <Toaster richColors position="top-center" className="max-w-sm" />
+      <ConversionEventProvider>
+        <SettingsProvider>
+          <AudioSyncProvider>
+            <ChapterProgressProvider>
+              <AudioProgressProvider>
+                <AppWithProviders />
+              </AudioProgressProvider>
+            </ChapterProgressProvider>
+          </AudioSyncProvider>
+        </SettingsProvider>
+        <Toaster richColors position="top-center" className="max-w-sm" />
+      </ConversionEventProvider>
     </ErrorBoundary>
   );
 }
