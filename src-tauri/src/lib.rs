@@ -60,6 +60,34 @@ pub fn run() {
     
     tauri::Builder::default()
         .setup(|app| {
+            // Set TAURI_RESOURCE_DIR environment variable for kokoros to find bundled models
+            match app.path().resource_dir() {
+                Ok(resource_dir) => {
+                    if let Some(resource_str) = resource_dir.to_str() {
+                        std::env::set_var("TAURI_RESOURCE_DIR", resource_str);
+                        log::info!("✓ Set TAURI_RESOURCE_DIR to: {}", resource_str);
+                        log::info!("  Resource directory exists: {}", resource_dir.exists());
+                        log::info!("  Resource directory is_dir: {}", resource_dir.is_dir());
+                        
+                        // Log what's actually in the resource directory
+                        if let Ok(entries) = std::fs::read_dir(&resource_dir) {
+                            let mut files: Vec<String> = entries
+                                .filter_map(|e| e.ok())
+                                .map(|e| e.file_name().to_string_lossy().to_string())
+                                .collect();
+                            files.sort();
+                            log::info!("  Resource directory contents ({} items): {:?}", files.len(), files);
+                        }
+                    } else {
+                        log::warn!("⚠ Resource directory path is not valid UTF-8: {:?}", resource_dir);
+                    }
+                }
+                Err(e) => {
+                    log::error!("❌ Failed to get Tauri resource directory: {}", e);
+                    log::error!("  This will cause path resolution to fail in production!");
+                }
+            }
+            
             // Create and configure the main window
             window::create_main_window(app)?;
             
@@ -138,6 +166,7 @@ pub fn run() {
             book_service::update_reader_preferences,
             book_service::update_book_last_opened_time,
             book_service::audio_stream::get_audio_stream_url,
+            utils::path_resolver::get_path_diagnostics,
         ])
         .manage(epub::CancellationTokens::new())
         .build(tauri::generate_context!())

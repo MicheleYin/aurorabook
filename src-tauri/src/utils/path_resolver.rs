@@ -2,6 +2,57 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 use crate::utils::errors::{AppError, AppResult};
 use percent_encoding::percent_decode_str;
+use serde::{Deserialize, Serialize};
+
+/// Diagnostic information about path resolution.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PathDiagnostics {
+    pub tauri_resource_dir: Option<String>,
+    pub tauri_resource_dir_error: Option<String>,
+    pub current_working_dir: Option<String>,
+    pub current_working_dir_error: Option<String>,
+    pub tauri_resource_dir_env: Option<String>,
+    pub onnx_paths: Vec<PathCheck>,
+    pub voices_paths: Vec<PathCheck>,
+    pub g2p_paths: Vec<PathCheck>,
+    pub piper_model_paths: Vec<PathCheck>,
+    pub arpabet_mapping_paths: Vec<PathCheck>,
+}
+
+/// Information about a single path check.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PathCheck {
+    pub path: String,
+    pub exists: bool,
+    pub is_file: bool,
+    pub is_dir: bool,
+    pub error: Option<String>,
+}
+
+/// Check a single path and return diagnostic information.
+fn check_path(path: &Path) -> PathCheck {
+    let path_str = path.display().to_string();
+    match path.metadata() {
+        Ok(metadata) => {
+            PathCheck {
+                path: path_str,
+                exists: true,
+                is_file: metadata.is_file(),
+                is_dir: metadata.is_dir(),
+                error: None,
+            }
+        }
+        Err(e) => {
+            PathCheck {
+                path: path_str,
+                exists: false,
+                is_file: false,
+                is_dir: false,
+                error: Some(format!("{}", e)),
+            }
+        }
+    }
+}
 
 /// Resolves paths for TTS model and voice files.
 ///
@@ -41,30 +92,44 @@ impl ResourcePathResolver {
 
         // Try resource directory from app handle
         if let Some(app) = app {
-            if let Ok(resource_dir) = app.path().resource_dir() {
-                possible_onnx_paths.push(resource_dir.join("kokoro-v1.0.onnx"));
-                possible_onnx_paths.push(resource_dir.join("resources").join("kokoro-v1.0.onnx"));
-                possible_voices_paths.push(resource_dir.join("voices-v1.0.bin"));
-                possible_voices_paths.push(resource_dir.join("resources").join("voices-v1.0.bin"));
+            match app.path().resource_dir() {
+                Ok(resource_dir) => {
+                    log::info!("✓ Tauri resource directory: {}", resource_dir.display());
+                    possible_onnx_paths.push(resource_dir.join("kokoro-v1.0.onnx"));
+                    possible_onnx_paths.push(resource_dir.join("resources").join("kokoro-v1.0.onnx"));
+                    possible_voices_paths.push(resource_dir.join("voices-v1.0.bin"));
+                    possible_voices_paths.push(resource_dir.join("resources").join("voices-v1.0.bin"));
+                }
+                Err(e) => {
+                    log::warn!("⚠ Failed to get Tauri resource directory: {}", e);
+                }
             }
+        } else {
+            log::debug!("No AppHandle provided, skipping Tauri resource directory check");
         }
 
         // Try current directory (dev mode)
-        if let Ok(current_dir) = std::env::current_dir() {
-            possible_onnx_paths.push(
-                current_dir
-                    .join("src-tauri")
-                    .join("resources")
-                    .join("kokoro-v1.0.onnx"),
-            );
-            possible_onnx_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
-            possible_voices_paths.push(
-                current_dir
-                    .join("src-tauri")
-                    .join("resources")
-                    .join("voices-v1.0.bin"),
-            );
-            possible_voices_paths.push(current_dir.join("resources").join("voices-v1.0.bin"));
+        match std::env::current_dir() {
+            Ok(current_dir) => {
+                log::debug!("Current working directory: {}", current_dir.display());
+                possible_onnx_paths.push(
+                    current_dir
+                        .join("src-tauri")
+                        .join("resources")
+                        .join("kokoro-v1.0.onnx"),
+                );
+                possible_onnx_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
+                possible_voices_paths.push(
+                    current_dir
+                        .join("src-tauri")
+                        .join("resources")
+                        .join("voices-v1.0.bin"),
+                );
+                possible_voices_paths.push(current_dir.join("resources").join("voices-v1.0.bin"));
+            }
+            Err(e) => {
+                log::warn!("⚠ Failed to get current working directory: {}", e);
+            }
         }
 
         // Try environment variables
@@ -102,17 +167,32 @@ impl ResourcePathResolver {
             .cloned();
 
         match (onnx_path, voices_path) {
-            (Some(onnx), Some(voices)) => Ok((onnx, voices)),
+            (Some(onnx), Some(voices)) => {
+                log::info!("✓ Found ONNX model at: {}", onnx.display());
+                log::info!("✓ Found voices file at: {}", voices.display());
+                Ok((onnx, voices))
+            },
             _ => {
                 let mut error_msg = "Could not find required files. Checked paths:\n".to_string();
                 error_msg.push_str("ONNX model paths:\n");
                 for path in &possible_onnx_paths {
-                    error_msg.push_str(&format!("  - {}\n", path.display()));
+                    let exists = path.exists();
+                    let is_file = exists && path.is_file();
+                    error_msg.push_str(&format!("  - {} (exists: {}, is_file: {})\n", 
+                        path.display(), exists, is_file));
+                    log::debug!("  ONNX path: {} (exists: {}, is_file: {})", 
+                        path.display(), exists, is_file);
                 }
                 error_msg.push_str("Voices file paths:\n");
                 for path in &possible_voices_paths {
-                    error_msg.push_str(&format!("  - {}\n", path.display()));
+                    let exists = path.exists();
+                    let is_file = exists && path.is_file();
+                    error_msg.push_str(&format!("  - {} (exists: {}, is_file: {})\n", 
+                        path.display(), exists, is_file));
+                    log::debug!("  Voices path: {} (exists: {}, is_file: {})", 
+                        path.display(), exists, is_file);
                 }
+                log::error!("❌ Resource path resolution failed:\n{}", error_msg);
                 Err(AppError::ResourceNotFound(error_msg))
             }
         }
@@ -284,11 +364,17 @@ impl ResourcePathResolver {
 
         // 1. Try resource directory from app handle (bundled app)
         if let Some(app) = app {
-            if let Ok(resource_dir) = app.path().resource_dir() {
-                possible_paths.push(resource_dir.join(mfa_model_dir).join("model.fst"));
-                possible_paths.push(
-                    resource_dir.join("resources").join(mfa_model_dir).join("model.fst"),
-                );
+            match app.path().resource_dir() {
+                Ok(resource_dir) => {
+                    log::debug!("Tauri resource directory for G2P: {}", resource_dir.display());
+                    possible_paths.push(resource_dir.join(mfa_model_dir).join("model.fst"));
+                    possible_paths.push(
+                        resource_dir.join("resources").join(mfa_model_dir).join("model.fst"),
+                    );
+                }
+                Err(e) => {
+                    log::warn!("⚠ Failed to get Tauri resource directory for G2P: {}", e);
+                }
             }
         }
 
@@ -320,6 +406,7 @@ impl ResourcePathResolver {
 
         // Find the first existing path
         if let Some(path) = possible_paths.iter().find(|p| p.exists() && p.is_file()) {
+            log::info!("✓ Found G2P model at: {}", path.display());
             Ok(path.clone())
         } else {
             let mut error_msg = format!(
@@ -327,10 +414,141 @@ impl ResourcePathResolver {
                 language
             );
             for path in &possible_paths {
-                error_msg.push_str(&format!("  - {}\n", path.display()));
+                let exists = path.exists();
+                let is_file = exists && path.is_file();
+                error_msg.push_str(&format!("  - {} (exists: {}, is_file: {})\n", 
+                    path.display(), exists, is_file));
+                log::debug!("  G2P path: {} (exists: {}, is_file: {})", 
+                    path.display(), exists, is_file);
             }
+            log::error!("❌ G2P model path resolution failed:\n{}", error_msg);
             Err(AppError::ResourceNotFound(error_msg))
         }
     }
 }
+
+    /// Get comprehensive path resolution diagnostics.
+    ///
+    /// This function checks all possible paths for TTS resources and returns
+    /// detailed information about what exists and what doesn't. Useful for
+    /// debugging production build issues.
+    ///
+    /// # Arguments
+    /// * `app` - Tauri AppHandle
+    ///
+    /// # Returns
+    /// A `PathDiagnostics` struct with all path information.
+    #[tauri::command]
+    pub fn get_path_diagnostics(app: AppHandle) -> PathDiagnostics {
+        let mut diagnostics = PathDiagnostics {
+            tauri_resource_dir: None,
+            tauri_resource_dir_error: None,
+            current_working_dir: None,
+            current_working_dir_error: None,
+            tauri_resource_dir_env: std::env::var("TAURI_RESOURCE_DIR").ok(),
+            onnx_paths: Vec::new(),
+            voices_paths: Vec::new(),
+            g2p_paths: Vec::new(),
+            piper_model_paths: Vec::new(),
+            arpabet_mapping_paths: Vec::new(),
+        };
+
+        // Check Tauri resource directory
+        match app.path().resource_dir() {
+            Ok(resource_dir) => {
+                diagnostics.tauri_resource_dir = Some(resource_dir.display().to_string());
+            }
+            Err(e) => {
+                diagnostics.tauri_resource_dir_error = Some(format!("{}", e));
+            }
+        }
+
+        // Check current working directory
+        match std::env::current_dir() {
+            Ok(cwd) => {
+                diagnostics.current_working_dir = Some(cwd.display().to_string());
+            }
+            Err(e) => {
+                diagnostics.current_working_dir_error = Some(format!("{}", e));
+            }
+        }
+
+        // Check ONNX model paths
+        let mut onnx_paths = Vec::new();
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            onnx_paths.push(resource_dir.join("kokoro-v1.0.onnx"));
+            onnx_paths.push(resource_dir.join("resources").join("kokoro-v1.0.onnx"));
+        }
+        if let Ok(current_dir) = std::env::current_dir() {
+            onnx_paths.push(current_dir.join("src-tauri").join("resources").join("kokoro-v1.0.onnx"));
+            onnx_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
+        }
+        if let Ok(env_path) = std::env::var("KOKORO_MODEL_PATH") {
+            if !env_path.is_empty() {
+                onnx_paths.push(PathBuf::from(env_path));
+            }
+        }
+        diagnostics.onnx_paths = onnx_paths.iter().map(|p| check_path(p)).collect();
+
+        // Check voices paths
+        let mut voices_paths = Vec::new();
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            voices_paths.push(resource_dir.join("voices-v1.0.bin"));
+            voices_paths.push(resource_dir.join("resources").join("voices-v1.0.bin"));
+        }
+        if let Ok(current_dir) = std::env::current_dir() {
+            voices_paths.push(current_dir.join("src-tauri").join("resources").join("voices-v1.0.bin"));
+            voices_paths.push(current_dir.join("resources").join("voices-v1.0.bin"));
+        }
+        if let Ok(env_voices) = std::env::var("KOKORO_VOICES_PATH") {
+            if !env_voices.is_empty() {
+                voices_paths.push(PathBuf::from(env_voices));
+            }
+        }
+        diagnostics.voices_paths = voices_paths.iter().map(|p| check_path(p)).collect();
+
+        // Check G2P model paths
+        let mut g2p_paths = Vec::new();
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            g2p_paths.push(resource_dir.join("english_us_mfa").join("model.fst"));
+            g2p_paths.push(resource_dir.join("resources").join("english_us_mfa").join("model.fst"));
+        }
+        if let Ok(current_dir) = std::env::current_dir() {
+            g2p_paths.push(current_dir.join("src-tauri").join("resources").join("english_us_mfa").join("model.fst"));
+            g2p_paths.push(current_dir.join("resources").join("english_us_mfa").join("model.fst"));
+        }
+        diagnostics.g2p_paths = g2p_paths.iter().map(|p| check_path(p)).collect();
+
+        // Check Piper TTS model paths (mini-bart-g2p)
+        let mut piper_paths = Vec::new();
+        let default_paths = vec![
+            PathBuf::from("../../mini-bart-g2p"),
+            PathBuf::from("../mini-bart-g2p"),
+            PathBuf::from("mini-bart-g2p"),
+        ];
+        for default_path in default_paths {
+            if let Ok(cwd) = std::env::current_dir() {
+                let resolved = cwd.join(&default_path);
+                piper_paths.push(resolved);
+            }
+        }
+        diagnostics.piper_model_paths = piper_paths.iter().map(|p| check_path(p)).collect();
+
+        // Check ARPABET mapping paths
+        let mut arpabet_paths = Vec::new();
+        if let Ok(resource_dir) = std::env::var("TAURI_RESOURCE_DIR") {
+            if !resource_dir.is_empty() {
+                let resource_path = PathBuf::from(&resource_dir);
+                arpabet_paths.push(resource_path.join("arpabet-mapping.txt"));
+                arpabet_paths.push(resource_path.join("resources").join("arpabet-mapping.txt"));
+            }
+        }
+        if let Ok(current_dir) = std::env::current_dir() {
+            arpabet_paths.push(current_dir.join("src-tauri").join("resources").join("arpabet-mapping.txt"));
+            arpabet_paths.push(current_dir.join("resources").join("arpabet-mapping.txt"));
+        }
+        diagnostics.arpabet_mapping_paths = arpabet_paths.iter().map(|p| check_path(p)).collect();
+
+        diagnostics
+    }
 
