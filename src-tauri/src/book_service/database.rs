@@ -1,4 +1,5 @@
-use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+use sqlx::{SqlitePool, sqlite::{SqlitePoolOptions, SqliteConnectOptions}};
+use std::str::FromStr;
 use tauri::AppHandle;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -42,15 +43,32 @@ pub async fn init_db_connection(app: &AppHandle) -> Result<(), String> {
         }
     }
     
-    // Create SQLite connection string for SQLx
-    let db_url = format!("sqlite:{}", db_path_str);
+    // Use SqliteConnectOptions to properly handle paths with spaces and special characters
+    // This is the recommended approach for SQLx as it handles path encoding correctly
+    let connect_options = SqliteConnectOptions::from_str(db_path_str)
+        .map_err(|e| {
+            format!(
+                "Failed to create SQLite connection options from path {:?}: {}. \
+                Check that the path is valid.",
+                db_path, e
+            )
+        })?
+        .create_if_missing(true); // Create database file if it doesn't exist
+    
+    log::info!("Database connection options created for path: {:?}", db_path);
     
     // Create connection pool with minimal connections for memory efficiency
     let pool = SqlitePoolOptions::new()
         .max_connections(1) // Single connection for maximum memory efficiency
-        .connect(&db_url)
+        .connect_with(connect_options)
         .await
-        .map_err(|e| format!("Failed to connect to database at {:?}: {}", db_path, e))?;
+        .map_err(|e| {
+            format!(
+                "Failed to connect to database at {:?}: {}. \
+                Ensure the directory exists and is writable.",
+                db_path, e
+            )
+        })?;
     
     // Initialize schema
     init_database_schema(&pool).await?;
