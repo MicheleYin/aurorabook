@@ -480,3 +480,293 @@ fn test_extract_text_with_spans_ellipsis() {
     assert!(updated_html.contains(r#"<span id="f"#), "Should contain span tags with f prefix");
 }
 
+/// Helper function to validate HTML structure
+fn validate_html_structure(html: &str) -> Result<(), String> {
+    use scraper::Html;
+    
+    // Try to parse the HTML - if it fails, the HTML is invalid
+    let doc = Html::parse_document(html);
+    
+    // Count opening and closing span tags
+    let opening_spans = html.matches(r#"<span"#).count();
+    let closing_spans = html.matches("</span>").count();
+    
+    if opening_spans != closing_spans {
+        return Err(format!(
+            "Unbalanced span tags: {} opening, {} closing",
+            opening_spans, closing_spans
+        ));
+    }
+    
+    // Check for duplicate span IDs
+    use regex::Regex;
+    let id_pattern = Regex::new(r#"id="(f\d+)""#).unwrap();
+    let mut seen_ids = std::collections::HashSet::new();
+    for cap in id_pattern.captures_iter(html) {
+        if let Some(id) = cap.get(1) {
+            let id_str = id.as_str();
+            if !seen_ids.insert(id_str) {
+                return Err(format!("Duplicate span ID found: {}", id_str));
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+#[test]
+fn test_html_validation_simple() {
+    let html = "<html><body><p>First sentence. Second sentence!</p></body></html>";
+    let result = extract_text_with_spans(html, None);
+    assert!(result.is_ok());
+    
+    let (_, updated_html, _) = result.unwrap();
+    validate_html_structure(&updated_html).expect("HTML should be valid");
+}
+
+#[test]
+fn test_html_validation_complex_nesting() {
+    let html = r#"<html><body>
+        <p>First sentence. <em>Emphasized text.</em> Second sentence!</p>
+        <div><p>Nested paragraph. Another sentence?</p></div>
+    </body></html>"#;
+    
+    let result = extract_text_with_spans(html, None);
+    assert!(result.is_ok());
+    
+    let (_, updated_html, _) = result.unwrap();
+    validate_html_structure(&updated_html).expect("HTML should be valid with nested elements");
+}
+
+#[test]
+fn test_html_validation_multiple_paragraphs() {
+    let html = r#"<html><body>
+        <p>Paragraph one. First sentence.</p>
+        <p>Paragraph two. Second sentence!</p>
+        <p>Paragraph three? Third sentence.</p>
+    </body></html>"#;
+    
+    let result = extract_text_with_spans(html, None);
+    assert!(result.is_ok());
+    
+    let (_, updated_html, _) = result.unwrap();
+    validate_html_structure(&updated_html).expect("HTML should be valid with multiple paragraphs");
+}
+
+#[test]
+fn test_html_validation_sentence_across_elements() {
+    // Test case where a sentence might span across HTML element boundaries
+    let html = r#"<html><body>
+        <p>Start of sentence <em>middle part</em> end of sentence.</p>
+    </body></html>"#;
+    
+    let result = extract_text_with_spans(html, None);
+    assert!(result.is_ok());
+    
+    let (_, updated_html, _) = result.unwrap();
+    validate_html_structure(&updated_html).expect("HTML should be valid when sentence spans elements");
+}
+
+#[test]
+fn test_html_validation_existing_spans() {
+    // Test with existing spans that might cause issues
+    let html = r#"<html><body><p><span id="existing1">First part.</span> <span id="existing2">Second part!</span></p></body></html>"#;
+    
+    let result = extract_text_with_spans(html, None);
+    assert!(result.is_ok());
+    
+    let (_, updated_html, _) = result.unwrap();
+    validate_html_structure(&updated_html).expect("HTML should be valid with existing spans");
+}
+
+#[test]
+fn test_html_validation_self_closing_tags() {
+    // Test with self-closing tags like <a id="page-1"/>
+    let html = r#"<html><body>
+        <h1><a id="page-1"/><a href="toc.xhtml">Chapter Title</a></h1>
+        <p>First sentence. Second sentence!</p>
+    </body></html>"#;
+    
+    let result = extract_text_with_spans(html, None);
+    assert!(result.is_ok());
+    
+    let (_, updated_html, _) = result.unwrap();
+    validate_html_structure(&updated_html).expect("HTML should be valid with self-closing tags");
+}
+
+#[test]
+fn test_html_validation_empty_paragraphs() {
+    let html = r#"<html><body>
+        <p>First sentence.</p>
+        <p></p>
+        <p>Second sentence!</p>
+    </body></html>"#;
+    
+    let result = extract_text_with_spans(html, None);
+    assert!(result.is_ok());
+    
+    let (_, updated_html, _) = result.unwrap();
+    validate_html_structure(&updated_html).expect("HTML should be valid with empty paragraphs");
+}
+
+#[test]
+fn test_html_validation_list_items() {
+    let html = r#"<html><body>
+        <ul>
+            <li>First item. First sentence.</li>
+            <li>Second item! Second sentence.</li>
+        </ul>
+    </body></html>"#;
+    
+    let result = extract_text_with_spans(html, None);
+    assert!(result.is_ok());
+    
+    let (_, updated_html, _) = result.unwrap();
+    validate_html_structure(&updated_html).expect("HTML should be valid with list items");
+}
+
+#[test]
+fn test_html_validation_provided_spans() {
+    // Test with provided spans to ensure validation works in that path too
+    let html = "<html><body><p>Test sentence. Another sentence!</p></body></html>";
+    let sentences = extract_all_sentences(html).unwrap();
+    
+    if !sentences.is_empty() {
+        let result = extract_text_with_spans(html, Some(&sentences));
+        assert!(result.is_ok());
+        
+        let (_, updated_html, _) = result.unwrap();
+        validate_html_structure(&updated_html).expect("HTML should be valid with provided spans");
+    }
+}
+
+#[test]
+fn test_html_validation_edge_case_quotes() {
+    // Test with quotes that might be in separate spans
+    let html = r#"<html><body><p><span id="f000053">"Aw, stop being mean to her," he said.</span> <span id="f000054">"And don't worry," she replied.</span></p></body></html>"#;
+    
+    let result = extract_text_with_spans(html, None);
+    assert!(result.is_ok());
+    
+    let (_, updated_html, _) = result.unwrap();
+    validate_html_structure(&updated_html).expect("HTML should be valid with quote spans");
+}
+
+#[test]
+fn test_html_validation_long_content() {
+    // Test with longer content that might stress the algorithm
+    let html = r#"<html><body>
+        <p>Sentence one. Sentence two! Sentence three? Sentence four. Sentence five!</p>
+        <p>More sentences. Even more sentences! Many sentences? Lots of sentences.</p>
+    </body></html>"#;
+    
+    let result = extract_text_with_spans(html, None);
+    assert!(result.is_ok());
+    
+    let (_, updated_html, _) = result.unwrap();
+    validate_html_structure(&updated_html).expect("HTML should be valid with long content");
+}
+
+#[test]
+fn test_html_validation_orphaned_closing_tags() {
+    // Test case that reproduces the malformed HTML issue from sample_audio/final
+    // This tests the specific pattern where closing </span> tags appear before opening <span> tags
+    let html = r#"<html><body>
+        <p>The morning sun cast long shadows across the quiet street. Sarah walked briskly toward the coffee shop, her mind already racing with the day's tasks. She had always found comfort in routine, but today felt different somehow.</p>
+        <p>As she pushed open the door, the familiar aroma of freshly ground beans filled the air. The barista smiled warmly and began preparing her usual order. Sarah glanced at the newspaper on the counter, noticing a headline about technological advances in artificial intelligence.</p>
+        <p>"Technology continues to evolve at an astonishing pace," she thought to herself. "What seemed impossible yesterday becomes reality today." She paid for her coffee and found a seat by the window, watching the world pass by outside.</p>
+    </body></html>"#;
+    
+    let result = extract_text_with_spans(html, None);
+    assert!(result.is_ok());
+    
+    let (_, updated_html, _) = result.unwrap();
+    
+    // Check for orphaned closing tags (</span> before <span>)
+    // This pattern should not exist: </span><span
+    assert!(
+        !updated_html.contains("</span><span"),
+        "Found orphaned closing span tag before opening span. HTML: {}",
+        updated_html
+    );
+    
+    // Validate HTML structure
+    validate_html_structure(&updated_html).expect("HTML should be valid without orphaned closing tags");
+    
+    // Verify that every closing span has a corresponding opening span
+    let opening_count = updated_html.matches(r#"<span id="f"#).count();
+    let closing_count = updated_html.matches("</span>").count();
+    assert_eq!(
+        opening_count, closing_count,
+        "Opening and closing span tags should match. Openings: {}, Closings: {}",
+        opening_count, closing_count
+    );
+}
+
+#[test]
+fn test_html_validation_multiple_paragraphs_sequential() {
+    // Test multiple paragraphs in sequence to catch span closing issues
+    let html = r#"<html><body>
+        <p>First paragraph. First sentence.</p>
+        <p>Second paragraph. Second sentence!</p>
+        <p>Third paragraph? Third sentence.</p>
+        <p>Fourth paragraph. Fourth sentence.</p>
+    </body></html>"#;
+    
+    let result = extract_text_with_spans(html, None);
+    assert!(result.is_ok());
+    
+    let (_, updated_html, _) = result.unwrap();
+    
+    // Check for orphaned closing tags
+    assert!(
+        !updated_html.contains("</span><span"),
+        "Found orphaned closing span tag. HTML: {}",
+        updated_html
+    );
+    
+    validate_html_structure(&updated_html).expect("HTML should be valid with sequential paragraphs");
+}
+
+#[test]
+fn test_html_validation_span_not_closed_before_paragraph_end() {
+    // Test case that reproduces the issue where spans aren't closed before </p> tags
+    // This is the pattern from chapter_1.xhtml where f000006 isn't closed before </p>
+    let html = r#"<html><body>
+        <p>The morning sun cast long shadows across the quiet street. Sarah walked briskly toward the coffee shop, her mind already racing with the day's tasks. She had always found comfort in routine, but today felt different somehow.</p>
+        <p>As she pushed open the door, the familiar aroma of freshly ground beans filled the air. The barista smiled warmly and began preparing her usual order. Sarah glanced at the newspaper on the counter, noticing a headline about technological advances in artificial intelligence.</p>
+        <p>"Technology continues to evolve at an astonishing pace," she thought to herself. "What seemed impossible yesterday becomes reality today." She paid for her coffee and found a seat by the window, watching the world pass by outside.</p>
+    </body></html>"#;
+    
+    let result = extract_text_with_spans(html, None);
+    assert!(result.is_ok());
+    
+    let (_, updated_html, _) = result.unwrap();
+    
+    // Check for orphaned closing tags at the start of paragraphs
+    assert!(
+        !updated_html.contains("</span><span"),
+        "Found orphaned closing span tag. HTML: {}",
+        updated_html
+    );
+    
+    // Check that all spans are properly closed before </p> tags
+    // Pattern: <span...>text</span></p> or </p> (no unclosed spans)
+    // We should NOT have: <span...>text</p> (span not closed)
+    let paragraphs: Vec<&str> = updated_html.split("</p>").collect();
+    for para in paragraphs {
+        if para.contains("<span") {
+            // Count opening and closing spans in this paragraph
+            let open_count = para.matches(r#"<span id="f"#).count();
+            let close_count = para.matches("</span>").count();
+            assert_eq!(
+                open_count, close_count,
+                "Paragraph should have balanced span tags. Paragraph: {}",
+                para
+            );
+        }
+    }
+    
+    validate_html_structure(&updated_html).expect("HTML should be valid with spans closed before paragraph ends");
+}
+

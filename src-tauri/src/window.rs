@@ -117,18 +117,27 @@ pub fn create_main_window(app: &tauri::App) -> Result<WebviewWindow, String> {
         use cocoa::appkit::{NSColor, NSWindow};
         use cocoa::base::{id, nil};
 
-        let ns_window = window.ns_window().unwrap() as id;
-        unsafe {
-            // Use white background (light mode default)
-            // HSL: 0 0% 100% -> RGB: 255, 255, 255
-            let bg_color = NSColor::colorWithRed_green_blue_alpha_(
-                nil,
-                0.97,  // Red: 255/255
-                0.97,  // Green: 255/255
-                0.97,  // Blue: 255/255
-                1.0,  // Alpha: 1.0 (fully opaque)
-            );
-            ns_window.setBackgroundColor_(bg_color);
+        // Safely handle the case where ns_window() might return an error
+        // This can happen during app launch before the window is fully initialized
+        match window.ns_window() {
+            Ok(ns_window_ptr) => {
+                let ns_window = ns_window_ptr as id;
+                unsafe {
+                    // Use white background (light mode default)
+                    // HSL: 0 0% 100% -> RGB: 255, 255, 255
+                    let bg_color = NSColor::colorWithRed_green_blue_alpha_(
+                        nil,
+                        0.97,  // Red: 255/255
+                        0.97,  // Green: 255/255
+                        0.97,  // Blue: 255/255
+                        1.0,  // Alpha: 1.0 (fully opaque)
+                    );
+                    ns_window.setBackgroundColor_(bg_color);
+                }
+            }
+            Err(e) => {
+                log::warn!("⚠️  Failed to get ns_window() - window background color not set. Error: {}. This may happen during app launch.", e);
+            }
         }
     }
     

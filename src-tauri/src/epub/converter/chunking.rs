@@ -76,21 +76,20 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
     }
     
     // Parse HTML and insert spans around text content
-    // Strategy:
+    // Simplified strategy:
     // 1. Open a span when we encounter the start of a sentence in a text token
-    // 2. Close a span when we encounter the end of a sentence OR when its containing element closes
-    // 3. Spans can span multiple text tokens (sentences can be split by HTML elements)
-    // 4. Track element stack to close spans when their containing elements close
+    // 2. Close a span when we encounter the end of a sentence in a text token
+    // 3. When an element closes, close any open span (prevents spans leaking across boundaries)
+    // 4. Only track if a span is open - this is the single source of truth
     
     let mut html_pos = 0;
     let mut output = String::with_capacity(html.len() + sentences.len() * 50);
     
-    // Track which sentence is currently open (only one at a time - no nesting)
-    let mut current_open_sentence: Option<usize> = None;
+    // Single source of truth: is a span currently open in the output?
+    let mut span_is_open = false;
     
-    // Track HTML element stack to know when to close spans
-    // Maps element name to its start position in HTML
-    let mut element_stack: Vec<(String, usize)> = Vec::new();
+    // Track HTML element stack (for validation, not span management)
+    let mut element_stack: Vec<String> = Vec::new();
     
     for token in Tokenizer::from(html) {
         match token {
@@ -106,7 +105,7 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                 // Only push to stack if not self-closing
                 if !is_self_closing {
                     let element_name = local.as_str().to_string();
-                    element_stack.push((element_name.clone(), span.start()));
+                    element_stack.push(element_name);
                 }
                 
                 // Output the element start tag
@@ -119,39 +118,19 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                 // Output HTML before this token
                 output.push_str(&html[html_pos..span.start()]);
                 
-                // Check if this is a closing tag and if we need to close spans
+                // Check if this is a closing tag
                 if let ElementEnd::Close(closing_local, _) = end {
                     let closing_name = closing_local.as_str();
                     
-                    // Find the matching opening tag in the stack
-                    if let Some(stack_pos) = element_stack.iter().rposition(|(name, _)| name.eq_ignore_ascii_case(closing_name)) {
-                        let (_, element_start) = element_stack[stack_pos];
-                        
-                        // If we have an open span, check if it's inside this closing element
-                        if let Some(current_sent_idx) = current_open_sentence {
-                            if let Some(span_data) = sentences_with_spans.get(current_sent_idx) {
-                                // Close span if it started inside this element
-                                // (span start is after element start and before element end)
-                                let span_inside = span_data.start_byte >= element_start && span_data.start_byte < span.start();
-                                if span_inside {
-                                    // Span is inside this element - close it before element closes
-                                    output.push_str("</span>");
-                                    current_open_sentence = None;
-                                }
-                            }
-                        }
-                        
-                        // Pop the element from stack
+                    // Close any open span before element closes (prevents spans leaking across boundaries)
+                    if span_is_open {
+                        output.push_str("</span>");
+                        span_is_open = false;
+                    }
+                    
+                    // Find and remove matching opening tag from stack
+                    if let Some(stack_pos) = element_stack.iter().rposition(|name| name.eq_ignore_ascii_case(closing_name)) {
                         element_stack.remove(stack_pos);
-                    } else {
-                        // Element not found in stack - might be a self-closing tag or malformed HTML
-                        // Still check if we need to close spans
-                        if current_open_sentence.is_some() {
-                            // For safety, close any open span when an element closes
-                            // (this handles edge cases where element wasn't in stack)
-                            output.push_str("</span>");
-                            current_open_sentence = None;
-                        }
                     }
                 }
                 
@@ -169,25 +148,12 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                 
                 // Only process spans for content in the body (after byte 400)
                 if text_start > 400 {
-                    // Step 1: Close current sentence if it ended before this token
-                    if let Some(sent_idx) = current_open_sentence {
-                        if let Some(span_data) = sentences_with_spans.get(sent_idx) {
-                            if span_data.end_byte <= text_start {
-                                output.push_str("</span>");
-                                current_open_sentence = None;
-                            }
-                        }
-                    }
-                    
-                    // Step 2: Find all sentences that overlap with this text token, sorted by start position
-                    // Exclude sentences that have already completely ended before this token starts
+                    // Find all sentences that overlap with this text token, sorted by start position
                     let mut relevant_sentences: Vec<(usize, &SentenceWithSpan)> = sentences_with_spans
                         .iter()
                         .enumerate()
                         .filter(|(_, span_data)| {
                             // Sentence overlaps if it starts before token ends and ends after token starts
-                            // CRITICAL: end_byte must be > text_start (not >=) to ensure we don't
-                            // reopen sentences that have already completely ended
                             span_data.start_byte < text_end && span_data.end_byte > text_start
                         })
                         .collect();
@@ -195,28 +161,12 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                     
                     if relevant_sentences.is_empty() {
                         // No sentences in this token - just output text
+                        // Don't close spans here - let element closing or next token handle it
+                        // This prevents premature closing
                         output.push_str(text_content);
-                        // Make sure we clear current_open_sentence if the sentence ended
-                        if let Some(sent_idx) = current_open_sentence {
-                            if let Some(span_data) = sentences_with_spans.get(sent_idx) {
-                                if span_data.end_byte <= text_end {
-                                    current_open_sentence = None;
-                                }
-                            }
-                        }
                     } else {
-                        // Step 3: Process sentences in order, outputting text in chunks
-                        let mut pos_in_token = 0; // Position relative to text_start
-                        let mut active_sent_idx: Option<usize> = current_open_sentence;
-                        
-                        // If current_open_sentence has ended, clear it
-                        if let Some(sent_idx) = active_sent_idx {
-                            if let Some(span_data) = sentences_with_spans.get(sent_idx) {
-                                if span_data.end_byte <= text_start {
-                                    active_sent_idx = None;
-                                }
-                            }
-                        }
+                        // Process sentences in order
+                        let mut pos_in_token = 0;
                         
                         for (sent_idx, span_data) in relevant_sentences {
                             // Determine boundaries within this token
@@ -232,55 +182,24 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                                 text_content.len() // Sentence continues beyond this token
                             };
                             
-                            // Close previous sentence if needed
-                            if let Some(prev_sent_idx) = active_sent_idx {
-                                if prev_sent_idx != sent_idx {
-                                    // Close at the earlier of: previous sentence end or new sentence start
-                                    let close_pos = if let Some(prev_span_data) = sentences_with_spans.get(prev_sent_idx) {
-                                        let prev_end = if prev_span_data.end_byte <= text_end {
-                                            prev_span_data.end_byte - text_start
-                                        } else {
-                                            sent_start_in_token
-                                        };
-                                        prev_end.min(sent_start_in_token)
-                                    } else {
-                                        sent_start_in_token
-                                    };
-                                    
-                                    // Output text up to close position
-                                    if close_pos > pos_in_token {
-                                        let slice = &text_content[pos_in_token..close_pos.min(text_content.len())];
-                                        output.push_str(slice);
-                                    }
-                                    output.push_str("</span>");
-                                    pos_in_token = close_pos;
-                                    active_sent_idx = None;
-                                }
-                            }
-                            
-                            // Open new sentence if it starts in this token
+                            // Output any text before this sentence starts
                             if sent_start_in_token > pos_in_token {
-                                // Output text between sentences (shouldn't happen often, but handle it)
                                 let slice = &text_content[pos_in_token..sent_start_in_token.min(text_content.len())];
                                 output.push_str(slice);
                                 pos_in_token = sent_start_in_token;
                             }
                             
-                            if active_sent_idx != Some(sent_idx) {
-                                // Only open if:
-                                // 1. Sentence hasn't already ended (end_byte > text_start)
-                                // 2. Sentence actually starts in this token OR we had it open before
-                                //    (if it started before this token and we don't have it open,
-                                //     it means it was closed at an element boundary and shouldn't be reopened)
-                                let should_open = span_data.end_byte > text_start && 
-                                    (span_data.start_byte >= text_start || current_open_sentence == Some(sent_idx));
-                                
-                                if should_open {
-                                    // Open the new sentence span
-                                    let span_id = format!("f{:06}", sent_idx + 1);
-                                    output.push_str(&format!(r#"<span id="{}">"#, span_id));
-                                    active_sent_idx = Some(sent_idx);
-                                }
+                            // Close any open span before starting a new one
+                            if span_is_open {
+                                output.push_str("</span>");
+                                span_is_open = false;
+                            }
+                            
+                            // Open new sentence span if it starts in this token
+                            if span_data.start_byte >= text_start {
+                                let span_id = format!("f{:06}", sent_idx + 1);
+                                output.push_str(&format!(r#"<span id="{}">"#, span_id));
+                                span_is_open = true;
                             }
                             
                             // Output text for this sentence
@@ -291,9 +210,9 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                             }
                             
                             // Close sentence if it ends in this token
-                            if span_data.end_byte > text_start && span_data.end_byte <= text_end {
+                            if span_data.end_byte > text_start && span_data.end_byte <= text_end && span_is_open {
                                 output.push_str("</span>");
-                                active_sent_idx = None;
+                                span_is_open = false;
                             }
                         }
                         
@@ -302,9 +221,6 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                             let slice = &text_content[pos_in_token..];
                             output.push_str(slice);
                         }
-                        
-                        // Update current_open_sentence for next token
-                        current_open_sentence = active_sent_idx;
                     }
                 } else {
                     // Not in body - just output text
@@ -326,8 +242,9 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
     }
     
     // Close any remaining open spans
-    if current_open_sentence.is_some() {
+    if span_is_open {
         output.push_str("</span>");
+        span_is_open = false;
     }
     
     let updated_html = output;
