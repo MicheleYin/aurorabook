@@ -16,8 +16,15 @@ use tower_http::cors::{CorsLayer, Any};
 // Global flag to track if server has started
 static SERVER_STARTED: OnceLock<Arc<std::sync::atomic::AtomicBool>> = OnceLock::new();
 
+// Global variable to store the port number assigned by the OS
+static SERVER_PORT: OnceLock<Arc<std::sync::atomic::AtomicU16>> = OnceLock::new();
+
 fn get_server_started_flag() -> Arc<std::sync::atomic::AtomicBool> {
     SERVER_STARTED.get_or_init(|| Arc::new(std::sync::atomic::AtomicBool::new(false))).clone()
+}
+
+fn get_server_port() -> Arc<std::sync::atomic::AtomicU16> {
+    SERVER_PORT.get_or_init(|| Arc::new(std::sync::atomic::AtomicU16::new(0))).clone()
 }
 
 /// Generate a streaming URL for an audio track
@@ -84,8 +91,14 @@ pub async fn get_audio_stream_url(
         }
     }
     
+    // Get the port number
+    let port = get_server_port().load(std::sync::atomic::Ordering::Relaxed);
+    if port == 0 {
+        return Err(AppError::Store("Audio streaming server port not initialized".to_string()));
+    }
+    
     // Return HTTP URL for the local streaming server
-    Ok(format!("http://localhost:1422/audio/{}/{}", book_id, track_id))
+    Ok(format!("http://localhost:{}/audio/{}/{}", port, book_id, track_id))
 }
 
 /// Health check endpoint
@@ -129,13 +142,19 @@ async fn handle_audio_stream(
 
 /// Check if the server is running by attempting to connect to the port
 pub async fn check_server_running() -> bool {
+    let port = get_server_port().load(std::sync::atomic::Ordering::Relaxed);
+    if port == 0 {
+        return false;
+    }
+    
     // Simple check: try to connect to the port
-    match tokio::net::TcpStream::connect("127.0.0.1:1422").await {
+    let addr = format!("127.0.0.1:{}", port);
+    match tokio::net::TcpStream::connect(&addr).await {
         Ok(mut stream) => {
             // Try to make a simple HTTP request to verify it's our server
             use tokio::io::{AsyncWriteExt, AsyncReadExt};
-            let request = b"GET /health HTTP/1.1\r\nHost: localhost:1422\r\n\r\n";
-            if stream.write_all(request).await.is_ok() {
+            let request = format!("GET /health HTTP/1.1\r\nHost: localhost:{}\r\n\r\n", port);
+            if stream.write_all(request.as_bytes()).await.is_ok() {
                 let mut buffer = [0u8; 64];
                 if let Ok(_) = tokio::time::timeout(
                     tokio::time::Duration::from_millis(100),
@@ -185,23 +204,35 @@ pub async fn start_audio_server(app: AppHandle) -> Result<(), Box<dyn std::error
         )
         .with_state(app_state);
     
-    // Try to bind to the port
-    log::info!("Attempting to bind to 127.0.0.1:1422...");
-    let listener = match TcpListener::bind("127.0.0.1:1422").await {
+    // Try to bind to an available port (port 0 lets the OS choose)
+    log::info!("Attempting to bind to 127.0.0.1:0 (OS will assign available port)...");
+    let listener = match TcpListener::bind("127.0.0.1:0").await {
         Ok(listener) => {
-            log::info!("✓ Successfully bound to http://127.0.0.1:1422");
+            // Get the actual port assigned by the OS
+            let port = listener.local_addr()
+                .map_err(|e| format!("Failed to get local address: {}", e))?
+                .port();
+            
+            // Store the port number
+            let server_port = get_server_port();
+            server_port.store(port, std::sync::atomic::Ordering::Relaxed);
+            
+            log::info!("✓ Successfully bound to http://127.0.0.1:{}", port);
             listener
         }
         Err(e) => {
-            log::error!("✗ Failed to bind to port 1422: {}", e);
-            return Err(format!("Failed to bind to port 1422: {}", e).into());
+            log::error!("✗ Failed to bind to port: {}", e);
+            return Err(format!("Failed to bind to port: {}", e).into());
         }
     };
     
+    // Get the port for logging
+    let port = get_server_port().load(std::sync::atomic::Ordering::Relaxed);
+    
     // Spawn the server in a separate task so it doesn't block
     tokio::spawn(async move {
-        log::info!("🚀 Audio streaming server starting on http://127.0.0.1:1422");
-        log::info!("   Health check: http://127.0.0.1:1422/health");
+        log::info!("🚀 Audio streaming server starting on http://127.0.0.1:{}", port);
+        log::info!("   Health check: http://127.0.0.1:{}/health", port);
         if let Err(e) = axum::serve(listener, router).await {
             log::error!("Audio streaming server error: {}", e);
         }
@@ -220,7 +251,9 @@ pub async fn start_audio_server(app: AppHandle) -> Result<(), Box<dyn std::error
 /// Restart the audio streaming server (useful when app comes back to foreground on iOS)
 pub async fn restart_audio_server(app: AppHandle) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let server_started = get_server_started_flag();
+    let server_port = get_server_port();
     server_started.store(false, std::sync::atomic::Ordering::Relaxed);
+    server_port.store(0, std::sync::atomic::Ordering::Relaxed);
     log::info!("Restarting audio streaming server...");
     start_audio_server(app).await
 }
