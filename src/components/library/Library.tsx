@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { BookOpen, Grid2x2, List, Plus } from "lucide-react";
@@ -8,6 +8,7 @@ import { useAudioProgressContext } from "@/context/AudioProgressContext";
 
 import type { Book } from "../../types/book";
 import { useAppContext } from "../../context/AppContext";
+import { useConversionEvents } from "../../context/ConversionEventContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
 import { staggerDelay } from "../../lib/animations";
 import { logger } from "../../lib/logger";
@@ -21,6 +22,7 @@ import { LoadingScreen } from "../app/LoadingScreen";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardFooter } from "../ui/card";
 import { Input } from "../ui/input";
+import { Progress } from "../ui/progress";
 import { BookDetailDialog } from "./BookDetailDialog";
 
 type ViewMode = "grid" | "list";
@@ -94,89 +96,144 @@ export function Library() {
     setCurrentTab("reader");
   };
 
-  const refreshBookById = async (bookId: string | null) => {
-    if (!bookId) return;
-    try {
-      // save the current book
-      // Use ref to access the latest books state
-      const bookToRefresh = booksRef.current.find((book) => book.id === bookId);
+  const refreshBookById = useCallback(
+    async (bookId: string | null) => {
+      if (!bookId) return;
+      try {
+        // save the current book
+        // Use ref to access the latest books state
+        const bookToRefresh = booksRef.current.find(
+          (book) => book.id === bookId
+        );
 
-      logger.log("bookToRefresh", bookToRefresh, bookId, booksRef.current);
-      if (!bookToRefresh) {
-        // If not found, reload all books
-        await loadBooks();
-        return;
-      }
+        logger.log("bookToRefresh", bookToRefresh, bookId, booksRef.current);
+        if (!bookToRefresh) {
+          // If not found, reload all books
+          await loadBooks();
+          return;
+        }
 
-      // Fetch the updated book from the backend
-      const updatedBook = await invoke<Book | null>("read_one_book", {
-        bookId: bookToRefresh.id,
-      });
+        // Fetch the updated book from the backend
+        const updatedBook = await invoke<Book | null>("read_one_book", {
+          bookId: bookToRefresh.id,
+        });
 
-      const wasPlaying = audioRef.current && !audioRef.current.paused;
-      logger.log("updatedBook", updatedBook);
-      saveAudioProgress(updatedBook || bookToRefresh);
+        const wasPlaying = audioRef.current && !audioRef.current.paused;
+        logger.log("updatedBook", updatedBook);
+        saveAudioProgress(updatedBook || bookToRefresh);
 
-      if (updatedBook) {
-        // save to the selected book
-        // if the selected book is the same as the updated book, update the current book
-        if (selectedBookId === updatedBook.id) {
-          setCurrentBookWithLoading(updatedBook, wasPlaying || false);
-          logger.log(
-            "selectedBookId is the same as the updated book, updating the current book"
+        if (updatedBook) {
+          // save to the selected book
+          // if the selected book is the same as the updated book, update the current book
+          if (selectedBookId === updatedBook.id) {
+            setCurrentBookWithLoading(updatedBook, wasPlaying || false);
+            logger.log(
+              "selectedBookId is the same as the updated book, updating the current book"
+            );
+          }
+          // Update the book in the books array
+          setBooks((prevBooks) =>
+            prevBooks.map((book) =>
+              book.id === updatedBook.id ? updatedBook : book
+            )
           );
         }
-        // Update the book in the books array
-        setBooks((prevBooks) =>
-          prevBooks.map((book) =>
-            book.id === updatedBook.id ? updatedBook : book
-          )
-        );
+      } catch (err) {
+        logger.error("Failed to refresh book:", err);
+        // Fallback to reloading all books on error
+        await loadBooks();
       }
-    } catch (err) {
-      logger.error("Failed to refresh book:", err);
-      // Fallback to reloading all books on error
-      await loadBooks();
-    }
-  };
-  const refreshByCompleted = async (convertedBook: Book | null) => {
-    logger.warn("refreshByCompleted", convertedBook);
-    if (!convertedBook) return;
-    logger.log("setting the books", convertedBook);
-    setBooks((prevBooks) =>
-      prevBooks.map((book) =>
-        book.id === convertedBook.id ? convertedBook : book
-      )
-    );
-    if (selectedBookId === convertedBook.id) {
-      logger.log("setting the current book with loading", convertedBook);
-      setCurrentBookWithLoading(convertedBook, false);
-    }
-  };
-  const handleSetStarted = async (bookId: string | null) => {
-    if (!bookId) return;
-    // Use functional update to access the latest books state
-    setBooks((prevBooks) => {
-      const convertingBook = prevBooks.find((book) => book.id === bookId);
-      if (convertingBook) {
-        // Create a new object to avoid mutating state
-        return prevBooks.map((book) =>
-          book.id === bookId
-            ? { ...book, conversionStatus: "started" as const }
-            : book
-        );
-      }
-      return prevBooks;
-    });
-  };
+    },
+    [
+      loadBooks,
+      saveAudioProgress,
+      selectedBookId,
+      setCurrentBookWithLoading,
+      setBooks,
+      audioRef,
+    ]
+  );
 
-  const { convertBook, cancelConversion, isConverting, convertingBookId } =
-    useBookConversion({
-      onConversionComplete: refreshByCompleted,
-      onConversionCancelled: refreshBookById,
-      onConversionStarted: handleSetStarted,
-      onChapterCompleted: refreshBookById,
+  const handleSetStarted = useCallback(
+    (bookId: string | null) => {
+      if (!bookId) return;
+      // Use functional update to access the latest books state
+      setBooks((prevBooks) => {
+        const convertingBook = prevBooks.find((book) => book.id === bookId);
+        if (convertingBook) {
+          // Create a new object to avoid mutating state
+          return prevBooks.map((book) =>
+            book.id === bookId
+              ? { ...book, conversionStatus: "started" as const }
+              : book
+          );
+        }
+        return prevBooks;
+      });
+    },
+    [setBooks]
+  );
+
+  const {
+    convertBook: convertBookFromContext,
+    cancelConversion,
+    isConverting,
+    convertingBookId,
+    conversionProgress,
+    eta,
+  } = useBookConversion();
+
+  // Wrap convertBook to handle completion callback
+  const convertBook = useCallback(
+    async (bookId: string) => {
+      try {
+        await convertBookFromContext(bookId);
+        // If conversion completes immediately, the book will be returned
+        // but we can't access it here. Instead, we'll refresh when isConverting becomes false.
+      } catch (err) {
+        // Error is already handled in context
+        logger.error("Conversion failed:", err);
+      }
+    },
+    [convertBookFromContext]
+  );
+
+  // Track previous converting state to detect completion
+  const prevIsConvertingRef = useRef(isConverting);
+  const prevConvertingBookIdRef = useRef(convertingBookId);
+
+  // Handle conversion started
+  useEffect(() => {
+    if (
+      convertingBookId &&
+      convertingBookId !== prevConvertingBookIdRef.current
+    ) {
+      handleSetStarted(convertingBookId);
+    }
+    prevConvertingBookIdRef.current = convertingBookId;
+  }, [convertingBookId, handleSetStarted]);
+
+  // Handle conversion completion - when isConverting goes from true to false
+  useEffect(() => {
+    if (
+      prevIsConvertingRef.current &&
+      !isConverting &&
+      prevConvertingBookIdRef.current
+    ) {
+      // Conversion completed, refresh the book
+      refreshBookById(prevConvertingBookIdRef.current);
+    }
+    prevIsConvertingRef.current = isConverting;
+  }, [isConverting, refreshBookById]);
+
+  // Subscribe to chapter completed events to refresh book
+  const { subscribeToChapterCompleted } = useConversionEvents();
+  useEffect(() => {
+    const unsubscribe = subscribeToChapterCompleted((event) => {
+      refreshBookById(event.bookId);
     });
+    return unsubscribe;
+  }, [subscribeToChapterCompleted, refreshBookById]);
 
   const ingestBook = async (epubPath: string) => {
     try {
@@ -256,9 +313,7 @@ export function Library() {
 
   const handleConvert = async () => {
     if (!selectedBookId) return;
-    // Use ref to get the latest book title
-    const book = booksRef.current.find((book) => book.id === selectedBookId);
-    convertBook(selectedBookId, book?.title || "");
+    convertBook(selectedBookId);
     setIsDialogOpen(false);
   };
 
@@ -429,6 +484,30 @@ export function Library() {
                         {book.author}
                       </p>
                     </div>
+                    {convertingBookId === book.id && conversionProgress && (
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground">
+                          {conversionProgress.message}
+                        </div>
+                        <Progress
+                          value={
+                            conversionProgress.totalWords > 0
+                              ? Math.round(
+                                  (conversionProgress.wordsProcessed /
+                                    conversionProgress.totalWords) *
+                                    100
+                                )
+                              : 0
+                          }
+                          className="h-1.5"
+                        />
+                        {eta && (
+                          <div className="text-xs text-muted-foreground">
+                            ETA: {eta}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </CardContent>
                 <CardFooter className="p-4">
@@ -501,6 +580,33 @@ export function Library() {
                           />
                         </div>
                       )}
+                      {convertingBookId === book.id && conversionProgress && (
+                        <div className="space-y-1">
+                          <div className="text-xs text-muted-foreground">
+                            Converting: Chapter{" "}
+                            {conversionProgress.currentChapter}/
+                            {conversionProgress.totalChapters} -{" "}
+                            {conversionProgress.message}
+                          </div>
+                          <Progress
+                            value={
+                              conversionProgress.totalWords > 0
+                                ? Math.round(
+                                    (conversionProgress.wordsProcessed /
+                                      conversionProgress.totalWords) *
+                                      100
+                                  )
+                                : 0
+                            }
+                            className="h-1.5"
+                          />
+                          {eta && (
+                            <div className="text-xs text-muted-foreground">
+                              ETA: {eta}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <Button
                       size="sm"
@@ -530,6 +636,10 @@ export function Library() {
           isConverting={isConverting}
           isConvertingThisBook={selectedBookId === convertingBookId}
           isDeleting={isDeleting}
+          conversionProgress={
+            selectedBookId === convertingBookId ? conversionProgress : null
+          }
+          eta={selectedBookId === convertingBookId ? eta : null}
         />
       )}
     </div>

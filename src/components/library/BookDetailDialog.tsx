@@ -36,6 +36,7 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "../ui/drawer";
+import { Progress } from "../ui/progress";
 import { Separator } from "../ui/separator";
 
 const formatFileSize = (bytes?: number) => {
@@ -55,6 +56,16 @@ const formatDuration = (seconds: number) => {
   }
   return `${minutes}:${secs.toString().padStart(2, "0")}`;
 };
+interface ConversionProgress {
+  currentChapter: number;
+  totalChapters: number;
+  wordsProcessed: number;
+  totalWords: number;
+  wordsInCurrentChapter: number;
+  currentStep: string;
+  message: string;
+}
+
 interface BookDetailDialogProps {
   book: Book | null;
   isOpen: boolean;
@@ -66,9 +77,19 @@ interface BookDetailDialogProps {
   isConverting: boolean;
   isConvertingThisBook: boolean;
   isDeleting: boolean;
+  conversionProgress: ConversionProgress | null;
+  eta: string | null;
 }
 
-const BookDetailContent = ({ book }: { book: Book }) => {
+const BookDetailContent = ({
+  book,
+  conversionProgress,
+  eta,
+}: {
+  book: Book;
+  conversionProgress: ConversionProgress | null;
+  eta: string | null;
+}) => {
   return (
     <div className="space-y-6">
       <div className="flex gap-6">
@@ -204,6 +225,53 @@ const BookDetailContent = ({ book }: { book: Book }) => {
         </>
       )}
 
+      {conversionProgress && (
+        <>
+          <Separator />
+          <div>
+            <p className="text-sm font-medium mb-2">Conversion Progress</p>
+            <div className="space-y-2">
+              <div className="text-sm text-muted-foreground">
+                {conversionProgress.message}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Chapter {conversionProgress.currentChapter}/
+                {conversionProgress.totalChapters}
+              </div>
+              <Progress
+                value={
+                  conversionProgress.totalWords > 0
+                    ? Math.round(
+                        (conversionProgress.wordsProcessed /
+                          conversionProgress.totalWords) *
+                          100
+                      )
+                    : 0
+                }
+                className="h-2"
+              />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">
+                  {conversionProgress.totalWords > 0
+                    ? Math.round(
+                        (conversionProgress.wordsProcessed /
+                          conversionProgress.totalWords) *
+                          100
+                      )
+                    : 0}
+                  %
+                </span>
+                {eta && (
+                  <span className="text-xs text-muted-foreground">
+                    ETA: {eta}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       {book.audioTracks && book.audioTracks.length > 0 && (
         <>
           <Separator />
@@ -268,6 +336,8 @@ export function BookDetailDialog({
   isConverting,
   isConvertingThisBook,
   isDeleting,
+  conversionProgress,
+  eta,
 }: Readonly<BookDetailDialogProps>) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const isMobile = useIsMobile();
@@ -328,7 +398,11 @@ export function BookDetailDialog({
               <DialogDescription>Book Details</DialogDescription>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto">
-              <BookDetailContent book={book} />
+              <BookDetailContent
+                book={book}
+                conversionProgress={conversionProgress}
+                eta={eta}
+              />
             </div>
             <DialogFooter className="flex-shrink-0 gap-2">
               <Button
@@ -407,7 +481,11 @@ export function BookDetailDialog({
               <DrawerDescription>Book Details</DrawerDescription>
             </DrawerHeader>
             <div className="flex-1 overflow-y-auto px-6 pb-6">
-              <BookDetailContent book={book} />
+              <BookDetailContent
+                book={book}
+                conversionProgress={conversionProgress}
+                eta={eta}
+              />
             </div>
             <DrawerFooter className="flex-shrink-0 gap-2 p-4">
               <Button

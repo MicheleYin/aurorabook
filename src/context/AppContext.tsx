@@ -129,6 +129,7 @@ export function AppProvider({
             audioState: audioState,
           };
         }
+        // setCurrentBook(newBook);
         setLibrary(
           library.map((book) => (book.id === currentBook.id ? newBook : book))
         );

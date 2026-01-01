@@ -19,6 +19,7 @@ import {
   useChapterProgressContext,
 } from "./context/ChapterProgressContext";
 import { ConversionEventProvider } from "./context/ConversionEventContext";
+import { ConversionStateProvider } from "./context/ConversionStateContext";
 import { SettingsProvider } from "./context/SettingsContext";
 
 function AppContent() {
@@ -123,15 +124,17 @@ function App() {
   return (
     <ErrorBoundary>
       <ConversionEventProvider>
-        <SettingsProvider>
-          <AudioSyncProvider>
-            <ChapterProgressProvider>
-              <AudioProgressProvider>
-                <AppWithProviders />
-              </AudioProgressProvider>
-            </ChapterProgressProvider>
-          </AudioSyncProvider>
-        </SettingsProvider>
+        <ConversionStateProvider>
+          <SettingsProvider>
+            <AudioSyncProvider>
+              <ChapterProgressProvider>
+                <AudioProgressProvider>
+                  <AppWithProviders />
+                </AudioProgressProvider>
+              </ChapterProgressProvider>
+            </AudioSyncProvider>
+          </SettingsProvider>
+        </ConversionStateProvider>
         <Toaster richColors position="top-center" className="max-w-sm" />
       </ConversionEventProvider>
     </ErrorBoundary>
