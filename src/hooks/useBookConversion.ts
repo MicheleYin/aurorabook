@@ -17,6 +17,7 @@ export function useBookConversion() {
     eta,
     convertBook,
     cancelConversion,
+    registerCallbacks,
   } = useConversionState();
 
   return {
@@ -26,5 +27,6 @@ export function useBookConversion() {
     convertingBookId,
     conversionProgress,
     eta,
+    registerCallbacks,
   };
 }

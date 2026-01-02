@@ -8,7 +8,6 @@ import { useAudioProgressContext } from "@/context/AudioProgressContext";
 
 import type { Book } from "../../types/book";
 import { useAppContext } from "../../context/AppContext";
-import { useConversionEvents } from "../../context/ConversionEventContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
 import { staggerDelay } from "../../lib/animations";
 import { logger } from "../../lib/logger";
@@ -174,6 +173,43 @@ export function Library() {
     [setBooks]
   );
 
+  const refreshByCompleted = useCallback(
+    async (convertedBook: Book | null, bookId?: string | null) => {
+      if (!convertedBook) {
+        // If no book object provided (e.g., from progress event completion),
+        // refresh by the book ID
+        if (bookId) {
+          await refreshBookById(bookId);
+        }
+        return;
+      }
+
+      logger.log("Refreshing book by completed conversion:", convertedBook);
+      const wasPlaying = audioRef.current && !audioRef.current.paused;
+      saveAudioProgress(convertedBook);
+
+      // Update the book in the books array
+      setBooks((prevBooks) =>
+        prevBooks.map((book) =>
+          book.id === convertedBook.id ? convertedBook : book
+        )
+      );
+
+      // If this is the selected book, update the current book
+      if (selectedBookId === convertedBook.id) {
+        setCurrentBookWithLoading(convertedBook, wasPlaying || false);
+      }
+    },
+    [
+      refreshBookById,
+      saveAudioProgress,
+      selectedBookId,
+      setCurrentBookWithLoading,
+      setBooks,
+      audioRef,
+    ]
+  );
+
   const {
     convertBook: convertBookFromContext,
     cancelConversion,
@@ -181,15 +217,31 @@ export function Library() {
     convertingBookId,
     conversionProgress,
     eta,
+    registerCallbacks,
   } = useBookConversion();
 
-  // Wrap convertBook to handle completion callback
+  // Register callbacks for conversion events
+  useEffect(() => {
+    const unregister = registerCallbacks({
+      onConversionComplete: refreshByCompleted,
+      onConversionStarted: handleSetStarted,
+      onConversionCancelled: refreshBookById,
+      onChapterCompleted: refreshBookById,
+    });
+
+    return unregister;
+  }, [
+    registerCallbacks,
+    refreshByCompleted,
+    handleSetStarted,
+    refreshBookById,
+  ]);
+
+  // Wrap convertBook (no changes needed, callbacks handle everything)
   const convertBook = useCallback(
     async (bookId: string) => {
       try {
         await convertBookFromContext(bookId);
-        // If conversion completes immediately, the book will be returned
-        // but we can't access it here. Instead, we'll refresh when isConverting becomes false.
       } catch (err) {
         // Error is already handled in context
         logger.error("Conversion failed:", err);
@@ -197,43 +249,6 @@ export function Library() {
     },
     [convertBookFromContext]
   );
-
-  // Track previous converting state to detect completion
-  const prevIsConvertingRef = useRef(isConverting);
-  const prevConvertingBookIdRef = useRef(convertingBookId);
-
-  // Handle conversion started
-  useEffect(() => {
-    if (
-      convertingBookId &&
-      convertingBookId !== prevConvertingBookIdRef.current
-    ) {
-      handleSetStarted(convertingBookId);
-    }
-    prevConvertingBookIdRef.current = convertingBookId;
-  }, [convertingBookId, handleSetStarted]);
-
-  // Handle conversion completion - when isConverting goes from true to false
-  useEffect(() => {
-    if (
-      prevIsConvertingRef.current &&
-      !isConverting &&
-      prevConvertingBookIdRef.current
-    ) {
-      // Conversion completed, refresh the book
-      refreshBookById(prevConvertingBookIdRef.current);
-    }
-    prevIsConvertingRef.current = isConverting;
-  }, [isConverting, refreshBookById]);
-
-  // Subscribe to chapter completed events to refresh book
-  const { subscribeToChapterCompleted } = useConversionEvents();
-  useEffect(() => {
-    const unsubscribe = subscribeToChapterCompleted((event) => {
-      refreshBookById(event.bookId);
-    });
-    return unsubscribe;
-  }, [subscribeToChapterCompleted, refreshBookById]);
 
   const ingestBook = async (epubPath: string) => {
     try {

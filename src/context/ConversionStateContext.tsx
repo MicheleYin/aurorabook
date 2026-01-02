@@ -35,6 +35,16 @@ export interface ConversionProgress {
   message: string;
 }
 
+export interface ConversionStateCallbacks {
+  onConversionComplete?: (
+    book: Book | null,
+    bookId?: string | null
+  ) => Promise<void> | void;
+  onConversionStarted?: (bookId: string | null) => Promise<void> | void;
+  onConversionCancelled?: (bookId: string | null) => Promise<void> | void;
+  onChapterCompleted?: (bookId: string | null) => Promise<void> | void;
+}
+
 interface ConversionStateContextValue {
   isConverting: boolean;
   convertingBookId: string | null;
@@ -42,6 +52,7 @@ interface ConversionStateContextValue {
   eta: string | null; // Estimated time remaining (e.g., "5m 30s")
   convertBook: (bookId: string) => Promise<void>;
   cancelConversion: (bookId: string | null) => Promise<void>;
+  registerCallbacks: (callbacks: ConversionStateCallbacks) => () => void;
 }
 
 const ConversionStateContext =
@@ -71,6 +82,9 @@ export function ConversionStateProvider({
     time: number;
     wordsProcessed: number;
   } | null>(null);
+
+  // Store registered callbacks
+  const callbacksRef = useRef<Set<ConversionStateCallbacks>>(new Set());
 
   // Update refs when values change
   useEffect(() => {
@@ -123,9 +137,7 @@ export function ConversionStateProvider({
 
       // Track start time on first progress update
       const now = Date.now();
-      if (conversionStartTimeRef.current === null) {
-        conversionStartTimeRef.current = now;
-      }
+      conversionStartTimeRef.current ??= now;
 
       // Calculate ETA based on progress rate
       if (progress.totalWords > 0 && progress.wordsProcessed > 0) {
@@ -153,9 +165,9 @@ export function ConversionStateProvider({
       setConversionProgress(progress);
 
       const toastId =
-        progressToastIdRef.current ||
+        progressToastIdRef.current ??
         `conversion-${convertingBookIdRef.current}`;
-      if (!progressToastIdRef.current && convertingBookIdRef.current) {
+      if (progressToastIdRef.current === null && convertingBookIdRef.current) {
         setProgressToastId(toastId);
         progressToastIdRef.current = toastId;
       }
@@ -164,6 +176,7 @@ export function ConversionStateProvider({
       if (progress.currentChapter >= progress.totalChapters && percent >= 100) {
         toast.success(`Conversion complete!`, { id: toastId });
         dismissLoadingToast(toastId);
+        const completedBookId = convertingBookIdRef.current;
         setIsConverting(false);
         setConvertingBookId(null);
         setProgressToastId(null);
@@ -174,7 +187,17 @@ export function ConversionStateProvider({
         chapterToastIdRef.current = null;
         conversionStartTimeRef.current = null;
         lastProgressUpdateRef.current = null;
-        // Note: onConversionComplete is called from convertBook when it has the Book object
+
+        // Call registered callbacks for conversion complete
+        // Note: We don't have the Book object here, so we pass null with the bookId
+        // Components should refresh the book themselves using the bookId
+        callbacksRef.current.forEach((callbacks) => {
+          try {
+            callbacks.onConversionComplete?.(null, completedBookId);
+          } catch (error) {
+            logger.error("Error in onConversionComplete callback:", error);
+          }
+        });
       }
       // Removed progress toast - progress is now shown in cards
     });
@@ -195,11 +218,20 @@ export function ConversionStateProvider({
           duration: 3000,
         }
       );
-      // Chapter completed - components can subscribe to this event to refresh book data
+
+      // Call registered callbacks for chapter completed
+      callbacksRef.current.forEach((callbacks) => {
+        try {
+          callbacks.onChapterCompleted?.(bookId);
+        } catch (error) {
+          logger.error("Error in onChapterCompleted callback:", error);
+        }
+      });
     });
 
     // Subscribe to cancelled events
-    const unsubscribeCancelled = subscribeToCancelled(() => {
+    const unsubscribeCancelled = subscribeToCancelled((event) => {
+      const { bookId } = event;
       const toastId = progressToastIdRef.current;
       if (toastId) {
         toast.error("Conversion cancelled", { id: toastId });
@@ -217,7 +249,15 @@ export function ConversionStateProvider({
       chapterToastIdRef.current = null;
       conversionStartTimeRef.current = null;
       lastProgressUpdateRef.current = null;
-      // Conversion cancelled - components can watch state changes
+
+      // Call registered callbacks for conversion cancelled
+      callbacksRef.current.forEach((callbacks) => {
+        try {
+          callbacks.onConversionCancelled?.(bookId);
+        } catch (error) {
+          logger.error("Error in onConversionCancelled callback:", error);
+        }
+      });
     });
 
     // Cleanup subscriptions on unmount
@@ -252,15 +292,33 @@ export function ConversionStateProvider({
         lastProgressUpdateRef.current = null;
         setEta(null);
 
-        // Conversion started - state will be updated
-
-        await invoke<Book | null>("convert_epub_to_audiobook_command", {
-          bookId,
-          voiceId: defaultVoiceId,
+        // Call registered callbacks for conversion started
+        callbacksRef.current.forEach((callbacks) => {
+          try {
+            callbacks.onConversionStarted?.(bookId);
+          } catch (error) {
+            logger.error("Error in onConversionStarted callback:", error);
+          }
         });
 
-        // Conversion complete - the book is returned, but conversion may continue in background
-        // Components can watch isConverting state to detect completion
+        const book = await invoke<Book | null>(
+          "convert_epub_to_audiobook_command",
+          {
+            bookId,
+            voiceId: defaultVoiceId,
+          }
+        );
+
+        // If conversion completes immediately (book is returned), call the complete callback
+        if (book) {
+          callbacksRef.current.forEach((callbacks) => {
+            try {
+              callbacks.onConversionComplete?.(book, bookId);
+            } catch (error) {
+              logger.error("Error in onConversionComplete callback:", error);
+            }
+          });
+        }
 
         // Don't dismiss the toast here - let the progress events handle it
         // The conversion might complete immediately or continue in background
@@ -308,6 +366,25 @@ export function ConversionStateProvider({
     }
   }, []);
 
+  // Register callbacks for conversion events
+  const registerCallbacks = useCallback(
+    (callbacks: ConversionStateCallbacks) => {
+      callbacksRef.current.add(callbacks);
+      logger.log(
+        `Registered conversion callbacks (${callbacksRef.current.size} total)`
+      );
+
+      // Return unregister function
+      return () => {
+        callbacksRef.current.delete(callbacks);
+        logger.log(
+          `Unregistered conversion callbacks (${callbacksRef.current.size} remaining)`
+        );
+      };
+    },
+    []
+  );
+
   const value: ConversionStateContextValue = useMemo(
     () => ({
       isConverting,
@@ -316,6 +393,7 @@ export function ConversionStateProvider({
       eta,
       convertBook,
       cancelConversion,
+      registerCallbacks,
     }),
     [
       isConverting,
@@ -324,6 +402,7 @@ export function ConversionStateProvider({
       eta,
       convertBook,
       cancelConversion,
+      registerCallbacks,
     ]
   );
 
