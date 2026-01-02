@@ -1,6 +1,8 @@
 import { useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
+import { filesize } from "filesize";
+import humanizeDuration from "humanize-duration";
 import {
   AlertTriangle,
   BookOpen,
@@ -39,23 +41,6 @@ import {
 import { Progress } from "../ui/progress";
 import { Separator } from "../ui/separator";
 
-const formatFileSize = (bytes?: number) => {
-  if (!bytes) return "Unknown";
-  const mb = bytes / (1024 * 1024);
-  return `${mb.toFixed(2)} MB`;
-};
-
-const formatDuration = (seconds: number) => {
-  if (!seconds || seconds === 0) return "Unknown";
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-  }
-  return `${minutes}:${secs.toString().padStart(2, "0")}`;
-};
 interface ConversionProgress {
   currentChapter: number;
   totalChapters: number;
@@ -159,7 +144,7 @@ const BookDetailContent = ({
           <div>
             <p className="text-sm font-medium mb-1">File Size</p>
             <p className="text-sm text-muted-foreground">
-              {formatFileSize(book.fileSizeBytes)}
+              {filesize(book.fileSizeBytes)}
             </p>
           </div>
         )}
@@ -292,11 +277,11 @@ const BookDetailContent = ({
                     Total Duration
                   </span>
                   <span className="text-sm font-medium">
-                    {formatDuration(
+                    {humanizeDuration(
                       book.audioTracks.reduce(
                         (total, track) => total + (track.duration || 0),
                         0
-                      )
+                      ) * 1000
                     )}
                   </span>
                 </div>
@@ -308,7 +293,7 @@ const BookDetailContent = ({
                     Audio Size
                   </span>
                   <span className="text-sm font-medium">
-                    {formatFileSize(
+                    {filesize(
                       book.audioTracks.reduce(
                         (total, track) => total + (track.fileSizeBytes || 0),
                         0

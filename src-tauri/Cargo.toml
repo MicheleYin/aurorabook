@@ -85,6 +85,7 @@ tempfile = "3.8"
 [patch.crates-io]
 audiopus_sys = { path = "../patches/audiopus_sys" }
 espeak-rs-sys = { path = "../patches/espeak-rs-sys" }
+mp3lame-sys = { path = "../patches/mp3lame-sys" }
 
 
 [profile.release]

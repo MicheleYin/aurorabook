@@ -100,6 +100,27 @@ fn find_installed_opus() -> Option<String> {
     } else if let Ok(lib_directory) = env::var("OPUS_LIB_DIR") {
         Some(lib_directory)
     } else {
+        // Try to find opus in common Homebrew installation paths
+        let homebrew_prefixes = vec![
+            "/opt/homebrew",  // Apple Silicon
+            "/usr/local",     // Intel Mac
+        ];
+        
+        for prefix in homebrew_prefixes {
+            // Check for opus in Homebrew Cellar
+            let opus_cellar = format!("{}/Cellar/opus", prefix);
+            if let Ok(entries) = std::fs::read_dir(&opus_cellar) {
+                // Get the latest version (usually the only one)
+                if let Some(entry) = entries.flatten().next() {
+                    let version_dir = entry.path();
+                    let lib_path = version_dir.join("lib");
+                    if lib_path.exists() && lib_path.join("libopus.a").exists() {
+                        return Some(lib_path.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+        
         None
     }
 }

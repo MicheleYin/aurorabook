@@ -28,3 +28,5 @@ test-results/
 .history/
 data/
 sample_audio/
+patches/mp3lame-sys/
+vendor/

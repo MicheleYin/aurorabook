@@ -131,13 +131,10 @@ export function AudioProgressProvider({
     const loadSettings = async () => {
       try {
         const settings = await invoke<AppSettings>("get_app_settings");
-        console.log("settings", settings);
+
         if (settings.audioPlaybackSpeed) {
           setPlaybackRate(settings.audioPlaybackSpeed);
-          console.log(
-            "settings.audioPlaybackSpeed",
-            settings.audioPlaybackSpeed
-          );
+
           if (audioRef.current) {
             audioRef.current.playbackRate = settings.audioPlaybackSpeed;
           }

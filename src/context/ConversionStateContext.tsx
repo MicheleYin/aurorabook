@@ -16,6 +16,8 @@ import {
   useState,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Estimation } from "arrival-time";
+import humanizeDuration from "humanize-duration";
 import { toast } from "sonner";
 
 import { Book } from "@/types/book";
@@ -76,11 +78,7 @@ export function ConversionStateProvider({
   const progressToastIdRef = useRef<string | null>(null);
   const convertingBookIdRef = useRef<string | null>(null);
   const chapterToastIdRef = useRef<string | null>(null);
-  const conversionStartTimeRef = useRef<number | null>(null);
-  const lastProgressUpdateRef = useRef<{
-    time: number;
-    wordsProcessed: number;
-  } | null>(null);
+  const [estimation, setEstimation] = useState<Estimation | null>(null);
 
   // Store registered callbacks
   const callbacksRef = useRef<Set<ConversionStateCallbacks>>(new Set());
@@ -97,21 +95,6 @@ export function ConversionStateProvider({
     subscribeToCancelled,
   } = useConversionEvents();
 
-  // Helper function to format time duration
-  const formatETA = useCallback((seconds: number): string => {
-    if (seconds < 60) {
-      return `${Math.round(seconds)}s`;
-    } else if (seconds < 3600) {
-      const minutes = Math.floor(seconds / 60);
-      const secs = Math.round(seconds % 60);
-      return secs > 0 ? `${minutes}m ${secs}s` : `${minutes}m`;
-    } else {
-      const hours = Math.floor(seconds / 3600);
-      const minutes = Math.floor((seconds % 3600) / 60);
-      return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
-    }
-  }, []);
-
   // Subscribe to conversion events - handlers can be reset by re-subscribing
   useEffect(() => {
     // Subscribe to progress events
@@ -121,31 +104,12 @@ export function ConversionStateProvider({
           ? Math.round((progress.wordsProcessed / progress.totalWords) * 100)
           : 0;
 
-      // Track start time on first progress update
-      const now = Date.now();
-      conversionStartTimeRef.current ??= now;
+      const measurement = estimation?.update(
+        progress.wordsProcessed,
+        progress.totalWords
+      );
 
-      // Calculate ETA based on progress rate
-      if (progress.totalWords > 0 && progress.wordsProcessed > 0) {
-        const elapsed = (now - conversionStartTimeRef.current) / 1000; // seconds
-        const wordsPerSecond = progress.wordsProcessed / elapsed;
-        const remainingWords = progress.totalWords - progress.wordsProcessed;
-
-        if (wordsPerSecond > 0) {
-          const remainingSeconds = remainingWords / wordsPerSecond;
-          setEta(formatETA(remainingSeconds));
-        } else {
-          setEta(null);
-        }
-
-        // Update last progress update for smoothing
-        lastProgressUpdateRef.current = {
-          time: now,
-          wordsProcessed: progress.wordsProcessed,
-        };
-      } else {
-        setEta(null);
-      }
+      setEta(humanizeDuration(measurement?.estimate ?? 0, { round: true }));
 
       // Update progress state for UI components
       setConversionProgress(progress);
@@ -171,8 +135,6 @@ export function ConversionStateProvider({
         progressToastIdRef.current = null;
         convertingBookIdRef.current = null;
         chapterToastIdRef.current = null;
-        conversionStartTimeRef.current = null;
-        lastProgressUpdateRef.current = null;
 
         // Call registered callbacks for conversion complete
         // Note: We don't have the Book object here, so we pass null with the bookId
@@ -233,8 +195,7 @@ export function ConversionStateProvider({
       progressToastIdRef.current = null;
       convertingBookIdRef.current = null;
       chapterToastIdRef.current = null;
-      conversionStartTimeRef.current = null;
-      lastProgressUpdateRef.current = null;
+      estimationRef.current = null;
 
       // Call registered callbacks for conversion cancelled
       callbacksRef.current.forEach((callbacks) => {
@@ -256,7 +217,7 @@ export function ConversionStateProvider({
     subscribeToProgress,
     subscribeToChapterCompleted,
     subscribeToCancelled,
-    formatETA,
+    estimation,
   ]);
 
   const convertBook = useCallback(
@@ -274,8 +235,7 @@ export function ConversionStateProvider({
         const toastId = `conversion-${bookId}`;
         setProgressToastId(toastId);
         progressToastIdRef.current = toastId;
-        conversionStartTimeRef.current = Date.now();
-        lastProgressUpdateRef.current = null;
+        setEstimation(new Estimation());
         setEta(null);
 
         // Call registered callbacks for conversion started
@@ -335,8 +295,7 @@ export function ConversionStateProvider({
         progressToastIdRef.current = null;
         convertingBookIdRef.current = null;
         chapterToastIdRef.current = null;
-        conversionStartTimeRef.current = null;
-        lastProgressUpdateRef.current = null;
+        setEstimation(null);
       }
     },
     [progressToastId, isConverting, convertingBookId]
