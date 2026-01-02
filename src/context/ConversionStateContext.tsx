@@ -195,7 +195,6 @@ export function ConversionStateProvider({
       progressToastIdRef.current = null;
       convertingBookIdRef.current = null;
       chapterToastIdRef.current = null;
-      estimationRef.current = null;
 
       // Call registered callbacks for conversion cancelled
       callbacksRef.current.forEach((callbacks) => {
