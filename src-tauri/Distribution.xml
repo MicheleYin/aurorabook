@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
+    <title>AuroraBook</title>
+    <organization>com.micheleyin</organization>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <options customize="never" require-scripts="false" hostArchitectures="arm64"/>
+    <pkg-ref id="com.micheleyin.aurorabook"/>
+    <options customize="never" require-scripts="false"/>
+    <product id="com.micheleyin.aurorabook" version="1.1.0" plist-path="AuroraBook.app/Contents/Info.plist" minSystemVersion="12.0">
+        <bundle id="com.micheleyin.aurorabook" CFBundleIdentifier="com.micheleyin.aurorabook" path="AuroraBook.app" CFBundleVersion="1.1.0"/>
+        <bundle-version>
+            <bundle id="com.micheleyin.aurorabook" CFBundleIdentifier="com.micheleyin.aurorabook" CFBundleVersion="1.1.0"/>
+        </bundle-version>
+    </product>
+    <os-version min="12.0"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.micheleyin.aurorabook"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="com.micheleyin.aurorabook" visible="false">
+        <pkg-ref id="com.micheleyin.aurorabook"/>
+    </choice>
+    <pkg-ref id="com.micheleyin.aurorabook" version="1.0.0" onConclusion="none">AuroraBook_component.pkg</pkg-ref>
+</installer-gui-script>

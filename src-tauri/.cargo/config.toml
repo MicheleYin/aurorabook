@@ -1,6 +1,9 @@
 [env]
 # Fix CMake compatibility issue with espeak-rs-sys for iOS builds
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+# Skip ONNX Runtime binary download for iOS (libraries must be provided separately)
+# This prevents ort-sys from panicking when binaries aren't available for iOS
+ORT_DIRECT_LINK = "1"
 
 [target.aarch64-apple-ios-sim]
 # Help bindgen find iOS SDK headers and configure linker

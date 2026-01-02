@@ -71,7 +71,7 @@ sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
 kokoros = { path = "../Kokoros/kokoros", default-features = false, features = ["cpu"] }
 # Use local ort repository for better iOS support (patched in [patch.crates-io])
 # Enable download-binaries for iOS to get pre-built binaries
-ort = { version = "2.0.0-rc.10", default-features = false, features = ["std", "ndarray", "tracing", "download-binaries", "tls-native", "copy-dylibs"] }
+ort = { version = "2.0.0-rc.10", default-features = true }
 ndarray = "0.16"
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -85,8 +85,7 @@ tempfile = "3.8"
 [patch.crates-io]
 audiopus_sys = { path = "../patches/audiopus_sys" }
 espeak-rs-sys = { path = "../patches/espeak-rs-sys" }
-ort = { path = "../ort" }
-ort-sys = { path = "../ort/ort-sys" }
+
 
 [profile.release]
 opt-level = 3
