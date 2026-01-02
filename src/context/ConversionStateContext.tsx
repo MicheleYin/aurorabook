@@ -67,7 +67,6 @@ export function ConversionStateProvider({
 }: Readonly<ConversionStateProviderProps>) {
   const [isConverting, setIsConverting] = useState(false);
   const [convertingBookId, setConvertingBookId] = useState<string | null>(null);
-  const [defaultVoiceId, setDefaultVoiceId] = useState<string>("af_heart");
   const [progressToastId, setProgressToastId] = useState<string | null>(null);
   const [conversionProgress, setConversionProgress] =
     useState<ConversionProgress | null>(null);
@@ -91,19 +90,6 @@ export function ConversionStateProvider({
     progressToastIdRef.current = progressToastId;
     convertingBookIdRef.current = convertingBookId;
   }, [progressToastId, convertingBookId]);
-
-  // Load default voice from settings
-  useEffect(() => {
-    const loadDefaultVoice = async () => {
-      try {
-        const settings = await invoke<AppSettings>("get_app_settings");
-        setDefaultVoiceId(settings.ttsVoiceId || "af_heart");
-      } catch (err) {
-        logger.error("Failed to load default voice:", err);
-      }
-    };
-    loadDefaultVoice();
-  }, []);
 
   const {
     subscribeToProgress,
@@ -301,11 +287,16 @@ export function ConversionStateProvider({
           }
         });
 
+        // Get the current voice from settings right before conversion
+        // This ensures we always use the latest voice setting
+        const settings = await invoke<AppSettings>("get_app_settings");
+        const voiceId = settings.ttsVoiceId || "af_heart";
+
         const book = await invoke<Book | null>(
           "convert_epub_to_audiobook_command",
           {
             bookId,
-            voiceId: defaultVoiceId,
+            voiceId,
           }
         );
 
@@ -348,7 +339,7 @@ export function ConversionStateProvider({
         lastProgressUpdateRef.current = null;
       }
     },
-    [defaultVoiceId, progressToastId, isConverting, convertingBookId]
+    [progressToastId, isConverting, convertingBookId]
   );
 
   const cancelConversion = useCallback(async (bookId: string | null) => {
