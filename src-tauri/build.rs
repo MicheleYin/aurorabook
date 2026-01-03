@@ -10,11 +10,29 @@ fn main() {
         "/usr/local",     // Intel Mac
     ];
     
+    let mut lame_found = false;
     for prefix in homebrew_prefixes {
         let lame_lib_path = format!("{}/opt/lame/lib", prefix);
         if std::path::Path::new(&lame_lib_path).exists() {
             println!("cargo:rustc-link-search=native={}", lame_lib_path);
+            // Explicitly link the LAME library
+            println!("cargo:rustc-link-lib=dylib=mp3lame");
+            lame_found = true;
             break;
+        }
+    }
+    
+    if !lame_found {
+        eprintln!("cargo:warning=LAME library not found in standard Homebrew locations");
+        eprintln!("cargo:warning=Install with: brew install lame");
+        eprintln!("cargo:warning=Or set LAME_LIB_DIR environment variable");
+        
+        // Try environment variable as fallback
+        if let Ok(lame_dir) = std::env::var("LAME_LIB_DIR") {
+            if !lame_dir.is_empty() {
+                println!("cargo:rustc-link-search=native={}", lame_dir);
+                println!("cargo:rustc-link-lib=dylib=mp3lame");
+            }
         }
     }
     

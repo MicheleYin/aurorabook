@@ -94,6 +94,14 @@ lto = "thin"
 codegen-units = 1
 strip = true
 panic = "abort"
+# Preserve floating-point precision for audio processing
+# This prevents aggressive optimizations that could affect audio quality
+overflow-checks = false
+# Note: We keep opt-level 3 for performance, but ensure audio code uses
+# proper floating-point semantics. If audio issues persist, consider:
+# - Reducing opt-level to 2 for audio-related crates
+# - Using #[inline(never)] on critical audio processing functions
+# - Adding #[target_feature(enable = "fma")] for specific optimizations
 
 
 
