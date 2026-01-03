@@ -148,7 +148,7 @@ const BookDetailContent = ({
             </p>
           </div>
         )}
-        {book.progress?.bookProgressPercent && (
+        {!!book.progress?.bookProgressPercent && (
           <div>
             <p className="text-sm font-medium mb-1">Progress</p>
             <p className="text-sm text-muted-foreground">
@@ -174,7 +174,7 @@ const BookDetailContent = ({
         </>
       )}
 
-      {book.progress?.bookProgressPercent && (
+      {!!book.progress?.bookProgressPercent && (
         <>
           <Separator />
           <div>

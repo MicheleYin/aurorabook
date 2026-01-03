@@ -6,10 +6,10 @@
     <options customize="never" require-scripts="false" hostArchitectures="arm64"/>
     <pkg-ref id="com.micheleyin.aurorabook"/>
     <options customize="never" require-scripts="false"/>
-    <product id="com.micheleyin.aurorabook" version="1.1.2" plist-path="AuroraBook.app/Contents/Info.plist" minSystemVersion="12.0">
-        <bundle id="com.micheleyin.aurorabook" CFBundleIdentifier="com.micheleyin.aurorabook" path="AuroraBook.app" CFBundleVersion="1.1.2"/>
+    <product id="com.micheleyin.aurorabook" version="1.1.3" plist-path="AuroraBook.app/Contents/Info.plist" minSystemVersion="12.0">
+        <bundle id="com.micheleyin.aurorabook" CFBundleIdentifier="com.micheleyin.aurorabook" path="AuroraBook.app" CFBundleVersion="1.1.3"/>
         <bundle-version>
-            <bundle id="com.micheleyin.aurorabook" CFBundleIdentifier="com.micheleyin.aurorabook" CFBundleVersion="1.1.2"/>
+            <bundle id="com.micheleyin.aurorabook" CFBundleIdentifier="com.micheleyin.aurorabook" CFBundleVersion="1.1.3"/>
         </bundle-version>
     </product>
     <os-version min="12.0"/>
@@ -22,5 +22,5 @@
     <choice id="com.micheleyin.aurorabook" visible="false">
         <pkg-ref id="com.micheleyin.aurorabook"/>
     </choice>
-    <pkg-ref id="com.micheleyin.aurorabook" version="1.1.2" onConclusion="none">AuroraBook_component.pkg</pkg-ref>
+    <pkg-ref id="com.micheleyin.aurorabook" version="1.1.3" onConclusion="none">AuroraBook_component.pkg</pkg-ref>
 </installer-gui-script>

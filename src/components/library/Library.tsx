@@ -473,7 +473,7 @@ export function Library() {
                         <BookOpen className="h-12 w-12 text-muted-foreground/50" />
                       </div>
                     )}
-                    {book.progress?.bookProgressPercent && (
+                    {!!book.progress?.bookProgressPercent && (
                       <div className="absolute bottom-0 left-0 right-0 h-1 bg-background/50">
                         <div
                           className="h-full bg-primary"
@@ -578,14 +578,14 @@ export function Library() {
                           <span>{book.chapters.length} chapters</span>
                         )}
                         {book.pageCount && <span>{book.pageCount} pages</span>}
-                        {book.progress?.bookProgressPercent && (
+                        {!!book.progress?.bookProgressPercent && (
                           <span>
                             {Math.round(book.progress.bookProgressPercent)}%
                             read
                           </span>
                         )}
                       </div>
-                      {book.progress?.bookProgressPercent && (
+                      {!!book.progress?.bookProgressPercent && (
                         <div className="h-1 bg-muted rounded-full overflow-hidden">
                           <div
                             className="h-full bg-primary"
