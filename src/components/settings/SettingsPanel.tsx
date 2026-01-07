@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { Pause, Play } from "lucide-react";
 
 import { useSettingsContext } from "@/context/SettingsContext";
@@ -42,9 +43,20 @@ export function Settings() {
     applyTheme,
   } = useSettingsContext();
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string>("Loading...");
   // const [isLogViewerOpen, setIsLogViewerOpen] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
+
+  // Load app version from Tauri
+  useEffect(() => {
+    getVersion()
+      .then((version) => setAppVersion(version))
+      .catch((err) => {
+        logger.error("Failed to get app version:", err);
+        setAppVersion("Unknown");
+      });
+  }, []);
 
   const handleThemeChange = useCallback(
     async (newTheme: UITheme) => {
@@ -311,7 +323,9 @@ export function Settings() {
             <CardContent className="space-y-4">
               <div className="flex flex-col gap-2">
                 <p className="font-medium">Application Version</p>
-                <p className="text-sm text-muted-foreground">Version 1.0.0</p>
+                <p className="text-sm text-muted-foreground">
+                  Version {appVersion}
+                </p>
               </div>
               {/* <div className="flex flex-col gap-2">
                 <p className="font-medium">Debug Tools</p>
