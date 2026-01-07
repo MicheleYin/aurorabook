@@ -34,7 +34,7 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["cors"] }
 
 # Audio processing
-lame = "0.1"
+mp3lame-encoder = "0.2.1"
 symphonia = { version = "0.5", features = ["all"] }
 
 # EPUB processing
@@ -84,7 +84,6 @@ tempfile = "3.8"
 
 [patch.crates-io]
 audiopus_sys = { path = "../patches/audiopus_sys" }
-espeak-rs-sys = { path = "../patches/espeak-rs-sys" }
 # mp3lame-sys = { path = "../patches/mp3lame-sys" }
 
 
@@ -93,7 +92,7 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = true
-panic = "abort"
+# panic = "abort"
 # Preserve floating-point precision for audio processing
 # This prevents aggressive optimizations that could affect audio quality
 overflow-checks = false

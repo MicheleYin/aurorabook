@@ -29,7 +29,8 @@
     "resources": [
       "resources/kokoro-v1.0.onnx",
       "resources/voices-v1.0.bin",
-      "resources/voice-samples/**/*.mp3"
+      "resources/voice-samples/**/*.mp3",
+      "resources/mini-bart-g2p/**/*"
     ],
     "macOS": {
       "frameworks": [],

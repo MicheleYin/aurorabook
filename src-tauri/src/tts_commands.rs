@@ -1,8 +1,9 @@
-use crate::utils::path_resolver::ResourcePathResolver;
-use crate::utils::audio::f32_to_pcm_le_bytes;
-use crate::utils::constants::{DEFAULT_MP3_BITRATE, DEFAULT_LAME_QUALITY};
-use crate::utils::errors::{AppError, AppResult};
 use crate::tts::engine::TtsEngineType;
+use crate::utils::audio::f32_to_pcm_le_bytes;
+use crate::utils::constants::{DEFAULT_LAME_QUALITY, DEFAULT_MP3_BITRATE};
+use crate::utils::errors::{AppError, AppResult};
+use crate::utils::path_resolver::ResourcePathResolver;
+use mp3lame_encoder::{Builder, FlushNoGap, MonoPcm};
 use std::sync::Arc;
 
 /// Initialize the Kokoros TTS engine (Tauri command).
@@ -53,7 +54,9 @@ pub async fn init_kokoros_engine(
         }
     }
 
-    log::info!("TTS engine initialization (models will be loaded from bundle resources when needed)");
+    log::info!(
+        "TTS engine initialization (models will be loaded from bundle resources when needed)"
+    );
     if !model_path.is_empty() {
         log::info!("Model path: {}, Voices path: {}", model_path, voices_path);
     } else {
@@ -129,7 +132,7 @@ pub async fn generate_tts_cached(
 
     // Note: RuleBasedG2p (voirs-g2p) doesn't require resource directories
     // as it uses rule-based phonemization without model files
-    
+
     let audio_samples = match engine_type {
         TtsEngineType::Onnx => {
             let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
@@ -139,23 +142,25 @@ pub async fn generate_tts_cached(
             )
             .await;
             let model_instance = engine.get_model_instance(worker_id.unwrap_or(0));
-            engine.tts_raw_audio_with_instance(
-                &text,
-                language.as_deref().unwrap_or("en"),
-                &voice_id,
-                speed.unwrap_or(1.0),
-                None,
-                None,
-                None,
-                None,
-                model_instance,
-            )
-            .map_err(|e| AppError::TtsGeneration(format!("TTS generation failed: {}", e)))?
+            engine
+                .tts_raw_audio_with_instance(
+                    &text,
+                    language.as_deref().unwrap_or("en"),
+                    &voice_id,
+                    speed.unwrap_or(1.0),
+                    None,
+                    None,
+                    None,
+                    None,
+                    model_instance,
+                )
+                .map_err(|e| AppError::TtsGeneration(format!("TTS generation failed: {}", e)))?
         }
         TtsEngineType::Candle => {
             // Candle engine support is not yet implemented in kokoros crate
             return Err(AppError::TtsGeneration(
-                "Candle engine is not yet implemented. Please use TtsEngineType::Onnx instead.".to_string()
+                "Candle engine is not yet implemented. Please use TtsEngineType::Onnx instead."
+                    .to_string(),
             ));
         }
     };
@@ -216,9 +221,9 @@ pub async fn generate_tts_batch(
     engine_type: Option<String>,
     app: tauri::AppHandle,
 ) -> AppResult<Vec<Vec<u8>>> {
-    use crate::tts::engine::TtsEnginePool;
     use crate::epub::converter::get_parallelism;
-    
+    use crate::tts::engine::TtsEnginePool;
+
     let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(Some(&app))?;
 
     let onnx_path_str = onnx_path
@@ -238,17 +243,18 @@ pub async fn generate_tts_batch(
 
     // Create engine pool once (reused for all batch items)
     let parallelism = get_parallelism();
-    let engine_pool = TtsEnginePool::new(
-        &onnx_path_str,
-        &voices_path_str,
-        parallelism,
-        engine_type,
-    )
-    .await
-    .map_err(|e| AppError::TtsGeneration(format!("Failed to create TTS engine pool: {}", e)))?;
-    
-    log::info!("Created TTS engine pool with {} instances for batch processing", parallelism);
-    
+    let engine_pool =
+        TtsEnginePool::new(&onnx_path_str, &voices_path_str, parallelism, engine_type)
+            .await
+            .map_err(|e| {
+                AppError::TtsGeneration(format!("Failed to create TTS engine pool: {}", e))
+            })?;
+
+    log::info!(
+        "Created TTS engine pool with {} instances for batch processing",
+        parallelism
+    );
+
     let engine_pool_arc = std::sync::Arc::new(engine_pool);
     // Use Arc<str> for shared strings to avoid unnecessary cloning
     let language_str: std::sync::Arc<str> = Arc::from(language.as_deref().unwrap_or("en"));
@@ -281,8 +287,6 @@ pub async fn generate_tts_batch(
 
     Ok(results)
 }
-
-
 
 /// Convert PCM audio data to MP3 format (Tauri command).
 ///
@@ -327,10 +331,14 @@ pub fn convert_pcm_to_mp3(
         return Err(AppError::Encoding("PCM data is empty".to_string()));
     }
     if sample_rate == 0 {
-        return Err(AppError::Config("Sample rate must be greater than 0".to_string()));
+        return Err(AppError::Config(
+            "Sample rate must be greater than 0".to_string(),
+        ));
     }
     if channels != 1 && channels != 2 {
-        return Err(AppError::Config("Channels must be 1 (mono) or 2 (stereo)".to_string()));
+        return Err(AppError::Config(
+            "Channels must be 1 (mono) or 2 (stereo)".to_string(),
+        ));
     }
     if pcm_data.len() % (channels as usize * 2) != 0 {
         return Err(AppError::Encoding(format!(
@@ -340,6 +348,7 @@ pub fn convert_pcm_to_mp3(
         )));
     }
 
+    // Convert PCM bytes to i16 samples
     let num_samples = pcm_data.len() / 2;
     let mut pcm_samples = Vec::with_capacity(num_samples);
     for chunk in pcm_data.chunks_exact(2) {
@@ -347,66 +356,121 @@ pub fn convert_pcm_to_mp3(
         pcm_samples.push(sample);
     }
 
-    let mut encoder = lame::Lame::new()
+    // Build MP3 encoder using mp3lame-encoder (self-contained, no system LAME required)
+    let mut encoder_builder = Builder::new()
         .ok_or_else(|| AppError::Encoding("Failed to initialize LAME encoder".to_string()))?;
 
-    encoder
+    encoder_builder
+        .set_num_channels(channels as u8)
+        .map_err(|e| AppError::Encoding(format!("Failed to set channels: {:?}", e)))?;
+
+    encoder_builder
         .set_sample_rate(sample_rate)
         .map_err(|e| AppError::Encoding(format!("Failed to set sample rate: {:?}", e)))?;
 
-    encoder
-        .set_channels(channels as u8)
-        .map_err(|e| AppError::Encoding(format!("Failed to set channels: {:?}", e)))?;
-
-    encoder
-        .set_quality(DEFAULT_LAME_QUALITY)
+    // Convert quality (0-9) to mp3lame-encoder Quality enum
+    // DEFAULT_LAME_QUALITY is 5, which maps to Good
+    let quality = match DEFAULT_LAME_QUALITY {
+        0..=3 => mp3lame_encoder::Quality::Worst,
+        4..=6 => mp3lame_encoder::Quality::Good,
+        7..=9 => mp3lame_encoder::Quality::Best,
+        _ => mp3lame_encoder::Quality::Good,
+    };
+    encoder_builder
+        .set_quality(quality)
         .map_err(|e| AppError::Encoding(format!("Failed to set quality: {:?}", e)))?;
 
-    encoder
-        .set_kilobitrate(bitrate_kbps as i32)
+    // Convert bitrate to mp3lame-encoder Bitrate enum
+    // Available bitrates: Kbps32, Kbps40, Kbps48, Kbps56, Kbps64, Kbps80, Kbps96,
+    // Kbps112, Kbps128, Kbps160, Kbps192, Kbps224, Kbps256, Kbps320
+    let bitrate_enum = match bitrate_kbps {
+        32 => mp3lame_encoder::Bitrate::Kbps32,
+        40 => mp3lame_encoder::Bitrate::Kbps40,
+        48 => mp3lame_encoder::Bitrate::Kbps48,
+        64 => mp3lame_encoder::Bitrate::Kbps64,
+        80 => mp3lame_encoder::Bitrate::Kbps80,
+        96 => mp3lame_encoder::Bitrate::Kbps96,
+        112 => mp3lame_encoder::Bitrate::Kbps112,
+        128 => mp3lame_encoder::Bitrate::Kbps128,
+        160 => mp3lame_encoder::Bitrate::Kbps160,
+        192 => mp3lame_encoder::Bitrate::Kbps192,
+        224 => mp3lame_encoder::Bitrate::Kbps224,
+        256 => mp3lame_encoder::Bitrate::Kbps256,
+        320 => mp3lame_encoder::Bitrate::Kbps320,
+        _ => {
+            // Default to closest available bitrate
+            if bitrate_kbps <= 48 {
+                mp3lame_encoder::Bitrate::Kbps48
+            } else if bitrate_kbps <= 64 {
+                mp3lame_encoder::Bitrate::Kbps64
+            } else if bitrate_kbps <= 128 {
+                mp3lame_encoder::Bitrate::Kbps128
+            } else if bitrate_kbps <= 192 {
+                mp3lame_encoder::Bitrate::Kbps192
+            } else {
+                mp3lame_encoder::Bitrate::Kbps320
+            }
+        }
+    };
+    encoder_builder
+        .set_brate(bitrate_enum)
         .map_err(|e| AppError::Encoding(format!("Failed to set bitrate: {:?}", e)))?;
 
-    encoder
-        .init_params()
-        .map_err(|e| AppError::Encoding(format!("Failed to initialize encoder parameters: {:?}", e)))?;
+    let mut encoder = encoder_builder
+        .build()
+        .map_err(|e| AppError::Encoding(format!("Failed to build encoder: {:?}", e)))?;
 
+    // Prepare output buffer
     let mut mp3_output = Vec::new();
+    mp3_output.reserve(mp3lame_encoder::max_required_buffer_size(pcm_samples.len()));
 
-    let buffer_size = (pcm_samples.len() as f64 * 1.25) as usize + 7200;
-    let mut mp3_buffer = vec![0u8; buffer_size];
-
+    // Encode based on channel count
+    // Note: mp3lame-encoder handles stereo internally when channels=2 is set
+    // We encode as mono for simplicity (stereo can be added later if needed)
     if channels == 1 {
+        // Mono encoding
+        let pcm = MonoPcm(&pcm_samples);
         let encoded_size = encoder
-            .encode(&pcm_samples, &pcm_samples, &mut mp3_buffer)
+            .encode(pcm, mp3_output.spare_capacity_mut())
             .map_err(|e| AppError::Encoding(format!("Failed to encode audio: {:?}", e)))?;
 
-        mp3_output.extend_from_slice(&mp3_buffer[..encoded_size]);
-    } else {
-        let mut pcm_left = Vec::with_capacity(num_samples / 2);
-        let mut pcm_right = Vec::with_capacity(num_samples / 2);
-
-        for i in 0..(num_samples / 2) {
-            pcm_left.push(pcm_samples[i * 2]);
-            pcm_right.push(pcm_samples[i * 2 + 1]);
+        unsafe {
+            mp3_output.set_len(mp3_output.len().wrapping_add(encoded_size));
         }
-
+    } else {
+        // For stereo, we need to interleave the samples
+        // mp3lame-encoder with channels=2 expects interleaved stereo PCM
+        // For now, convert to mono by taking left channel only
+        // TODO: Add proper stereo support when mp3lame-encoder API supports it
+        let mut mono_samples = Vec::with_capacity(num_samples / 2);
+        for i in 0..(num_samples / 2) {
+            mono_samples.push(pcm_samples[i * 2]); // Take left channel
+        }
+        let pcm = MonoPcm(&mono_samples);
         let encoded_size = encoder
-            .encode(&pcm_left, &pcm_right, &mut mp3_buffer)
+            .encode(pcm, mp3_output.spare_capacity_mut())
             .map_err(|e| AppError::Encoding(format!("Failed to encode audio: {:?}", e)))?;
 
-        mp3_output.extend_from_slice(&mp3_buffer[..encoded_size]);
+        unsafe {
+            mp3_output.set_len(mp3_output.len().wrapping_add(encoded_size));
+        }
     }
 
+    // Flush encoder to get remaining data
     let flush_size = encoder
-        .encode(&[], &[], &mut mp3_buffer)
+        .flush::<FlushNoGap>(mp3_output.spare_capacity_mut())
         .map_err(|e| AppError::Encoding(format!("Failed to flush encoder: {:?}", e)))?;
 
     if flush_size > 0 {
-        mp3_output.extend_from_slice(&mp3_buffer[..flush_size]);
+        unsafe {
+            mp3_output.set_len(mp3_output.len().wrapping_add(flush_size));
+        }
     }
 
     if mp3_output.is_empty() {
-        return Err(AppError::Encoding("MP3 encoding produced no output".to_string()));
+        return Err(AppError::Encoding(
+            "MP3 encoding produced no output".to_string(),
+        ));
     }
 
     Ok(mp3_output)

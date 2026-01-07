@@ -3,19 +3,21 @@
 //! This module provides the main Tauri command for converting EPUB files
 //! to audiobooks, broken down into smaller, focused functions.
 
-use tauri::{AppHandle, Emitter};
-use crate::utils::errors::{AppError, AppResult};
-use crate::utils::constants::MAX_EPUB_SIZE;
-use crate::utils::path_validation::validate_file_size;
-use crate::book_service::models::{Book, ConversionStatus};
 use crate::book_service::database::get_db_connection;
+use crate::book_service::models::{Book, ConversionStatus};
 use crate::book_service::repositories::{BookRepository, EpubRepository};
-use crate::epub::converter::{ConversionOptions, ConversionProgress, ConversionChapter, emit_progress};
-use crate::epub::cancellation::{get_cancellation_token, cleanup_cancellation_token};
 use crate::epub::book_update::update_book_audio_tracks;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use crate::epub::cancellation::{cleanup_cancellation_token, get_cancellation_token};
+use crate::epub::converter::{
+    emit_progress, ConversionChapter, ConversionOptions, ConversionProgress,
+};
+use crate::utils::constants::MAX_EPUB_SIZE;
+use crate::utils::errors::{AppError, AppResult};
+use crate::utils::path_validation::validate_file_size;
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter};
 
 /// Tauri command wrapper for EPUB to audiobook conversion.
 ///
@@ -53,49 +55,96 @@ pub async fn convert_epub_to_audiobook_command(
     voice_id: String,
     app: AppHandle,
 ) -> AppResult<Option<Book>> {
-    log::info!("convert_epub_to_audiobook_command called: book_id={}, voice_id={}", 
-        book_id, voice_id);
-    
+    log::info!(
+        "convert_epub_to_audiobook_command called: book_id={}, voice_id={}",
+        book_id,
+        voice_id
+    );
+    crate::logging::log(
+        "info",
+        &format!(
+            "Conversion started: book_id={}, voice_id={}",
+            book_id, voice_id
+        ),
+        None,
+    );
+
     // Emit initial progress
     emit_initial_progress(&app);
-    
+
     // Load book from database to get source_path
-    let db = get_db_connection(&app).await
-        .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
-    let book = BookRepository::find_by_id(db.as_ref(), &book_id).await
-        .map_err(|e| AppError::Store(format!("Failed to load book: {}", e)))?
-        .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
-    
+    let db = get_db_connection(&app).await.map_err(|e| {
+        let err_msg = format!("Failed to connect to database: {}", e);
+        crate::logging::log("error", &err_msg, None);
+        AppError::Store(err_msg)
+    })?;
+    let book = BookRepository::find_by_id(db.as_ref(), &book_id)
+        .await
+        .map_err(|e| {
+            let err_msg = format!("Failed to load book: {}", e);
+            crate::logging::log("error", &err_msg, None);
+            AppError::Store(err_msg)
+        })?
+        .ok_or_else(|| {
+            let err_msg = format!("Book not found: {}", book_id);
+            crate::logging::log("error", &err_msg, None);
+            AppError::Store(err_msg)
+        })?;
+
     let source_path = book.source_path.clone();
-    log::info!("Loaded book from database: id={}, source_path={}", book_id, source_path);
-    
+    log::info!(
+        "Loaded book from database: id={}, source_path={}",
+        book_id,
+        source_path
+    );
+    crate::logging::log(
+        "info",
+        &format!(
+            "Loaded book from database: id={}, source_path={}",
+            book_id, source_path
+        ),
+        None,
+    );
+
     // Load EPUB from database first, fallback to file system
     let epub_data = load_epub_with_fallback(&app, &source_path).await?;
     log::info!("Loaded EPUB: {} bytes", epub_data.len());
-    
+
     // Validate EPUB
     validate_and_cache_epub(&app, &source_path, &epub_data)?;
-    
+
     // Load chapters from database instead of extracting from EPUB
     // Note: EPUB structure parsing is done on-demand (caching disabled)
     let all_conversion_chapters = load_chapters_from_database(&app, &book_id).await?;
-    
+
     // Load and prepare book data
-    let book_data = load_and_prepare_book(&app, &source_path, &voice_id, &all_conversion_chapters).await?;
-    
+    let book_data =
+        load_and_prepare_book(&app, &source_path, &voice_id, &all_conversion_chapters).await?;
+
     // Check if all chapters are already converted
     if book_data.conversion_chapters.is_empty() {
-        return handle_all_chapters_completed(&app, &source_path, book_data.total_words_all_chapters, book_data.existing_book).await;
+        return handle_all_chapters_completed(
+            &app,
+            &source_path,
+            book_data.total_words_all_chapters,
+            book_data.existing_book,
+        )
+        .await;
     }
-    
+
     // If resuming (has completed chapters), try to load the converted EPUB from database
     // This ensures we have existing audio tracks in the OPF
     let epub_data_for_conversion = if !book_data.completed_chapters_set.is_empty() {
         log::info!("Resuming conversion - attempting to load converted EPUB from database");
-        
-        if let Ok(Some(loaded_epub)) = EpubRepository::find_by_source_path(db.as_ref(), &source_path).await {
-            log::info!("Successfully loaded partial EPUB from database ({} bytes, {} chapters completed)", 
-                loaded_epub.len(), book_data.completed_chapters_set.len());
+
+        if let Ok(Some(loaded_epub)) =
+            EpubRepository::find_by_source_path(db.as_ref(), &source_path).await
+        {
+            log::info!(
+                "Successfully loaded partial EPUB from database ({} bytes, {} chapters completed)",
+                loaded_epub.len(),
+                book_data.completed_chapters_set.len()
+            );
             loaded_epub
         } else {
             log::warn!("No partial EPUB found in database, using original EPUB - existing audio tracks may be missing");
@@ -105,10 +154,10 @@ pub async fn convert_epub_to_audiobook_command(
         log::info!("Starting new conversion - using original EPUB");
         epub_data
     };
-    
+
     // Prepare conversion
     let conversion_prep = prepare_conversion(&app, &book_id, &book_data).await?;
-    
+
     // Perform conversion
     // Note: epub_structure is cached at this level but not passed down since
     // initialize_conversion_context parses it once anyway. The main optimization
@@ -120,27 +169,33 @@ pub async fn convert_epub_to_audiobook_command(
         epub_data_for_conversion,
         &book_data,
         &conversion_prep,
-    ).await?;
-    
+    )
+    .await?;
+
     // Save converted EPUB and update book
-    save_converted_epub_and_update_book(&app, &source_path, &converted_epub, book_data.total_words_all_chapters).await
+    save_converted_epub_and_update_book(
+        &app,
+        &source_path,
+        &converted_epub,
+        book_data.total_words_all_chapters,
+    )
+    .await
 }
 
 /// Load EPUB from database first, fallback to file system
-async fn load_epub_with_fallback(
-    app: &AppHandle,
-    source_path: &str,
-) -> AppResult<Vec<u8>> {
-    let db = get_db_connection(app).await
+async fn load_epub_with_fallback(app: &AppHandle, source_path: &str) -> AppResult<Vec<u8>> {
+    let db = get_db_connection(app)
+        .await
         .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
-    
+
     // Try to load from database first
-    if let Ok(Some(epub_data)) = EpubRepository::find_by_source_path(db.as_ref(), source_path).await {
+    if let Ok(Some(epub_data)) = EpubRepository::find_by_source_path(db.as_ref(), source_path).await
+    {
         log::info!("Loaded EPUB from database: {} bytes", epub_data.len());
-        
+
         // Validate EPUB file size
         validate_file_size(epub_data.len(), MAX_EPUB_SIZE, "EPUB")?;
-        
+
         // Validate EPUB signature (should start with PK for ZIP)
         if epub_data.len() >= 4 && &epub_data[0..4] == b"PK\x03\x04" {
             return Ok(epub_data);
@@ -150,7 +205,7 @@ async fn load_epub_with_fallback(
     } else {
         log::info!("EPUB not found in database, loading from file system");
     }
-    
+
     // Fallback to file system
     load_epub_from_file_system(source_path)
 }
@@ -159,28 +214,35 @@ async fn load_epub_with_fallback(
 fn load_epub_from_file_system(source_path: &str) -> AppResult<Vec<u8>> {
     // Handle web:// prefix (not supported)
     if source_path.starts_with("web://") {
-        return Err(AppError::EpubParse(
-            format!("Cannot load EPUB from web source: {}", source_path)
-        ));
+        return Err(AppError::EpubParse(format!(
+            "Cannot load EPUB from web source: {}",
+            source_path
+        )));
     }
-    
+
     // Normalize path (remove file:// prefix and decode URL-encoded characters)
     // This is important on iOS where file picker returns URL-encoded paths
     use crate::utils::path_resolver::ResourcePathResolver;
     let actual_path = ResourcePathResolver::normalize_file_path(source_path);
-    
+
     log::info!("Loading EPUB from file system: {}", actual_path);
-    let epub_data = fs::read(&actual_path)
-        .map_err(|e| AppError::Io(e).with_context(format!("Failed to read EPUB file from path '{}'", actual_path)))?;
-    
+    let epub_data = fs::read(&actual_path).map_err(|e| {
+        AppError::Io(e).with_context(format!(
+            "Failed to read EPUB file from path '{}'",
+            actual_path
+        ))
+    })?;
+
     // Validate EPUB file size
     validate_file_size(epub_data.len(), MAX_EPUB_SIZE, "EPUB")?;
-    
+
     // Validate EPUB signature (should start with PK for ZIP)
     if epub_data.len() < 4 || &epub_data[0..4] != b"PK\x03\x04" {
-        return Err(AppError::EpubParse("Invalid EPUB file: not a valid ZIP archive".to_string()));
+        return Err(AppError::EpubParse(
+            "Invalid EPUB file: not a valid ZIP archive".to_string(),
+        ));
     }
-    
+
     Ok(epub_data)
 }
 
@@ -194,29 +256,36 @@ async fn load_chapters_from_database(
     use crate::book_service::repositories::ChapterRepository;
     use crate::epub::converter::ConversionChapter;
     use crate::utils::text::count_words_in_html;
-    
-    let db = get_db_connection(app).await
+
+    let db = get_db_connection(app)
+        .await
         .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
-    
+
     // Emit progress for chapter loading
-    emit_progress(app, ConversionProgress {
-        current_chapter: 0,
-        total_chapters: 0,
-        words_processed: 0,
-        total_words: 0,
-        words_in_current_chapter: 0,
-        current_step: "initializing".to_string(),
-        message: "Loading chapters from database...".to_string(),
-    });
-    
+    emit_progress(
+        app,
+        ConversionProgress {
+            current_chapter: 0,
+            total_chapters: 0,
+            words_processed: 0,
+            total_words: 0,
+            words_in_current_chapter: 0,
+            current_step: "initializing".to_string(),
+            message: "Loading chapters from database...".to_string(),
+        },
+    );
+
     // Load chapters from database WITH content_html (needed for conversion)
-    let db_chapters = ChapterRepository::find_by_book_id_with_content(db.as_ref(), book_id).await
+    let db_chapters = ChapterRepository::find_by_book_id_with_content(db.as_ref(), book_id)
+        .await
         .map_err(|e| AppError::Store(format!("Failed to load chapters from database: {}", e)))?;
-    
+
     if db_chapters.is_empty() {
-        return Err(AppError::EpubParse("No chapters found in database".to_string()));
+        return Err(AppError::EpubParse(
+            "No chapters found in database".to_string(),
+        ));
     }
-    
+
     // Convert database chapters to ConversionChapter format
     let mut conversion_chapters = Vec::new();
     let mut chapters_without_content = 0;
@@ -224,19 +293,27 @@ async fn load_chapters_from_database(
         // Use content_html from database, or empty string if not available
         let content_html = chapter.content_html.unwrap_or_else(|| {
             chapters_without_content += 1;
-            log::warn!("Chapter '{}' (href: '{}') has no content_html in database", chapter.title, chapter.href);
+            log::warn!(
+                "Chapter '{}' (href: '{}') has no content_html in database",
+                chapter.title,
+                chapter.href
+            );
             String::new()
         });
-        
+
         if !content_html.is_empty() {
-            log::debug!("Loaded chapter '{}' with {} bytes of content", chapter.title, content_html.len());
+            log::debug!(
+                "Loaded chapter '{}' with {} bytes of content",
+                chapter.title,
+                content_html.len()
+            );
         }
-        
+
         // Calculate word count if not already set, or use existing
-        let word_count = chapter.word_count.unwrap_or_else(|| {
-            count_words_in_html(&content_html)
-        });
-        
+        let word_count = chapter
+            .word_count
+            .unwrap_or_else(|| count_words_in_html(&content_html));
+
         conversion_chapters.push(ConversionChapter {
             id: chapter.id,
             title: chapter.title,
@@ -245,28 +322,37 @@ async fn load_chapters_from_database(
             word_count,
         });
     }
-    
+
     if chapters_without_content > 0 {
-        log::warn!("Loaded {} chapters from database, but {} chapters have no content_html", 
-            conversion_chapters.len(), chapters_without_content);
+        log::warn!(
+            "Loaded {} chapters from database, but {} chapters have no content_html",
+            conversion_chapters.len(),
+            chapters_without_content
+        );
     } else {
-        log::info!("Loaded {} chapters from database with content", conversion_chapters.len());
+        log::info!(
+            "Loaded {} chapters from database with content",
+            conversion_chapters.len()
+        );
     }
-    
+
     Ok(conversion_chapters)
 }
 
 /// Emit initial progress update for responsive UI
 fn emit_initial_progress(app: &AppHandle) {
-    emit_progress(app, ConversionProgress {
-        current_chapter: 0,
-        total_chapters: 0,
-        words_processed: 0,
-        total_words: 0,
-        words_in_current_chapter: 0,
-        current_step: "initializing".to_string(),
-        message: "Starting conversion...".to_string(),
-    });
+    emit_progress(
+        app,
+        ConversionProgress {
+            current_chapter: 0,
+            total_chapters: 0,
+            words_processed: 0,
+            total_words: 0,
+            words_in_current_chapter: 0,
+            current_step: "initializing".to_string(),
+            message: "Starting conversion...".to_string(),
+        },
+    );
 }
 
 /// Validate EPUB file size (no longer caching - EPUB is loaded from file system when needed)
@@ -302,25 +388,30 @@ async fn load_and_prepare_book(
     voice_id: &str,
     all_conversion_chapters: &[ConversionChapter],
 ) -> AppResult<BookData> {
-    let db = get_db_connection(app).await
+    let db = get_db_connection(app)
+        .await
         .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
-    let mut books = BookRepository::find_all(db.as_ref()).await
+    let mut books = BookRepository::find_all(db.as_ref())
+        .await
         .map_err(|e| AppError::Store(format!("Failed to load books: {}", e)))?;
-    
-    let (completed_chapters_set, existing_book_clone) = if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
-        // Mark conversion as started and store voice ID
-        book.conversion_status = ConversionStatus::Started;
-        book.voice_id = Some(voice_id.to_string());
-        let completed_set: std::collections::HashSet<String> = book.completed_chapters.iter().cloned().collect();
-        let book_clone = book.clone();
-        (completed_set, Some(book_clone))
-    } else {
-        (std::collections::HashSet::new(), None)
-    };
-    
+
+    let (completed_chapters_set, existing_book_clone) =
+        if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
+            // Mark conversion as started and store voice ID
+            book.conversion_status = ConversionStatus::Started;
+            book.voice_id = Some(voice_id.to_string());
+            let completed_set: std::collections::HashSet<String> =
+                book.completed_chapters.iter().cloned().collect();
+            let book_clone = book.clone();
+            (completed_set, Some(book_clone))
+        } else {
+            (std::collections::HashSet::new(), None)
+        };
+
     // Calculate total words across ALL chapters
-    let total_words_all_chapters: usize = all_conversion_chapters.iter().map(|c| c.word_count).sum();
-    
+    let total_words_all_chapters: usize =
+        all_conversion_chapters.iter().map(|c| c.word_count).sum();
+
     // Filter out completed chapters and chapters without text content
     // Chapters without text content (word_count == 0) are skipped during conversion
     // so we exclude them from the conversion_chapters list
@@ -332,11 +423,13 @@ async fn load_and_prepare_book(
         })
         .cloned()
         .collect();
-    
+
     // Calculate words processed from completed chapters
-    let words_processed_from_completed: usize = if let Some(ref existing_book) = existing_book_clone {
+    let words_processed_from_completed: usize = if let Some(ref existing_book) = existing_book_clone
+    {
         existing_book.words_processed.unwrap_or_else(|| {
-            all_conversion_chapters.iter()
+            all_conversion_chapters
+                .iter()
                 .filter(|c| completed_chapters_set.contains(&c.href))
                 .map(|c| c.word_count)
                 .sum()
@@ -344,7 +437,7 @@ async fn load_and_prepare_book(
     } else {
         0
     };
-    
+
     // Update book with total words if not already set, and save voice_id
     if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
         if book.total_words.is_none() {
@@ -354,14 +447,15 @@ async fn load_and_prepare_book(
         if book.voice_id.is_none() {
             book.voice_id = Some(voice_id.to_string());
         }
-        
+
         // Save only this specific book to persist voice_id and conversion_status changes
-        BookRepository::save(db.as_ref(), book).await
+        BookRepository::save(db.as_ref(), book)
+            .await
             .map_err(|e| AppError::Store(format!("Failed to save book with voice_id: {}", e)))?;
     }
-    
+
     let total_chapters = completed_chapters_set.len() + conversion_chapters.len();
-    
+
     Ok(BookData {
         completed_chapters_set,
         existing_book: existing_book_clone,
@@ -380,19 +474,27 @@ async fn handle_all_chapters_completed(
     total_words_all_chapters: usize,
     existing_book: Option<Book>,
 ) -> AppResult<Option<Book>> {
-    log::info!("All chapters with text content already converted for book at {}", source_path);
+    log::info!(
+        "All chapters with text content already converted for book at {}",
+        source_path
+    );
     // Mark conversion as done and save word counts if book exists
     if existing_book.is_some() {
         use crate::book_service::database::get_db_connection;
         use crate::book_service::repositories::BookRepository;
-        let db = get_db_connection(app).await
+        let db = get_db_connection(app)
+            .await
             .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
-        if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await {
+        if let Ok(Some(mut book)) =
+            BookRepository::find_by_source_path(db.as_ref(), source_path).await
+        {
             // Verify that all chapters with text content are completed
-            let chapters_with_text: usize = book.chapters.iter()
+            let chapters_with_text: usize = book
+                .chapters
+                .iter()
                 .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
                 .count();
-            
+
             if book.completed_chapters.len() >= chapters_with_text {
                 book.conversion_status = ConversionStatus::Done;
                 log::info!("All chapters with text content completed ({} of {} total chapters), marking conversion as done", 
@@ -401,10 +503,11 @@ async fn handle_all_chapters_completed(
                 log::warn!("Expected all chapters to be completed, but only {}/{} chapters with text are completed", 
                     book.completed_chapters.len(), chapters_with_text);
             }
-            
+
             book.total_words = Some(total_words_all_chapters);
             book.words_processed = Some(total_words_all_chapters);
-            BookRepository::save(db.as_ref(), &book).await
+            BookRepository::save(db.as_ref(), &book)
+                .await
                 .map_err(|e| AppError::Store(format!("Failed to save books: {}", e)))?;
         }
     }
@@ -422,14 +525,20 @@ async fn prepare_conversion(
     book_id: &str,
     book_data: &BookData,
 ) -> AppResult<ConversionPrep> {
-    log::info!("Resuming conversion: {} chapters remaining out of {} total ({} already completed)", 
-        book_data.conversion_chapters.len(), 
+    log::info!(
+        "Resuming conversion: {} chapters remaining out of {} total ({} already completed)",
+        book_data.conversion_chapters.len(),
         book_data.total_chapters,
-        book_data.completed_chapters_set.len());
-    
+        book_data.completed_chapters_set.len()
+    );
+
     // Calculate total words for remaining chapters
-    let total_words_remaining: usize = book_data.conversion_chapters.iter().map(|c| c.word_count).sum();
-    
+    let total_words_remaining: usize = book_data
+        .conversion_chapters
+        .iter()
+        .map(|c| c.word_count)
+        .sum();
+
     // Emit progress with restored progress from completed chapters
     emit_progress(app, ConversionProgress {
         current_chapter: book_data.completed_chapters_set.len(),
@@ -441,10 +550,10 @@ async fn prepare_conversion(
         message: format!("Resuming: {} chapters remaining ({} words), {} words already processed out of {} total", 
             book_data.conversion_chapters.len(), total_words_remaining, book_data.words_processed_from_completed, book_data.total_words_all_chapters),
     });
-    
+
     // Get cancellation token for this conversion
     let cancel_token = get_cancellation_token(app, book_id)?;
-    
+
     Ok(ConversionPrep { cancel_token })
 }
 
@@ -458,43 +567,49 @@ async fn perform_conversion(
     conversion_prep: &ConversionPrep,
 ) -> AppResult<Vec<u8>> {
     use crate::epub::converter::convert_epub_to_audiobook;
-    
+
     let options = ConversionOptions {
         voice_id: book_data.voice_id.clone(),
         chapters: book_data.conversion_chapters.clone(),
     };
-    
+
     // Use the cancellation token from preparation
     let cancel_token = Arc::clone(&conversion_prep.cancel_token);
-    
+
     // Perform conversion
-    log::info!("Starting EPUB to audiobook conversion with {} chapters", book_data.conversion_chapters.len());
+    log::info!(
+        "Starting EPUB to audiobook conversion with {} chapters",
+        book_data.conversion_chapters.len()
+    );
     let converted_epub_result = convert_epub_to_audiobook(
-        epub_data, 
-        options, 
-        app.clone(), 
+        epub_data,
+        options,
+        app.clone(),
         Some(source_path.to_string()),
         Some(Arc::clone(&cancel_token)),
         Some(book_data.words_processed_from_completed),
         Some(book_data.total_words_all_chapters),
         Some(book_data.completed_chapters_set.len()),
         Some(book_data.total_chapters),
-    ).await;
-    
+    )
+    .await;
+
     // Clean up cancellation token
     cleanup_cancellation_token(app, book_id);
-    
+
     // Check if conversion was cancelled
     if cancel_token.load(Ordering::Relaxed) {
         handle_conversion_cancellation(app, book_id, source_path).await?;
-        return Err(AppError::EpubParse("Conversion cancelled by user".to_string()));
+        return Err(AppError::EpubParse(
+            "Conversion cancelled by user".to_string(),
+        ));
     }
-    
+
     let converted_epub = converted_epub_result.map_err(|e| {
         log::error!("Conversion failed: {}", e);
         AppError::EpubParse(e.to_string()).with_context("Conversion failed")
     })?;
-    
+
     log::info!("EPUB conversion completed successfully");
     Ok(converted_epub)
 }
@@ -505,22 +620,29 @@ async fn handle_conversion_cancellation(
     book_id: &str,
     source_path: &str,
 ) -> AppResult<()> {
-    log::info!("Conversion was cancelled for book_id: {}, source_path: {}", book_id, source_path);
-    
+    log::info!(
+        "Conversion was cancelled for book_id: {}, source_path: {}",
+        book_id,
+        source_path
+    );
+
     // Set conversion status to "started" when cancelling
     if let Ok(db) = get_db_connection(app).await {
         if let Ok(mut books) = BookRepository::find_all(db.as_ref()).await {
-        if let Some(book) = books.iter_mut().find(|b| b.id == book_id) {
-            book.conversion_status = ConversionStatus::Started;
+            if let Some(book) = books.iter_mut().find(|b| b.id == book_id) {
+                book.conversion_status = ConversionStatus::Started;
                 if let Err(e) = BookRepository::save(db.as_ref(), book).await {
-                log::warn!("Failed to set conversion status to started on cancellation: {}", e);
-            } else {
-                log::debug!("Set conversion status to started for cancelled conversion");
+                    log::warn!(
+                        "Failed to set conversion status to started on cancellation: {}",
+                        e
+                    );
+                } else {
+                    log::debug!("Set conversion status to started for cancelled conversion");
                 }
             }
         }
     }
-    
+
     // Emit conversion-cancelled event to frontend
     use crate::epub::converter::ConversionCancelledEvent;
     let event = ConversionCancelledEvent {
@@ -530,9 +652,12 @@ async fn handle_conversion_cancellation(
     if let Err(e) = app.emit("conversion-cancelled", event) {
         log::warn!("Failed to emit conversion-cancelled event: {}", e);
     } else {
-        log::debug!("Emitted conversion-cancelled event for book_id: {}", book_id);
+        log::debug!(
+            "Emitted conversion-cancelled event for book_id: {}",
+            book_id
+        );
     }
-    
+
     Ok(())
 }
 
@@ -544,20 +669,29 @@ async fn save_converted_epub_and_update_book(
     total_words_all_chapters: usize,
 ) -> AppResult<Option<Book>> {
     // Get database connection once and reuse it
-    let db = get_db_connection(app).await
+    let db = get_db_connection(app)
+        .await
         .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
-    
+
     // Store converted EPUB in database
     if let Ok(Some(book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await {
-        EpubRepository::save(db.as_ref(), source_path, &book.id, converted_epub).await
-        .map_err(|e| AppError::Store(format!("Failed to save converted EPUB: {}", e)))?;
-        log::debug!("Saved converted EPUB to database ({} bytes)", converted_epub.len());
+        EpubRepository::save(db.as_ref(), source_path, &book.id, converted_epub)
+            .await
+            .map_err(|e| AppError::Store(format!("Failed to save converted EPUB: {}", e)))?;
+        log::debug!(
+            "Saved converted EPUB to database ({} bytes)",
+            converted_epub.len()
+        );
     } else {
-        log::warn!("Book not found for source_path '{}', cannot save converted EPUB", source_path);
+        log::warn!(
+            "Book not found for source_path '{}', cannot save converted EPUB",
+            source_path
+        );
     }
-    
+
     // Save final words_processed now that conversion is complete (reusing same connection)
-    if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await {
+    if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await
+    {
         if book.total_words.is_none() {
             book.total_words = Some(total_words_all_chapters);
         }
@@ -565,23 +699,32 @@ async fn save_converted_epub_and_update_book(
         if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
             log::warn!("Failed to save final words_processed: {}", e);
         } else {
-            log::debug!("Saved final words_processed: {} / {}", total_words_all_chapters, total_words_all_chapters);
+            log::debug!(
+                "Saved final words_processed: {} / {}",
+                total_words_all_chapters,
+                total_words_all_chapters
+            );
         }
     }
-    
+
     // Extract audio tracks from converted EPUB and update book in library
-    update_book_audio_tracks(converted_epub, source_path, app).await
+    update_book_audio_tracks(converted_epub, source_path, app)
+        .await
         .map_err(|e| AppError::Store(format!("Failed to update book audio tracks: {}", e)))?;
-    
+
     // Explicitly check and set conversion status to Done if all chapters are completed
     // This ensures the status is properly set even if update_book_in_library didn't catch it
     // Then reload the book from database to return the updated version
-    let final_book = if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await {
+    let final_book = if let Ok(Some(mut book)) =
+        BookRepository::find_by_source_path(db.as_ref(), source_path).await
+    {
         // Try to count chapters with text content first
-        let chapters_with_text: usize = book.chapters.iter()
+        let chapters_with_text: usize = book
+            .chapters
+            .iter()
             .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
             .count();
-        
+
         // If no chapters with word_count found, use total chapters as fallback
         // (this can happen if chapters were reloaded from EPUB without word_count)
         let expected_completed = if chapters_with_text > 0 {
@@ -591,15 +734,18 @@ async fn save_converted_epub_and_update_book(
             // This is safe because we only convert chapters with text content
             book.chapters.len()
         };
-        
+
         log::debug!("Final conversion status check: completed_chapters={}, chapters_with_text={}, total_chapters={}, expected_completed={}, current_status={:?}", 
             book.completed_chapters.len(), chapters_with_text, book.chapters.len(), expected_completed, book.conversion_status);
-        
+
         // Check if all expected chapters are completed
         if book.completed_chapters.len() == expected_completed && expected_completed > 0 {
             if book.conversion_status != ConversionStatus::Done {
                 book.conversion_status = ConversionStatus::Done;
-                log::info!("Conversion completed - all {} chapters are done, setting status to Done", expected_completed);
+                log::info!(
+                    "Conversion completed - all {} chapters are done, setting status to Done",
+                    expected_completed
+                );
                 if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
                     log::warn!("Failed to save conversion status as Done: {}", e);
                 } else {
@@ -609,17 +755,23 @@ async fn save_converted_epub_and_update_book(
                 log::debug!("Conversion status already set to Done");
             }
         } else {
-            log::warn!("Conversion not complete yet: {}/{} chapters are completed (status: {:?})", 
-                book.completed_chapters.len(), expected_completed, book.conversion_status);
+            log::warn!(
+                "Conversion not complete yet: {}/{} chapters are completed (status: {:?})",
+                book.completed_chapters.len(),
+                expected_completed,
+                book.conversion_status
+            );
         }
-        
+
         // Reload the book from database to get the latest status
-        BookRepository::find_by_source_path(db.as_ref(), source_path).await
-            .map_err(|e| AppError::Store(format!("Failed to reload book after status update: {}", e)))?
+        BookRepository::find_by_source_path(db.as_ref(), source_path)
+            .await
+            .map_err(|e| {
+                AppError::Store(format!("Failed to reload book after status update: {}", e))
+            })?
     } else {
         None
     };
-    
+
     Ok(final_book)
 }
-

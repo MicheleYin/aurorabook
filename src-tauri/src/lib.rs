@@ -11,6 +11,7 @@ pub mod tts;  // Made public for testing
 pub mod epub;  // Made public for testing
 pub mod utils;  // Made public for testing
 mod window;
+mod logging;
 
 // Use kokoros crate directly on all platforms (it uses ONNX Runtime with CoreML EP on macOS/iOS)
 
@@ -55,19 +56,43 @@ fn greet(name: &str) -> String {
 /// Panics if the Tauri application fails to run.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize logger
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    
     tauri::Builder::default()
         .setup(|app| {
+            // Initialize log forwarding first (before setting up logger)
+            logging::init_log_forwarding(app.handle());
+            
+            // Initialize custom logger that forwards to frontend
+            // The logger will use RUST_LOG env var or default to trace to capture all logs
+            let logger = Box::new(logging::FrontendLogger::new());
+            // Set max level to Trace to capture all logs including ONNX Runtime
+            // The env_logger inside FrontendLogger will handle filtering based on RUST_LOG
+            log::set_boxed_logger(logger)
+                .map(|()| log::set_max_level(log::LevelFilter::Trace))
+                .expect("Failed to set logger");
             // Set TAURI_RESOURCE_DIR environment variable for kokoros to find bundled models
             match app.path().resource_dir() {
                 Ok(resource_dir) => {
                     if let Some(resource_str) = resource_dir.to_str() {
                         std::env::set_var("TAURI_RESOURCE_DIR", resource_str);
-                        log::info!("✓ Set TAURI_RESOURCE_DIR to: {}", resource_str);
-                        log::info!("  Resource directory exists: {}", resource_dir.exists());
-                        log::info!("  Resource directory is_dir: {}", resource_dir.is_dir());
+                        let msg = format!("✓ Set TAURI_RESOURCE_DIR to: {}", resource_str);
+                        log::info!("{}", msg);
+                        logging::log("info", &msg, None);
+                        
+                        let exists_msg = format!("  Resource directory exists: {}", resource_dir.exists());
+                        log::info!("{}", exists_msg);
+                        logging::log("info", &exists_msg, None);
+                        
+                        // Verify mini-bart-g2p model is available
+                        let mini_bart_path = resource_dir.join("mini-bart-g2p");
+                        if mini_bart_path.exists() {
+                            let model_msg = format!("✓ Found mini-bart-g2p model at: {}", mini_bart_path.display());
+                            log::info!("{}", model_msg);
+                            logging::log("info", &model_msg, None);
+                        } else {
+                            let warn_msg = format!("⚠ mini-bart-g2p model not found at: {:?}", mini_bart_path);
+                            log::warn!("{}", warn_msg);
+                            logging::log("warn", &warn_msg, None);
+                        }
                         
                         // Log what's actually in the resource directory
                         if let Ok(entries) = std::fs::read_dir(&resource_dir) {
@@ -76,15 +101,24 @@ pub fn run() {
                                 .map(|e| e.file_name().to_string_lossy().to_string())
                                 .collect();
                             files.sort();
-                            log::info!("  Resource directory contents ({} items): {:?}", files.len(), files);
+                            let contents_msg = format!("  Resource directory contents ({} items): {:?}", files.len(), files);
+                            log::info!("{}", contents_msg);
+                            logging::log("info", &contents_msg, Some(serde_json::json!({ "files": files })));
                         }
                     } else {
-                        log::warn!("⚠ Resource directory path is not valid UTF-8: {:?}", resource_dir);
+                        let warn_msg = format!("⚠ Resource directory path is not valid UTF-8: {:?}", resource_dir);
+                        log::warn!("{}", warn_msg);
+                        logging::log("warn", &warn_msg, None);
                     }
                 }
                 Err(e) => {
-                    log::error!("❌ Failed to get Tauri resource directory: {}", e);
-                    log::error!("  This will cause path resolution to fail in production!");
+                    let error_msg = format!("❌ Failed to get Tauri resource directory: {}", e);
+                    log::error!("{}", error_msg);
+                    logging::log("error", &error_msg, None);
+                    
+                    let error_msg2 = "  This will cause path resolution to fail in production!";
+                    log::error!("{}", error_msg2);
+                    logging::log("error", error_msg2, None);
                 }
             }
             

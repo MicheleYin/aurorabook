@@ -12,6 +12,11 @@ if (!rootElement) {
     "Root element not found. Make sure there's a <div id='root'></div> in your HTML."
   );
 }
+document.addEventListener("DOMContentLoaded", () => {
+  document.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+  });
+});
 
 try {
   ReactDOM.createRoot(rootElement).render(

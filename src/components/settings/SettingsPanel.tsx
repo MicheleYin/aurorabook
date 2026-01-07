@@ -42,6 +42,7 @@ export function Settings() {
     applyTheme,
   } = useSettingsContext();
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+  // const [isLogViewerOpen, setIsLogViewerOpen] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
 
@@ -312,6 +313,20 @@ export function Settings() {
                 <p className="font-medium">Application Version</p>
                 <p className="text-sm text-muted-foreground">Version 1.0.0</p>
               </div>
+              {/* <div className="flex flex-col gap-2">
+                <p className="font-medium">Debug Tools</p>
+                <Button
+                  variant="outline"
+                  onClick={() => setIsLogViewerOpen(true)}
+                  className="w-full sm:w-auto"
+                >
+                  <Terminal className="mr-2 h-4 w-4" />
+                  Open Log Viewer
+                </Button>
+                <p className="text-sm text-muted-foreground">
+                  View frontend and backend logs for debugging
+                </p>
+              </div> */}
               {isSaving && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
@@ -436,6 +451,7 @@ export function Settings() {
           </Card>
         </div>
       </div>
+      {/* <LogViewer isOpen={isLogViewerOpen} onOpenChange={setIsLogViewerOpen} /> */}
     </div>
   );
 }
