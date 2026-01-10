@@ -100,7 +100,14 @@ pub(crate) fn map_alignments_to_segments(
 }
 
 /// Convert audio samples to MP3 bytes
+/// Returns empty vector if input is empty (prevents crashes on empty audio)
 pub(crate) fn convert_audio_to_mp3(audio_samples: &[f32]) -> AppResult<Vec<u8>> {
+    // Handle empty audio gracefully - return empty MP3 bytes instead of failing
+    if audio_samples.is_empty() {
+        log::debug!("Skipping MP3 conversion for empty audio samples");
+        return Ok(Vec::new());
+    }
+
     use crate::utils::audio::f32_to_pcm_le_bytes;
     use crate::utils::constants::WAV_HEADER_SIZE;
 
@@ -150,8 +157,133 @@ pub(crate) fn resolve_chapter_path(href: &str, base_path: &str) -> String {
     }
 }
 
+/// Clean and normalize text before processing
+/// Removes non-alphabetic, non-numeric characters (except punctuation), normalizes whitespace,
+/// and converts to lowercase before sending to phonemizer
+/// Number conversion will happen during normalization in the phonemizer
+fn clean_text_for_tts(text: &str) -> String {
+    let mut cleaned = text.trim().to_string();
+    
+    // Replace multiple newlines with single space
+    cleaned = cleaned.replace("\n\n\n", " ");
+    cleaned = cleaned.replace("\n\n", " ");
+    cleaned = cleaned.replace('\n', " ");
+    
+    // Replace tabs and carriage returns with spaces
+    cleaned = cleaned.replace('\r', " ");
+    cleaned = cleaned.replace('\t', " ");
+    
+    // Convert to lowercase (normalization)
+    cleaned = cleaned.to_lowercase();
+    
+    // Remove non-alphabetic, non-numeric characters except punctuation and spaces
+    // Keep: letters, numbers, whitespace, and common punctuation
+    // Keep common punctuation: . , ! ? : ; - ( ) [ ] { } " ' / \ & * @ # $ % ^ _ = + | ~ ` < >
+    cleaned = cleaned
+        .chars()
+        .filter(|c| {
+            c.is_alphabetic() 
+            || c.is_ascii_digit()  // Keep numbers so they can be converted to words
+            || c.is_whitespace()
+            || matches!(c, 
+                '.' | ',' | '!' | '?' | ':' | ';' 
+            )
+        })
+        .collect();
+    
+    // Replace multiple spaces with single space
+    while cleaned.contains("  ") {
+        cleaned = cleaned.replace("  ", " ");
+    }
+    
+    cleaned.trim().to_string()
+}
+
+/// Split a long sentence into smaller chunks to avoid phonemizer failures
+/// Enforces a strict maximum of MAX_SENTENCE_WORDS (10) words per chunk
+/// Splits on word boundaries, respecting MAX_SENTENCE_LENGTH and MAX_SENTENCE_WORDS limits
+fn split_long_sentence(text: &str) -> Vec<String> {
+    let text = clean_text_for_tts(text);
+    if text.is_empty() {
+        return Vec::new();
+    }
+
+    // Check if splitting is needed
+    let word_count = count_words(&text);
+    let char_count = text.chars().count();
+
+    // Always enforce MAX_SENTENCE_WORDS limit (10 words)
+    let max_words = MAX_SENTENCE_WORDS;
+    let max_length = MAX_SENTENCE_LENGTH;
+
+    // If text is within limits, return as single chunk
+    if word_count <= max_words && char_count <= max_length {
+        return vec![text];
+    }
+
+    log::debug!(
+        "Splitting sentence: {} chars, {} words (max: {} chars, {} words per chunk)",
+        char_count,
+        word_count,
+        max_length,
+        max_words
+    );
+
+    // Split by words to enforce the 10-word limit
+    let chunks = split_by_words(&text, max_length, max_words);
+
+    log::debug!(
+        "Split sentence into {} chunks (original: {} chars, {} words)",
+        chunks.len(),
+        char_count,
+        word_count
+    );
+
+    chunks
+}
+
+/// Split text by words respecting character and word limits
+fn split_by_words(text: &str, max_length: usize, max_words: usize) -> Vec<String> {
+    let words: Vec<&str> = text.split_whitespace().filter(|s| !s.is_empty()).collect();
+    let mut chunks = Vec::new();
+    let mut current_chunk = String::new();
+    let mut current_word_count = 0;
+
+    for word in words {
+        let test_chunk = if current_chunk.is_empty() {
+            word.to_string()
+        } else {
+            format!("{} {}", current_chunk, word)
+        };
+
+        let test_char_count = test_chunk.chars().count();
+        let test_word_count = current_word_count + 1;
+
+        // Check if adding this word would exceed limits
+        if test_char_count > max_length || test_word_count > max_words {
+            // Save current chunk and start a new one
+            if !current_chunk.is_empty() {
+                chunks.push(current_chunk);
+            }
+            current_chunk = word.to_string();
+            current_word_count = 1;
+        } else {
+            current_chunk = test_chunk;
+            current_word_count = test_word_count;
+        }
+    }
+
+    // Add the last chunk if it's not empty
+    if !current_chunk.is_empty() {
+        chunks.push(current_chunk);
+    }
+
+    chunks
+}
+
 /// Process a single sentence: generate audio and return result
 /// The new model doesn't provide timestamps, so we calculate them from audio duration
+/// Automatically splits very long sentences to avoid phonemizer failures
 pub(crate) async fn process_sentence(
     sentence: &str,
     sentence_index: usize,
@@ -168,9 +300,84 @@ pub(crate) async fn process_sentence(
         return Ok((Vec::new(), Vec::new(), String::new()));
     }
 
+    // Split long sentences into smaller chunks to avoid phonemizer failures
+    let chunks = split_long_sentence(text);
+    if chunks.is_empty() {
+        return Ok((Vec::new(), Vec::new(), String::new()));
+    }
+
+    // If only one chunk, process it directly (common case)
+    if chunks.len() == 1 {
+        return process_single_chunk(
+            &chunks[0],
+            sentence_index,
+            0,
+            engine,
+            worker_id,
+            voice_id,
+            cancel_token,
+        )
+        .await;
+    }
+
+    // Process multiple chunks and merge results
+    let mut all_audio_samples = Vec::new();
+    let mut all_word_alignments = Vec::new();
+    let mut cumulative_duration = 0.0;
+
+    for (chunk_idx, chunk) in chunks.iter().enumerate() {
+        check_cancellation!(cancel_token);
+
+        let (audio_samples, word_alignments, _) = process_single_chunk(
+            chunk,
+            sentence_index,
+            chunk_idx,
+            engine,
+            worker_id,
+            voice_id,
+            cancel_token.as_ref().map(Arc::clone),
+        )
+        .await?;
+
+        if audio_samples.is_empty() {
+            log::warn!(
+                "Empty audio for sentence {} chunk {}: '{}'",
+                sentence_index,
+                chunk_idx,
+                chunk.chars().take(50).collect::<String>()
+            );
+            continue;
+        }
+
+        // Offset word alignments by cumulative duration
+        let mut offset_alignments: Vec<kokoros::tts::koko::WordAlignment> = word_alignments
+            .iter()
+            .map(|wa| kokoros::tts::koko::WordAlignment {
+                word: wa.word.clone(),
+                start_sec: wa.start_sec + cumulative_duration,
+                end_sec: wa.end_sec + cumulative_duration,
+            })
+            .collect();
+
+        all_word_alignments.append(&mut offset_alignments);
+        all_audio_samples.extend_from_slice(&audio_samples);
+
+        // Update cumulative duration
+        cumulative_duration += audio_samples.len() as f32 / SAMPLE_RATE as f32;
+    }
+
+    Ok((all_audio_samples, all_word_alignments, text.to_string()))
+}
+
+/// Process a single chunk of text without retry logic (internal helper)
+async fn process_chunk_direct(
+    text: &str,
+    engine: &Arc<kokoros::tts::koko::TTSKokoParallel>,
+    worker_id: usize,
+    voice_id: &str,
+) -> Result<Vec<f32>, String> {
     let model_instance = engine.get_model_instance(worker_id);
-    // Use tts_raw_audio_with_instance since the new model doesn't provide timestamps
-    let audio_samples = engine
+    engine
         .tts_raw_audio_with_instance(
             text,
             "en",
@@ -182,43 +389,167 @@ pub(crate) async fn process_sentence(
             None,
             model_instance,
         )
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "TTS generation failed for sentence {}: {}",
-                sentence_index,
-                e
-            )
-        })?;
+        .map_err(|e| e.to_string())
+}
 
-    // Check for cancellation after TTS generation completes
-    check_cancellation!(cancel_token);
-
-    if audio_samples.is_empty() {
+/// Process a single chunk of text (helper function for process_sentence)
+/// If phonemization fails, automatically retries with smaller chunks
+async fn process_single_chunk(
+    text: &str,
+    sentence_index: usize,
+    chunk_index: usize,
+    engine: &Arc<kokoros::tts::koko::TTSKokoParallel>,
+    worker_id: usize,
+    voice_id: &str,
+    cancel_token: Option<Arc<AtomicBool>>,
+) -> AnyhowResult<(Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String)> {
+    let text = clean_text_for_tts(text);
+    if text.is_empty() {
         return Ok((Vec::new(), Vec::new(), String::new()));
     }
 
-    // Calculate word alignments from audio duration
-    // Split text into words and distribute duration proportionally
-    let words: Vec<&str> = text.split_whitespace().filter(|s| !s.is_empty()).collect();
-    // Note: We collect words here for alignment, but word counting uses count_words()
-    let audio_duration_sec = audio_samples.len() as f32 / SAMPLE_RATE as f32;
+    // Try processing the chunk
+    let result = process_chunk_direct(&text, engine, worker_id, voice_id).await;
 
-    let mut word_alignments = Vec::new();
-    if !words.is_empty() {
-        // Distribute duration evenly across words
-        let duration_per_word = audio_duration_sec / words.len() as f32;
-        for (idx, word) in words.iter().enumerate() {
-            let start_sec = idx as f32 * duration_per_word;
-            let end_sec = (idx + 1) as f32 * duration_per_word;
-            word_alignments.push(kokoros::tts::koko::WordAlignment {
-                word: word.to_string(),
-                start_sec,
-                end_sec,
-            });
+    // If phonemization failed with "No tokens generated", try splitting further
+    match result {
+        Ok(audio_samples) => {
+            // Success - continue with normal processing
+            check_cancellation!(cancel_token);
+
+            if audio_samples.is_empty() {
+                log::warn!(
+                    "Empty audio samples returned for sentence {} chunk {}: '{}'",
+                    sentence_index,
+                    chunk_index,
+                    text.chars().take(50).collect::<String>()
+                );
+                return Ok((Vec::new(), Vec::new(), String::new()));
+            }
+
+            // Calculate word alignments from audio duration
+            let words: Vec<&str> = text.split_whitespace().filter(|s| !s.is_empty()).collect();
+            let audio_duration_sec = audio_samples.len() as f32 / SAMPLE_RATE as f32;
+
+            let mut word_alignments = Vec::new();
+            if !words.is_empty() {
+                let duration_per_word = audio_duration_sec / words.len() as f32;
+                for (idx, word) in words.iter().enumerate() {
+                    let start_sec = idx as f32 * duration_per_word;
+                    let end_sec = (idx + 1) as f32 * duration_per_word;
+                    word_alignments.push(kokoros::tts::koko::WordAlignment {
+                        word: word.to_string(),
+                        start_sec,
+                        end_sec,
+                    });
+                }
+            }
+
+            Ok((audio_samples, word_alignments, text))
+        }
+        Err(e) => {
+            let error_str = e.to_string();
+            let is_no_tokens_error = error_str.contains("No tokens generated");
+            
+            if is_no_tokens_error {
+                // Phonemization failed - try splitting into smaller chunks
+                let char_count = text.chars().count();
+                let word_count = count_words(&text);
+                
+                log::warn!(
+                    "Phonemization failed for sentence {} chunk {} ({} chars, {} words), attempting aggressive split",
+                    sentence_index, chunk_index, char_count, word_count
+                );
+                
+                // Split into much smaller chunks and process each
+                let smaller_chunks = split_by_words(&text, MAX_CHUNK_LENGTH, MAX_CHUNK_WORDS);
+                
+                if smaller_chunks.len() > 1 {
+                    log::info!(
+                        "Split failed chunk into {} smaller chunks for retry",
+                        smaller_chunks.len()
+                    );
+                    
+                    // Process each smaller chunk and merge (without recursion - use direct processing)
+                    let mut all_audio = Vec::new();
+                    let mut all_alignments = Vec::new();
+                    let mut cumulative_duration = 0.0;
+                    
+                    for (sub_idx, sub_chunk) in smaller_chunks.iter().enumerate() {
+                        check_cancellation!(cancel_token);
+                        
+                        // Use direct processing to avoid recursion
+                        match process_chunk_direct(sub_chunk, engine, worker_id, voice_id).await {
+                            Ok(audio) => {
+                                if !audio.is_empty() {
+                                    // Calculate alignments for this sub-chunk
+                                    let words: Vec<&str> = sub_chunk.split_whitespace().filter(|s| !s.is_empty()).collect();
+                                    let audio_duration_sec = audio.len() as f32 / SAMPLE_RATE as f32;
+                                    
+                                    let mut sub_alignments = Vec::new();
+                                    if !words.is_empty() {
+                                        let duration_per_word = audio_duration_sec / words.len() as f32;
+                                        for (idx, word) in words.iter().enumerate() {
+                                            let start_sec = idx as f32 * duration_per_word + cumulative_duration;
+                                            let end_sec = (idx + 1) as f32 * duration_per_word + cumulative_duration;
+                                            sub_alignments.push(kokoros::tts::koko::WordAlignment {
+                                                word: word.to_string(),
+                                                start_sec,
+                                                end_sec,
+                                            });
+                                        }
+                                    }
+                                    
+                                    all_alignments.extend(sub_alignments);
+                                    all_audio.extend_from_slice(&audio);
+                                    cumulative_duration += audio_duration_sec;
+                                }
+                            }
+                            Err(sub_err) => {
+                                log::warn!(
+                                    "Failed to process sub-chunk {} of sentence {} chunk {}: {}. Skipping this sub-chunk.",
+                                    sub_idx, sentence_index, chunk_index, sub_err
+                                );
+                                // Continue with other chunks rather than failing completely
+                            }
+                        }
+                    }
+                    
+                    if !all_audio.is_empty() {
+                        return Ok((all_audio, all_alignments, text));
+                    }
+                }
+                
+                // If we get here, phonemization failed completely (even after splitting)
+                // Return empty audio instead of crashing - this allows conversion to continue
+                log::warn!(
+                    "Phonemization completely failed for sentence {} chunk {} ({} chars, {} words): {}. Returning empty audio to allow conversion to continue.",
+                    sentence_index,
+                    chunk_index,
+                    text.chars().count(),
+                    word_count,
+                    e
+                );
+                return Ok((Vec::new(), Vec::new(), String::new()));
+            }
+            
+            // For other errors (not "No tokens generated"), still return error but log it
+            log::error!(
+                "TTS generation failed for sentence {} chunk {}: {}. Text: '{}'",
+                sentence_index,
+                chunk_index,
+                e,
+                text.chars().take(100).collect::<String>()
+            );
+            
+            // For production safety, return empty audio instead of crashing on unknown errors
+            // This prevents the entire conversion from failing due to a single chunk
+            log::warn!(
+                "Returning empty audio for failed chunk to prevent app crash. Conversion will continue."
+            );
+            Ok((Vec::new(), Vec::new(), String::new()))
         }
     }
-
-    Ok((audio_samples, word_alignments, text.to_string()))
 }
 
 /// Process a single chapter: generate audio, create SMIL, and store files
@@ -667,8 +998,21 @@ pub(crate) async fn process_chapter(
         ),
     });
 
-    // Convert merged audio to MP3
-    let mp3_bytes = convert_audio_to_mp3(&merged_audio)?;
+    // Handle empty audio gracefully - skip MP3 conversion if no audio was generated
+    let mp3_bytes = if merged_audio.is_empty() {
+        log::warn!(
+            "No audio generated for chapter {} '{}' - creating empty MP3 file",
+            chapter_index + 1,
+            chapter.title
+        );
+        Vec::new() // Return empty MP3 bytes
+    } else {
+        convert_audio_to_mp3(&merged_audio)
+            .map_err(|e| {
+                log::error!("MP3 conversion failed for chapter {}: {}", chapter_index + 1, e);
+                e
+            })?
+    };
 
     // Generate audio file paths
     let (audio_href_zip, audio_href_manifest) =

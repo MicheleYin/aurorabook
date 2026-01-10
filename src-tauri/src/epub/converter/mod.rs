@@ -1,30 +1,30 @@
 // Module declarations
-pub mod chunking;
 pub mod audio;
-pub mod smil;
-pub mod opf;
-mod types;
-mod progress;
-mod extraction;
-mod processing;
-mod epub_builder;
+pub mod chunking;
 mod conversion;
+mod epub_builder;
+mod extraction;
+pub mod opf;
+mod processing;
+mod progress;
+pub mod smil;
+mod types;
 
 // Re-export public types and functions
-pub use chunking::*;
 pub use audio::*;
-pub use smil::*;
-pub use opf::*;
-pub use types::*;
-pub use progress::{emit_progress, get_parallelism};
-pub use progress::ProgressCallback;
-pub use extraction::extract_chapters;
+pub use chunking::*;
 pub use epub_builder::CachedEpubStructure;
+pub use extraction::extract_chapters;
+pub use opf::*;
+pub use progress::ProgressCallback;
+pub use progress::{emit_progress, get_parallelism};
+pub use smil::*;
+pub use types::*;
 
-use crate::utils::errors::{AppError, AppResult};
 use crate::epub::converter::conversion::convert_epub_core_with_durations;
-use std::sync::Arc;
+use crate::utils::errors::{AppError, AppResult};
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use tauri::AppHandle;
 
 /// Converts an EPUB file to an audiobook format with synchronized audio.
@@ -89,24 +89,24 @@ pub async fn convert_epub_to_audiobook(
     total_chapters_all: Option<usize>,
 ) -> AppResult<Vec<u8>> {
     use crate::utils::path_resolver::ResourcePathResolver;
-    
+
     // Create progress callback that emits to Tauri
     let app_progress = app.clone();
     let progress_callback: ProgressCallback = Box::new(move |progress| {
         emit_progress(&app_progress, progress);
     });
-    
+
     // Calculate total words for remaining chapters
     let total_words_remaining: usize = options.chapters.iter().map(|c| c.word_count).sum();
     let num_chapters = options.chapters.len();
-    
+
     // Use provided values if resuming, otherwise use defaults
     let words_processed_start = initial_words_processed.unwrap_or(0);
     let total_words_display = total_words_all.unwrap_or(total_words_remaining);
     let current_chapter_start = initial_chapter_index.unwrap_or(0);
     let total_chapters_display = total_chapters_all.unwrap_or(num_chapters);
     let num_chapters_for_call = num_chapters; // Store before options is moved
-    
+
     // Emit initial progress event when conversion starts (with restored values if resuming)
     progress_callback(ConversionProgress {
         current_chapter: current_chapter_start,
@@ -119,35 +119,42 @@ pub async fn convert_epub_to_audiobook(
             format!("Resuming conversion: {} chapters remaining ({} words), {} words already processed out of {} total", 
                 num_chapters, total_words_remaining, words_processed_start, total_words_display)
         } else {
-            format!("Starting conversion of {} chapters ({} words)...", num_chapters, total_words_remaining)
+            format!(
+                "Starting conversion of {} chapters ({} words)...",
+                num_chapters, total_words_remaining
+            )
         },
     });
-    
+
     // Find model files
     let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(Some(&app))?;
-    
+
     // Note: RuleBasedG2p (voirs-g2p) doesn't require resource directories
     // as it uses rule-based phonemization without model files
-    
-    let onnx_path_str = onnx_path.to_str()
+
+    let onnx_path_str = onnx_path
+        .to_str()
         .ok_or_else(|| AppError::Encoding("ONNX path contains invalid UTF-8".to_string()))?
         .to_string();
-    let voices_path_str = voices_path.to_str()
+    let voices_path_str = voices_path
+        .to_str()
         .ok_or_else(|| AppError::Encoding("Voices path contains invalid UTF-8".to_string()))?
         .to_string();
-    
-    // Create TTS engine pool with at most get_parallelism() instances, capped by num_chapters
+
+    // Create or get global TTS engine pool with round-robin distribution
+    // This ensures engines and phonemizers are only loaded once
     let num_instances = get_parallelism();
-    let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+    let engine_pool = crate::tts::engine::TtsEnginePool::get_or_create_global(
         &onnx_path_str,
         &voices_path_str,
         num_instances,
+        crate::tts::engine::TtsEngineType::Onnx,
     )
-    .await;
-    
-    log::info!("Created {} TTS engine instances for conversion (parallelism: {}, chapters: {})", 
+    .await?;
+
+    log::info!("Using global TTS engine pool with {} instances for conversion (parallelism: {}, chapters: {})", 
         num_instances, get_parallelism(), num_chapters);
-    
+
     // Emit progress event for engine creation (use provided values if resuming)
     progress_callback(ConversionProgress {
         current_chapter: initial_chapter_index.unwrap_or(0),
@@ -158,15 +165,14 @@ pub async fn convert_epub_to_audiobook(
         current_step: "initializing".to_string(),
         message: "TTS engine created - ready to process chapters".to_string(),
     });
-    
-    let engine_arc = std::sync::Arc::new(engine);
+
     let voice_id = options.voice_id.clone();
-    
+
     convert_epub_core_with_durations(
-        epub_data, 
-        options, 
-        progress_callback, 
-        engine_arc,
+        epub_data,
+        options,
+        progress_callback,
+        engine_pool,
         num_instances,
         voice_id,
         Some(app),
@@ -177,8 +183,8 @@ pub async fn convert_epub_to_audiobook(
         initial_chapter_index.unwrap_or(0),
         total_chapters_all.unwrap_or(num_chapters_for_call),
     )
-        .await
-        .map_err(|e| AppError::EpubParse(e.to_string()))
+    .await
+    .map_err(|e| AppError::EpubParse(e.to_string()))
 }
 
 /// Standalone version of `convert_epub_to_audiobook` for testing (no AppHandle required).
@@ -212,21 +218,23 @@ pub async fn convert_epub_to_audiobook_standalone(
     cancel_token: Option<Arc<AtomicBool>>,
 ) -> AppResult<Vec<u8>> {
     use crate::utils::path_resolver::ResourcePathResolver;
-    
+
     // Create console-based progress callback for testing
     let progress_callback: ProgressCallback = Box::new(|progress| {
-        println!("Progress: {} - {} ({}/{})", 
-            progress.current_step, 
+        println!(
+            "Progress: {} - {} ({}/{})",
+            progress.current_step,
             progress.message,
             progress.current_chapter,
-            progress.total_chapters);
+            progress.total_chapters
+        );
     });
-    
+
     // Calculate total words
     let total_words: usize = options.chapters.iter().map(|c| c.word_count).sum();
     let num_chapters = options.chapters.len();
     let num_chapters_for_call = num_chapters; // Store before options is moved
-    
+
     // Emit initial progress event when conversion starts
     progress_callback(ConversionProgress {
         current_chapter: 0,
@@ -235,37 +243,44 @@ pub async fn convert_epub_to_audiobook_standalone(
         total_words,
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
-        message: format!("Starting conversion of {} chapters ({} words)...", num_chapters, total_words),
+        message: format!(
+            "Starting conversion of {} chapters ({} words)...",
+            num_chapters, total_words
+        ),
     });
-    
+
     // Find model files (without AppHandle)
     let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(None)?;
-    
+
     // Note: RuleBasedG2p (voirs-g2p) doesn't require resource directories
     // as it uses rule-based phonemization without model files
-    
-    let onnx_path_str = onnx_path.to_str()
+
+    let onnx_path_str = onnx_path
+        .to_str()
         .ok_or_else(|| AppError::Encoding("ONNX path contains invalid UTF-8".to_string()))?
         .to_string();
-    let voices_path_str = voices_path.to_str()
+    let voices_path_str = voices_path
+        .to_str()
         .ok_or_else(|| AppError::Encoding("Voices path contains invalid UTF-8".to_string()))?
         .to_string();
-    
-    // Create TTS engine pool with at most get_parallelism() instances, capped by num_chapters
+
+    // Create or get global TTS engine pool with round-robin distribution
+    // This ensures engines and phonemizers are only loaded once
     let num_instances = get_parallelism();
-    let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+    let engine_pool = crate::tts::engine::TtsEnginePool::get_or_create_global(
         &onnx_path_str,
         &voices_path_str,
         num_instances,
+        crate::tts::engine::TtsEngineType::Onnx,
     )
-    .await;
-    
-    log::info!("Created {} TTS engine instances for conversion (parallelism: {}, chapters: {})", 
+    .await?;
+
+    log::info!("Using global TTS engine pool with {} instances for conversion (parallelism: {}, chapters: {})", 
         num_instances, get_parallelism(), num_chapters);
-    
+
     // Calculate total words for remaining chapters
     let total_words_remaining: usize = options.chapters.iter().map(|c| c.word_count).sum();
-    
+
     // Emit progress event for engine creation
     progress_callback(ConversionProgress {
         current_chapter: 0,
@@ -274,27 +289,26 @@ pub async fn convert_epub_to_audiobook_standalone(
         total_words: total_words_remaining,
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
-        message: "TTS engine created - ready to process chapters".to_string(),
+        message: "TTS engine pool ready - ready to process chapters".to_string(),
     });
-    
-    let engine_arc = std::sync::Arc::new(engine);
+
     let voice_id = options.voice_id.clone();
-    
+
     convert_epub_core_with_durations(
-        epub_data, 
-        options, 
-        progress_callback, 
-        engine_arc,
+        epub_data,
+        options,
+        progress_callback,
+        engine_pool,
         num_instances,
         voice_id,
-        None, // No AppHandle for standalone version
-        None, // No source_path for standalone version
-        cancel_token, // Pass cancellation token
-        0, // Initial words processed (standalone version starts fresh)
+        None,                  // No AppHandle for standalone version
+        None,                  // No source_path for standalone version
+        cancel_token,          // Pass cancellation token
+        0,                     // Initial words processed (standalone version starts fresh)
         total_words_remaining, // Total words across all chapters
-        0, // Initial chapter index
+        0,                     // Initial chapter index
         num_chapters_for_call, // Total chapters across all
     )
-        .await
-        .map_err(|e| AppError::EpubParse(e.to_string()))
+    .await
+    .map_err(|e| AppError::EpubParse(e.to_string()))
 }

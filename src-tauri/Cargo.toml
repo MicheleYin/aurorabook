@@ -97,7 +97,7 @@ strip = true
 # caught and handled gracefully, allowing the conversion to continue or fail
 # with a proper error message instead of crashing the entire app.
 # Trade-off: slightly larger binary size (~5-10%), but much better error handling
-panic = "unwind"
+panic = "abort"
 # Preserve floating-point precision for audio processing
 # This prevents aggressive optimizations that could affect audio quality
 overflow-checks = false

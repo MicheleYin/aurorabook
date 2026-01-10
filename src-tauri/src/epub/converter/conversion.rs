@@ -7,6 +7,7 @@ use crate::epub::converter::epub_builder::initialize_conversion_context;
 use crate::epub::converter::processing::{process_chapter, resolve_chapter_path};
 use crate::epub::converter::chunking::extract_all_sentences;
 use crate::epub::converter::epub_builder::{merge_chapter_result, rebuild_and_save_epub, build_final_epub};
+use crate::tts::engine::TtsEnginePool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use anyhow::Result as AnyhowResult;
@@ -47,7 +48,7 @@ pub(crate) async fn convert_epub_core_with_durations(
     epub_data: Vec<u8>,
     options: ConversionOptions,
     progress_callback: ProgressCallback,
-    engine: Arc<kokoros::tts::koko::TTSKokoParallel>,
+    engine_pool: Arc<TtsEnginePool>,
     num_instances: usize,
     voice_id: String,
     app: Option<AppHandle>,
@@ -152,13 +153,18 @@ pub(crate) async fn convert_epub_core_with_durations(
             message: format!("Processing chapter {}: {} ({} words)", initial_chapter_index + chapter_index + 1, chapter.title, chapter.word_count),
         });
         
+        // Get the ONNX engine from the pool
+        let engine = engine_pool.get_onnx_engine().ok_or_else(|| {
+            anyhow::anyhow!("ONNX engine not initialized in engine pool")
+        })?;
+        
         // Process the chapter with atomic counter for progress tracking
         // HTML elements within the chapter will be processed in parallel
         let result = process_chapter(
             chapter,
             chapter_index,
             &base_path,
-            &engine,
+            engine,
             worker_id,
             &voice_id,
             &*progress_callback,
