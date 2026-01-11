@@ -14,6 +14,29 @@ BUILD_CONFIG="Release"
 ONNXRUNTIME_DIR="${ONNXRUNTIME_DIR:-../onnxruntime}"
 BUILD_DIR="${ONNXRUNTIME_DIR}/build/iOS"
 
+# Use Python 3.11 if available (ONNX Runtime supports 3.8-3.12, Python 3.14 may have issues)
+# build.sh calls python3 directly, so we need to ensure python3 points to 3.11
+PYTHON3_PATH=""
+if command -v python3.11 &> /dev/null; then
+    PYTHON3_PATH=$(which python3.11)
+    export Python_EXECUTABLE="$PYTHON3_PATH"
+    export PYTHON_EXECUTABLE="$PYTHON3_PATH"
+    # Prepend Python 3.11's directory to PATH so 'python3' resolves to 3.11
+    export PATH="$(dirname "$PYTHON3_PATH"):$PATH"
+    echo "✅ Using Python 3.11 for build compatibility"
+    echo "   Python path: $PYTHON3_PATH"
+elif command -v python3.12 &> /dev/null; then
+    PYTHON3_PATH=$(which python3.12)
+    export Python_EXECUTABLE="$PYTHON3_PATH"
+    export PYTHON_EXECUTABLE="$PYTHON3_PATH"
+    export PATH="$(dirname "$PYTHON3_PATH"):$PATH"
+    echo "✅ Using Python 3.12 for build compatibility"
+    echo "   Python path: $PYTHON3_PATH"
+else
+    echo "⚠️  Using default Python (may be too new - ONNX Runtime supports Python 3.8-3.12)"
+    echo "   Consider installing Python 3.11 or 3.12: brew install python@3.11"
+fi
+
 # Check prerequisites
 echo ""
 echo "📋 Checking prerequisites..."
@@ -62,11 +85,29 @@ if [ ! -f "./build.sh" ]; then
     exit 1
 fi
 
+# Clean up build directory to avoid database lock issues
+echo ""
+echo "🧹 Cleaning build directory to avoid lock issues..."
+if [ -d "$BUILD_DIR" ]; then
+    # Remove Xcode build databases and lock files
+    find "$BUILD_DIR" -name "build.db" -type f -delete 2>/dev/null || true
+    find "$BUILD_DIR" -name "*.xcbuilddata" -type f -delete 2>/dev/null || true
+    find "$BUILD_DIR" -name "XCBuildData" -type d -exec rm -rf {} + 2>/dev/null || true
+    # Remove CMake cache to force fresh configuration
+    find "$BUILD_DIR" -name "CMakeCache.txt" -type f -delete 2>/dev/null || true
+    find "$BUILD_DIR" -name "CMakeFiles" -type d -exec rm -rf {} + 2>/dev/null || true
+    echo "✅ Build directory cleaned"
+fi
+
 echo ""
 echo "🏗️  Building ONNX Runtime for iOS device (arm64)"
 echo "   Config: $BUILD_CONFIG"
 echo "   iOS Deployment Target: $IOS_DEPLOYMENT_TARGET"
-echo "   CoreML EP: Enabled"
+echo "   CoreML EP: Disabled (coremltools build issue - will use CPU EP)"
+echo "   KleidiAI: Disabled (--no_kleidiai) to avoid missing kai_* symbols"
+echo "   XNNPACK: Enabled (--use_xnnpack) for optimized performance"
+echo "   Python: ${Python_EXECUTABLE:-$(which python3)}"
+echo "   Note: This build will take 30-60 minutes"
 echo ""
 
 # Function to patch CMakeLists.txt files for dependencies with old CMake requirements
@@ -144,6 +185,14 @@ while [ $BUILD_ATTEMPTS -lt $MAX_ATTEMPTS ]; do
     fi
     
     # Try the build
+    # Note: --use_coreml is disabled temporarily due to coremltools build issues
+    # You can enable it later once coremltools CMake issues are resolved
+    # --no_kleidiai: Disable KleidiAI to avoid missing kai_* symbol errors
+    # --use_xnnpack: Use XNNPACK for optimized performance (recommended for iOS)
+    # --skip_tests: Skip tests to speed up build
+    # Note: The build script may force BUILD_SHARED_LIB=ON for iOS, but we need static libs
+    # We'll override it and disable installation to avoid CMake export errors
+    # IMPORTANT: Pass cmake_extra_defines as separate arguments, not semicolon-separated
     if ./build.sh \
         --config "$BUILD_CONFIG" \
         --use_xcode \
@@ -151,7 +200,12 @@ while [ $BUILD_ATTEMPTS -lt $MAX_ATTEMPTS ]; do
         --apple_sysroot iphoneos \
         --osx_arch arm64 \
         --apple_deploy_target "$IOS_DEPLOYMENT_TARGET" \
-        --use_coreml \
+        --no_kleidiai \
+        --use_xnnpack \
+        --skip_tests \
+        --cmake_extra_defines \
+        "onnxruntime_BUILD_SHARED_LIB=OFF" \
+        "CMAKE_SKIP_INSTALL_RULES=ON" \
         --parallel; then
         echo ""
         echo "✅ Build succeeded!"

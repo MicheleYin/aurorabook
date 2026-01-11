@@ -11,6 +11,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+cc = "1.0"
 
 [dependencies]
 # Tauri
@@ -83,6 +84,7 @@ tempfile = "3.8"
 
 [patch.crates-io]
 audiopus_sys = { path = "../patches/audiopus_sys" }
+ort-sys = { path = "../patches/ort-sys/ort-sys-2.0.0-rc.10" }
 # mp3lame-sys = { path = "../patches/mp3lame-sys" }
 
 
