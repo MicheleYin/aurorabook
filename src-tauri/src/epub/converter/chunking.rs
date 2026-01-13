@@ -88,6 +88,9 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
     // Single source of truth: is a span currently open in the output?
     let mut span_is_open = false;
     
+    // Track if we are inside the body element
+    let mut in_body = false;
+    
     // Track HTML element stack (for validation, not span management)
     let mut element_stack: Vec<String> = Vec::new();
     
@@ -105,6 +108,9 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                 // Only push to stack if not self-closing
                 if !is_self_closing {
                     let element_name = local.as_str().to_string();
+                    if element_name.eq_ignore_ascii_case("body") {
+                        in_body = true;
+                    }
                     element_stack.push(element_name);
                 }
                 
@@ -130,7 +136,10 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                     
                     // Find and remove matching opening tag from stack
                     if let Some(stack_pos) = element_stack.iter().rposition(|name| name.eq_ignore_ascii_case(closing_name)) {
-                        element_stack.remove(stack_pos);
+                        let name = element_stack.remove(stack_pos);
+                        if name.eq_ignore_ascii_case("body") {
+                            in_body = false;
+                        }
                     }
                 }
                 
@@ -146,8 +155,8 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                 // Output HTML before this text token
                 output.push_str(&html[html_pos..text_start]);
                 
-                // Only process spans for content in the body (after byte 400)
-                if text_start > 400 {
+                // Only process spans for content in the body
+                if in_body {
                     // Find all sentences that overlap with this text token, sorted by start position
                     let mut relevant_sentences: Vec<(usize, &SentenceWithSpan)> = sentences_with_spans
                         .iter()
@@ -195,8 +204,10 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                                 span_is_open = false;
                             }
                             
-                            // Open new sentence span if it starts in this token
-                            if span_data.start_byte >= text_start {
+                            // Open sentence span:
+                            // 1. If it's newly starting in this token
+                            // 2. OR if it started before but we aren't currently in an open span (continuity)
+                            if !span_is_open {
                                 let span_id = format!("f{:06}", sent_idx + 1);
                                 output.push_str(&format!(r#"<span id="{}">"#, span_id));
                                 span_is_open = true;
@@ -282,6 +293,15 @@ struct TextSegment {
     combined_start: usize,
     /// End byte position in the combined text
     combined_end: usize,
+    /// ID of the block this segment belongs to
+    block_id: usize,
+}
+
+fn is_inline_tag(tag: &str) -> bool {
+    match tag.to_lowercase().as_str() {
+        "a" | "b" | "i" | "em" | "strong" | "span" | "sub" | "sup" | "u" | "code" | "mark" | "cite" | "q" | "br" | "small" | "big" | "font" => true,
+        _ => false
+    }
 }
 
 pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
@@ -293,15 +313,22 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
     let mut body_depth = 0;
     let mut combined_byte_pos = 0;
     
+    let mut current_block_id = 0;
+    
     for token in Tokenizer::from(html) {
         match token {
-            Ok(Token::ElementStart { local, .. }) => {
+            Ok(Token::ElementStart { local, span, .. }) => {
                 let local_str = local.as_str();
                 if local_str.eq_ignore_ascii_case("body") {
                     in_body = true;
                     body_depth = 1;
                 } else if in_body {
                     body_depth += 1;
+                }
+
+                // If it's a block tag and we're in the body, increment block ID
+                if in_body && !is_inline_tag(local_str) {
+                    current_block_id += 1;
                 }
             }
             Ok(Token::ElementEnd { end, .. }) => {
@@ -314,6 +341,11 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
                             body_depth = 0;
                         } else if in_body && body_depth > 1 {
                             body_depth -= 1;
+                        }
+
+                        // If it's a block tag and we're in the body, increment block ID
+                        if in_body && !is_inline_tag(local_str) {
+                            current_block_id += 1;
                         }
                     }
                     _ => {
@@ -336,6 +368,7 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
                         html_end,
                         combined_start: combined_byte_pos,
                         combined_end: combined_byte_pos + text_len,
+                        block_id: current_block_id,
                     });
                     
                     combined_byte_pos += text_len;
@@ -352,20 +385,15 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
         return Ok(Vec::new());
     }
     
-    // Combine all text segments
-    let all_text: String = text_segments.iter().map(|seg| seg.text.as_str()).collect();
-    
-    // Trim and find sentences
-    let trimmed_text = all_text.trim();
-    if trimmed_text.is_empty() {
-        return Ok(Vec::new());
-    }
-    
-    let trim_offset = all_text.find(trimmed_text).unwrap_or(0);
-    
     // Helper: map a byte position in combined text to HTML byte position
-    let map_to_html = |combined_pos: usize| -> Option<usize> {
-        for seg in &text_segments {
+    let map_to_html = |combined_pos: usize, segments: &[TextSegment]| -> Option<usize> {
+        if segments.is_empty() { return None; }
+        // Handle exact end of the last segment
+        if combined_pos == segments.last().unwrap().combined_end {
+            return Some(segments.last().unwrap().html_end);
+        }
+        
+        for seg in segments {
             if combined_pos >= seg.combined_start && combined_pos < seg.combined_end {
                 let offset_in_seg = combined_pos - seg.combined_start;
                 return Some(seg.html_start + offset_in_seg);
@@ -374,59 +402,112 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
         None
     };
     
-    // Find sentences in trimmed text
-    let sentence_matches: Vec<(usize, usize, &str)> = sentence_pattern
-        .find_iter(trimmed_text)
-        .map(|m| {
-            let start = m.start(); // Byte position in trimmed_text
-            let end = m.end();     // Byte position in trimmed_text
-            let text = m.as_str().trim();
-            (start, end, text)
-        })
-        .filter(|(_, _, text)| !text.is_empty())
-        .collect();
-    
-    let all_sentences: Vec<SentenceWithSpan> = if sentence_matches.is_empty() {
-        // Treat whole text as one sentence
-        let start_combined = trim_offset;
-        let end_combined = trim_offset + trimmed_text.len();
-        let start_byte = map_to_html(start_combined)
-            .or_else(|| text_segments.first().map(|s| s.html_start))
-            .unwrap_or(0);
-        let end_byte = map_to_html(end_combined)
-            .or_else(|| text_segments.last().map(|s| s.html_end))
-            .unwrap_or(html.len());
-        vec![SentenceWithSpan {
-            text: trimmed_text.to_string(),
-            start_byte,
-            end_byte,
-        }]
-    } else {
-        sentence_matches.into_iter().map(|(sent_start, sent_end, text)| {
-            // Map from trimmed_text positions to combined_text positions
-            let start_combined = trim_offset + sent_start;
-            let end_combined = trim_offset + sent_end;
-            
-            // Map to HTML positions
-            let start_byte = map_to_html(start_combined)
-                .or_else(|| text_segments.first().map(|s| s.html_start))
-                .unwrap_or(0);
-            let end_byte = map_to_html(end_combined)
-                .or_else(|| text_segments.last().map(|s| s.html_end))
-                .unwrap_or(html.len());
-            
-            SentenceWithSpan {
-                text: text.to_string(),
+    // Group segments by block_id and process each block separately
+    let mut all_sentences: Vec<SentenceWithSpan> = Vec::new();
+    if text_segments.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut start_idx = 0;
+    while start_idx < text_segments.len() {
+        let block_id = text_segments[start_idx].block_id;
+        let mut end_idx = start_idx + 1;
+        while end_idx < text_segments.len() && text_segments[end_idx].block_id == block_id {
+            end_idx += 1;
+        }
+
+        // text_segments[start_idx..end_idx] is the current block
+        let block_segments = &text_segments[start_idx..end_idx];
+        let block_text: String = block_segments.iter().map(|s| s.text.as_str()).collect();
+        let trimmed_block = block_text.trim();
+
+        if !trimmed_block.is_empty() {
+            let block_offset = block_text.find(trimmed_block).unwrap_or(0);
+            let mut last_match_end = 0;
+
+            for m in sentence_pattern.find_iter(trimmed_block) {
+                // Gap before match
+                let gap_text = &trimmed_block[last_match_end..m.start()];
+                let trimmed_gap = gap_text.trim();
+                if !trimmed_gap.is_empty() {
+                    let start_in_block = last_match_end + gap_text.find(trimmed_gap).unwrap_or(0);
+                    let start_combined = block_segments[0].combined_start + block_offset + start_in_block;
+                    let end_combined = start_combined + trimmed_gap.len();
+                    
+                    let start_byte = map_to_html(start_combined, block_segments).unwrap_or(0);
+                    let end_byte = map_to_html(end_combined, block_segments).unwrap_or(html.len());
+                    
+                    all_sentences.push(SentenceWithSpan {
+                        text: trimmed_gap.to_string(),
+                        start_byte,
+                        end_byte,
+                    });
+                }
+
+                // The match itself
+                let match_text = m.as_str();
+                let trimmed_match = match_text.trim();
+                if !trimmed_match.is_empty() {
+                    let start_in_block = m.start() + match_text.find(trimmed_match).unwrap_or(0);
+                    let start_combined = block_segments[0].combined_start + block_offset + start_in_block;
+                    let end_combined = start_combined + trimmed_match.len();
+                    
+                    let start_byte = map_to_html(start_combined, block_segments).unwrap_or(0);
+                    let end_byte = map_to_html(end_combined, block_segments).unwrap_or(html.len());
+                    
+                    all_sentences.push(SentenceWithSpan {
+                        text: trimmed_match.to_string(),
+                        start_byte,
+                        end_byte,
+                    });
+                }
+                last_match_end = m.end();
+            }
+
+            // Remaining text in block
+            let remaining_text = &trimmed_block[last_match_end..];
+            let trimmed_remaining = remaining_text.trim();
+            if !trimmed_remaining.is_empty() {
+                let start_in_block = last_match_end + remaining_text.find(trimmed_remaining).unwrap_or(0);
+                let start_combined = block_segments[0].combined_start + block_offset + start_in_block;
+                let end_combined = start_combined + trimmed_remaining.len();
+                
+                let start_byte = map_to_html(start_combined, block_segments).unwrap_or(0);
+                let end_byte = map_to_html(end_combined, block_segments).unwrap_or(html.len());
+                
+                all_sentences.push(SentenceWithSpan {
+                    text: trimmed_remaining.to_string(),
+                    start_byte,
+                    end_byte,
+                });
+            }
+        }
+
+        start_idx = end_idx;
+    }
+
+    if all_sentences.is_empty() {
+        // Find the full trimmed text for a final fallback if nothing was extracted from blocks
+        let all_text: String = text_segments.iter().map(|seg| seg.text.as_str()).collect();
+        let trimmed_all = all_text.trim();
+        if !trimmed_all.is_empty() {
+            let trim_offset = all_text.find(trimmed_all).unwrap_or(0);
+            let start_byte = map_to_html(trim_offset, &text_segments).unwrap_or(0);
+            let end_byte = map_to_html(trim_offset + trimmed_all.len(), &text_segments).unwrap_or(html.len());
+            all_sentences.push(SentenceWithSpan {
+                text: trimmed_all.to_string(),
                 start_byte,
                 end_byte,
-            }
-        }).collect()
-    };
+            });
+        }
+    }
     
     log::debug!("Extracted {} sentences from HTML body", all_sentences.len());
     
     Ok(all_sentences)
 }
+
+
 
 
 
