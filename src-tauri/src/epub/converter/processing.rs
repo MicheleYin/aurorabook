@@ -173,24 +173,6 @@ fn clean_text_for_tts(text: &str) -> String {
     cleaned = cleaned.replace('\r', " ");
     cleaned = cleaned.replace('\t', " ");
     
-    // Convert to lowercase (normalization)
-    cleaned = cleaned.to_lowercase();
-    
-    // Remove non-alphabetic, non-numeric characters except punctuation and spaces
-    // Keep: letters, numbers, whitespace, and common punctuation
-    // Keep common punctuation: . , ! ? : ; - ( ) [ ] { } " ' / \ & * @ # $ % ^ _ = + | ~ ` < >
-    cleaned = cleaned
-        .chars()
-        .filter(|c| {
-            c.is_alphabetic() 
-            || c.is_ascii_digit()  // Keep numbers so they can be converted to words
-            || c.is_whitespace()
-            || matches!(c, 
-                '.' | ',' | '!' | '?' | ':' | ';' 
-            )
-        })
-        .collect();
-    
     // Replace multiple spaces with single space
     while cleaned.contains("  ") {
         cleaned = cleaned.replace("  ", " ");
@@ -208,35 +190,28 @@ fn split_long_sentence(text: &str) -> Vec<String> {
         return Vec::new();
     }
 
-    // Check if splitting is needed
-    let word_count = count_words(&text);
+    // Check if splitting is needed based on character count
     let char_count = text.chars().count();
-
-    // Always enforce MAX_SENTENCE_WORDS limit (10 words)
-    let max_words = MAX_SENTENCE_WORDS;
     let max_length = MAX_SENTENCE_LENGTH;
 
     // If text is within limits, return as single chunk
-    if word_count <= max_words && char_count <= max_length {
+    if char_count <= max_length {
         return vec![text];
     }
 
     log::debug!(
-        "Splitting sentence: {} chars, {} words (max: {} chars, {} words per chunk)",
+        "Splitting long sentence: {} chars (max: {} chars per chunk)",
         char_count,
-        word_count,
-        max_length,
-        max_words
+        max_length
     );
 
-    // Split by words to enforce the 10-word limit
-    let chunks = split_by_words(&text, max_length, max_words);
+    // Split by words to respect max_length while keeping words intact
+    let chunks = split_by_words(&text, max_length, MAX_SENTENCE_WORDS);
 
     log::debug!(
-        "Split sentence into {} chunks (original: {} chars, {} words)",
+        "Split sentence into {} chunks (original: {} chars)",
         chunks.len(),
-        char_count,
-        word_count
+        char_count
     );
 
     chunks

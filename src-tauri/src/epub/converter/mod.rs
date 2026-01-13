@@ -129,8 +129,8 @@ pub async fn convert_epub_to_audiobook(
     // Find model files
     let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(Some(&app))?;
 
-    // Note: RuleBasedG2p (voirs-g2p) doesn't require resource directories
-    // as it uses rule-based phonemization without model files
+    // Note: Misaki G2P (misaki-rs) is self-contained and doesn't require 
+    // external model files or resource directories.
 
     let onnx_path_str = onnx_path
         .to_str()

@@ -82,14 +82,14 @@ pub fn run() {
                         log::info!("{}", exists_msg);
                         logging::log("info", &exists_msg, None);
                         
-                        // Verify mini-bart-g2p model is available
-                        let mini_bart_path = resource_dir.join("mini-bart-g2p");
-                        if mini_bart_path.exists() {
-                            let model_msg = format!("✓ Found mini-bart-g2p model at: {}", mini_bart_path.display());
+                        // Verify kokoro model is available
+                        let kokoro_path = resource_dir.join("kokoro-v1.0.onnx");
+                        if kokoro_path.exists() {
+                            let model_msg = format!("✓ Found kokoro-v1.0.onnx model at: {}", kokoro_path.display());
                             log::info!("{}", model_msg);
                             logging::log("info", &model_msg, None);
                         } else {
-                            let warn_msg = format!("⚠ mini-bart-g2p model not found at: {:?}", mini_bart_path);
+                            let warn_msg = format!("⚠ kokoro-v1.0.onnx model not found at: {:?}", kokoro_path);
                             log::warn!("{}", warn_msg);
                             logging::log("warn", &warn_msg, None);
                         }

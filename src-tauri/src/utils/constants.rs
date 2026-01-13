@@ -40,11 +40,11 @@ pub const MAX_SENTENCE_LENGTH: usize = 1000;
 
 /// Maximum sentence length in words before splitting
 /// Enforced strictly: sentences with more than this will be split into multiple chunks
-pub const MAX_SENTENCE_WORDS: usize = 10;
+pub const MAX_SENTENCE_WORDS: usize = 1000;
 
 /// Maximum chunk size for aggressive splitting when phonemizer fails
 /// Used as a fallback when initial processing fails
 pub const MAX_CHUNK_LENGTH: usize = 500;
 
 /// Maximum chunk words for aggressive splitting
-pub const MAX_CHUNK_WORDS: usize = 10;
+pub const MAX_CHUNK_WORDS: usize = 1000;

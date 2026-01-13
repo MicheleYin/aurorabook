@@ -130,8 +130,8 @@ pub async fn generate_tts_cached(
         .transpose()?
         .unwrap_or(TtsEngineType::Onnx);
 
-    // Note: RuleBasedG2p (voirs-g2p) doesn't require resource directories
-    // as it uses rule-based phonemization without model files
+    // Note: Misaki G2P (misaki-rs) is self-contained and doesn't require 
+    // external model files or resource directories.
 
     let audio_samples = match engine_type {
         TtsEngineType::Onnx => {
