@@ -360,9 +360,7 @@ pub async fn stop_audio_server() -> Result<(), Box<dyn std::error::Error + Send 
 
     if let Some(tx) = shutdown_tx {
         if let Err(_e) = tx.send(()) {
-            log::warn!(
-                "Failed to send shutdown signal (server may have already stopped)"
-            );
+            log::warn!("Failed to send shutdown signal (server may have already stopped)");
         } else {
             log::info!("Shutdown signal sent to audio streaming server");
             // Give the server a moment to shut down gracefully
