@@ -136,7 +136,7 @@ pub fn run() {
                 e
             })?;
             
-            // Start audio streaming HTTP server in the background
+            // Start audio streaming HTTP server tied to app lifecycle
             // Use the runtime handle to spawn the task
             let app_handle_for_server = app.handle().clone();
             let handle = rt.handle().clone();
@@ -145,10 +145,10 @@ pub fn run() {
             handle.spawn(async move {
                 // Small delay to ensure everything is initialized
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                log::info!("Attempting to start audio streaming server...");
+                log::info!("Starting audio streaming server (tied to app lifecycle)...");
                 match book_service::audio_stream::start_audio_server(app_handle_for_server).await {
                     Ok(_) => {
-                        log::info!("Audio streaming server startup completed");
+                        log::info!("Audio streaming server started successfully");
                     }
                     Err(e) => {
                         log::error!("Failed to start audio streaming server: {}", e);
@@ -251,10 +251,21 @@ pub fn run() {
                         }
                     }
                     
-                    // Add your cleanup code here
-                    // For example:
-                    // - book_service::database::close_connection(&app_handle).await;
-                    // - book_service::audio_stream::stop_audio_server().await;
+                    // Stop the audio streaming server gracefully
+                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                        handle.spawn(async move {
+                            if let Err(e) = book_service::audio_stream::stop_audio_server().await {
+                                log::error!("Failed to stop audio streaming server: {}", e);
+                            } else {
+                                log::info!("Audio streaming server stopped gracefully");
+                            }
+                        });
+                        // Give the server a moment to shut down
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                    } else {
+                        // Fallback: try to stop synchronously if no runtime handle
+                        log::warn!("No tokio runtime handle available, server may not shut down gracefully");
+                    }
                     
                     log::info!("Cleanup completed, app will now close");
                 }
@@ -262,7 +273,7 @@ pub fn run() {
                 // Handle app lifecycle events (especially important on iOS)
                 #[cfg(target_os = "ios")]
                 tauri::RunEvent::Ready => {
-                    log::info!("App is ready, ensuring audio server is running...");
+                    log::info!("App is ready, ensuring audio server is running (tied to app lifecycle)...");
                     let app_handle_clone = app_handle.clone();
                     // Use Tauri's runtime if available
                     if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -281,7 +292,7 @@ pub fn run() {
                 
                 #[cfg(target_os = "ios")]
                 tauri::RunEvent::Resumed => {
-                    log::info!("App resumed from background, restarting audio server...");
+                    log::info!("App resumed from background, restarting audio server (tied to app lifecycle)...");
                     let app_handle_clone = app_handle.clone();
                     // Always restart server when app resumes on iOS
                     // iOS may have killed the server when app was backgrounded
