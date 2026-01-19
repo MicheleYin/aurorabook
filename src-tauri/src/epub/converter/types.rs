@@ -102,6 +102,8 @@ pub(crate) struct ConversionContext {
     pub original_files: std::collections::HashMap<String, Vec<u8>>,
     pub audio_files: Vec<(usize, String)>,
     pub smil_files: Vec<(usize, String)>,
+    pub vtt_files: Vec<(usize, String)>,
+    pub chapter_data: Vec<(usize, String, Vec<kokoros::tts::koko::WordAlignment>)>, // (index, title, alignments)
 }
 
 /// Result of processing a single chapter
@@ -110,6 +112,7 @@ pub(crate) struct ChapterProcessResult {
     pub files: std::collections::HashMap<String, Vec<u8>>,
     pub audio_file: (usize, String),
     pub smil_file: (usize, String),
+    pub vtt_file: (usize, String),
+    pub word_alignments: Vec<kokoros::tts::koko::WordAlignment>,
     pub words_processed: usize,
 }
-

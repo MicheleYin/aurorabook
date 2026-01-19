@@ -163,21 +163,21 @@ pub(crate) fn resolve_chapter_path(href: &str, base_path: &str) -> String {
 /// Number conversion will happen during normalization in the phonemizer
 fn clean_text_for_tts(text: &str) -> String {
     let mut cleaned = text.trim().to_string();
-    
+
     // Replace multiple newlines with single space
     cleaned = cleaned.replace("\n\n\n", " ");
     cleaned = cleaned.replace("\n\n", " ");
     cleaned = cleaned.replace('\n', " ");
-    
+
     // Replace tabs and carriage returns with spaces
     cleaned = cleaned.replace('\r', " ");
     cleaned = cleaned.replace('\t', " ");
-    
+
     // Replace multiple spaces with single space
     while cleaned.contains("  ") {
         cleaned = cleaned.replace("  ", " ");
     }
-    
+
     cleaned.trim().to_string()
 }
 
@@ -425,56 +425,65 @@ async fn process_single_chunk(
         Err(e) => {
             let error_str = e.to_string();
             let is_no_tokens_error = error_str.contains("No tokens generated");
-            
+
             if is_no_tokens_error {
                 // Phonemization failed - try splitting into smaller chunks
                 let char_count = text.chars().count();
                 let word_count = count_words(&text);
-                
+
                 log::warn!(
                     "Phonemization failed for sentence {} chunk {} ({} chars, {} words), attempting aggressive split",
                     sentence_index, chunk_index, char_count, word_count
                 );
-                
+
                 // Split into much smaller chunks and process each
                 let smaller_chunks = split_by_words(&text, MAX_CHUNK_LENGTH, MAX_CHUNK_WORDS);
-                
+
                 if smaller_chunks.len() > 1 {
                     log::info!(
                         "Split failed chunk into {} smaller chunks for retry",
                         smaller_chunks.len()
                     );
-                    
+
                     // Process each smaller chunk and merge (without recursion - use direct processing)
                     let mut all_audio = Vec::new();
                     let mut all_alignments = Vec::new();
                     let mut cumulative_duration = 0.0;
-                    
+
                     for (sub_idx, sub_chunk) in smaller_chunks.iter().enumerate() {
                         check_cancellation!(cancel_token);
-                        
+
                         // Use direct processing to avoid recursion
                         match process_chunk_direct(sub_chunk, engine, worker_id, voice_id).await {
                             Ok(audio) => {
                                 if !audio.is_empty() {
                                     // Calculate alignments for this sub-chunk
-                                    let words: Vec<&str> = sub_chunk.split_whitespace().filter(|s| !s.is_empty()).collect();
-                                    let audio_duration_sec = audio.len() as f32 / SAMPLE_RATE as f32;
-                                    
+                                    let words: Vec<&str> = sub_chunk
+                                        .split_whitespace()
+                                        .filter(|s| !s.is_empty())
+                                        .collect();
+                                    let audio_duration_sec =
+                                        audio.len() as f32 / SAMPLE_RATE as f32;
+
                                     let mut sub_alignments = Vec::new();
                                     if !words.is_empty() {
-                                        let duration_per_word = audio_duration_sec / words.len() as f32;
+                                        let duration_per_word =
+                                            audio_duration_sec / words.len() as f32;
                                         for (idx, word) in words.iter().enumerate() {
-                                            let start_sec = idx as f32 * duration_per_word + cumulative_duration;
-                                            let end_sec = (idx + 1) as f32 * duration_per_word + cumulative_duration;
-                                            sub_alignments.push(kokoros::tts::koko::WordAlignment {
-                                                word: word.to_string(),
-                                                start_sec,
-                                                end_sec,
-                                            });
+                                            let start_sec = idx as f32 * duration_per_word
+                                                + cumulative_duration;
+                                            let end_sec = (idx + 1) as f32 * duration_per_word
+                                                + cumulative_duration;
+                                            sub_alignments.push(
+                                                kokoros::tts::koko::WordAlignment {
+                                                    word: word.to_string(),
+                                                    start_sec,
+                                                    end_sec,
+                                                },
+                                            );
                                         }
                                     }
-                                    
+
                                     all_alignments.extend(sub_alignments);
                                     all_audio.extend_from_slice(&audio);
                                     cumulative_duration += audio_duration_sec;
@@ -489,12 +498,12 @@ async fn process_single_chunk(
                             }
                         }
                     }
-                    
+
                     if !all_audio.is_empty() {
                         return Ok((all_audio, all_alignments, text));
                     }
                 }
-                
+
                 // If we get here, phonemization failed completely (even after splitting)
                 // Return empty audio instead of crashing - this allows conversion to continue
                 log::warn!(
@@ -507,7 +516,7 @@ async fn process_single_chunk(
                 );
                 return Ok((Vec::new(), Vec::new(), String::new()));
             }
-            
+
             // For other errors (not "No tokens generated"), still return error but log it
             log::error!(
                 "TTS generation failed for sentence {} chunk {}: {}. Text: '{}'",
@@ -516,7 +525,7 @@ async fn process_single_chunk(
                 e,
                 text.chars().take(100).collect::<String>()
             );
-            
+
             // For production safety, return empty audio instead of crashing on unknown errors
             // This prevents the entire conversion from failing due to a single chunk
             log::warn!(
@@ -615,6 +624,8 @@ pub(crate) async fn process_chapter(
             files,
             audio_file: (chapter_index, String::new()),
             smil_file: (chapter_index, String::new()),
+            vtt_file: (chapter_index, String::new()),
+            word_alignments: Vec::new(),
             words_processed: chapter.word_count,
         });
     }
@@ -982,11 +993,14 @@ pub(crate) async fn process_chapter(
         );
         Vec::new() // Return empty MP3 bytes
     } else {
-        convert_audio_to_mp3(&merged_audio)
-            .map_err(|e| {
-                log::error!("MP3 conversion failed for chapter {}: {}", chapter_index + 1, e);
+        convert_audio_to_mp3(&merged_audio).map_err(|e| {
+            log::error!(
+                "MP3 conversion failed for chapter {}: {}",
+                chapter_index + 1,
                 e
-            })?
+            );
+            e
+        })?
     };
 
     // Generate audio file paths
@@ -1065,6 +1079,31 @@ pub(crate) async fn process_chapter(
         smil_href_manifest
     );
 
+    // Generate VTT file for this chapter (only if we have audio/alignments)
+    let (vtt_href_zip, vtt_href_manifest) =
+        if !all_word_alignments.is_empty() && !audio_href_manifest.is_empty() {
+            use crate::epub::converter::vtt::generate_chapter_vtt;
+            let vtt_content = generate_chapter_vtt(&all_word_alignments, &chapter.title);
+
+            // Generate VTT file path (similar to audio file path)
+            let vtt_zip = audio_href_zip.replace(".mp3", ".vtt");
+            let vtt_manifest = audio_href_manifest.replace(".mp3", ".vtt");
+
+            files.insert(vtt_zip.clone(), vtt_content.into_bytes());
+            log::debug!(
+                "Generated VTT file: chapter_index={}, href={}",
+                chapter_index,
+                vtt_manifest
+            );
+            (vtt_zip, vtt_manifest)
+        } else {
+            log::debug!(
+                "Skipping VTT generation for chapter {}: no audio/alignments",
+                chapter_index
+            );
+            (String::new(), String::new())
+        };
+
     // Use chapter.word_count from ingestion to avoid double-counting nested elements
     // This matches the word count calculated during ingestion
     let actual_words_processed = chapter.word_count;
@@ -1074,6 +1113,8 @@ pub(crate) async fn process_chapter(
         files,
         audio_file: (chapter_index, audio_href_manifest),
         smil_file: (chapter_index, smil_href_manifest),
+        vtt_file: (chapter_index, vtt_href_manifest),
+        word_alignments: all_word_alignments,
         words_processed: actual_words_processed,
     })
 }

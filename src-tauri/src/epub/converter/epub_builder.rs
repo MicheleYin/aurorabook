@@ -1,5 +1,5 @@
-use crate::epub::converter::types::{ConversionContext, ChapterProcessResult};
 use crate::epub::converter::opf::update_content_opf;
+use crate::epub::converter::types::{ChapterProcessResult, ConversionContext};
 use anyhow::{Context, Result as AnyhowResult};
 use tauri::Emitter;
 
@@ -9,27 +9,30 @@ pub(crate) fn build_epub_zip(
     updated_opf: &str,
 ) -> AnyhowResult<Vec<u8>> {
     use std::io::{Cursor, Write};
-    use zip::{ZipWriter, write::FileOptions};
-    
+    use zip::{write::FileOptions, ZipWriter};
+
     let mut zip_writer = ZipWriter::new(Cursor::new(Vec::new()));
-    let file_options = FileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-    let mimetype_options = FileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
-    
+    let file_options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let mimetype_options =
+        FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
     // Add mimetype first (EPUB spec requirement)
     if let Some(mimetype_data) = context.original_files.get("mimetype") {
-        zip_writer.start_file("mimetype", mimetype_options)
+        zip_writer
+            .start_file("mimetype", mimetype_options)
             .context("Failed to add mimetype to ZIP")?;
-        zip_writer.write_all(mimetype_data)
+        zip_writer
+            .write_all(mimetype_data)
             .context("Failed to write mimetype")?;
     } else {
-        zip_writer.start_file("mimetype", mimetype_options)
+        zip_writer
+            .start_file("mimetype", mimetype_options)
             .context("Failed to add mimetype to ZIP")?;
-        zip_writer.write_all(b"application/epub+zip")
+        zip_writer
+            .write_all(b"application/epub+zip")
             .context("Failed to write mimetype")?;
     }
-    
+
     // Add META-INF/container.xml
     let container_xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -40,50 +43,59 @@ pub(crate) fn build_epub_zip(
 </container>"#,
         context.opf_path
     );
-    zip_writer.start_file("META-INF/container.xml", file_options)
+    zip_writer
+        .start_file("META-INF/container.xml", file_options)
         .context("Failed to add container.xml to ZIP")?;
-    zip_writer.write_all(container_xml.as_bytes())
+    zip_writer
+        .write_all(container_xml.as_bytes())
         .context("Failed to write container.xml")?;
-    
+
     // Add other META-INF files
-    let mut meta_inf_files: Vec<_> = context.original_files.iter()
+    let mut meta_inf_files: Vec<_> = context
+        .original_files
+        .iter()
         .filter(|(path, _)| path.starts_with("META-INF/") && *path != "META-INF/container.xml")
         .collect();
     meta_inf_files.sort_by_key(|(path, _)| *path);
-    
+
     for (file_path, file_data) in meta_inf_files {
-        zip_writer.start_file(file_path, file_options)
+        zip_writer
+            .start_file(file_path, file_options)
             .with_context(|| format!("Failed to add {} to ZIP", file_path))?;
-        zip_writer.write_all(file_data)
+        zip_writer
+            .write_all(file_data)
             .with_context(|| format!("Failed to write {}", file_path))?;
     }
-    
+
     // Add updated OPF
-    zip_writer.start_file(&context.opf_path, file_options)
+    zip_writer
+        .start_file(&context.opf_path, file_options)
         .context("Failed to add OPF to ZIP")?;
-    zip_writer.write_all(updated_opf.as_bytes())
+    zip_writer
+        .write_all(updated_opf.as_bytes())
         .context("Failed to write OPF")?;
-    
+
     // Add all other files
-    let mut other_files: Vec<_> = context.original_files.iter()
+    let mut other_files: Vec<_> = context
+        .original_files
+        .iter()
         .filter(|(path, _)| {
-            *path != "mimetype" 
-            && *path != "META-INF/container.xml" 
-            && *path != &context.opf_path
+            *path != "mimetype" && *path != "META-INF/container.xml" && *path != &context.opf_path
         })
         .collect();
     other_files.sort_by_key(|(path, _)| *path);
-    
+
     for (file_path, file_data) in other_files {
-        zip_writer.start_file(file_path, file_options)
+        zip_writer
+            .start_file(file_path, file_options)
             .with_context(|| format!("Failed to add file {} to ZIP", file_path))?;
-        zip_writer.write_all(file_data)
+        zip_writer
+            .write_all(file_data)
             .with_context(|| format!("Failed to write file data for {}", file_path))?;
     }
-    
-    let zip_data = zip_writer.finish()
-        .context("Failed to finalize ZIP")?;
-    
+
+    let zip_data = zip_writer.finish().context("Failed to finalize ZIP")?;
+
     Ok(zip_data.into_inner())
 }
 
@@ -99,40 +111,47 @@ pub(crate) fn initialize_conversion_context(
     epub_data: &[u8],
     cached_structure: Option<&CachedEpubStructure>,
 ) -> AnyhowResult<(ConversionContext, String)> {
+    use crate::epub::converter::extraction::{extract_original_files, initialize_conversion};
     use std::io::{Cursor, Read};
     use zip::ZipArchive;
-    use crate::epub::converter::extraction::{initialize_conversion, extract_original_files};
-    
+
     // Use cached structure if available, otherwise parse
     let (opf_path, base_path) = if let Some(cached) = cached_structure {
-        log::debug!("Using cached EPUB structure: opf_path={}, base_path={}", cached.opf_path, cached.base_path);
+        log::debug!(
+            "Using cached EPUB structure: opf_path={}, base_path={}",
+            cached.opf_path,
+            cached.base_path
+        );
         (cached.opf_path.clone(), cached.base_path.clone())
     } else {
         log::debug!("Parsing EPUB structure (no cache available)");
         initialize_conversion(epub_data)?
     };
-    
+
     let original_files = extract_original_files(epub_data, &opf_path)?;
-    
+
     let context = ConversionContext {
         opf_path: opf_path.clone(),
         base_path,
         original_files,
         audio_files: Vec::new(),
         smil_files: Vec::new(),
+        vtt_files: Vec::new(),
+        chapter_data: Vec::new(),
     };
-    
+
     // Read original OPF content
-    let mut archive = ZipArchive::new(Cursor::new(epub_data))
-        .context("Failed to open EPUB for OPF read")?;
-    let original_opf_content = archive.by_name(&opf_path)
+    let mut archive =
+        ZipArchive::new(Cursor::new(epub_data)).context("Failed to open EPUB for OPF read")?;
+    let original_opf_content = archive
+        .by_name(&opf_path)
         .and_then(|mut f| {
             let mut content = String::new();
             f.read_to_string(&mut content)?;
             Ok(content)
         })
         .context("Failed to read original OPF")?;
-    
+
     Ok((context, original_opf_content))
 }
 
@@ -140,12 +159,13 @@ pub(crate) fn initialize_conversion_context(
 pub(crate) fn merge_chapter_result(
     context: &mut ConversionContext,
     result: ChapterProcessResult,
+    chapter_title: &str,
 ) {
     // Merge files into context
     for (path, data) in result.files {
         context.original_files.insert(path, data);
     }
-    
+
     // Add audio and SMIL file entries only if they're not empty
     if !result.audio_file.1.is_empty() {
         context.audio_files.push(result.audio_file);
@@ -153,10 +173,24 @@ pub(crate) fn merge_chapter_result(
     if !result.smil_file.1.is_empty() {
         context.smil_files.push(result.smil_file);
     }
-    
-    // Sort audio and SMIL files by chapter index to maintain order
+    if !result.vtt_file.1.is_empty() {
+        context.vtt_files.push(result.vtt_file);
+    }
+
+    // Store chapter data for final VTT generation
+    if !result.word_alignments.is_empty() {
+        context.chapter_data.push((
+            result.chapter_index,
+            chapter_title.to_string(),
+            result.word_alignments,
+        ));
+    }
+
+    // Sort files by chapter index to maintain order
     context.audio_files.sort_by_key(|(idx, _)| *idx);
     context.smil_files.sort_by_key(|(idx, _)| *idx);
+    context.vtt_files.sort_by_key(|(idx, _)| *idx);
+    context.chapter_data.sort_by_key(|(idx, _, _)| *idx);
 }
 
 /// Rebuild EPUB with current progress and save to Tauri store
@@ -175,7 +209,7 @@ pub(crate) async fn rebuild_and_save_epub(
     chapter_title: Option<&str>,
 ) -> AnyhowResult<Vec<u8>> {
     use crate::epub::converter::types::ConversionProgress;
-    
+
     // Update progress
     progress_callback(ConversionProgress {
         current_chapter: chapter_index + 1,
@@ -186,7 +220,7 @@ pub(crate) async fn rebuild_and_save_epub(
         current_step: "saving-epub".to_string(),
         message: format!("Saving EPUB after chapter {}...", chapter_index + 1),
     });
-    
+
     // Update OPF with current progress
     let updated_opf = update_content_opf(
         original_opf_content,
@@ -195,10 +229,10 @@ pub(crate) async fn rebuild_and_save_epub(
         chapter_hrefs,
     )
     .map_err(|e| anyhow::anyhow!("Failed to update content.opf: {}", e))?;
-    
+
     // Build EPUB with current progress
     let epub_output = build_epub_zip(context, &updated_opf)?;
-    
+
     // Save to database if app and source_path are provided
     if let (Some(app_ref), Some(source_path_ref)) = (app, source_path) {
         // Save partial EPUB to database so it can be resumed if conversion is interrupted
@@ -206,35 +240,59 @@ pub(crate) async fn rebuild_and_save_epub(
         use crate::book_service::repositories::{BookRepository, EpubRepository};
         if let Ok(db) = get_db_connection(app_ref).await {
             // Get book_id from source_path
-            if let Ok(Some(book)) = BookRepository::find_by_source_path(db.as_ref(), source_path_ref).await {
-                if let Err(e) = EpubRepository::save(db.as_ref(), source_path_ref, &book.id, &epub_output).await {
-                    log::warn!("Failed to save partial EPUB to database after chapter {}: {}", chapter_index + 1, e);
+            if let Ok(Some(book)) =
+                BookRepository::find_by_source_path(db.as_ref(), source_path_ref).await
+            {
+                if let Err(e) =
+                    EpubRepository::save(db.as_ref(), source_path_ref, &book.id, &epub_output).await
+                {
+                    log::warn!(
+                        "Failed to save partial EPUB to database after chapter {}: {}",
+                        chapter_index + 1,
+                        e
+                    );
                 } else {
-                    log::debug!("Saved partial EPUB to database after chapter {} ({} bytes)", chapter_index + 1, epub_output.len());
+                    log::debug!(
+                        "Saved partial EPUB to database after chapter {} ({} bytes)",
+                        chapter_index + 1,
+                        epub_output.len()
+                    );
                 }
             } else {
-                log::warn!("Book not found for source_path '{}', cannot save partial EPUB", source_path_ref);
+                log::warn!(
+                    "Book not found for source_path '{}', cannot save partial EPUB",
+                    source_path_ref
+                );
             }
         } else {
             log::warn!("Failed to connect to database for partial EPUB save");
         }
-        
+
         // Update book audio tracks so user can listen as soon as one chapter is ready
         // Note: This will compute durations and save audio bytes to database
         use crate::epub::book_update::update_book_audio_tracks;
         if let Err(e) = update_book_audio_tracks(&epub_output, source_path_ref, app_ref).await {
-            log::warn!("Failed to update book audio tracks after chapter {}: {}", chapter_index + 1, e);
+            log::warn!(
+                "Failed to update book audio tracks after chapter {}: {}",
+                chapter_index + 1,
+                e
+            );
             // Don't fail the conversion if audio track update fails
         } else {
-            log::debug!("Updated book audio tracks after chapter {}", chapter_index + 1);
-            
+            log::debug!(
+                "Updated book audio tracks after chapter {}",
+                chapter_index + 1
+            );
+
             // Mark chapter as completed in the book
             use crate::book_service::database::get_db_connection;
-            use crate::book_service::repositories::BookRepository;
             use crate::book_service::models::ConversionStatus;
+            use crate::book_service::repositories::BookRepository;
             let mut book_id_opt: Option<String> = None;
             if let Ok(db) = get_db_connection(app_ref).await {
-                if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path_ref).await {
+                if let Ok(Some(mut book)) =
+                    BookRepository::find_by_source_path(db.as_ref(), source_path_ref).await
+                {
                     book_id_opt = Some(book.id.clone());
                     // Get the chapter href for this chapter
                     if chapter_index < chapter_hrefs.len() {
@@ -242,29 +300,35 @@ pub(crate) async fn rebuild_and_save_epub(
                         if !book.completed_chapters.contains(chapter_href) {
                             book.completed_chapters.push(chapter_href.clone());
                             log::debug!("Marked chapter {} as completed", chapter_href);
-                            
+
                             // Check if all chapters with text content are completed
                             // Only count chapters that have text content (word_count > 0)
-                            let chapters_with_text: usize = book.chapters.iter()
+                            let chapters_with_text: usize = book
+                                .chapters
+                                .iter()
                                 .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
                                 .count();
-                            
+
                             // Only set status to Done if we've completed ALL chapters with text
                             // Use strict equality to avoid false positives during partial conversions
-                            if book.completed_chapters.len() == chapters_with_text && chapters_with_text > 0 {
+                            if book.completed_chapters.len() == chapters_with_text
+                                && chapters_with_text > 0
+                            {
                                 book.conversion_status = ConversionStatus::Done;
                                 log::info!("All chapters with text content completed ({} of {} total chapters), marking conversion as done", 
                                     book.completed_chapters.len(), book.chapters.len());
                             } else {
                                 // Ensure status remains Started if not all chapters are done
                                 // This prevents false "Done" status during partial conversions
-                                if book.conversion_status == ConversionStatus::Done && book.completed_chapters.len() < chapters_with_text {
+                                if book.conversion_status == ConversionStatus::Done
+                                    && book.completed_chapters.len() < chapters_with_text
+                                {
                                     log::warn!("Conversion status was Done but only {}/{} chapters are completed, resetting to Started", 
                                         book.completed_chapters.len(), chapters_with_text);
                                     book.conversion_status = ConversionStatus::Started;
                                 }
                             }
-                            
+
                             // Save the updated book
                             if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
                                 log::warn!("Failed to save completed chapter: {}", e);
@@ -273,15 +337,19 @@ pub(crate) async fn rebuild_and_save_epub(
                     }
                 }
             }
-            
+
             // Check if audio was generated for this chapter
             // Audio files are stored as (chapter_index, audio_path) tuples
-            let audio_generated = context.audio_files.iter()
+            let audio_generated = context
+                .audio_files
+                .iter()
                 .any(|(idx, _)| *idx == chapter_index);
-            
+
             // Emit event to frontend to refetch the book
             use crate::epub::converter::types::ChapterCompletedEvent;
-            let chapter_title_str = chapter_title.unwrap_or(&format!("Chapter {}", chapter_index + 1)).to_string();
+            let chapter_title_str = chapter_title
+                .unwrap_or(&format!("Chapter {}", chapter_index + 1))
+                .to_string();
             let book_id = book_id_opt.unwrap_or_else(|| String::new());
             let event = ChapterCompletedEvent {
                 book_id: book_id.clone(),
@@ -291,10 +359,10 @@ pub(crate) async fn rebuild_and_save_epub(
                 chapter_title: chapter_title_str.clone(),
                 audio_generated,
             };
-            
+
             log::info!("[EpubBuilder] Preparing to emit chapter-completed event: book_id='{}', source_path='{}', chapter_index={}, chapter_title='{}', audio_generated={}", 
                 book_id, source_path_ref, chapter_index + 1, chapter_title_str, audio_generated);
-            
+
             if let Err(e) = app_ref.emit("chapter-completed", event) {
                 log::error!("[EpubBuilder] ✗ Failed to emit chapter-completed event: book_id='{}', source_path='{}', chapter_index={}, error={}", 
                     book_id, source_path_ref, chapter_index + 1, e);
@@ -304,16 +372,60 @@ pub(crate) async fn rebuild_and_save_epub(
             }
         }
     }
-    
+
     Ok(epub_output)
 }
 
 /// Build final EPUB with all completed chapters
 pub(crate) fn build_final_epub(
-    context: &ConversionContext,
+    context: &mut ConversionContext,
     original_opf_content: &str,
     chapter_hrefs: &[String],
 ) -> AnyhowResult<Vec<u8>> {
+    // Generate final combined VTT file for the whole book
+    if !context.chapter_data.is_empty() {
+        use crate::epub::converter::vtt::generate_book_vtt;
+
+        // Calculate cumulative start times for each chapter
+        let mut cumulative_time = 0.0;
+        let mut chapters_with_times: Vec<(String, Vec<kokoros::tts::koko::WordAlignment>, f64)> =
+            Vec::new();
+
+        for (_, title, alignments) in &context.chapter_data {
+            // Skip chapters with no alignments (no audio generated)
+            if alignments.is_empty() {
+                continue;
+            }
+
+            let chapter_start = cumulative_time;
+            chapters_with_times.push((title.clone(), alignments.clone(), chapter_start));
+
+            // Update cumulative time for next chapter
+            if let Some(last_alignment) = alignments.last() {
+                cumulative_time += last_alignment.end_sec as f64;
+            }
+        }
+
+        // Only generate combined VTT if we have at least one chapter with audio
+        if !chapters_with_times.is_empty() {
+            // Generate the combined VTT file
+            let book_vtt_content = generate_book_vtt(&chapters_with_times);
+
+            // Store the final VTT file in the EPUB
+            let book_vtt_path = format!("{}Audio/book.vtt", context.base_path);
+            context
+                .original_files
+                .insert(book_vtt_path, book_vtt_content.into_bytes());
+
+            log::debug!(
+                "Generated final combined VTT file for book with {} chapters with audio",
+                chapters_with_times.len()
+            );
+        } else {
+            log::debug!("Skipping final VTT generation: no chapters with audio");
+        }
+    }
+
     let updated_opf = update_content_opf(
         original_opf_content,
         &context.audio_files,
@@ -321,7 +433,6 @@ pub(crate) fn build_final_epub(
         chapter_hrefs,
     )
     .map_err(|e| anyhow::anyhow!("Failed to update content.opf: {}", e))?;
-    
+
     build_epub_zip(context, &updated_opf)
 }
-
