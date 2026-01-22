@@ -382,50 +382,6 @@ pub(crate) fn build_final_epub(
     original_opf_content: &str,
     chapter_hrefs: &[String],
 ) -> AnyhowResult<Vec<u8>> {
-    // Generate final combined VTT file for the whole book
-    if !context.chapter_data.is_empty() {
-        use crate::epub::converter::vtt::generate_book_vtt;
-
-        // Calculate cumulative start times for each chapter
-        let mut cumulative_time = 0.0;
-        let mut chapters_with_times: Vec<(String, Vec<kokoros::tts::koko::WordAlignment>, f64)> =
-            Vec::new();
-
-        for (_, title, alignments) in &context.chapter_data {
-            // Skip chapters with no alignments (no audio generated)
-            if alignments.is_empty() {
-                continue;
-            }
-
-            let chapter_start = cumulative_time;
-            chapters_with_times.push((title.clone(), alignments.clone(), chapter_start));
-
-            // Update cumulative time for next chapter
-            if let Some(last_alignment) = alignments.last() {
-                cumulative_time += last_alignment.end_sec as f64;
-            }
-        }
-
-        // Only generate combined VTT if we have at least one chapter with audio
-        if !chapters_with_times.is_empty() {
-            // Generate the combined VTT file
-            let book_vtt_content = generate_book_vtt(&chapters_with_times);
-
-            // Store the final VTT file in the EPUB
-            let book_vtt_path = format!("{}Audio/book.vtt", context.base_path);
-            context
-                .original_files
-                .insert(book_vtt_path, book_vtt_content.into_bytes());
-
-            log::debug!(
-                "Generated final combined VTT file for book with {} chapters with audio",
-                chapters_with_times.len()
-            );
-        } else {
-            log::debug!("Skipping final VTT generation: no chapters with audio");
-        }
-    }
-
     let updated_opf = update_content_opf(
         original_opf_content,
         &context.audio_files,
