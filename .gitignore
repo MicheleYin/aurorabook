@@ -28,4 +28,6 @@ test-results/
 .history/
 data/
 sample_audio/
-vendor/
+vendor/src-tauri/Entitlements.macos-appstore.plist
+src-tauri/signing/MacAppStore.provisionprofile
+src-tauri/signing/LOCAL_APPSTORE_BUILD.md

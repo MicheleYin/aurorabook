@@ -40,7 +40,7 @@
       "entitlements": "gen/apple/aurorabook_macOS/aurorabook_macOS.entitlements"
     },
     "iOS": {
-      "developmentTeam": "YOUR_TEAM_ID",
+      "developmentTeam": "YOUR_DEVELOPMENT_TEAM_ID",
       "frameworks": [],
       "minimumSystemVersion": "15.1"
     }

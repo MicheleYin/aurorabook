@@ -69,7 +69,7 @@ anyhow = "1.0"
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
 
 # TTS engine (uses CoreML EP on Apple platforms)
-kokoros = { path = "../Kokoros/kokoros", default-features = false, features = ["cpu"] }
+kokoros = { path = "../../Kokoros/kokoros", default-features = false, features = ["cpu"] }
 # Use local ort repository for better iOS support (patched in [patch.crates-io])
 # Enable download-binaries for iOS to get pre-built binaries
 ort = { version = "2.0.0-rc.10", default-features = true }
