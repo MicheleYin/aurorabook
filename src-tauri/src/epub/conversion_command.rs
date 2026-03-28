@@ -675,7 +675,13 @@ async fn save_converted_epub_and_update_book(
 
     // Store converted EPUB in database
     if let Ok(Some(book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await {
-        EpubRepository::save(db.as_ref(), source_path, &book.id, converted_epub)
+        EpubRepository::save_write_file_and_clear_blob(
+                db.as_ref(),
+                app,
+                source_path,
+                &book.id,
+                converted_epub,
+            )
             .await
             .map_err(|e| AppError::Store(format!("Failed to save converted EPUB: {}", e)))?;
         log::debug!(

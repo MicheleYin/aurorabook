@@ -97,6 +97,63 @@ pub async fn get_db_connection(_app: &AppHandle) -> Result<Arc<SqlitePool>, Stri
     Ok(pool_arc.clone())
 }
 
+
+/// Migrate legacy epub_data (BLOB NOT NULL, no file_path) to nullable BLOB + file_path.
+async fn migrate_epub_data_schema(pool: &SqlitePool) -> Result<(), String> {
+    use sqlx::Row;
+    let row = sqlx::query("SELECT sql FROM sqlite_master WHERE type='table' AND name='epub_data'")
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("Failed to read epub_data schema: {}", e))?;
+    let Some(row) = row else {
+        return Ok(());
+    };
+    let sql: String = row
+        .try_get("sql")
+        .map_err(|e| format!("Invalid sqlite_master row: {}", e))?;
+    let needs = sql.contains("data BLOB NOT NULL") || !sql.contains("file_path");
+    if !needs {
+        return Ok(());
+    }
+    log::info!("Migrating epub_data table (nullable data + file_path column)");
+    sqlx::query(
+        r#"
+        CREATE TABLE epub_data__m (
+            source_path TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL,
+            data BLOB,
+            file_path TEXT,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create epub_data__m: {}", e))?;
+    sqlx::query(
+        "INSERT INTO epub_data__m (source_path, book_id, data, file_path, updated_at)          SELECT source_path, book_id, data, NULL, updated_at FROM epub_data",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to copy epub_data: {}", e))?;
+    sqlx::query("DROP TABLE epub_data")
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to drop old epub_data: {}", e))?;
+    sqlx::query("ALTER TABLE epub_data__m RENAME TO epub_data")
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to rename epub_data: {}", e))?;
+    if let Err(e) = sqlx::query("CREATE INDEX IF NOT EXISTS idx_epub_data_book_id ON epub_data(book_id)")
+        .execute(pool)
+        .await
+    {
+        log::warn!("Failed to recreate idx_epub_data_book_id: {}", e);
+    }
+    Ok(())
+}
+
 /// Initialize database schema - creates tables if they don't exist
 async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
     // Create books table
@@ -297,13 +354,14 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
     .await
     .map_err(|e| format!("Failed to create audio_tracks table: {}", e))?;
     
-    // Create epub_data table
+    // Create epub_data table (file-backed EPUB + optional legacy BLOB)
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS epub_data (
             source_path TEXT PRIMARY KEY,
             book_id TEXT NOT NULL,
-            data BLOB NOT NULL,
+            data BLOB,
+            file_path TEXT,
             updated_at TEXT NOT NULL,
             FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
         )
@@ -312,6 +370,8 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to create epub_data table: {}", e))?;
+
+    migrate_epub_data_schema(pool).await?;
     
     // Create app_settings table (singleton - only one row)
     sqlx::query(

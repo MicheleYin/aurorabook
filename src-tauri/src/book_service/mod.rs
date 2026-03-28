@@ -3,6 +3,7 @@ pub mod filters;
 pub mod database;
 pub mod repositories;
 pub mod audio_stream;
+pub mod epub_file_storage;
 
 pub use models::*;
 use filters::*;
@@ -661,9 +662,8 @@ pub async fn load_epub_audio(
     
     log::debug!("Trying to load audio track '{}' for book '{}'", track_id, book_id);
     
-    match AudioRepository::find_data_by_id(db.as_ref(), &book_id, &track_id).await {
+    match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &book_id, &track_id).await {
         Ok(Some((audio_data, href))) => {
-            // Detect MIME type from extension
             let mime_type = detect_audio_mime_type(&href, &href);
             let data_url = create_data_url(&mime_type, &audio_data);
             log::info!("✓ Found audio track '{}' (href: '{}', {} bytes, type: {})", 
@@ -671,11 +671,11 @@ pub async fn load_epub_audio(
             Ok(Some(data_url))
         }
         Ok(None) => {
-            log::warn!("✗ Audio track not found in database: '{}' for book '{}'", track_id, book_id);
+            log::warn!("✗ Audio track not found: '{}' for book '{}'", track_id, book_id);
             Ok(None)
         }
         Err(e) => {
-            log::warn!("Error querying audio track '{}': {}", track_id, e);
+            log::warn!("Error loading audio track '{}': {}", track_id, e);
             Err(AppError::Store(e))
         }
     }
@@ -694,20 +694,19 @@ pub async fn load_epub_audio_bytes(
     
     log::debug!("Trying to load audio track bytes '{}' for book '{}'", track_id, book_id);
     
-    match AudioRepository::find_data_by_id(db.as_ref(), &book_id, &track_id).await {
+    match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &book_id, &track_id).await {
         Ok(Some((audio_data, href))) => {
-            // Detect MIME type from extension
             let mime_type = detect_audio_mime_type(&href, &href);
             log::info!("✓ Found audio track bytes '{}' (href: '{}', {} bytes, type: {})", 
                 track_id, href, audio_data.len(), mime_type);
             Ok(Some((audio_data, mime_type.to_string())))
         }
         Ok(None) => {
-            log::warn!("✗ Audio track not found in database: '{}' for book '{}'", track_id, book_id);
+            log::warn!("✗ Audio track not found: '{}' for book '{}'", track_id, book_id);
             Ok(None)
         }
         Err(e) => {
-            log::warn!("Error querying audio track '{}': {}", track_id, e);
+            log::warn!("Error loading audio track '{}': {}", track_id, e);
             Err(AppError::Store(e))
         }
     }
@@ -1195,7 +1194,21 @@ pub async fn ingest_epub(
     
     // Generate book ID
     let book_id = Uuid::new_v4().to_string();
-    
+
+    // Copy EPUB into Documents/AuroraBook/Library/{book_id}/book.epub (canonical copy)
+    let library_epub = crate::book_service::epub_file_storage::library_epub_path(&app, &book_id)
+        .map_err(|e| AppError::Store(e))?;
+    if let Some(parent) = library_epub.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::Io(e))?;
+    }
+    let src_pb = std::path::Path::new(&actual_path);
+    if src_pb != library_epub.as_path() {
+        fs::copy(src_pb, &library_epub).map_err(|e| AppError::Io(e))?;
+    }
+    let library_epub_str = library_epub.to_str().ok_or_else(|| {
+        AppError::Store("Library EPUB path is not valid UTF-8".to_string())
+    })?;
+
     // Derive title from path if not available
     let title = metadata.title
         .unwrap_or_else(|| derive_title_from_path(&source_path));
@@ -1359,76 +1372,8 @@ pub async fn ingest_epub(
     .map_err(|e| AppError::EpubParse(format!("Failed to extract images: {}", e)))?
     .map_err(|e| AppError::EpubParse(e))?;
     
-    // Extract audio track data
-    let epub_data_for_audio = Arc::clone(&epub_data_arc);
-    let audio_tracks_for_extraction = audio_tracks.clone();
-    let opf_path_for_audio = opf_path.clone();
-    let audio_extracted = tokio::task::spawn_blocking(move || {
-        use std::io::{Cursor, Read};
-        use zip::ZipArchive;
-        use crate::epub::parser::derive_base_path_from_opf;
-        use log::{debug, warn};
-        
-        let epub_slice: &[u8] = epub_data_for_audio.as_slice();
-        let mut archive = ZipArchive::new(Cursor::new(epub_slice))
-            .map_err(|e| format!("Failed to open EPUB: {}", e))?;
-        
-        let base_path = derive_base_path_from_opf(&opf_path_for_audio);
-        let mut audio_to_store = Vec::new();
-        let mut total_audio_found = 0;
-        let mut total_audio_extracted = 0;
-        
-        debug!("Extracting audio tracks (base_path: '{}', tracks: {})", base_path, audio_tracks_for_extraction.len());
-        
-        for track in &audio_tracks_for_extraction {
-            total_audio_found += 1;
-            
-            // Resolve audio path - try multiple variations like we do for images
-            let audio_path_primary = if track.href.starts_with("/") {
-                track.href[1..].to_string()
-            } else {
-                format!("{}{}", base_path, track.href)
-            };
-            
-            // Try multiple path variations
-            let paths_to_try = vec![
-                audio_path_primary.clone(),
-                track.href.clone(),
-                if track.href.starts_with("/") { track.href[1..].to_string() } else { track.href.clone() },
-                format!("{}{}", base_path, if track.href.starts_with("/") { &track.href[1..] } else { &track.href }),
-            ];
-            
-            debug!("Trying to extract audio track: '{}' (trying {} path variations)", track.href, paths_to_try.len());
-            
-            let mut found = false;
-            for path_to_try in &paths_to_try {
-                if let Ok(mut file) = archive.by_name(path_to_try) {
-                    let mut audio_data = Vec::new();
-                    if file.read_to_end(&mut audio_data).is_ok() && !audio_data.is_empty() {
-                        let audio_len = audio_data.len();
-                        audio_to_store.push((track.href.clone(), audio_data));
-                        debug!("✓ Extracted audio track: {} -> {} ({} bytes)", track.href, path_to_try, audio_len);
-                        total_audio_extracted += 1;
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            
-            if !found {
-                warn!("✗ Could not find audio track in archive: '{}' (tried: {:?}, base_path: '{}')", 
-                    track.href, paths_to_try, base_path);
-            }
-        }
-        
-        debug!("Audio extraction summary: found {} tracks, extracted {}", total_audio_found, total_audio_extracted);
-        
-        Ok::<Vec<(String, Vec<u8>)>, String>(audio_to_store)
-    })
-    .await
-    .map_err(|e| AppError::EpubParse(format!("Failed to extract audio: {}", e)))?
-    .map_err(|e| AppError::EpubParse(e))?;
-    
+    // Embedded audio is read from the canonical EPUB on demand (not duplicated in SQLite).
+
     // Ensure audio tracks are sorted by order before creating Book
     audio_tracks.sort_by_key(|t| t.order);
     
@@ -1475,14 +1420,17 @@ pub async fn ingest_epub(
     BookRepository::save(db.as_ref(), &book).await
         .map_err(|e| AppError::Store(e))?;
     
-    // Store original EPUB data in database
+    // Store EPUB reference (file in Documents/Library; no BLOB duplicate)
     use repositories::EpubRepository;
-    log::info!("Storing original EPUB data ({} bytes)...", epub_data_arc.len());
-    if let Err(e) = EpubRepository::save(db.as_ref(), &source_path, &book_id, epub_data_arc.as_slice()).await {
-        log::error!("Failed to store original EPUB data: {}", e);
-        // Don't fail ingestion if EPUB storage fails, but log it
+    log::info!(
+        "Registering canonical EPUB at {} ({} bytes)",
+        library_epub_str,
+        epub_data_arc.len()
+    );
+    if let Err(e) = EpubRepository::save_file_backed(db.as_ref(), &source_path, &book_id, library_epub_str).await {
+        log::error!("Failed to register canonical EPUB: {}", e);
     } else {
-        log::debug!("Successfully stored original EPUB data ({} bytes)", epub_data_arc.len());
+        log::debug!("Canonical EPUB registered successfully");
     }
     
     // Store all images AFTER book save (since book save deletes them first)
@@ -1531,33 +1479,7 @@ pub async fn ingest_epub(
         }
     }
     
-    // Store all audio track data AFTER book save (since book save deletes them first)
-    log::info!("Storing {} audio tracks...", audio_extracted.len());
-    if audio_extracted.is_empty() {
-        log::warn!("No audio tracks were extracted during ingestion! This might indicate an issue with audio extraction.");
-    }
-    for (audio_href, audio_data) in audio_extracted {
-        log::info!("Storing audio track: {} ({} bytes)", audio_href, audio_data.len());
-        match AudioRepository::save_data(db.as_ref(), &book_id, &audio_href, &audio_data).await {
-            Ok(()) => {
-                log::info!("✓ Successfully stored audio track data: {} ({} bytes)", audio_href, audio_data.len());
-            }
-            Err(e) => {
-                log::error!("✗ Failed to store audio track {} ({} bytes): {}", audio_href, audio_data.len(), e);
-                // Check if audio track metadata exists
-                if let Ok(tracks) = AudioRepository::find_by_book_id(db.as_ref(), &book_id).await {
-                    if tracks.iter().any(|t| t.href == audio_href) {
-                        log::warn!("Audio track metadata exists but data save failed. Track href: {}", audio_href);
-                    } else {
-                        log::warn!("Audio track not found in database. Track href: {}, Available tracks: {:?}", 
-                            audio_href, tracks.iter().map(|t| &t.href).collect::<Vec<_>>());
-                    }
-                }
-            }
-        }
-    }
-    
-    // Reload book to get the complete data
+// Reload book to get the complete data
     let result_book = BookRepository::find_by_id(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))?
         .ok_or_else(|| AppError::Store("Book not found after ingestion".to_string()))?;

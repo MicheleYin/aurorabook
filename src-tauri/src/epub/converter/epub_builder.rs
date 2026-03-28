@@ -243,8 +243,14 @@ pub(crate) async fn rebuild_and_save_epub(
             if let Ok(Some(book)) =
                 BookRepository::find_by_source_path(db.as_ref(), source_path_ref).await
             {
-                if let Err(e) =
-                    EpubRepository::save(db.as_ref(), source_path_ref, &book.id, &epub_output).await
+                if let Err(e) = EpubRepository::save_write_file_and_clear_blob(
+                        db.as_ref(),
+                        app_ref,
+                        source_path_ref,
+                        &book.id,
+                        &epub_output,
+                    )
+                    .await
                 {
                     log::warn!(
                         "Failed to save partial EPUB to database after chapter {}: {}",

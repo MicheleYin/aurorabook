@@ -131,27 +131,73 @@ impl AudioRepository {
         }
     }
     
-    /// Get audio track data by track id
-    pub async fn find_data_by_id(pool: &SqlitePool, book_id: &str, track_id: &str) -> Result<Option<(Vec<u8>, String)>, String> {
+    /// Row present: `(blob, href)` where `blob` is None if audio is only inside the canonical EPUB file.
+    pub async fn find_data_by_id(
+        pool: &SqlitePool,
+        book_id: &str,
+        track_id: &str,
+    ) -> Result<Option<(Option<Vec<u8>>, String)>, String> {
         let row = sqlx::query("SELECT data, href FROM audio_tracks WHERE id = ? AND book_id = ?")
             .bind(track_id)
             .bind(book_id)
             .fetch_optional(pool)
             .await
             .map_err(|e| format!("Failed to query audio track by id: {}", e))?;
-        
+
         use sqlx::Row;
-        
+
         if let Some(row) = row {
             let href: String = row.get("href");
-            if let Some(data) = row.get::<Option<Vec<u8>>, _>("data") {
-                Ok(Some((data, href)))
-            } else {
-                Ok(None)
-            }
+            let data: Option<Vec<u8>> = row.try_get("data").ok().flatten();
+            Ok(Some((data, href)))
         } else {
             Ok(None)
         }
+    }
+
+    pub async fn can_stream_track(pool: &SqlitePool, book_id: &str, track_id: &str) -> Result<bool, String> {
+        match Self::find_data_by_id(pool, book_id, track_id).await? {
+            None => Ok(false),
+            Some((Some(_), _)) => Ok(true),
+            Some((None, _)) => {
+                let fp =
+                    crate::book_service::repositories::EpubRepository::file_path_for_book_id(pool, book_id)
+                        .await?;
+                Ok(fp
+                    .map(|p| std::path::Path::new(&p).is_file())
+                    .unwrap_or(false))
+            }
+        }
+    }
+
+    /// Load full audio bytes: SQLite blob if present, else read from canonical EPUB on disk.
+    pub async fn resolve_track_audio_bytes(
+        pool: &SqlitePool,
+        book_id: &str,
+        track_id: &str,
+    ) -> Result<Option<(Vec<u8>, String)>, String> {
+        let Some((blob, href)) = Self::find_data_by_id(pool, book_id, track_id).await? else {
+            return Ok(None);
+        };
+        if let Some(b) = blob {
+            return Ok(Some((b, href)));
+        }
+        let Some(fp) =
+            crate::book_service::repositories::EpubRepository::file_path_for_book_id(pool, book_id).await?
+        else {
+            return Ok(None);
+        };
+        let fp_clone = fp.clone();
+        let href_clone = href.clone();
+        let bytes = tokio::task::spawn_blocking(move || {
+            crate::book_service::epub_file_storage::read_member_from_epub_file(
+                std::path::Path::new(&fp_clone),
+                &href_clone,
+            )
+        })
+        .await
+        .map_err(|e| format!("Audio load task failed: {}", e))??;
+        Ok(Some((bytes, href)))
     }
     
     /// Delete all audio tracks for a book

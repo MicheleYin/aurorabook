@@ -1,4 +1,4 @@
-use std::io::{Cursor, Read};
+use std::io::{Read, Seek};
 use zip::ZipArchive;
 
 /// Find the content.opf path from container.xml or common locations.
@@ -11,7 +11,7 @@ use zip::ZipArchive;
 ///
 /// # Returns
 /// The path to the OPF file within the EPUB archive.
-pub fn find_opf_path(archive: &mut ZipArchive<Cursor<&[u8]>>) -> Result<String, String> {
+pub fn find_opf_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<String, String> {
     use quick_xml::events::Event;
     use quick_xml::Reader;
     use log::debug;

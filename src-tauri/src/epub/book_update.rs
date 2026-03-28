@@ -738,7 +738,7 @@ async fn update_book_in_library(
     audio_tracks: Vec<crate::book_service::models::AudioTrack>,
     audio_sync_map: Option<crate::book_service::models::AudioSyncMap>,
     epub_size: usize,
-    audio_bytes_map: std::collections::HashMap<String, Vec<u8>>,
+    _audio_bytes_map: std::collections::HashMap<String, Vec<u8>>,
 ) -> Result<Option<Book>, String> {
     let db = get_db_connection(app).await?;
     if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await {
@@ -792,17 +792,8 @@ async fn update_book_in_library(
             .map_err(|e| format!("Failed to save book: {}", e))?;
         log::debug!("Book saved successfully, audio sync map should be persisted");
         
-        // Save audio track data after metadata is saved
-        use crate::book_service::repositories::AudioRepository;
-        log::info!("Saving {} audio track data files to database", audio_bytes_map.len());
-        for (href, audio_data) in audio_bytes_map {
-            if let Err(e) = AudioRepository::save_data(db.as_ref(), &book.id, &href, &audio_data).await {
-                log::warn!("Failed to save audio track data for '{}': {}", href, e);
-            } else {
-                log::debug!("Saved audio track data for '{}' ({} bytes)", href, audio_data.len());
-            }
-        }
-        
+        // Audio bytes stay in the canonical EPUB on disk (no duplicate BLOBs in SQLite).
+
         Ok(Some(updated_book))
     } else {
         log::warn!("Book with source_path '{}' not found in library, skipping audio track update", source_path);

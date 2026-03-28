@@ -57,12 +57,14 @@ pub async fn get_audio_stream_url(
         .await
         .map_err(|e| AppError::Store(e))?;
 
-    let track_exists = AudioRepository::find_data_by_id(db.as_ref(), &book_id, &track_id)
+    let can = AudioRepository::can_stream_track(db.as_ref(), &book_id, &track_id)
         .await
         .map_err(|e| AppError::Store(e))?;
 
-    if track_exists.is_none() {
-        return Err(AppError::Store("Audio track not found".to_string()));
+    if !can {
+        return Err(AppError::Store(
+            "Audio track not found or EPUB file missing".to_string(),
+        ));
     }
 
     // Ensure the server is running before returning the URL
@@ -153,8 +155,7 @@ async fn handle_audio_stream(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Fetch audio data and metadata
-    let (audio_data, href) = AudioRepository::find_data_by_id(db.as_ref(), &book_id, &track_id)
+    let (audio_data, href) = AudioRepository::resolve_track_audio_bytes(db.as_ref(), &book_id, &track_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
