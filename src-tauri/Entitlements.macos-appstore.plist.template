@@ -4,6 +4,7 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+	<!-- Required for TestFlight: App ID = Team ID + bundle ID (see Apple DTS thread 733942). -->
 	<key>com.apple.application-identifier</key>
 	<string>__APPLE_TEAM_ID__.__APPLE_BUNDLE_ID__</string>
 	<key>com.apple.developer.team-identifier</key>
