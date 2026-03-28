@@ -1,4 +1,8 @@
-//! Canonical EPUB files under Documents (fallback: app data) and ZIP member reads.
+//! Canonical EPUB files under the app container (`app_data_dir`), not Documents.
+//!
+//! App Sandbox (signed Mac App Store) grants read/write inside the container without extra
+//! file entitlements. Using `document_dir` here caused sandbox denials for playback of EPUBs
+//! copied at ingest when the webview loads `http://localhost:…` audio URLs.
 
 use std::fs::File;
 use std::io::Read;
@@ -7,14 +11,13 @@ use tauri::AppHandle;
 use tauri::Manager;
 use zip::ZipArchive;
 
-/// `Documents/AuroraBook/Library` (or app data dir if Documents is unavailable).
+/// `Application Support/<bundle-id>/Library` (same root family as `library.db`).
 pub fn resolve_library_root(app: &AppHandle) -> Result<PathBuf, String> {
     let base = app
         .path()
-        .document_dir()
-        .or_else(|_| app.path().app_data_dir())
-        .map_err(|e| format!("Failed to resolve library root: {}", e))?;
-    Ok(base.join("AuroraBook").join("Library"))
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data directory: {}", e))?;
+    Ok(base.join("Library"))
 }
 
 /// Per-book directory containing `book.epub`.

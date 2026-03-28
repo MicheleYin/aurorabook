@@ -1195,7 +1195,7 @@ pub async fn ingest_epub(
     // Generate book ID
     let book_id = Uuid::new_v4().to_string();
 
-    // Copy EPUB into Documents/AuroraBook/Library/{book_id}/book.epub (canonical copy)
+    // Copy EPUB into app_data_dir/Library/{book_id}/book.epub (sandbox container; same root as library.db)
     let library_epub = crate::book_service::epub_file_storage::library_epub_path(&app, &book_id)
         .map_err(|e| AppError::Store(e))?;
     if let Some(parent) = library_epub.parent() {
@@ -1420,7 +1420,7 @@ pub async fn ingest_epub(
     BookRepository::save(db.as_ref(), &book).await
         .map_err(|e| AppError::Store(e))?;
     
-    // Store EPUB reference (file in Documents/Library; no BLOB duplicate)
+    // Store EPUB reference (file in app container Library/; no BLOB duplicate)
     use repositories::EpubRepository;
     log::info!(
         "Registering canonical EPUB at {} ({} bytes)",
