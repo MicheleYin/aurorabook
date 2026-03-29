@@ -100,9 +100,8 @@ impl TtsEnginePool {
             engine_type
         );
 
-        // Note: Misaki G2P (misaki-rs) is self-contained and doesn't require 
-        // external model files or resource directories.
-        // This is typically done in the calling code (e.g., tts_commands.rs, epub/converter.rs)
+        // Misaki G2P (misaki-rs) uses espeak-rs; phoneme tables come from bundled
+        // `espeak-ng-data` with `PIPER_ESPEAKNG_DATA_DIRECTORY` set in `lib.rs` setup.
 
         match engine_type {
             TtsEngineType::Onnx => {

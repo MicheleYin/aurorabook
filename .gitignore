@@ -7,6 +7,9 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Cargo artifact dir (set in src-tauri/.cargo/config.toml for shorter paths)
+../.cargo-target/
+
 node_modules
 dist
 dist-ssr

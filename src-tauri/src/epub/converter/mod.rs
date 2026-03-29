@@ -130,8 +130,7 @@ pub async fn convert_epub_to_audiobook(
     // Find model files
     let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(Some(&app))?;
 
-    // Note: Misaki G2P (misaki-rs) is self-contained and doesn't require
-    // external model files or resource directories.
+    // G2P uses bundled espeak-ng data (`PIPER_ESPEAKNG_DATA_DIRECTORY` set in app setup).
 
     let onnx_path_str = onnx_path
         .to_str()

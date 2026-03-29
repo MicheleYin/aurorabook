@@ -1,3 +1,139 @@
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+/// eSpeak-ng loads voice/phoneme data from disk at runtime (see `espeak-rs` / `PIPER_ESPEAKNG_DATA_DIRECTORY`).
+/// After `espeak-rs-sys` builds, copy that tree into `resources/espeak-ng-data` so Tauri can bundle it.
+fn sync_espeak_ng_data_for_bundle() {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if target.contains("apple-ios") {
+        return;
+    }
+
+    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
+        Ok(s) => PathBuf::from(s),
+        Err(_) => return,
+    };
+    let dest_root = manifest_dir.join("resources").join("espeak-ng-data");
+
+    // Prefer CARGO_TARGET_DIR, but also check the repo's `.cargo-target` when tools override
+    // CARGO_TARGET_DIR (e.g. sandbox) while espeak-rs-sys artifacts live next to the project.
+    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".into());
+    let fallback_target = manifest_dir
+        .join("..")
+        .join("..")
+        .join(".cargo-target")
+        .join(&profile);
+
+    let mut target_roots: Vec<PathBuf> = Vec::new();
+    if let Ok(t) = std::env::var("CARGO_TARGET_DIR") {
+        target_roots.push(PathBuf::from(t));
+    }
+    if !target_roots.iter().any(|p| p == &fallback_target) {
+        target_roots.push(fallback_target);
+    }
+
+    let Some(src_root) = target_roots
+        .iter()
+        .find_map(|root| find_built_espeak_ng_data(root))
+    else {
+        eprintln!(
+            "cargo:warning=espeak-ng-data not found under any of: {:?} — run cargo build so espeak-rs-sys completes first",
+            target_roots
+        );
+        return;
+    };
+
+    if should_skip_sync(&src_root, &dest_root) {
+        return;
+    }
+
+    let readme_src = manifest_dir.join("resources/espeak-ng-data/README.md");
+    let readme_backup = fs::read(&readme_src).ok();
+
+    if let Err(e) = copy_dir_all(&src_root, &dest_root) {
+        eprintln!(
+            "cargo:warning=failed to sync espeak-ng-data to {}: {}",
+            dest_root.display(),
+            e
+        );
+        return;
+    }
+
+    if let Some(bytes) = readme_backup {
+        let _ = fs::write(dest_root.join("README.md"), bytes);
+    }
+
+    eprintln!(
+        "cargo:warning=Synced espeak-ng-data into {} for Tauri bundle / dev resources",
+        dest_root.display()
+    );
+}
+
+fn find_built_espeak_ng_data(target_dir: &Path) -> Option<PathBuf> {
+    let build_dir = target_dir.join("build");
+    let entries = fs::read_dir(&build_dir).ok()?;
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with("espeak-rs-sys-") {
+            continue;
+        }
+        let base = entry.path().join("out");
+        for rel in ["build/espeak-ng-data", "share/espeak-ng-data"] {
+            let cand = base.join(rel);
+            let phondata = cand.join("phondata");
+            if cand.is_dir() && phondata.is_file() {
+                let Ok(mtime) = fs::metadata(&phondata).and_then(|m| m.modified()) else {
+                    continue;
+                };
+                best = match best {
+                    None => Some((mtime, cand)),
+                    Some((t0, _)) if mtime > t0 => Some((mtime, cand)),
+                    Some(prev) => Some(prev),
+                };
+            }
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+fn should_skip_sync(src_root: &Path, dest_root: &Path) -> bool {
+    let dest_phondata = dest_root.join("phondata");
+    let Ok(src_meta) = fs::metadata(src_root.join("phondata")) else {
+        return true;
+    };
+    let Ok(dest_meta) = fs::metadata(&dest_phondata) else {
+        return false;
+    };
+    let (Ok(st), Ok(dt)) = (src_meta.modified(), dest_meta.modified()) else {
+        return false;
+    };
+    dt >= st
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
+    if dst.exists() {
+        fs::remove_dir_all(dst)?;
+    }
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&from, &to)?;
+        } else {
+            if let Some(parent) = to.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     // Build kai_* stub library for iOS (ARM SME symbols)
     let target = std::env::var("TARGET").unwrap_or_default();
@@ -323,5 +459,6 @@ fn main() {
         }
     }
 
+    sync_espeak_ng_data_for_bundle();
     tauri_build::build()
 }

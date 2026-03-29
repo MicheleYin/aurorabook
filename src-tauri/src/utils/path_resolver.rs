@@ -327,6 +327,45 @@ impl ResourcePathResolver {
 
         Ok(canonical)
     }
+
+    /// Parent directory `P` such that `P/espeak-ng-data` exists on disk.
+    ///
+    /// Tauri bundles `tauri.conf.json` `bundle.resources` under
+    /// `resource_dir/resources/` on macOS (e.g. `Contents/Resources/resources/`),
+    /// while `resource_dir()` alone is `Contents/Resources`. Misaki / `espeak-rs`
+    /// expect [`PIPER_ESPEAKNG_DATA_DIRECTORY`](https://crates.io/crates/espeak-rs)
+    /// to be that parent (not the inner `espeak-ng-data` folder).
+    pub fn espeak_ng_piper_data_directory(resource_dir: &Path) -> Option<PathBuf> {
+        let nested = resource_dir.join("resources").join("espeak-ng-data");
+        if nested.is_dir() {
+            return Some(resource_dir.join("resources"));
+        }
+        let flat = resource_dir.join("espeak-ng-data");
+        if flat.is_dir() {
+            return Some(resource_dir.to_path_buf());
+        }
+        None
+    }
+
+    /// Resolve the eSpeak-ng bundle parent using the app resource dir, then dev `cwd` fallbacks
+    /// (`src-tauri/resources`, `./resources`).
+    pub fn resolve_espeak_ng_piper_directory(app: &AppHandle) -> Option<PathBuf> {
+        if let Ok(rd) = app.path().resource_dir() {
+            if let Some(p) = Self::espeak_ng_piper_data_directory(&rd) {
+                return Some(p);
+            }
+        }
+        let cwd = std::env::current_dir().ok()?;
+        for base in [
+            cwd.join("src-tauri").join("resources"),
+            cwd.join("resources"),
+        ] {
+            if base.join("espeak-ng-data").is_dir() {
+                return Some(base);
+            }
+        }
+        None
+    }
 }
 
     /// Get comprehensive path resolution diagnostics.

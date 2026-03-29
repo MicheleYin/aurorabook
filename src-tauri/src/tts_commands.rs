@@ -130,8 +130,7 @@ pub async fn generate_tts_cached(
         .transpose()?
         .unwrap_or(TtsEngineType::Onnx);
 
-    // Note: Misaki G2P (misaki-rs) is self-contained and doesn't require 
-    // external model files or resource directories.
+    // espeak-ng data path is configured at app startup (see lib.rs).
 
     let audio_samples = match engine_type {
         TtsEngineType::Onnx => {

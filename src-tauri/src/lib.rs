@@ -77,6 +77,32 @@ pub fn run() {
                         let msg = format!("✓ Set TAURI_RESOURCE_DIR to: {}", resource_str);
                         log::info!("{}", msg);
                         logging::log("info", &msg, None);
+
+                        // misaki-rs → espeak-rs: phoneme data must be on disk. espeak-rs uses
+                        // PIPER_ESPEAKNG_DATA_DIRECTORY as the parent of `espeak-ng-data`.
+                        // Bundled `tauri.conf.json` resources live under resource_dir/resources/
+                        // (e.g. .../Resources/resources/espeak-ng-data), same as ONNX — not
+                        // directly under resource_dir.
+                        if let Some(piper_parent) =
+                            crate::utils::path_resolver::ResourcePathResolver::resolve_espeak_ng_piper_directory(app.handle())
+                        {
+                            if let Some(piper_str) = piper_parent.to_str() {
+                                std::env::set_var("PIPER_ESPEAKNG_DATA_DIRECTORY", piper_str);
+                                log::info!(
+                                    "✓ Set PIPER_ESPEAKNG_DATA_DIRECTORY for eSpeak-ng (misaki G2P): {}",
+                                    piper_str
+                                );
+                            } else {
+                                log::warn!(
+                                    "⚠ eSpeak-ng parent path is not valid UTF-8: {:?}",
+                                    piper_parent
+                                );
+                            }
+                        } else {
+                            log::warn!(
+                                "⚠ espeak-ng-data not found — misaki/eSpeak G2P may fail. Run `cargo build` so build.rs syncs data into src-tauri/resources, and ensure bundle includes resources/espeak-ng-data."
+                            );
+                        }
                         
                         let exists_msg = format!("  Resource directory exists: {}", resource_dir.exists());
                         log::info!("{}", exists_msg);
