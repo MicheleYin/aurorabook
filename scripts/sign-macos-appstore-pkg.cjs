@@ -10,6 +10,7 @@
  * Optional:
  *   SKIP_MACOS_APPSTORE_PKG=1 — skip this step (e.g. you only need the .app)
  *   MACOS_APPSTORE_PKG_OUT — output .pkg path (default: next to the .app in bundle/macos/)
+ *   CARGO_TARGET_DIR — where Cargo wrote the build (default: repo /.cargo-target per src-tauri/.cargo/config.toml)
  */
 const fs = require("fs");
 const path = require("path");
@@ -23,6 +24,13 @@ if (String(process.env.SKIP_MACOS_APPSTORE_PKG || "").trim() === "1") {
 const root = path.join(__dirname, "..");
 const tauriDir = path.join(root, "src-tauri");
 const confPath = path.join(tauriDir, "tauri.conf.json");
+
+/** Matches `src-tauri/.cargo/config.toml` target-dir (repo `/.cargo-target`). Override with CARGO_TARGET_DIR. */
+function resolveCargoTargetDir() {
+  const fromEnv = (process.env.CARGO_TARGET_DIR || "").trim();
+  if (fromEnv) return path.resolve(fromEnv);
+  return path.resolve(tauriDir, "..", "..", ".cargo-target");
+}
 
 const identity = (process.env.APPLE_MACOS_INSTALLER_SIGNING_IDENTITY || "").trim();
 if (!identity) {
@@ -47,20 +55,32 @@ if (!productName) {
   process.exit(1);
 }
 
-const bundleDir = path.join(
-  tauriDir,
-  "target",
-  "aarch64-apple-darwin",
-  "release",
-  "bundle",
-  "macos"
-);
-const appPath = path.join(bundleDir, `${productName}.app`);
+const bundleSubpath = ["aarch64-apple-darwin", "release", "bundle", "macos"];
+
+function bundleDirForTargetRoot(targetRoot) {
+  return path.join(targetRoot, ...bundleSubpath);
+}
+
+let cargoTargetDir = resolveCargoTargetDir();
+let bundleDir = bundleDirForTargetRoot(cargoTargetDir);
+let appPath = path.join(bundleDir, `${productName}.app`);
 
 if (!fs.existsSync(appPath)) {
-  console.error("sign-macos-appstore-pkg: app bundle not found:", appPath);
-  console.error("  Run build:macos:appstore first (without SKIP_MACOS_APPSTORE_PKG during build).");
-  process.exit(1);
+  const legacyBundle = bundleDirForTargetRoot(path.join(tauriDir, "target"));
+  const legacyApp = path.join(legacyBundle, `${productName}.app`);
+  if (fs.existsSync(legacyApp)) {
+    bundleDir = legacyBundle;
+    appPath = legacyApp;
+    console.warn(
+      "sign-macos-appstore-pkg: using legacy src-tauri/target bundle (prefer .cargo-target per .cargo/config.toml)."
+    );
+  } else {
+    console.error("sign-macos-appstore-pkg: app bundle not found:", appPath);
+    console.error("  Also checked:", legacyApp);
+    console.error("  CARGO_TARGET_DIR:", cargoTargetDir);
+    console.error("  Run build:macos:appstore first (without SKIP_MACOS_APPSTORE_PKG during build).");
+    process.exit(1);
+  }
 }
 
 const outPkg =
