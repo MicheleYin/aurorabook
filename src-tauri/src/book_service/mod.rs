@@ -824,7 +824,16 @@ pub async fn delete_book(
     // All related data (chapters, images, audio tracks) will be automatically deleted
     BookRepository::delete(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))?;
-    
+
+    // Remove canonical EPUB and any other files under `Library/<book_id>/`
+    if let Err(e) = epub_file_storage::remove_book_library_dir(&app, &book_id) {
+        log::warn!(
+            "Book removed from database but failed to delete on-disk library files for {}: {}",
+            book_id,
+            e
+        );
+    }
+
     Ok(())
 }
 

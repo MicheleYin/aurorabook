@@ -25,6 +25,25 @@ pub fn library_epub_path(app: &AppHandle, book_id: &str) -> Result<PathBuf, Stri
     Ok(resolve_library_root(app)?.join(book_id).join("book.epub"))
 }
 
+/// Per-book directory under the app Library root (`Library/<book_id>/`).
+pub fn library_book_dir(app: &AppHandle, book_id: &str) -> Result<PathBuf, String> {
+    Ok(resolve_library_root(app)?.join(book_id))
+}
+
+/// Deletes `Library/<book_id>/` and everything inside (canonical EPUB and any other per-book files).
+pub fn remove_book_library_dir(app: &AppHandle, book_id: &str) -> Result<(), String> {
+    let dir = library_book_dir(app, book_id)?;
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(|e| {
+            format!(
+                "Failed to remove book library directory {:?}: {}",
+                dir, e
+            )
+        })?;
+    }
+    Ok(())
+}
+
 /// Read an audio (or any) member from an on-disk EPUB, using the same path rules as ingestion.
 pub fn read_member_from_epub_file(epub_path: &Path, inner_href: &str) -> Result<Vec<u8>, String> {
     let file = File::open(epub_path).map_err(|e| format!("Failed to open EPUB: {}", e))?;
