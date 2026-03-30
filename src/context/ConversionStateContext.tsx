@@ -79,9 +79,14 @@ export function ConversionStateProvider({
   const convertingBookIdRef = useRef<string | null>(null);
   const chapterToastIdRef = useRef<string | null>(null);
   const [estimation, setEstimation] = useState<Estimation | null>(null);
+  const estimationRef = useRef<Estimation | null>(null);
 
   // Store registered callbacks
   const callbacksRef = useRef<Set<ConversionStateCallbacks>>(new Set());
+
+  useEffect(() => {
+    estimationRef.current = estimation;
+  }, [estimation]);
 
   // Update refs when values change
   useEffect(() => {
@@ -104,7 +109,7 @@ export function ConversionStateProvider({
           ? Math.round((progress.wordsProcessed / progress.totalWords) * 100)
           : 0;
 
-      const measurement = estimation?.update(
+      const measurement = estimationRef.current?.update(
         progress.wordsProcessed,
         progress.totalWords
       );
@@ -212,12 +217,7 @@ export function ConversionStateProvider({
       unsubscribeChapterCompleted();
       unsubscribeCancelled();
     };
-  }, [
-    subscribeToProgress,
-    subscribeToChapterCompleted,
-    subscribeToCancelled,
-    estimation,
-  ]);
+  }, [subscribeToProgress, subscribeToChapterCompleted, subscribeToCancelled]);
 
   const convertBook = useCallback(
     async (bookId: string) => {
