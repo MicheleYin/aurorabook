@@ -10,6 +10,7 @@ use crate::utils::text::count_words;
 use anyhow::Result as AnyhowResult;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use tokio::task::JoinSet;
 
 /// Macro to check cancellation token and return early if cancelled
 macro_rules! check_cancellation {
@@ -643,8 +644,9 @@ pub(crate) async fn process_chapter(
     let sentences_processed = Arc::new(AtomicUsize::new(0));
     let total_sentences = sentences.len();
 
-    // Process all sentences in parallel with round-robin distribution
-    let mut handles = Vec::new();
+    // Process all sentences in parallel with round-robin distribution.
+    // JoinSet lets us observe completions as they happen instead of waiting in spawn order.
+    let mut handles = JoinSet::new();
     for (idx, sentence) in sentences.iter().enumerate() {
         // Check for cancellation before spawning each sentence task
         check_cancellation!(cancel_token);
@@ -655,7 +657,7 @@ pub(crate) async fn process_chapter(
         let voice_id = voice_id.to_string();
         let cancel_token_clone = cancel_token.as_ref().map(Arc::clone);
 
-        let handle = tokio::spawn(async move {
+        handles.spawn(async move {
             let _permit = semaphore
                 .acquire()
                 .await
@@ -693,8 +695,6 @@ pub(crate) async fn process_chapter(
                 anyhow::Error,
             >((idx, result.0, result.1, result.2))
         });
-
-        handles.push(handle);
     }
 
     // Collect results and update progress as each sentence completes
@@ -706,8 +706,8 @@ pub(crate) async fn process_chapter(
         String,
     )> = Vec::new();
 
-    // Process handles with periodic cancellation checks
-    for handle in handles {
+    // Process sentence results in completion order so pooled workers emit progress promptly.
+    while !handles.is_empty() {
         // Check for cancellation before waiting for next result
         check_cancellation!(cancel_token);
 
@@ -715,7 +715,7 @@ pub(crate) async fn process_chapter(
         let result = if let Some(ref token) = cancel_token {
             let token_clone = Arc::clone(token);
             tokio::select! {
-                result = handle => {
+                result = handles.join_next() => {
                     result
                 }
                 _ = async move {
@@ -734,7 +734,11 @@ pub(crate) async fn process_chapter(
                 }
             }
         } else {
-            handle.await
+            handles.join_next().await
+        };
+
+        let Some(result) = result else {
+            break;
         };
 
         // Handle task join result - if task panicked, JoinError will be returned
