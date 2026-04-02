@@ -20,7 +20,7 @@ fn test_get_parallelism() {
     
     // On machines with 8+ cores, should use ~75% (with 1 reserved)
     if logical_cores >= 8 {
-        let expected_max = ((logical_cores as f64) * 0.75).round() as usize;
+        let expected_max = ((logical_cores as f64) * 0.50).round() as usize;
         assert!(parallelism <= expected_max, 
                 "On {} core machine, parallelism ({}) should be <= {}", 
                 logical_cores, parallelism, expected_max);
