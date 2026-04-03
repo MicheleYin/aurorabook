@@ -16,6 +16,13 @@ const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
+function runOrFail(cmd, args, opts = {}) {
+  const result = spawnSync(cmd, args, { stdio: "inherit", ...opts });
+  if (result.status !== 0) {
+    process.exit(result.status === null ? 1 : result.status);
+  }
+}
+
 if (String(process.env.SKIP_MACOS_APPSTORE_PKG || "").trim() === "1") {
   console.log("sign-macos-appstore-pkg: SKIP_MACOS_APPSTORE_PKG=1, skipping .pkg signing.");
   process.exit(0);
@@ -39,6 +46,15 @@ if (!identity) {
   );
   console.error('  Example: "3rd Party Mac Developer Installer: Your Name (TEAMID)"');
   console.error("  List identities: security find-identity -v");
+  process.exit(1);
+}
+
+const appSigningIdentity = (process.env.APPLE_SIGNING_IDENTITY || "").trim();
+if (!appSigningIdentity) {
+  console.error(
+    "sign-macos-appstore-pkg: set APPLE_SIGNING_IDENTITY so bundled executables can be signed with sandbox entitlements."
+  );
+  console.error('  Example: "3rd Party Mac Developer Application: Your Name (TEAMID)"');
   process.exit(1);
 }
 
@@ -83,18 +99,66 @@ if (!fs.existsSync(appPath)) {
   }
 }
 
+// App Store validation requires nested executables to carry sandbox entitlements.
+const ffmpegPath = path.join(
+  appPath,
+  "Contents",
+  "Resources",
+  "resources",
+  "ffmpeg"
+);
+if (fs.existsSync(ffmpegPath)) {
+  const appStoreEntitlementsPath = path.join(tauriDir, "Entitlements.macos-appstore.plist");
+  if (!fs.existsSync(appStoreEntitlementsPath)) {
+    console.error(
+      "sign-macos-appstore-pkg: missing entitlements file required for nested executable signing:",
+      appStoreEntitlementsPath
+    );
+    process.exit(1);
+  }
+
+  console.log("sign-macos-appstore-pkg: signing nested executable", path.relative(root, ffmpegPath));
+  runOrFail(
+    "codesign",
+    [
+      "--force",
+      "--sign",
+      appSigningIdentity,
+      "--entitlements",
+      appStoreEntitlementsPath,
+      ffmpegPath,
+    ],
+    { cwd: root }
+  );
+
+  console.log("sign-macos-appstore-pkg: re-signing app bundle after nested signing");
+  runOrFail(
+    "codesign",
+    [
+      "--force",
+      "--sign",
+      appSigningIdentity,
+      "--entitlements",
+      appStoreEntitlementsPath,
+      appPath,
+    ],
+    { cwd: root }
+  );
+} else {
+  console.warn(
+    "sign-macos-appstore-pkg: bundled ffmpeg not found; skipping nested executable signing at",
+    ffmpegPath
+  );
+}
+
 const outPkg =
   (process.env.MACOS_APPSTORE_PKG_OUT || "").trim() ||
   path.join(bundleDir, `${productName.replace(/[\s/\\\(\)]/g, "")}.pkg`);
 
-const r = spawnSync(
+runOrFail(
   "xcrun",
   ["productbuild", "--sign", identity, "--component", appPath, "/Applications", outPkg],
-  { stdio: "inherit", cwd: root }
+  { cwd: root }
 );
-
-if (r.status !== 0) {
-  process.exit(r.status === null ? 1 : r.status);
-}
 
 console.log("sign-macos-appstore-pkg: wrote", path.relative(root, outPkg));

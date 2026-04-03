@@ -12,6 +12,7 @@ use repositories::*;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::path_validation::validate_file_size;
+use tauri::Manager;
 
 /// Normalize an EPUB href by removing leading slash.
 /// The base path should already be correctly derived from the OPF file.
@@ -951,8 +952,7 @@ pub async fn export_epub_to_file(
 }
 
 /// Export audiobook as M4B (MPEG-4 Audio Book)
-/// Extracts audio tracks from the audiobook EPUB and creates an M4B file
-/// using FFmpeg for concatenation and format conversion.
+/// Extracts audio tracks and creates an M4B file using bundled FFmpeg.
 ///
 /// # Arguments
 /// * `book_id` - The book ID to export
@@ -963,12 +963,7 @@ pub async fn export_epub_to_file(
 /// `Ok(())` if export succeeds
 ///
 /// # Errors
-/// Returns an error if:
-/// - Book not found in database
-/// - EPUB file cannot be loaded
-/// - Audio extraction fails
-/// - FFmpeg is not available on the system
-/// - File write operations fail
+/// Returns an error if audio processing or FFmpeg fails
 #[tauri::command]
 pub async fn export_as_m4b(
     book_id: String,
@@ -980,7 +975,9 @@ pub async fn export_as_m4b(
     use std::io::Write;
     use std::path::Path;
     use std::process::Command;
-    use tempfile::TempDir;
+    use uuid::Uuid;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     fn escape_ffmetadata_value(value: &str) -> String {
         value
@@ -991,14 +988,11 @@ pub async fn export_as_m4b(
             .replace('#', "\\#")
     }
 
-    fn probe_duration_ms(path: &Path) -> Option<u64> {
-        let output = Command::new("ffprobe")
-            .arg("-v")
-            .arg("error")
-            .arg("-show_entries")
-            .arg("format=duration")
-            .arg("-of")
-            .arg("default=noprint_wrappers=1:nokey=1")
+    fn probe_duration_ms(ffmpeg_path: &Path, path: &Path) -> Option<u64> {
+        let output = Command::new(ffmpeg_path)
+            .arg("-v").arg("error")
+            .arg("-show_entries").arg("format=duration")
+            .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
             .arg(path)
             .output()
             .ok()?;
@@ -1022,22 +1016,47 @@ pub async fn export_as_m4b(
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
     
-    // Get book metadata for title and author
+    // Get book metadata
     let book = BookRepository::find_by_id(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))?
         .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
     
-    // Create temporary directory for working files
-    let temp_dir = TempDir::new()
-        .map_err(|e| AppError::Store(format!("Failed to create temp directory: {}", e)))?;
-    let temp_path = temp_dir.path();
+    // Get bundled FFmpeg path
+    let ffmpeg_path = app.path().resolve("resources/ffmpeg", tauri::path::BaseDirectory::Resource)
+        .map_err(|e| AppError::Store(format!("Failed to resolve FFmpeg path: {}", e)))?;
     
-    // Extract audio files and create file list for FFmpeg
+    if !ffmpeg_path.exists() {
+        return Err(AppError::Store(
+            format!("FFmpeg binary not found at: {:?}", ffmpeg_path)
+        ));
+    }
+    
+    // Ensure executable permissions on Unix
+    #[cfg(unix)]
+    {
+        use std::fs::Metadata;
+        if let Ok(metadata) = fs::metadata(&ffmpeg_path) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o755);
+            let _ = fs::set_permissions(&ffmpeg_path, perms);
+        }
+    }
+    
+    // Create working directory in app data directory
+    let app_data_dir = app.path().app_data_dir()
+        .map_err(|e| AppError::Store(format!("Failed to get app data directory: {}", e)))?;
+    let export_work_dir = app_data_dir.join("m4b_export").join(Uuid::new_v4().to_string());
+    fs::create_dir_all(&export_work_dir)
+        .map_err(|e| AppError::Store(format!("Failed to create export work directory: {}", e)))?;
+    
+    let cleanup_dir = export_work_dir.clone();
+    
+    // Extract audio files and create file list
     let mut audio_files = Vec::new();
     let mut filelist_content = String::new();
     let mut chapter_entries: Vec<(String, u64)> = Vec::new();
     
-    // Sort audio tracks by order to ensure correct concatenation sequence
+    // Sort audio tracks by order
     let mut sorted_tracks = book.audio_tracks.clone();
     sorted_tracks.sort_by_key(|t| t.order);
 
@@ -1045,15 +1064,13 @@ pub async fn export_as_m4b(
     let mut missing_tracks = 0usize;
     
     for (index, track) in sorted_tracks.iter().enumerate() {
-        // Resolve bytes via repository (blob first, then canonical EPUB fallback)
         match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &book_id, &track.id).await {
             Ok(Some((audio_bytes, href))) => {
                 let ext = href.rsplit('.').next().unwrap_or("mp3");
-                let output_file = temp_path.join(format!("{:03}.{}", index, ext));
+                let output_file = export_work_dir.join(format!("{:03}.{}", index, ext));
                 fs::write(&output_file, audio_bytes)
                     .map_err(|e| AppError::Store(format!("Failed to write temp audio file: {}", e)))?;
 
-                // Escape single quotes for ffmpeg concat file syntax.
                 let escaped_path = output_file.display().to_string().replace('\'', "'\\''");
                 filelist_content.push_str(&format!("file '{}'\n", escaped_path));
 
@@ -1061,7 +1078,7 @@ pub async fn export_as_m4b(
                     .duration
                     .map(|d| (d * 1000.0).round() as u64)
                     .filter(|d| *d > 0)
-                    .or_else(|| probe_duration_ms(&output_file))
+                    .or_else(|| probe_duration_ms(&ffmpeg_path, &output_file))
                     .unwrap_or(0);
 
                 if duration_ms > 0 {
@@ -1073,7 +1090,7 @@ pub async fn export_as_m4b(
                     chapter_entries.push((chapter_title, duration_ms));
                 } else {
                     log::warn!(
-                        "Could not determine duration for track id='{}' href='{}'; chapter marker will be omitted",
+                        "Could not determine duration for track id='{}' href='{}'",
                         track.id,
                         track.href
                     );
@@ -1084,7 +1101,7 @@ pub async fn export_as_m4b(
             Ok(None) => {
                 missing_tracks += 1;
                 log::warn!(
-                    "Skipping missing audio track id='{}' href='{}' during M4B export",
+                    "Skipping missing audio track id='{}' href='{}'",
                     track.id,
                     track.href
                 );
@@ -1092,7 +1109,7 @@ pub async fn export_as_m4b(
             Err(e) => {
                 missing_tracks += 1;
                 log::warn!(
-                    "Skipping unreadable audio track id='{}' href='{}' during M4B export: {}",
+                    "Skipping unreadable audio track id='{}' href='{}': {}",
                     track.id,
                     track.href,
                     e
@@ -1104,29 +1121,29 @@ pub async fn export_as_m4b(
     if audio_files.is_empty() {
         return Err(AppError::Store(
             format!(
-                "No exportable audio tracks found ({} tracks were missing or unreadable)",
-                total_tracks
+                "No exportable audio tracks found ({} of {} tracks were missing or unreadable)",
+                missing_tracks, total_tracks
             ),
         ));
     }
 
     if missing_tracks > 0 {
         log::warn!(
-            "M4B export will continue with partial audio: {} of {} tracks missing/unreadable",
+            "M4B export continuing with partial audio: {} of {} tracks missing/unreadable",
             missing_tracks,
             total_tracks
         );
     }
     
     // Write FFmpeg concat file list
-    let filelist_path = temp_path.join("filelist.txt");
+    let filelist_path = export_work_dir.join("filelist.txt");
     let mut filelist = fs::File::create(&filelist_path)
         .map_err(|e| AppError::Store(format!("Failed to create filelist: {}", e)))?;
     filelist.write_all(filelist_content.as_bytes())
         .map_err(|e| AppError::Store(format!("Failed to write filelist: {}", e)))?;
 
-    // Write FFmpeg metadata with chapters so merged M4B keeps per-track navigation.
-    let metadata_path = temp_path.join("metadata.ffmeta");
+    // Write FFmpeg metadata with chapters
+    let metadata_path = export_work_dir.join("metadata.ffmeta");
     let mut metadata_content = String::new();
     metadata_content.push_str(";FFMETADATA1\n");
     metadata_content.push_str(&format!("title={}\n", escape_ffmetadata_value(&book.title)));
@@ -1146,28 +1163,19 @@ pub async fn export_as_m4b(
     }
 
     fs::write(&metadata_path, metadata_content)
-        .map_err(|e| AppError::Store(format!("Failed to write FFmpeg metadata: {}", e)))?;
+        .map_err(|e| AppError::Store(format!("Failed to write metadata: {}", e)))?;
     
-    // Use FFmpeg to concatenate and convert to M4B
-    log::info!("Starting FFmpeg concatenation with {} audio files", audio_files.len());
+    log::info!("Starting FFmpeg with {} audio files", audio_files.len());
     
-    let output = Command::new("ffmpeg")
-        .arg("-f")
-        .arg("concat")
-        .arg("-safe")
-        .arg("0")
-        .arg("-i")
-        .arg(filelist_path.to_str().unwrap())
-        .arg("-i")
-        .arg(metadata_path.to_str().unwrap())
-        .arg("-map_metadata")
-        .arg("1")
-        .arg("-map_chapters")
-        .arg("1")
-        .arg("-c")
-        .arg("aac")
-        .arg("-b:a")
-        .arg("128k")
+    let output = Command::new(&ffmpeg_path)
+        .arg("-f").arg("concat")
+        .arg("-safe").arg("0")
+        .arg("-i").arg(filelist_path.to_str().unwrap())
+        .arg("-i").arg(metadata_path.to_str().unwrap())
+        .arg("-map_metadata").arg("1")
+        .arg("-map_chapters").arg("1")
+        .arg("-c").arg("aac")
+        .arg("-b:a").arg("128k")
         .arg("-y")
         .arg(&output_path)
         .output()
@@ -1180,7 +1188,13 @@ pub async fn export_as_m4b(
         ));
     }
     
-    log::info!("M4B export completed successfully: {}", output_path);
+    log::info!("M4B export completed: {}", output_path);
+    
+    // Clean up
+    if let Err(e) = fs::remove_dir_all(&cleanup_dir) {
+        log::warn!("Failed to clean up working directory: {}", e);
+    }
+    
     Ok(())
 }
 
