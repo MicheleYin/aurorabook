@@ -119,8 +119,6 @@ pub(crate) fn generate_book_vtt(chapters: &[(String, Vec<WordAlignment>, f64)]) 
     vtt.push_str("NOTE Complete audiobook with all chapters\n");
     vtt.push_str("\n");
 
-    let mut cumulative_time = 0.0;
-
     for (chapter_title, word_alignments, chapter_start_time) in chapters {
         // Add chapter marker
         vtt.push_str(&format!("NOTE Chapter: {}\n", chapter_title));
@@ -186,10 +184,6 @@ pub(crate) fn generate_book_vtt(chapters: &[(String, Vec<WordAlignment>, f64)]) 
             vtt.push_str("\n");
         }
 
-        // Update cumulative time for next chapter
-        if let Some(last_alignment) = word_alignments.last() {
-            cumulative_time = chapter_start_time + last_alignment.end_sec as f64;
-        }
     }
 
     vtt

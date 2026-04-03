@@ -39,6 +39,13 @@ import {
   DrawerTitle,
 } from "../ui/drawer";
 import { Progress } from "../ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Separator } from "../ui/separator";
 
 interface ConversionProgress {
@@ -325,6 +332,7 @@ export function BookDetailDialog({
   eta,
 }: Readonly<BookDetailDialogProps>) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [exportDropdownKey, setExportDropdownKey] = useState(0);
   const isMobile = useIsMobile();
 
   const handleDeleteClick = useCallback(() => setShowDeleteConfirm(true), []);
@@ -336,7 +344,7 @@ export function BookDetailDialog({
 
   const handleDeleteCancel = useCallback(() => setShowDeleteConfirm(false), []);
 
-  const handleExport = useCallback(async () => {
+  const handleExportEpub = useCallback(async () => {
     if (!book) return;
 
     try {
@@ -362,12 +370,57 @@ export function BookDetailDialog({
         outputPath: filePath,
       });
 
-      toast.success("Book exported successfully");
+      toast.success("EPUB exported successfully");
     } catch (err) {
-      logger.error("Failed to export book:", err);
-      toast.error(err instanceof Error ? err.message : "Failed to export book");
+      logger.error("Failed to export EPUB:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to export EPUB");
     }
   }, [book]);
+
+  const handleExportM4b = useCallback(async () => {
+    if (!book) return;
+
+    try {
+      // Open save dialog
+      const filePath = await save({
+        defaultPath: `${book.title}.m4b`,
+        filters: [
+          {
+            name: "M4B Audio Files",
+            extensions: ["m4b"],
+          },
+        ],
+      });
+
+      if (!filePath) {
+        // User cancelled
+        return;
+      }
+
+      // Call backend to export M4B
+      await invoke("export_as_m4b", {
+        bookId: book.id,
+        outputPath: filePath,
+      });
+
+      toast.success("M4B exported successfully");
+    } catch (err) {
+      logger.error("Failed to export M4B:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to export M4B");
+    }
+  }, [book]);
+
+  const handleExportDropdownAction = useCallback(
+    (value: string) => {
+      if (value === "epub") {
+        void handleExportEpub();
+      } else if (value === "m4b") {
+        void handleExportM4b();
+      }
+      setExportDropdownKey((prev) => prev + 1);
+    },
+    [handleExportEpub, handleExportM4b]
+  );
 
   logger.log("isConvertingThisBook", isConvertingThisBook);
   if (!book) return null;
@@ -400,15 +453,20 @@ export function BookDetailDialog({
                 <BookOpen className="h-4 w-4" />
                 Open Book
               </Button>
-              <Button
-                variant="outline"
-                onClick={handleExport}
+              <Select
+                key={`desktop-${exportDropdownKey}`}
+                onValueChange={handleExportDropdownAction}
                 disabled={isDeleting || isConvertingThisBook}
-                className="gap-2"
               >
-                <Download className="h-4 w-4" />
-                Export EPUB
-              </Button>
+                <SelectTrigger className="w-[170px] gap-2">
+                  <Download className="h-4 w-4" />
+                  <SelectValue placeholder="Export" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="epub">Export as EPUB</SelectItem>
+                  <SelectItem value="m4b">Export as M4B</SelectItem>
+                </SelectContent>
+              </Select>
               {book.conversionStatus === "started" && isConvertingThisBook && (
                 <Button
                   variant="outline"
@@ -483,15 +541,21 @@ export function BookDetailDialog({
                 <BookOpen className="h-4 w-4" />
                 Open Book
               </Button>
-              <Button
-                variant="outline"
-                onClick={handleExport}
+              <Select
+                key={`mobile-${exportDropdownKey}`}
+                onValueChange={handleExportDropdownAction}
+                
                 disabled={isDeleting || isConvertingThisBook}
-                className="gap-2"
               >
-                <Download className="h-4 w-4" />
-                Export EPUB
-              </Button>
+                <SelectTrigger className="w-full gap-2">
+                  <Download className="h-4 w-4" />
+                  <SelectValue placeholder="Export" />
+                </SelectTrigger>
+                <SelectContent className="w-full">
+                  <SelectItem className="w-full" value="epub">Export as EPUB</SelectItem>
+                  <SelectItem className="w-full" value="m4b">Export as M4B</SelectItem>
+                </SelectContent>
+              </Select>
               {book.conversionStatus === "started" && isConvertingThisBook && (
                 <Button
                   variant="outline"
