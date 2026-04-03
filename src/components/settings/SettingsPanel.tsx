@@ -439,9 +439,7 @@ export function Settings() {
                   <AccordionContent>
                     <p className="text-sm text-muted-foreground">
                       Currently, the app processes one book at a time to ensure
-                      optimal performance and resource management. You can queue
-                      books by starting conversions sequentially, and each will
-                      process after the previous one completes.
+                      optimal performance and resource management.
                     </p>
                   </AccordionContent>
                 </AccordionItem>
