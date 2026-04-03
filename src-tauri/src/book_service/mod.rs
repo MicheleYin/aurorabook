@@ -12,7 +12,175 @@ use repositories::*;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::path_validation::validate_file_size;
-use tauri::Manager;
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+use tauri::{Emitter, Manager};
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct M4bExportProgress {
+    book_id: String,
+    current_step: String,
+    message: String,
+    processed_tracks: usize,
+    total_tracks: usize,
+    percent: u8,
+    eta_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct M4bExportStatus {
+    in_progress: bool,
+    book_id: Option<String>,
+}
+
+static ACTIVE_M4B_EXPORT_PIDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+static M4B_EXPORT_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+static ACTIVE_M4B_EXPORT_BOOK_ID: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+fn active_m4b_export_pids() -> &'static Mutex<HashSet<u32>> {
+    ACTIVE_M4B_EXPORT_PIDS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn active_m4b_export_book_id() -> &'static Mutex<Option<String>> {
+    ACTIVE_M4B_EXPORT_BOOK_ID.get_or_init(|| Mutex::new(None))
+}
+
+fn set_active_m4b_export_book_id(book_id: Option<String>) {
+    if let Ok(mut guard) = active_m4b_export_book_id().lock() {
+        *guard = book_id;
+    }
+}
+
+#[tauri::command]
+pub async fn get_m4b_export_status() -> AppResult<M4bExportStatus> {
+    let in_progress = M4B_EXPORT_IN_PROGRESS.load(Ordering::Acquire);
+    let book_id = if let Ok(guard) = active_m4b_export_book_id().lock() {
+        guard.clone()
+    } else {
+        None
+    };
+
+    Ok(M4bExportStatus {
+        in_progress,
+        book_id,
+    })
+}
+
+fn register_m4b_export_pid(pid: u32) {
+    if let Ok(mut guard) = active_m4b_export_pids().lock() {
+        guard.insert(pid);
+    }
+}
+
+fn unregister_m4b_export_pid(pid: u32) {
+    if let Ok(mut guard) = active_m4b_export_pids().lock() {
+        guard.remove(&pid);
+    }
+}
+
+pub fn terminate_active_m4b_exports() {
+    let pids: Vec<u32> = if let Ok(guard) = active_m4b_export_pids().lock() {
+        guard.iter().copied().collect()
+    } else {
+        Vec::new()
+    };
+
+    for pid in pids {
+        let pid_str = pid.to_string();
+        match std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(&pid_str)
+            .status()
+        {
+            Ok(status) if status.success() => {
+                log::info!("Sent SIGTERM to active M4B export ffmpeg process pid={}", pid);
+            }
+            Ok(status) => {
+                log::warn!(
+                    "Failed to terminate M4B export ffmpeg process pid={} (status={:?})",
+                    pid,
+                    status.code()
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to execute kill for M4B export ffmpeg process pid={}: {}",
+                    pid,
+                    e
+                );
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn cancel_m4b_export(app: tauri::AppHandle) -> AppResult<bool> {
+    let in_progress = M4B_EXPORT_IN_PROGRESS.load(Ordering::Acquire);
+    if !in_progress {
+        return Ok(false);
+    }
+
+    let active_book_id = if let Ok(guard) = active_m4b_export_book_id().lock() {
+        guard.clone()
+    } else {
+        None
+    };
+
+    let pids: Vec<u32> = if let Ok(guard) = active_m4b_export_pids().lock() {
+        guard.iter().copied().collect()
+    } else {
+        Vec::new()
+    };
+
+    let mut killed_any = false;
+    for pid in pids {
+        let pid_str = pid.to_string();
+        match std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(&pid_str)
+            .status()
+        {
+            Ok(status) if status.success() => {
+                killed_any = true;
+                log::info!("Sent SIGTERM to cancel M4B export ffmpeg process pid={}", pid);
+            }
+            Ok(status) => {
+                log::warn!(
+                    "Failed to cancel M4B export ffmpeg process pid={} (status={:?})",
+                    pid,
+                    status.code()
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to execute kill for cancelling M4B export ffmpeg process pid={}: {}",
+                    pid,
+                    e
+                );
+            }
+        }
+    }
+
+    if killed_any {
+        let _ = app.emit(
+            "m4b-export-progress",
+            M4bExportProgress {
+                book_id: active_book_id.unwrap_or_default(),
+                current_step: "cancelled".to_string(),
+                message: "M4B export cancelled".to_string(),
+                processed_tracks: 0,
+                total_tracks: 0,
+                percent: 0,
+                eta_ms: Some(0),
+            },
+        );
+    }
+
+    Ok(killed_any)
+}
 
 /// Normalize an EPUB href by removing leading slash.
 /// The base path should already be correctly derived from the OPF file.
@@ -972,12 +1140,36 @@ pub async fn export_as_m4b(
 ) -> AppResult<()> {
     use repositories::AudioRepository;
     use std::fs;
-    use std::io::Write;
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::path::Path;
-    use std::process::Command;
+    use std::process::{Command, Stdio};
+    use std::time::Instant;
     use uuid::Uuid;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    use std::os::unix::process::CommandExt;
+
+    if M4B_EXPORT_IN_PROGRESS
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err(AppError::Store(
+            "Another M4B export is already in progress. Please wait for it to finish."
+                .to_string(),
+        ));
+    }
+
+    set_active_m4b_export_book_id(Some(book_id.clone()));
+
+    struct M4bExportLockGuard;
+    impl Drop for M4bExportLockGuard {
+        fn drop(&mut self) {
+            set_active_m4b_export_book_id(None);
+            M4B_EXPORT_IN_PROGRESS.store(false, Ordering::Release);
+        }
+    }
+    let _m4b_export_lock_guard = M4bExportLockGuard;
 
     fn escape_ffmetadata_value(value: &str) -> String {
         value
@@ -989,7 +1181,13 @@ pub async fn export_as_m4b(
     }
 
     fn probe_duration_ms(ffmpeg_path: &Path, path: &Path) -> Option<u64> {
-        let output = Command::new(ffmpeg_path)
+        let mut cmd = Command::new(ffmpeg_path);
+        #[cfg(unix)]
+        {
+            cmd.arg0("aurorabook");
+        }
+
+        let output = cmd
             .arg("-v").arg("error")
             .arg("-show_entries").arg("format=duration")
             .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
@@ -1061,8 +1259,38 @@ pub async fn export_as_m4b(
     sorted_tracks.sort_by_key(|t| t.order);
 
     let total_tracks = sorted_tracks.len();
-    let mut missing_tracks = 0usize;
+    let export_started = Instant::now();
+
+    let emit_m4b_progress = |current_step: &str,
+                             message: String,
+                             processed_tracks: usize,
+                             total_tracks: usize,
+                             percent: u8,
+                             eta_ms: Option<u64>| {
+        let _ = app.emit(
+            "m4b-export-progress",
+            M4bExportProgress {
+                book_id: book_id.clone(),
+                current_step: current_step.to_string(),
+                message,
+                processed_tracks,
+                total_tracks,
+                percent,
+                eta_ms,
+            },
+        );
+    };
+
+    emit_m4b_progress(
+        "initializing",
+        "Starting M4B export...".to_string(),
+        0,
+        total_tracks,
+        0,
+        None,
+    );
     
+    let mut missing_tracks = 0usize;
     for (index, track) in sorted_tracks.iter().enumerate() {
         match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &book_id, &track.id).await {
             Ok(Some((audio_bytes, href))) => {
@@ -1116,6 +1344,36 @@ pub async fn export_as_m4b(
                 );
             }
         }
+
+        let processed_tracks = index + 1;
+        let eta_ms = if total_tracks > 0 && processed_tracks > 0 {
+            let elapsed_ms = export_started.elapsed().as_millis() as f64;
+            let progress_fraction = processed_tracks as f64 / total_tracks as f64;
+            if progress_fraction > 0.0 {
+                let estimated_total_ms = elapsed_ms / progress_fraction;
+                let remaining_ms = (estimated_total_ms - elapsed_ms).max(0.0);
+                Some(remaining_ms.round() as u64)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let percent = if total_tracks > 0 {
+            ((processed_tracks * 10) / total_tracks).min(10) as u8
+        } else {
+            0
+        };
+
+        emit_m4b_progress(
+            "extracting-audio",
+            format!("Preparing track {}/{} for export", processed_tracks, total_tracks),
+            processed_tracks,
+            total_tracks,
+            percent,
+            eta_ms,
+        );
     }
     
     if audio_files.is_empty() {
@@ -1164,10 +1422,36 @@ pub async fn export_as_m4b(
 
     fs::write(&metadata_path, metadata_content)
         .map_err(|e| AppError::Store(format!("Failed to write metadata: {}", e)))?;
+
+    emit_m4b_progress(
+        "writing-metadata",
+        "Writing chapter metadata...".to_string(),
+        total_tracks,
+        total_tracks,
+        12,
+        None,
+    );
     
     log::info!("Starting FFmpeg with {} audio files", audio_files.len());
+
+    emit_m4b_progress(
+        "encoding-m4b",
+        "Encoding M4B output...".to_string(),
+        total_tracks,
+        total_tracks,
+        15,
+        None,
+    );
+
+    let total_duration_ms: u64 = chapter_entries.iter().map(|(_, duration_ms)| *duration_ms).sum();
     
-    let output = Command::new(&ffmpeg_path)
+    let mut ffmpeg_cmd = Command::new(&ffmpeg_path);
+    #[cfg(unix)]
+    {
+        ffmpeg_cmd.arg0("aurorabook");
+    }
+
+    let mut child = ffmpeg_cmd
         .arg("-f").arg("concat")
         .arg("-safe").arg("0")
         .arg("-i").arg(filelist_path.to_str().unwrap())
@@ -1176,19 +1460,135 @@ pub async fn export_as_m4b(
         .arg("-map_chapters").arg("1")
         .arg("-c").arg("aac")
         .arg("-b:a").arg("128k")
+        .arg("-progress").arg("pipe:1")
+        .arg("-nostats")
         .arg("-y")
         .arg(&output_path)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| AppError::Store(format!("Failed to execute FFmpeg: {}", e)))?;
+
+    let ffmpeg_pid = child.id();
+    register_m4b_export_pid(ffmpeg_pid);
+
+    struct FfmpegPidGuard(u32);
+    impl Drop for FfmpegPidGuard {
+        fn drop(&mut self) {
+            unregister_m4b_export_pid(self.0);
+        }
+    }
+    let _ffmpeg_pid_guard = FfmpegPidGuard(ffmpeg_pid);
+
+    let ffmpeg_stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AppError::Store("Failed to capture FFmpeg progress output".to_string()))?;
+    let ffmpeg_stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| AppError::Store("Failed to capture FFmpeg stderr output".to_string()))?;
+
+    let stderr_handle = std::thread::spawn(move || {
+        let mut reader = BufReader::new(ffmpeg_stderr);
+        let mut stderr_buffer = String::new();
+        let _ = reader.read_to_string(&mut stderr_buffer);
+        stderr_buffer
+    });
+
+    let mut stdout_reader = BufReader::new(ffmpeg_stdout);
+    let mut line = String::new();
+    let mut latest_out_time_ms: u64 = 0;
+    let mut latest_speed: Option<f64> = None;
+
+    loop {
+        line.clear();
+        let bytes_read = stdout_reader
+            .read_line(&mut line)
+            .map_err(|e| AppError::Store(format!("Failed to read FFmpeg progress output: {}", e)))?;
+
+        if bytes_read == 0 {
+            break;
+        }
+
+        let progress_line = line.trim();
+
+        if let Some(value) = progress_line.strip_prefix("out_time_ms=") {
+            if let Ok(out_time_us) = value.parse::<u64>() {
+                latest_out_time_ms = out_time_us / 1000;
+            }
+        } else if let Some(value) = progress_line.strip_prefix("speed=") {
+            let speed_value = value.trim_end_matches('x');
+            if let Ok(speed) = speed_value.parse::<f64>() {
+                if speed.is_finite() && speed > 0.0 {
+                    latest_speed = Some(speed);
+                }
+            }
+        } else if progress_line == "progress=continue" || progress_line == "progress=end" {
+            let percent = if total_duration_ms > 0 {
+                let ratio = (latest_out_time_ms as f64 / total_duration_ms as f64).clamp(0.0, 1.0);
+                let encode_percent = (ratio * 100.0).round() as u8;
+                15 + ((encode_percent as u16 * 84) / 100) as u8
+            } else {
+                15
+            };
+
+            let eta_ms = if total_duration_ms > latest_out_time_ms {
+                if let Some(speed) = latest_speed {
+                    let remaining_audio_ms = (total_duration_ms - latest_out_time_ms) as f64;
+                    Some((remaining_audio_ms / speed).round() as u64)
+                } else {
+                    None
+                }
+            } else {
+                Some(0)
+            };
+
+            emit_m4b_progress(
+                "encoding-m4b",
+                "Encoding M4B output...".to_string(),
+                total_tracks,
+                total_tracks,
+                percent.min(99),
+                eta_ms,
+            );
+        }
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| AppError::Store(format!("Failed to wait for FFmpeg process: {}", e)))?;
+
+    let stderr = stderr_handle
+        .join()
+        .unwrap_or_else(|_| "Failed to capture FFmpeg stderr output".to_string());
     
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !status.success() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if let Some(signal) = status.signal() {
+                if signal == 15 || signal == 2 {
+                    return Err(AppError::Store("M4B export cancelled".to_string()));
+                }
+            }
+        }
+
         return Err(AppError::Store(
             format!("FFmpeg conversion failed: {}", stderr),
         ));
     }
     
     log::info!("M4B export completed: {}", output_path);
+
+    emit_m4b_progress(
+        "completed",
+        "M4B export complete".to_string(),
+        total_tracks,
+        total_tracks,
+        100,
+        Some(0),
+    );
     
     // Clean up
     if let Err(e) = fs::remove_dir_all(&cleanup_dir) {

@@ -1,5 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { filesize } from "filesize";
 import humanizeDuration from "humanize-duration";
@@ -57,6 +58,21 @@ interface ConversionProgress {
   wordsInCurrentChapter: number;
   currentStep: string;
   message: string;
+}
+
+interface M4bExportProgress {
+  bookId: string;
+  currentStep: string;
+  message: string;
+  processedTracks: number;
+  totalTracks: number;
+  percent: number;
+  etaMs: number | null;
+}
+
+interface M4bExportStatus {
+  inProgress: boolean;
+  bookId: string | null;
 }
 
 interface BookDetailDialogProps {
@@ -335,7 +351,44 @@ export function BookDetailDialog({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [exportDropdownKey, setExportDropdownKey] = useState(0);
   const [isExportingM4b, setIsExportingM4b] = useState(false);
+  const [isCancellingM4b, setIsCancellingM4b] = useState(false);
+  const [isAnyM4bExporting, setIsAnyM4bExporting] = useState(false);
+  const [activeM4bExportBookId, setActiveM4bExportBookId] =
+    useState<string | null>(null);
   const isMobile = useIsMobile();
+
+  const syncM4bExportStatus = useCallback(async () => {
+    try {
+      const status = await invoke<M4bExportStatus>("get_m4b_export_status");
+      setIsAnyM4bExporting(status.inProgress);
+      setActiveM4bExportBookId(status.bookId);
+
+      if (!book) {
+        setIsExportingM4b(false);
+        return;
+      }
+
+      setIsExportingM4b(status.inProgress && status.bookId === book.id);
+    } catch (err) {
+      logger.warn("Failed to sync M4B export status:", err);
+    }
+  }, [book]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    void syncM4bExportStatus();
+
+    const interval = window.setInterval(() => {
+      void syncM4bExportStatus();
+    }, 1500);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [isOpen, syncM4bExportStatus]);
 
   const handleDeleteClick = useCallback(() => setShowDeleteConfirm(true), []);
 
@@ -382,8 +435,68 @@ export function BookDetailDialog({
   const handleExportM4b = useCallback(async () => {
     if (!book) return;
 
+    const toastId = `m4b-export-${book.id}`;
+    let unlistenM4bProgress: (() => void) | null = null;
+
     try {
+      const currentStatus = await invoke<M4bExportStatus>(
+        "get_m4b_export_status"
+      );
+
+      if (currentStatus.inProgress) {
+        setIsAnyM4bExporting(true);
+        setActiveM4bExportBookId(currentStatus.bookId);
+        setIsExportingM4b(currentStatus.bookId === book.id);
+
+        toast.error(
+          currentStatus.bookId === book.id
+            ? "An M4B export is already running for this book"
+            : "Another M4B export is already in progress"
+        );
+        return;
+      }
+
       setIsExportingM4b(true);
+      setIsAnyM4bExporting(true);
+      setActiveM4bExportBookId(book.id);
+      toast.loading("Starting M4B export...", { id: toastId });
+
+      unlistenM4bProgress = await listen<M4bExportProgress>(
+        "m4b-export-progress",
+        (event) => {
+          const progress = event.payload;
+
+          setIsAnyM4bExporting(progress.currentStep !== "completed");
+          setActiveM4bExportBookId(
+            progress.currentStep === "completed" || progress.currentStep === "cancelled"
+              ? null
+              : progress.bookId
+          );
+          setIsExportingM4b(
+            progress.bookId === book.id &&
+              progress.currentStep !== "completed" &&
+              progress.currentStep !== "cancelled"
+          );
+
+          if (progress.bookId !== book.id) {
+            return;
+          }
+
+          if (progress.currentStep === "cancelled") {
+            toast("M4B export cancelled", { id: toastId });
+            return;
+          }
+
+          const etaText =
+            progress.etaMs !== null
+              ? ` ETA: ${humanizeDuration(progress.etaMs, { round: true })}`
+              : "";
+
+          toast.loading(`${progress.message} (${progress.percent}%)${etaText}`, {
+            id: toastId,
+          });
+        }
+      );
 
       // Open save dialog
       const filePath = await save({
@@ -407,14 +520,46 @@ export function BookDetailDialog({
         outputPath: filePath,
       });
 
-      toast.success("M4B exported successfully");
+      toast.success("M4B exported successfully", { id: toastId });
     } catch (err) {
       logger.error("Failed to export M4B:", err);
-      toast.error(err instanceof Error ? err.message : "Failed to export M4B");
+      const message = err instanceof Error ? err.message : "Failed to export M4B";
+      if (message.toLowerCase().includes("cancel")) {
+        toast("M4B export cancelled", { id: toastId });
+      } else {
+        toast.error(message, {
+          id: toastId,
+        });
+      }
     } finally {
+      if (unlistenM4bProgress) {
+        unlistenM4bProgress();
+      }
       setIsExportingM4b(false);
+      setIsCancellingM4b(false);
+      void syncM4bExportStatus();
     }
-  }, [book]);
+  }, [book, syncM4bExportStatus]);
+
+  const handleCancelM4bExport = useCallback(async () => {
+    if (!isExportingM4b) {
+      return;
+    }
+
+    try {
+      setIsCancellingM4b(true);
+      const cancelled = await invoke<boolean>("cancel_m4b_export");
+      if (!cancelled) {
+        toast("No M4B export is currently running");
+      }
+    } catch (err) {
+      logger.error("Failed to cancel M4B export:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Failed to cancel M4B export"
+      );
+      setIsCancellingM4b(false);
+    }
+  }, [isExportingM4b]);
 
   const handleExportDropdownAction = useCallback(
     (value: string) => {
@@ -430,6 +575,11 @@ export function BookDetailDialog({
 
   logger.log("isConvertingThisBook", isConvertingThisBook);
   if (!book) return null;
+
+  const isExportDisabled =
+    isDeleting || isConvertingThisBook || isExportingM4b || isAnyM4bExporting;
+  const isAnotherBookExporting =
+    isAnyM4bExporting && activeM4bExportBookId !== null && activeM4bExportBookId !== book.id;
 
   return (
     <>
@@ -462,13 +612,17 @@ export function BookDetailDialog({
               <Select
                 key={`desktop-${exportDropdownKey}`}
                 onValueChange={handleExportDropdownAction}
-                disabled={isDeleting || isConvertingThisBook || isExportingM4b}
+                disabled={isExportDisabled}
               >
                 <SelectTrigger className="w-[170px] gap-2">
-                  {isExportingM4b ? (
+                  {isExportingM4b || isAnotherBookExporting ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>Exporting M4B...</span>
+                      <span>
+                        {isAnotherBookExporting
+                          ? "Export Busy..."
+                          : "Exporting M4B..."}
+                      </span>
                     </>
                   ) : (
                     <>
@@ -491,6 +645,17 @@ export function BookDetailDialog({
                 >
                   <X className="h-4 w-4" />
                   Cancel Conversion
+                </Button>
+              )}
+              {isExportingM4b && (
+                <Button
+                  variant="outline"
+                  onClick={handleCancelM4bExport}
+                  disabled={isDeleting || isCancellingM4b}
+                  className="gap-2"
+                >
+                  <X className="h-4 w-4" />
+                  {isCancellingM4b ? "Cancelling Export..." : "Cancel Export"}
                 </Button>
               )}
               {book.conversionStatus === "started" && !isConvertingThisBook && (
@@ -559,14 +724,17 @@ export function BookDetailDialog({
               <Select
                 key={`mobile-${exportDropdownKey}`}
                 onValueChange={handleExportDropdownAction}
-                
-                disabled={isDeleting || isConvertingThisBook || isExportingM4b}
+                disabled={isExportDisabled}
               >
                 <SelectTrigger className="w-full gap-2">
-                  {isExportingM4b ? (
+                  {isExportingM4b || isAnotherBookExporting ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>Exporting M4B...</span>
+                      <span>
+                        {isAnotherBookExporting
+                          ? "Export Busy..."
+                          : "Exporting M4B..."}
+                      </span>
                     </>
                   ) : (
                     <>
@@ -589,6 +757,17 @@ export function BookDetailDialog({
                 >
                   <X className="h-4 w-4" />
                   Cancel Conversion
+                </Button>
+              )}
+              {isExportingM4b && (
+                <Button
+                  variant="outline"
+                  onClick={handleCancelM4bExport}
+                  disabled={isDeleting || isCancellingM4b}
+                  className="gap-2"
+                >
+                  <X className="h-4 w-4" />
+                  {isCancellingM4b ? "Cancelling Export..." : "Cancel Export"}
                 </Button>
               )}
               {book.conversionStatus === "started" && !isConvertingThisBook && (
