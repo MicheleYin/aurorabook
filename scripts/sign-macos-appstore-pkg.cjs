@@ -109,10 +109,21 @@ const ffmpegPath = path.join(
 );
 if (fs.existsSync(ffmpegPath)) {
   const appStoreEntitlementsPath = path.join(tauriDir, "Entitlements.macos-appstore.plist");
+  const nestedExecEntitlementsPath = path.join(
+    tauriDir,
+    "Entitlements.macos-appstore.nested-exec.plist"
+  );
   if (!fs.existsSync(appStoreEntitlementsPath)) {
     console.error(
-      "sign-macos-appstore-pkg: missing entitlements file required for nested executable signing:",
+      "sign-macos-appstore-pkg: missing app entitlements file:",
       appStoreEntitlementsPath
+    );
+    process.exit(1);
+  }
+  if (!fs.existsSync(nestedExecEntitlementsPath)) {
+    console.error(
+      "sign-macos-appstore-pkg: missing nested executable entitlements file:",
+      nestedExecEntitlementsPath
     );
     process.exit(1);
   }
@@ -125,7 +136,7 @@ if (fs.existsSync(ffmpegPath)) {
       "--sign",
       appSigningIdentity,
       "--entitlements",
-      appStoreEntitlementsPath,
+      nestedExecEntitlementsPath,
       ffmpegPath,
     ],
     { cwd: root }
