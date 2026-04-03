@@ -9,6 +9,7 @@ import {
   Calendar,
   Download,
   FileText,
+  Loader2,
   Play,
   Trash2,
   User,
@@ -333,6 +334,7 @@ export function BookDetailDialog({
 }: Readonly<BookDetailDialogProps>) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [exportDropdownKey, setExportDropdownKey] = useState(0);
+  const [isExportingM4b, setIsExportingM4b] = useState(false);
   const isMobile = useIsMobile();
 
   const handleDeleteClick = useCallback(() => setShowDeleteConfirm(true), []);
@@ -381,6 +383,8 @@ export function BookDetailDialog({
     if (!book) return;
 
     try {
+      setIsExportingM4b(true);
+
       // Open save dialog
       const filePath = await save({
         defaultPath: `${book.title}.m4b`,
@@ -407,6 +411,8 @@ export function BookDetailDialog({
     } catch (err) {
       logger.error("Failed to export M4B:", err);
       toast.error(err instanceof Error ? err.message : "Failed to export M4B");
+    } finally {
+      setIsExportingM4b(false);
     }
   }, [book]);
 
@@ -456,11 +462,20 @@ export function BookDetailDialog({
               <Select
                 key={`desktop-${exportDropdownKey}`}
                 onValueChange={handleExportDropdownAction}
-                disabled={isDeleting || isConvertingThisBook}
+                disabled={isDeleting || isConvertingThisBook || isExportingM4b}
               >
                 <SelectTrigger className="w-[170px] gap-2">
-                  <Download className="h-4 w-4" />
-                  <SelectValue placeholder="Export" />
+                  {isExportingM4b ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>Exporting M4B...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-4 w-4" />
+                      <SelectValue placeholder="Export" />
+                    </>
+                  )}
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="epub">Export as EPUB</SelectItem>
@@ -545,11 +560,20 @@ export function BookDetailDialog({
                 key={`mobile-${exportDropdownKey}`}
                 onValueChange={handleExportDropdownAction}
                 
-                disabled={isDeleting || isConvertingThisBook}
+                disabled={isDeleting || isConvertingThisBook || isExportingM4b}
               >
                 <SelectTrigger className="w-full gap-2">
-                  <Download className="h-4 w-4" />
-                  <SelectValue placeholder="Export" />
+                  {isExportingM4b ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>Exporting M4B...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-4 w-4" />
+                      <SelectValue placeholder="Export" />
+                    </>
+                  )}
                 </SelectTrigger>
                 <SelectContent className="w-full">
                   <SelectItem className="w-full" value="epub">Export as EPUB</SelectItem>
