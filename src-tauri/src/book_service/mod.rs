@@ -1240,19 +1240,14 @@ pub async fn export_as_m4b(
         }
     }
     
-    // Create working directory in app data directory
-    let app_data_dir = app.path().app_data_dir()
-        .map_err(|e| AppError::Store(format!("Failed to get app data directory: {}", e)))?;
-    let export_work_dir = app_data_dir.join("m4b_export").join(Uuid::new_v4().to_string());
-    fs::create_dir_all(&export_work_dir)
-        .map_err(|e| AppError::Store(format!("Failed to create export work directory: {}", e)))?;
+    // Use system temp directory for pipes
+    let temp_dir = std::env::temp_dir();
+    let work_id = Uuid::new_v4().to_string();
     
-    let cleanup_dir = export_work_dir.clone();
-    
-    // Extract audio files and create file list
-    let mut audio_files = Vec::new();
+    // Extract audio files and create file list using pipes
     let mut filelist_content = String::new();
     let mut chapter_entries: Vec<(String, u64)> = Vec::new();
+    let mut audio_pipe_handles = Vec::new();
     
     // Sort audio tracks by order
     let mut sorted_tracks = book.audio_tracks.clone();
@@ -1295,18 +1290,58 @@ pub async fn export_as_m4b(
         match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &book_id, &track.id).await {
             Ok(Some((audio_bytes, href))) => {
                 let ext = href.rsplit('.').next().unwrap_or("mp3");
-                let output_file = export_work_dir.join(format!("{:03}.{}", index, ext));
-                fs::write(&output_file, audio_bytes)
-                    .map_err(|e| AppError::Store(format!("Failed to write temp audio file: {}", e)))?;
-
-                let escaped_path = output_file.display().to_string().replace('\'', "'\\''");
-                filelist_content.push_str(&format!("file '{}'\n", escaped_path));
+                
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs as unix_fs;
+                    
+                    // Create named pipe for this audio track
+                    let pipe_path = temp_dir.join(format!("m4b_{}_{:03}.{}", work_id, index, ext));
+                    
+                    // Clean up any stale pipe
+                    let _ = fs::remove_file(&pipe_path);
+                    
+                    // Create named pipe using mkfifo
+                    unsafe {
+                        use std::ffi::CString;
+                        use std::os::raw::c_int;
+                        extern "C" {
+                            fn mkfifo(path: *const u8, mode: c_int) -> c_int;
+                        }
+                        let c_path = CString::new(pipe_path.to_str().unwrap()).unwrap();
+                        if mkfifo(c_path.as_ptr() as *const u8, 0o644) == -1 {
+                            return Err(AppError::Store(format!("Failed to create named pipe for track {}", index)));
+                        }
+                    }
+                    
+                    // Spawn thread to write audio to pipe
+                    let pipe_path_clone = pipe_path.clone();
+                    let handle = std::thread::spawn(move || {
+                        if let Ok(mut file) = fs::File::create(&pipe_path_clone) {
+                            let _ = file.write_all(&audio_bytes);
+                        }
+                    });
+                    audio_pipe_handles.push((pipe_path.clone(), handle));
+                    
+                    let escaped_path = pipe_path.display().to_string().replace('\'', "'\\''");
+                    filelist_content.push_str(&format!("file '{}'\n", escaped_path));
+                }
+                
+                #[cfg(not(unix))]
+                {
+                    // Fallback for non-Unix: use temp files
+                    let output_file = temp_dir.join(format!("m4b_{}_{:03}.{}", work_id, index, ext));
+                    fs::write(&output_file, audio_bytes)
+                        .map_err(|e| AppError::Store(format!("Failed to write temp audio file: {}", e)))?;
+                    
+                    let escaped_path = output_file.display().to_string().replace('\'', "'\\''");
+                    filelist_content.push_str(&format!("file '{}'\n", escaped_path));
+                }
 
                 let duration_ms = track
                     .duration
                     .map(|d| (d * 1000.0).round() as u64)
                     .filter(|d| *d > 0)
-                    .or_else(|| probe_duration_ms(&ffmpeg_path, &output_file))
                     .unwrap_or(0);
 
                 if duration_ms > 0 {
@@ -1323,8 +1358,6 @@ pub async fn export_as_m4b(
                         track.href
                     );
                 }
-
-                audio_files.push(output_file);
             }
             Ok(None) => {
                 missing_tracks += 1;
@@ -1376,7 +1409,7 @@ pub async fn export_as_m4b(
         );
     }
     
-    if audio_files.is_empty() {
+    if filelist_content.is_empty() {
         return Err(AppError::Store(
             format!(
                 "No exportable audio tracks found ({} of {} tracks were missing or unreadable)",
@@ -1394,14 +1427,14 @@ pub async fn export_as_m4b(
     }
     
     // Write FFmpeg concat file list
-    let filelist_path = export_work_dir.join("filelist.txt");
+    let filelist_path = temp_dir.join(format!("m4b_{}_filelist.txt", work_id));
     let mut filelist = fs::File::create(&filelist_path)
         .map_err(|e| AppError::Store(format!("Failed to create filelist: {}", e)))?;
     filelist.write_all(filelist_content.as_bytes())
         .map_err(|e| AppError::Store(format!("Failed to write filelist: {}", e)))?;
 
     // Write FFmpeg metadata with chapters
-    let metadata_path = export_work_dir.join("metadata.ffmeta");
+    let metadata_path = temp_dir.join(format!("m4b_{}_metadata.ffmeta", work_id));
     let mut metadata_content = String::new();
     metadata_content.push_str(";FFMETADATA1\n");
     metadata_content.push_str(&format!("title={}\n", escape_ffmetadata_value(&book.title)));
@@ -1432,7 +1465,7 @@ pub async fn export_as_m4b(
         None,
     );
     
-    log::info!("Starting FFmpeg with {} audio files", audio_files.len());
+    log::info!("Starting FFmpeg with {} audio tracks via pipes", sorted_tracks.len());
 
     emit_m4b_progress(
         "encoding-m4b",
@@ -1479,6 +1512,28 @@ pub async fn export_as_m4b(
         }
     }
     let _ffmpeg_pid_guard = FfmpegPidGuard(ffmpeg_pid);
+    
+    // Guard to clean up temp files and pipes on early return
+    struct TempFilesGuard {
+        filelist_path: std::path::PathBuf,
+        metadata_path: std::path::PathBuf,
+        audio_pipes: Vec<std::path::PathBuf>,
+    }
+    impl Drop for TempFilesGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.filelist_path);
+            let _ = fs::remove_file(&self.metadata_path);
+            for pipe in &self.audio_pipes {
+                let _ = fs::remove_file(pipe);
+            }
+        }
+    }
+    let pipe_paths: Vec<_> = audio_pipe_handles.iter().map(|(p, _)| p.clone()).collect();
+    let _temp_files_guard = TempFilesGuard {
+        filelist_path: filelist_path.clone(),
+        metadata_path: metadata_path.clone(),
+        audio_pipes: pipe_paths,
+    };
 
     let ffmpeg_stdout = child
         .stdout
@@ -1579,6 +1634,12 @@ pub async fn export_as_m4b(
         ));
     }
     
+    // Wait for pipe writer threads to complete
+    #[cfg(unix)]
+    for (_, handle) in audio_pipe_handles {
+        let _ = handle.join();
+    }
+    
     log::info!("M4B export completed: {}", output_path);
 
     emit_m4b_progress(
@@ -1589,11 +1650,6 @@ pub async fn export_as_m4b(
         100,
         Some(0),
     );
-    
-    // Clean up
-    if let Err(e) = fs::remove_dir_all(&cleanup_dir) {
-        log::warn!("Failed to clean up working directory: {}", e);
-    }
     
     Ok(())
 }
