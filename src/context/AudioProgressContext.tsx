@@ -311,7 +311,7 @@ export function AudioProgressProvider({
         loadedBook?.audioTracks?.length &&
         loadedBook.audioTracks.length > 0
       ) {
-        audioTrackToLoad = book.audioTracks[0];
+        audioTrackToLoad = loadedBook.audioTracks[0];
       }
       if (audioTrackToLoad) {
         await loadAudioTrack(book.id, audioTrackToLoad, loadedBook || book);

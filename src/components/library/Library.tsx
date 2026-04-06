@@ -4,8 +4,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { BookOpen, Grid2x2, List, Plus } from "lucide-react";
 import { toast } from "sonner";
 
-import { useAudioProgressContext } from "@/context/AudioProgressContext";
-
 import type { Book } from "../../types/book";
 import { useAppContext } from "../../context/AppContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
@@ -36,7 +34,6 @@ export function Library() {
 
     loadBooks,
   } = useAppContext();
-  const { saveAudioProgress, audioRef } = useAudioProgressContext();
 
   const booksRef = useRef(books);
 
@@ -95,120 +92,9 @@ export function Library() {
     setCurrentTab("reader");
   };
 
-  const refreshBookById = useCallback(
-    async (bookId: string | null) => {
-      if (!bookId) return;
-      try {
-        // save the current book
-        // Use ref to access the latest books state
-        const bookToRefresh = booksRef.current.find(
-          (book) => book.id === bookId
-        );
 
-        logger.log("bookToRefresh", bookToRefresh, bookId, booksRef.current);
-        if (!bookToRefresh) {
-          // If not found, reload all books
-          await loadBooks();
-          return;
-        }
 
-        // Fetch the updated book from the backend
-        const updatedBook = await invoke<Book | null>("read_one_book", {
-          bookId: bookToRefresh.id,
-        });
 
-        const wasPlaying = audioRef.current && !audioRef.current.paused;
-        logger.log("updatedBook", updatedBook);
-        saveAudioProgress(updatedBook || bookToRefresh);
-
-        if (updatedBook) {
-          // save to the selected book
-          // if the selected book is the same as the updated book, update the current book
-          if (selectedBookId === updatedBook.id) {
-            setCurrentBookWithLoading(updatedBook, wasPlaying || false);
-            logger.log(
-              "selectedBookId is the same as the updated book, updating the current book"
-            );
-          }
-          // Update the book in the books array
-          setBooks((prevBooks) =>
-            prevBooks.map((book) =>
-              book.id === updatedBook.id ? updatedBook : book
-            )
-          );
-        }
-      } catch (err) {
-        logger.error("Failed to refresh book:", err);
-        // Fallback to reloading all books on error
-        await loadBooks();
-      }
-    },
-    [
-      loadBooks,
-      saveAudioProgress,
-      selectedBookId,
-      setCurrentBookWithLoading,
-      setBooks,
-      audioRef,
-    ]
-  );
-
-  const handleSetStarted = useCallback(
-    (bookId: string | null) => {
-      if (!bookId) return;
-      // Use functional update to access the latest books state
-      setBooks((prevBooks) => {
-        const convertingBook = prevBooks.find((book) => book.id === bookId);
-        if (convertingBook) {
-          // Create a new object to avoid mutating state
-          return prevBooks.map((book) =>
-            book.id === bookId
-              ? { ...book, conversionStatus: "started" as const }
-              : book
-          );
-        }
-        return prevBooks;
-      });
-    },
-    [setBooks]
-  );
-
-  const refreshByCompleted = useCallback(
-    async (convertedBook: Book | null, bookId?: string | null) => {
-      if (!convertedBook) {
-        // If no book object provided (e.g., from progress event completion),
-        // refresh by the book ID
-        if (bookId) {
-          await refreshBookById(bookId);
-        }
-        return;
-      }
-
-      logger.log("Refreshing book by completed conversion:", convertedBook);
-      const wasPlaying = audioRef.current && !audioRef.current.paused;
-      saveAudioProgress(convertedBook);
-
-      // Update the book in the books array
-      setBooks((prevBooks) =>
-        prevBooks.map((book) =>
-          book.id === convertedBook.id ? convertedBook : book
-        )
-      );
-
-      // If this is the selected book, update the current book
-      if (selectedBookId === convertedBook.id) {
-        setCurrentBookWithLoading(convertedBook, wasPlaying || false);
-      }
-    },
-    [
-      refreshBookById,
-      saveAudioProgress,
-      selectedBookId,
-      setCurrentBookWithLoading,
-      setBooks,
-      audioRef,
-    ]
-  );
 
   const {
     convertBook: convertBookFromContext,
@@ -217,25 +103,7 @@ export function Library() {
     convertingBookId,
     conversionProgress,
     eta,
-    registerCallbacks,
   } = useBookConversion();
-
-  // Register callbacks for conversion events
-  useEffect(() => {
-    const unregister = registerCallbacks({
-      onConversionComplete: refreshByCompleted,
-      onConversionStarted: handleSetStarted,
-      onConversionCancelled: refreshBookById,
-      onChapterCompleted: refreshBookById,
-    });
-
-    return unregister;
-  }, [
-    registerCallbacks,
-    refreshByCompleted,
-    handleSetStarted,
-    refreshBookById,
-  ]);
 
   // Wrap convertBook (no changes needed, callbacks handle everything)
   const convertBook = useCallback(

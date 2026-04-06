@@ -1,4 +1,5 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 import type { Book } from "./types/book";
 import { FloatingAudioPlayer } from "./components/audio/FloatingAudioPlayer";
@@ -21,6 +22,8 @@ import {
 import { ConversionEventProvider } from "./context/ConversionEventContext";
 import { ConversionStateProvider } from "./context/ConversionStateContext";
 import { SettingsProvider } from "./context/SettingsContext";
+import { useBookConversion } from "./hooks/useBookConversion";
+import { logger } from "./lib/logger";
 
 function AppContent() {
   const { currentTab, setCurrentTab, currentBook } = useAppContext();
@@ -35,7 +38,10 @@ function AppContent() {
         className="flex h-full flex-col"
       >
         <main className="flex-1 overflow-hidden">
-          <TabsContent value="library" className="h-full overflow-auto m-0">
+          <TabsContent
+            value="library"
+            className="h-full overflow-auto m-0"
+          >
             <Library />
           </TabsContent>
           <TabsContent value="reader" className="h-full overflow-auto m-0">
@@ -72,6 +78,82 @@ function AppContent() {
       <FloatingAudioPlayer />
     </div>
   );
+}
+
+function ConversionCallbackHandler() {
+  const { currentBook, setLibrary, setCurrentBookWithLoading, loadBooks } = useAppContext();
+  const { saveAudioProgress } = useAudioProgressContext();
+  const { registerCallbacks } = useBookConversion();
+
+  // Refresh a single book from backend (for chapters/audio tracks)
+  const refreshBookById = useCallback(
+    async (bookId: string | null) => {
+      if (!bookId) return;
+      try {
+        const updatedBook = await invoke<Book | null>("read_one_book", {
+          bookId,
+        });
+
+        if (updatedBook) {
+          // Update library state
+          setLibrary((prevBooks) =>
+            prevBooks.map((book) =>
+              book.id === updatedBook.id ? updatedBook : book
+            )
+          );
+
+          // Keep reader state in sync when book is currently open
+          if (currentBook?.id === updatedBook.id) {
+            const wasPlaying = true; // Reader will handle audio state
+            saveAudioProgress(updatedBook);
+            setCurrentBookWithLoading(updatedBook, wasPlaying);
+            logger.log("Refreshed currently open book from completion event");
+          }
+        }
+      } catch (err) {
+        logger.error("Failed to refresh book from completion event:", err);
+        // Fallback to reloading all books
+        await loadBooks();
+      }
+    },
+    [currentBook, setLibrary, setCurrentBookWithLoading, saveAudioProgress, loadBooks]
+  );
+
+  // Register callbacks for conversion events - stays mounted even when Library tab is inactive
+  useEffect(() => {
+    const unregister = registerCallbacks({
+      onConversionComplete: async (book: Book | null, bookId?: string | null) => {
+        // Refresh the completed book to get updated chapters/audio tracks
+        if (bookId) {
+          await refreshBookById(bookId);
+        } else if (book) {
+          setLibrary((prevBooks) =>
+            prevBooks.map((b) => (b.id === book.id ? book : b))
+          );
+          if (currentBook?.id === book.id) {
+            saveAudioProgress(book);
+            setCurrentBookWithLoading(book, false);
+          }
+        }
+      },
+      onChapterCompleted: refreshBookById,
+      onConversionCancelled: refreshBookById,
+      onConversionStarted: (bookId: string | null) => {
+        if (!bookId) return;
+        setLibrary((prevBooks) =>
+          prevBooks.map((book) =>
+            book.id === bookId
+              ? { ...book, conversionStatus: "started" as const }
+              : book
+          )
+        );
+      },
+    });
+
+    return unregister;
+  }, [registerCallbacks, refreshBookById, currentBook, setLibrary, setCurrentBookWithLoading, saveAudioProgress]);
+
+  return null;
 }
 
 function AppWithProviders() {
@@ -115,6 +197,7 @@ function AppWithProviders() {
       calculateAudioProgress={calculateAudioProgress}
       saveAudioProgress={saveAudioProgress}
     >
+      <ConversionCallbackHandler />
       <AppContent />
     </AppProvider>
   );
