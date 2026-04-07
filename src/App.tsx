@@ -81,13 +81,32 @@ function AppContent() {
 }
 
 function ConversionCallbackHandler() {
-  const { currentBook, setLibrary, setCurrentBookWithLoading, loadBooks } = useAppContext();
+  const { currentBook, setCurrentBook, setLibrary, setCurrentBookWithLoading, loadBooks } = useAppContext();
   const { saveAudioProgress } = useAudioProgressContext();
   const { registerCallbacks } = useBookConversion();
 
+  const mergeOpenBookAdditively = useCallback(
+    (openBook: Book, updatedBook: Book): Book => {
+      return {
+        ...openBook,
+        ...updatedBook,
+        // Keep in-session reader/player progress stable while adding new conversion output.
+        progress: openBook.progress ?? updatedBook.progress,
+        audioState: openBook.audioState ?? updatedBook.audioState,
+        completedChapters: [
+          ...new Set([
+            ...(openBook.completedChapters || []),
+            ...(updatedBook.completedChapters || []),
+          ]),
+        ],
+      };
+    },
+    []
+  );
+
   // Refresh a single book from backend (for chapters/audio tracks)
   const refreshBookById = useCallback(
-    async (bookId: string | null) => {
+    async (bookId: string | null, additiveOnly = false) => {
       if (!bookId) return;
       try {
         const updatedBook = await invoke<Book | null>("read_one_book", {
@@ -104,10 +123,20 @@ function ConversionCallbackHandler() {
 
           // Keep reader state in sync when book is currently open
           if (currentBook?.id === updatedBook.id) {
-            const wasPlaying = true; // Reader will handle audio state
-            saveAudioProgress(updatedBook);
-            setCurrentBookWithLoading(updatedBook, wasPlaying);
-            logger.log("Refreshed currently open book from completion event");
+            if (additiveOnly) {
+              setCurrentBook((openBook) => {
+                if (!openBook || openBook.id !== updatedBook.id) {
+                  return openBook;
+                }
+                return mergeOpenBookAdditively(openBook, updatedBook);
+              });
+              logger.log("Additively refreshed currently open book from chapter completion event");
+            } else {
+              const wasPlaying = true; // Reader will handle audio state
+              saveAudioProgress(updatedBook);
+              setCurrentBookWithLoading(updatedBook, wasPlaying);
+              logger.log("Refreshed currently open book from completion event");
+            }
           }
         }
       } catch (err) {
@@ -116,7 +145,15 @@ function ConversionCallbackHandler() {
         await loadBooks();
       }
     },
-    [currentBook, setLibrary, setCurrentBookWithLoading, saveAudioProgress, loadBooks]
+    [
+      currentBook,
+      setLibrary,
+      setCurrentBook,
+      setCurrentBookWithLoading,
+      saveAudioProgress,
+      loadBooks,
+      mergeOpenBookAdditively,
+    ]
   );
 
   // Register callbacks for conversion events - stays mounted even when Library tab is inactive
@@ -136,7 +173,8 @@ function ConversionCallbackHandler() {
           }
         }
       },
-      onChapterCompleted: refreshBookById,
+      onChapterCompleted: (bookId: string | null) =>
+        refreshBookById(bookId, true),
       onConversionCancelled: refreshBookById,
       onConversionStarted: (bookId: string | null) => {
         if (!bookId) return;
