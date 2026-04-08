@@ -82,7 +82,7 @@ function AppContent() {
 
 function ConversionCallbackHandler() {
   const { currentBook, setCurrentBook, setLibrary, setCurrentBookWithLoading, loadBooks } = useAppContext();
-  const { saveAudioProgress } = useAudioProgressContext();
+  const { audioRef, saveAudioProgress } = useAudioProgressContext();
   const { registerCallbacks } = useBookConversion();
 
   const mergeOpenBookAdditively = useCallback(
@@ -132,8 +132,10 @@ function ConversionCallbackHandler() {
               });
               logger.log("Additively refreshed currently open book from chapter completion event");
             } else {
-              const wasPlaying = true; // Reader will handle audio state
-              saveAudioProgress(updatedBook);
+              const wasPlaying = Boolean(
+                audioRef.current && !audioRef.current.paused
+              );
+              await saveAudioProgress(currentBook);
               setCurrentBookWithLoading(updatedBook, wasPlaying);
               logger.log("Refreshed currently open book from completion event");
             }
@@ -168,8 +170,11 @@ function ConversionCallbackHandler() {
             prevBooks.map((b) => (b.id === book.id ? book : b))
           );
           if (currentBook?.id === book.id) {
-            saveAudioProgress(book);
-            setCurrentBookWithLoading(book, false);
+            const wasPlaying = Boolean(
+              audioRef.current && !audioRef.current.paused
+            );
+            await saveAudioProgress(currentBook);
+            setCurrentBookWithLoading(book, wasPlaying);
           }
         }
       },
@@ -189,7 +194,7 @@ function ConversionCallbackHandler() {
     });
 
     return unregister;
-  }, [registerCallbacks, refreshBookById, currentBook, setLibrary, setCurrentBookWithLoading, saveAudioProgress]);
+  }, [registerCallbacks, refreshBookById, currentBook, setLibrary, setCurrentBookWithLoading, audioRef, saveAudioProgress]);
 
   return null;
 }
