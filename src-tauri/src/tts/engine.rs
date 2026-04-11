@@ -385,4 +385,30 @@ impl TtsEnginePool {
 
         Ok(pool_arc)
     }
+
+    /// Clear the global engine pool singleton so the cached engine can be dropped.
+    ///
+    /// Any in-flight work holding its own `Arc<TtsEnginePool>` continues to run safely.
+    /// Memory is released once the final outstanding reference is dropped.
+    pub fn clear_global() -> AppResult<()> {
+        let guard = GLOBAL_ENGINE_POOL.get_or_init(|| Mutex::new(None));
+        let mut pool_opt = guard.lock().map_err(|e| {
+            AppError::TtsGeneration(format!(
+                "Failed to acquire global engine pool lock (mutex poisoned): {:?}",
+                e
+            ))
+        })?;
+
+        if let Some(existing_pool) = pool_opt.take() {
+            let outstanding_refs = Arc::strong_count(&existing_pool).saturating_sub(1);
+            log::info!(
+                "Cleared global TTS engine pool cache ({} outstanding reference(s) remain)",
+                outstanding_refs
+            );
+        } else {
+            log::debug!("Global TTS engine pool cache already empty");
+        }
+
+        Ok(())
+    }
 }
