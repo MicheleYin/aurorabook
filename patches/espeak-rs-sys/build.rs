@@ -143,9 +143,11 @@ fn macos_link_search_path() -> Option<String> {
 }
 
 fn main() {
-    println!("cargo:rustc-link-lib=speechPlayer");
-    println!("cargo:rustc-link-lib=espeak-ng");
-    println!("cargo:rustc-link-lib=ucd");
+    // Explicit static linking is required for iOS staticlib builds used by Tauri.
+    // Otherwise dependent symbols (notably ucd_*) may be missing at final Xcode link.
+    println!("cargo:rustc-link-lib=static=speechPlayer");
+    println!("cargo:rustc-link-lib=static=espeak-ng");
+    println!("cargo:rustc-link-lib=static=ucd");
     let target = env::var("TARGET").unwrap();
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
