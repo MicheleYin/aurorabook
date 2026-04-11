@@ -31,8 +31,23 @@ test-results/
 .history/
 data/
 sample_audio/
-vendor/src-tauri/Entitlements.macos-appstore.plist
+vendor/
+
+# Generated build artifacts (may contain personal paths / identifiers)
+src-tauri/check_output.txt
+src-tauri/check_output_final.txt
+src-tauri/test_output/
+src-tauri/watermark_test.mp3
+
 # Apple signing & certificates — never commit (see src-tauri/signing/README.md)
+# Entitlements.macos-appstore.plist is generated from the .template; do not commit it
+src-tauri/Entitlements.macos-appstore.plist
 # Ignore everything in signing/ except the README
 src-tauri/signing/*
 !src-tauri/signing/README.md
+
+
+src-tauri/check_output.txt
+src-tauri/check_output_final.txt
+src-tauri/test_output/
+src-tauri/watermark_test.mp3
