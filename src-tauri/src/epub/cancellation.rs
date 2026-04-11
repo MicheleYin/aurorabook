@@ -5,6 +5,7 @@
 
 use tauri::{AppHandle, Manager};
 use crate::utils::errors::{AppError, AppResult};
+use crate::tts::engine::TtsEnginePool;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,6 +48,15 @@ pub async fn cancel_conversion_command(
         } else {
             log::warn!("No active conversion found for book_id: {}", book_id);
         }
+    }
+
+    // Drop cached engines immediately on cancellation request.
+    // In-flight tasks keep their own Arc references and can unwind safely.
+    if let Err(e) = TtsEnginePool::clear_global() {
+        log::warn!(
+            "Failed to clear global TTS engine pool on cancellation request: {}",
+            e
+        );
     }
     
     Ok(())

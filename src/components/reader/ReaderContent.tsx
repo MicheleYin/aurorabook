@@ -250,6 +250,7 @@ export function ReaderContent({
       <div className="mx-auto py-8" style={paddingStyle}>
         <div
           ref={contentRef}
+          data-reader-chapter-content="true"
           className={cn(
             "prose prose-slate dark:prose-invert max-w-none",
             fontFamilyClass

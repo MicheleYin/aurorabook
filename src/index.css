@@ -204,6 +204,13 @@
     line-height: inherit !important;
   }
 
+  /* Keep EPUB images proportional when container dimensions change */
+  [data-reader-chapter-content="true"] img {
+    max-width: 100% !important;
+    height: auto !important;
+    object-fit: contain;
+  }
+
   /* Remove underline and disable links in reader content */
   .reader-prose a,
   .prose a,
