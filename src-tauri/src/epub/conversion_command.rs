@@ -11,6 +11,7 @@ use crate::epub::cancellation::{cleanup_cancellation_token, get_cancellation_tok
 use crate::epub::converter::{
     emit_progress, ConversionChapter, ConversionOptions, ConversionProgress,
 };
+use crate::tts::engine::TtsEnginePool;
 use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::path_validation::validate_file_size;
@@ -596,6 +597,10 @@ async fn perform_conversion(
 
     // Clean up cancellation token
     cleanup_cancellation_token(app, book_id);
+
+    if let Err(e) = TtsEnginePool::clear_global() {
+        log::warn!("Failed to clear global TTS engine pool after conversion: {}", e);
+    }
 
     // Check if conversion was cancelled
     if cancel_token.load(Ordering::Relaxed) {
