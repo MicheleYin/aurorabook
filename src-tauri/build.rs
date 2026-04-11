@@ -182,6 +182,15 @@ fn main() {
                     .join("iOS")
                     .join("Release")
                     .join("Release-iphoneos"),
+                // Workspace layout where ONNX Runtime sits beside tts-tauri/
+                project_root
+                    .parent()
+                    .unwrap_or(project_root)
+                    .join("onnxruntime")
+                    .join("build")
+                    .join("iOS")
+                    .join("Release")
+                    .join("Release-iphoneos"),
                 // Alternative: build/iOS/Release/Release-iphoneos (if built in different location)
                 project_root
                     .join("onnxruntime")

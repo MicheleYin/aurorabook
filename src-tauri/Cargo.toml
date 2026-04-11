@@ -85,6 +85,7 @@ cocoa = "0.26"
 [patch.crates-io]
 audiopus_sys = { path = "../patches/audiopus_sys" }
 ort-sys = { path = "../patches/ort-sys/ort-sys-2.0.0-rc.10" }
+espeak-rs-sys = { path = "../patches/espeak-rs-sys" }
 # mp3lame-sys = { path = "../patches/mp3lame-sys" }
 
 
