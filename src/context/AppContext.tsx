@@ -28,7 +28,7 @@ export interface AppContextType {
 
   currentBook: Book | null;
   setCurrentBook: Dispatch<SetStateAction<Book | null>>;
-  setCurrentBookWithLoading: (book: Book, autoPlayAudio: boolean) => void;
+  setCurrentBookWithLoading: (book: Book, autoPlayAudio: boolean) => Promise<void>;
 
   library: Book[];
   setLibrary: Dispatch<SetStateAction<Book[]>>;
@@ -95,18 +95,21 @@ export function AppProvider({
   }, []);
 
   const changeCurrentBook = useCallback(
-    (book: Book, autoPlayAudio: boolean) => {
-      setCurrentBook(book);
+    async (book: Book, autoPlayAudio: boolean) => {
+      // FIX: Save the CURRENT book's audio progress BEFORE switching
+      // This prevents corrupting the new book's audioState with the old book's data
+      if (currentBook && currentBook.id !== book.id) {
+        await saveAudioProgress(currentBook);
+      }
 
-      // saving the audio progress
-      saveAudioProgress(book);
+      setCurrentBook(book);
 
       // also load the chapter content
       loadLastOpenedChapter(book);
       // also load the audio track
       loadLastOpenedAudioTrack(book, autoPlayAudio);
     },
-    [loadLastOpenedChapter, loadLastOpenedAudioTrack, saveAudioProgress]
+    [currentBook, loadLastOpenedChapter, loadLastOpenedAudioTrack, saveAudioProgress]
   );
   const changeCurrentTab = useCallback(
     (tab: TabValue) => {
