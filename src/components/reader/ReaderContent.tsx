@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Book, ChapterWithContent } from "../../types/book";
 import type { ReaderSettings } from "./ReaderSettings";
@@ -35,9 +35,28 @@ export function ReaderContent({
   const contentRef = useRef<HTMLDivElement | null>(null);
   const previousHeaderVisibleRef = useRef<boolean | undefined>(isHeaderVisible);
   const scrollPositionRef = useRef<number>(0);
+  const [isSystemDark, setIsSystemDark] = useState(() =>
+    window.matchMedia("(prefers-color-scheme: dark)").matches
+  );
   const { currentAudioTrack } = useAudioProgressContext();
   const previousAudioTrackRef =
     useRef<typeof currentAudioTrack>(currentAudioTrack);
+
+  // Keep resolved system theme in sync so shadow DOM dark variants match app theme.
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsSystemDark(event.matches);
+    };
+
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    }
+
+    mediaQuery.addListener(handleChange);
+    return () => mediaQuery.removeListener(handleChange);
+  }, []);
 
   // Preserve scroll position when header visibility changes
   useEffect(() => {
@@ -166,16 +185,23 @@ export function ReaderContent({
     [onContentClick]
   );
 
+  // Keep a ref so the content effect can always read the latest theme class
+  // without adding it as a dependency (which would cause full shadow rebuilds).
+  const themeClassRef = useRef("");
+
   // Apply settings styles - map backend string values to CSS
   const themeClass = useMemo(() => {
     if (!settings?.theme) return "";
     if (settings.theme === "dark") return "dark";
     if (settings.theme === "system") {
-      // Use system theme (respects OS preference)
-      return "";
+      return isSystemDark ? "dark" : "";
     }
     return "";
-  }, [settings]);
+  }, [settings?.theme, isSystemDark]);
+
+  // Always keep the ref in sync so effects that don't depend on themeClass
+  // can still read the current value.
+  themeClassRef.current = themeClass;
 
   const fontFamilyClass = useMemo(() => {
     if (!settings?.fontFamily) return "font-serif";
@@ -230,6 +256,9 @@ export function ReaderContent({
       themeWrapper.setAttribute("data-shadow-theme", "true");
       shadow.appendChild(themeWrapper);
     }
+    // Always stamp the current theme class so chapter changes inherit the
+    // right theme even when themeClass itself hasn't changed.
+    themeWrapper.className = themeClassRef.current;
 
     // Create or reuse the prose content div
     let inner = themeWrapper.querySelector<HTMLDivElement>(
