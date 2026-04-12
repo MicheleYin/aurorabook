@@ -38,7 +38,13 @@ export function calculateBookProgress(
   let elementId: string | undefined;
   let elementIndex: number | undefined;
 
-  const contentRef = scrollContainer.querySelector(".prose") as HTMLElement;
+  const shadowHost = scrollContainer.querySelector<HTMLElement>(
+    "[data-reader-chapter-shadow-host]"
+  );
+  const contentRef =
+    shadowHost?.shadowRoot?.querySelector<HTMLElement>(
+      "[data-reader-chapter-content]"
+    ) ?? scrollContainer.querySelector<HTMLElement>(".prose");
   if (contentRef && scrollContainer) {
     const elements = contentRef.querySelectorAll("p, h1, h2, h3, h4, h5, h6");
     let closestElement: HTMLElement | null = null;

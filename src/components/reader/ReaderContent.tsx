@@ -31,7 +31,8 @@ export function ReaderContent({
   headerRef,
   isHeaderVisible,
 }: Readonly<ReaderContentProps>) {
-  const contentRef = useRef<HTMLDivElement>(null);
+  const shadowHostRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const previousHeaderVisibleRef = useRef<boolean | undefined>(isHeaderVisible);
   const scrollPositionRef = useRef<number>(0);
   const { currentAudioTrack } = useAudioProgressContext();
@@ -137,26 +138,6 @@ export function ReaderContent({
     }
   }, [book, currentChapter, onRestoreProgress, scrollContainerRef, isLoading]);
 
-  // Disable all links in reader content
-  useEffect(() => {
-    if (!contentRef.current) return;
-
-    const handleLinkClick = (e: Event) => {
-      const target = e.target as HTMLElement;
-      if (target.tagName === "A" || target.closest("a")) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    };
-
-    const container = contentRef.current;
-    container.addEventListener("click", handleLinkClick, true);
-
-    return () => {
-      container.removeEventListener("click", handleLinkClick, true);
-    };
-  }, [currentChapter]);
-
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       // Only trigger if clicking directly on the content area, not on links or interactive elements
@@ -227,6 +208,72 @@ export function ReaderContent({
     return { paddingLeft: padding, paddingRight: padding };
   }, [settings]);
 
+  // Render chapter content in an isolated Shadow DOM
+  useEffect(() => {
+    const host = shadowHostRef.current;
+    if (!host) return;
+
+    const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+
+    // Inject document stylesheets into shadow root once so Tailwind
+    // prose + audio-highlight styles apply to the isolated content.
+    if (!shadow.querySelector("link[rel='stylesheet'], style")) {
+      Array.from(
+        document.head.querySelectorAll<HTMLElement>("link[rel='stylesheet'], style")
+      ).forEach((node) => shadow.appendChild(node.cloneNode(true)));
+    }
+
+    // Theme wrapper — gives `dark:` Tailwind variants an ancestor with class "dark"
+    let themeWrapper = shadow.querySelector<HTMLDivElement>("[data-shadow-theme]");
+    if (!themeWrapper) {
+      themeWrapper = document.createElement("div");
+      themeWrapper.setAttribute("data-shadow-theme", "true");
+      shadow.appendChild(themeWrapper);
+    }
+
+    // Create or reuse the prose content div
+    let inner = themeWrapper.querySelector<HTMLDivElement>(
+      "[data-reader-chapter-content]"
+    );
+    if (!inner) {
+      inner = document.createElement("div");
+      themeWrapper.appendChild(inner);
+    }
+    inner.setAttribute("data-reader-chapter-content", "true");
+    inner.className = cn(
+      "prose prose-slate dark:prose-invert max-w-none",
+      fontFamilyClass
+    );
+    Object.assign(inner.style, fontSizeStyle);
+    inner.innerHTML = currentChapter.contentHtml ?? "";
+
+    contentRef.current = inner;
+
+    // Disable link navigation within book content
+    const handleLinkClick = (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "A" || target.closest("a")) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    inner.addEventListener("click", handleLinkClick, true);
+
+    return () => {
+      inner!.removeEventListener("click", handleLinkClick, true);
+    };
+  }, [currentChapter.contentHtml, fontFamilyClass, fontSizeStyle]);
+
+  // Sync dark/light theme class into shadow root so `dark:` variants work
+  useEffect(() => {
+    const wrapper = shadowHostRef.current?.shadowRoot?.querySelector<HTMLDivElement>(
+      "[data-shadow-theme]"
+    );
+    if (wrapper) {
+      wrapper.className = themeClass;
+    }
+  }, [themeClass]);
+
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -241,7 +288,7 @@ export function ReaderContent({
   return (
     <div
       ref={scrollContainerRef}
-      className={cn("flex-1 overflow-y-auto cursor-pointer", themeClass)}
+      className={cn("flex-1 min-w-0 overflow-y-auto overflow-x-hidden cursor-pointer", themeClass)}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       tabIndex={-1}
@@ -249,16 +296,8 @@ export function ReaderContent({
     >
       <div className="mx-auto py-8" style={paddingStyle}>
         <div
-          ref={contentRef}
-          data-reader-chapter-content="true"
-          className={cn(
-            "prose prose-slate dark:prose-invert max-w-none",
-            fontFamilyClass
-          )}
-          style={fontSizeStyle}
-          dangerouslySetInnerHTML={{
-            __html: currentChapter.contentHtml || "",
-          }}
+          ref={shadowHostRef}
+          data-reader-chapter-shadow-host="true"
         />
       </div>
     </div>

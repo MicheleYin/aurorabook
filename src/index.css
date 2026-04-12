@@ -211,6 +211,53 @@
     object-fit: contain;
   }
 
+  /* Prevent imported EPUB styles from exceeding reader width. */
+  [data-reader-chapter-content="true"] {
+    max-width: 100%;
+    overflow-x: clip;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  [data-reader-chapter-content="true"] * {
+    box-sizing: border-box;
+    max-width: 100%;
+  }
+
+  [data-reader-chapter-content="true"] :where(table, iframe, video, canvas, svg) {
+    max-width: 100% !important;
+  }
+
+  [data-reader-chapter-content="true"] :where(.width, .width1) {
+    width: 100% !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  /* Many EPUBs wrap content in calibre/body-like blocks with horizontal offsets. */
+  [data-reader-chapter-content="true"] :where(
+      html,
+      body,
+      section,
+      article,
+      .calibre,
+      .calibre3,
+      .calibre9,
+      .calibre10,
+      #button
+    ) {
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  [data-reader-chapter-content="true"] .signupbutton {
+    max-width: 100% !important;
+    display: inline-block;
+  }
+
   /* Remove underline and disable links in reader content */
   .reader-prose a,
   .prose a,

@@ -246,6 +246,27 @@ fn rewrite_css_urls_for_endpoint(
         })
         .to_string();
 
+    append_reader_css_width_guards(&out)
+}
+
+fn append_reader_css_width_guards(css_text: &str) -> String {
+    let mut out = String::with_capacity(css_text.len() + 1024);
+    out.push_str(css_text);
+    out.push_str(
+        "\n\n/* Aurorabook reader guard: keep injected EPUB CSS within reader bounds */\n",
+    );
+    out.push_str(
+        "[data-reader-chapter-content=\"true\"]{max-width:100%!important;overflow-x:clip;overflow-wrap:break-word;word-break:break-word;}\n",
+    );
+    out.push_str(
+        "[data-reader-chapter-content=\"true\"] *{box-sizing:border-box;max-width:100%;}\n",
+    );
+    out.push_str(
+        "[data-reader-chapter-content=\"true\"] :where(.width,.width1,.calibre,.calibre3,.calibre9,.calibre10,#button,section,article,div,p){margin-left:0!important;margin-right:0!important;padding-left:0!important;padding-right:0!important;}\n",
+    );
+    out.push_str(
+        "[data-reader-chapter-content=\"true\"] :where(img,svg,canvas,video,iframe,table){max-width:100%!important;height:auto;}\n",
+    );
     out
 }
 

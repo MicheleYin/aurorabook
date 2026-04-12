@@ -11,6 +11,21 @@ const HIGHLIGHT_ENTER_CLASS = "audio-highlight-enter";
 const HIGHLIGHT_ACTIVE_CLASS = "audio-highlight-active";
 const HIGHLIGHT_EXIT_CLASS = "audio-highlight-exit";
 
+/** Returns the prose container, piercing the shadow DOM when present. */
+function getProseContainer(
+  scrollContainer: HTMLDivElement
+): HTMLElement | null {
+  const shadowHost = scrollContainer.querySelector<HTMLElement>(
+    "[data-reader-chapter-shadow-host]"
+  );
+  if (shadowHost?.shadowRoot) {
+    return shadowHost.shadowRoot.querySelector<HTMLElement>(
+      "[data-reader-chapter-content]"
+    );
+  }
+  return scrollContainer.querySelector<HTMLElement>(".prose");
+}
+
 /**
  * Hook for audio-text synchronization
  * Performs text highlighting and scrolling based on audio playback
@@ -69,10 +84,23 @@ export function useAudioTextSync(
     }
   }, [isSyncEnabled, scrollContainerRef]);
 
-  // Helper: Remove all highlights
+  // Helper: Remove all highlights (searches both shadow DOM and regular DOM)
   const removeAllHighlights = useCallback(() => {
-    const allHighlights = document.querySelectorAll(`.${HIGHLIGHT_CLASS}`);
-    allHighlights.forEach((el) => {
+    // Search inside shadow roots first
+    document.querySelectorAll("[data-reader-chapter-shadow-host]").forEach((host) => {
+      host.shadowRoot
+        ?.querySelectorAll(`.${HIGHLIGHT_CLASS}`)
+        .forEach((el) => {
+          el.classList.remove(
+            HIGHLIGHT_CLASS,
+            HIGHLIGHT_ENTER_CLASS,
+            HIGHLIGHT_ACTIVE_CLASS,
+            HIGHLIGHT_EXIT_CLASS
+          );
+        });
+    });
+    // Fallback: search regular DOM
+    document.querySelectorAll(`.${HIGHLIGHT_CLASS}`).forEach((el) => {
       el.classList.remove(
         HIGHLIGHT_CLASS,
         HIGHLIGHT_ENTER_CLASS,
@@ -305,9 +333,7 @@ export function useAudioTextSync(
 
       // Find element in DOM
       if (!scrollContainerRef.current) return;
-      const contentContainer = scrollContainerRef.current.querySelector(
-        ".prose"
-      ) as HTMLElement;
+      const contentContainer = getProseContainer(scrollContainerRef.current);
       if (!contentContainer) return;
 
       const element = contentContainer.querySelector(
@@ -353,9 +379,7 @@ export function useAudioTextSync(
     const timeoutId = setTimeout(() => {
       if (!scrollContainerRef?.current) return;
 
-      const contentContainer = scrollContainerRef.current.querySelector(
-        ".prose"
-      ) as HTMLElement;
+      const contentContainer = getProseContainer(scrollContainerRef.current);
       if (!contentContainer) return;
 
       const activeSpanId = previousSpanIdRef.current;
