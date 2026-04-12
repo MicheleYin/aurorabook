@@ -323,12 +323,28 @@ export function AudioProgressProvider({
         );
         logger.log("loaded last opened audio track", audioTrackToLoad, book);
       } else {
-        toast.error("No audio tracks available in this book");
+        // Clear previous playback state when switching to a book with no audio.
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current.currentTime = 0;
+          audioRef.current.src = "";
+        }
+
+        if (blobUrlRef.current) {
+          URL.revokeObjectURL(blobUrlRef.current);
+          blobUrlRef.current = null;
+        }
+
+        setCurrentAudioTrack(null);
+
+        if ("mediaSession" in navigator) {
+          navigator.mediaSession.metadata = null;
+        }
       }
       setIsLoadingAudio(false);
     },
 
-    [loadAudioTrack, restoreAudioProgress]
+    [audioRef, loadAudioTrack, restoreAudioProgress]
   );
 
   const closeAudioPlayer = useCallback(
