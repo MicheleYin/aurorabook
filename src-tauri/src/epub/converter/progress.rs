@@ -40,9 +40,9 @@ pub fn get_parallelism() -> usize {
         let mut workers = logical.saturating_sub(1);
 
         // If the machine has many cores, avoid taking *all* of them.
-        // Example: 32-core machines → use 24 cores.
+        // Example: 32-core machines → use 24 cores. 1 engine uses 300$, a little bit less than all the cores to prevent too much usage and contention
         if logical >= 8 {
-            workers = workers.min((logical as f64 * 0.75).round() as usize);
+            workers = workers.min((logical as f64 * 0.50).round() as usize);
         }
 
         workers.max(1)
