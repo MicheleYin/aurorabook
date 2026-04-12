@@ -229,6 +229,7 @@ pub fn run() {
             book_service::update_reader_preferences,
             book_service::update_book_last_opened_time,
             book_service::audio_stream::get_audio_stream_url,
+            book_service::audio_stream::get_epub_resource_url,
             utils::path_resolver::get_path_diagnostics,
         ])
         .manage(epub::CancellationTokens::new())

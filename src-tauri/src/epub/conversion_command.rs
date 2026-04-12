@@ -114,9 +114,8 @@ pub async fn convert_epub_to_audiobook_command(
     // Validate EPUB
     validate_and_cache_epub(&app, &source_path, &epub_data)?;
 
-    // Load chapters from database instead of extracting from EPUB
-    // Note: EPUB structure parsing is done on-demand (caching disabled)
-    let all_conversion_chapters = load_chapters_from_database(&app, &book_id).await?;
+    // Load chapter metadata from DB and chapter HTML from EPUB archive (lazy, EPUB-backed).
+    let all_conversion_chapters = load_chapters_from_database(&app, &book_id, &epub_data).await?;
 
     // Load and prepare book data
     let book_data =
@@ -253,10 +252,16 @@ fn load_epub_from_file_system(source_path: &str) -> AppResult<Vec<u8>> {
 async fn load_chapters_from_database(
     app: &AppHandle,
     book_id: &str,
+    epub_data: &[u8],
 ) -> AppResult<Vec<ConversionChapter>> {
     use crate::book_service::repositories::ChapterRepository;
     use crate::epub::converter::ConversionChapter;
+    use crate::epub::parser::{derive_base_path_from_opf, find_opf_path};
+    use crate::utils::path_validation::validate_epub_path;
     use crate::utils::text::count_words_in_html;
+    use std::collections::HashMap;
+    use std::io::{Cursor, Read};
+    use zip::ZipArchive;
 
     let db = get_db_connection(app)
         .await
@@ -276,8 +281,8 @@ async fn load_chapters_from_database(
         },
     );
 
-    // Load chapters from database WITH content_html (needed for conversion)
-    let db_chapters = ChapterRepository::find_by_book_id_with_content(db.as_ref(), book_id)
+    // Load chapter metadata only from DB.
+    let db_chapters = ChapterRepository::find_by_book_id(db.as_ref(), book_id)
         .await
         .map_err(|e| AppError::Store(format!("Failed to load chapters from database: {}", e)))?;
 
@@ -287,15 +292,63 @@ async fn load_chapters_from_database(
         ));
     }
 
-    // Convert database chapters to ConversionChapter format
+    // Build an in-memory file cache once from EPUB for fast chapter content resolution.
+    let mut archive = ZipArchive::new(Cursor::new(epub_data))
+        .map_err(|e| AppError::EpubParse(format!("Failed to open EPUB archive: {}", e)))?;
+    let mut opf_archive = ZipArchive::new(Cursor::new(epub_data))
+        .map_err(|e| AppError::EpubParse(format!("Failed to open EPUB archive for OPF: {}", e)))?;
+    let opf_path = find_opf_path(&mut opf_archive)
+        .map_err(|e| AppError::EpubParse(format!("Failed to find OPF path: {}", e)))?;
+    let base_path = derive_base_path_from_opf(&opf_path);
+
+    let mut file_cache: HashMap<String, String> = HashMap::new();
+    for i in 0..archive.len() {
+        let mut file = match archive.by_index(i) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        let name = file.name().to_string();
+        if !(name.ends_with(".xhtml") || name.ends_with(".html") || name.ends_with(".htm")) {
+            continue;
+        }
+        let mut content = String::new();
+        if file.read_to_string(&mut content).is_ok() {
+            file_cache.insert(name, content);
+        }
+    }
+
+    // Convert chapter metadata + EPUB content to ConversionChapter format.
     let mut conversion_chapters = Vec::new();
     let mut chapters_without_content = 0;
     for chapter in db_chapters {
-        // Use content_html from database, or empty string if not available
-        let content_html = chapter.content_html.unwrap_or_else(|| {
+        let validated_href = validate_epub_path(&chapter.href)
+            .map_err(|e| AppError::EpubParse(format!("Invalid chapter href '{}': {}", chapter.href, e)))?;
+
+        let chapter_path = if validated_href.starts_with('/') {
+            validated_href[1..].to_string()
+        } else if !base_path.is_empty() && validated_href.starts_with(&base_path) {
+            validated_href.clone()
+        } else {
+            format!("{}{}", base_path, validated_href)
+        };
+
+        let mut content_html = file_cache.get(&chapter_path).cloned();
+        if content_html.is_none() {
+            content_html = file_cache.get(&validated_href).cloned();
+        }
+        if content_html.is_none() {
+            let href_no_slash = validated_href.trim_start_matches('/');
+            content_html = file_cache.get(href_no_slash).cloned();
+        }
+        if content_html.is_none() && !base_path.is_empty() {
+            let href_with_base = format!("{}{}", base_path, validated_href.trim_start_matches('/'));
+            content_html = file_cache.get(&href_with_base).cloned();
+        }
+
+        let content_html = content_html.unwrap_or_else(|| {
             chapters_without_content += 1;
             log::warn!(
-                "Chapter '{}' (href: '{}') has no content_html in database",
+                "Chapter '{}' (href: '{}') content not found in EPUB",
                 chapter.title,
                 chapter.href
             );
@@ -326,13 +379,13 @@ async fn load_chapters_from_database(
 
     if chapters_without_content > 0 {
         log::warn!(
-            "Loaded {} chapters from database, but {} chapters have no content_html",
+            "Loaded {} chapters for conversion, but {} chapters have no resolved content from EPUB",
             conversion_chapters.len(),
             chapters_without_content
         );
     } else {
         log::info!(
-            "Loaded {} chapters from database with content",
+            "Loaded {} chapters from EPUB with content",
             conversion_chapters.len()
         );
     }

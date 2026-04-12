@@ -1,8 +1,9 @@
 use crate::book_service::database::get_db_connection;
 use crate::book_service::repositories::AudioRepository;
+use crate::book_service::repositories::EpubRepository;
 use crate::utils::errors::AppError;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::Response,
     routing::get,
@@ -43,6 +44,211 @@ fn get_server_shutdown() -> Arc<std::sync::Mutex<Option<oneshot::Sender<()>>>> {
         .clone()
 }
 
+#[derive(serde::Deserialize)]
+struct EpubResourceQuery {
+    book_id: String,
+    href: String,
+    chapter_href: Option<String>,
+}
+
+async fn ensure_server_started_and_get_port(
+    app: tauri::AppHandle,
+) -> Result<u16, AppError> {
+    let server_started = get_server_started_flag();
+    let is_running = if server_started.load(std::sync::atomic::Ordering::Relaxed) {
+        check_server_running().await
+    } else {
+        false
+    };
+
+    if !is_running {
+        log::info!("Audio/resource server not running, starting it now...");
+        match start_audio_server(app.clone()).await {
+            Ok(_) => {
+                tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+            }
+            Err(e) => {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                if let Err(e2) = start_audio_server(app.clone()).await {
+                    return Err(AppError::Store(format!(
+                        "Failed to start streaming server: {}; retry: {}",
+                        e, e2
+                    )));
+                }
+            }
+        }
+
+        let mut retries = 3;
+        while retries > 0 && !check_server_running().await {
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+            retries -= 1;
+        }
+
+        if !check_server_running().await {
+            return Err(AppError::Store(
+                "Streaming server is not responding".to_string(),
+            ));
+        }
+    }
+
+    let port = get_server_port().load(std::sync::atomic::Ordering::Relaxed);
+    if port == 0 {
+        return Err(AppError::Store(
+            "Streaming server port not initialized".to_string(),
+        ));
+    }
+
+    Ok(port)
+}
+
+fn detect_resource_mime_type(path: &str, bytes: &[u8]) -> &'static str {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".css") {
+        "text/css"
+    } else if lower.ends_with(".xhtml") || lower.ends_with(".html") || lower.ends_with(".htm") {
+        "text/html"
+    } else if lower.ends_with(".js") {
+        "text/javascript"
+    } else if lower.ends_with(".svg") {
+        "image/svg+xml"
+    } else if lower.ends_with(".png") {
+        "image/png"
+    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if lower.ends_with(".gif") {
+        "image/gif"
+    } else if lower.ends_with(".webp") {
+        "image/webp"
+    } else if lower.ends_with(".woff2") {
+        "font/woff2"
+    } else if lower.ends_with(".woff") {
+        "font/woff"
+    } else if lower.ends_with(".ttf") {
+        "font/ttf"
+    } else if lower.ends_with(".otf") {
+        "font/otf"
+    } else if lower.ends_with(".mp3") {
+        "audio/mpeg"
+    } else if lower.ends_with(".m4a") {
+        "audio/mp4"
+    } else if lower.ends_with(".ogg") {
+        "audio/ogg"
+    } else if lower.ends_with(".wav") {
+        "audio/wav"
+    } else if lower.ends_with(".mp4") {
+        "video/mp4"
+    } else if lower.ends_with(".webm") {
+        "video/webm"
+    } else if lower.ends_with(".vtt") {
+        "text/vtt"
+    } else if bytes.len() >= 4 {
+        match &bytes[0..4] {
+            [0x89, 0x50, 0x4E, 0x47] => "image/png",
+            [0xFF, 0xD8, 0xFF, _] => "image/jpeg",
+            [0x47, 0x49, 0x46, 0x38] => "image/gif",
+            _ => "application/octet-stream",
+        }
+    } else {
+        "application/octet-stream"
+    }
+}
+
+fn is_external_resource_ref(v: &str) -> bool {
+    let l = v.trim().to_ascii_lowercase();
+    l.starts_with("data:")
+        || l.starts_with("http://")
+        || l.starts_with("https://")
+        || l.starts_with("blob:")
+        || l.starts_with("javascript:")
+        || l.starts_with("mailto:")
+        || l.starts_with('#')
+}
+
+fn build_epub_resource_absolute_url(
+    port: u16,
+    book_id: &str,
+    href: &str,
+    chapter_href: Option<&str>,
+) -> String {
+    fn enc(v: &str) -> String {
+        percent_encoding::utf8_percent_encode(v, percent_encoding::NON_ALPHANUMERIC).to_string()
+    }
+
+    let mut url = format!(
+        "http://localhost:{}/epub-resource?book_id={}&href={}",
+        port,
+        enc(book_id),
+        enc(href)
+    );
+    if let Some(ch) = chapter_href {
+        url.push_str("&chapter_href=");
+        url.push_str(&enc(ch));
+    }
+    url
+}
+
+fn rewrite_css_urls_for_endpoint(
+    css_text: &str,
+    port: u16,
+    book_id: &str,
+    css_member_path: &str,
+) -> String {
+    use regex::Regex;
+
+    let import_url_re = match Regex::new(r#"(?is)@import\s+url\(\s*(["']?)([^"')]+)\1\s*\)"#) {
+        Ok(v) => v,
+        Err(_) => return css_text.to_string(),
+    };
+    let import_plain_re = match Regex::new(r#"(?is)@import\s+(["'])([^"']+)\1"#) {
+        Ok(v) => v,
+        Err(_) => return css_text.to_string(),
+    };
+    let url_re = match Regex::new(r#"(?is)url\(\s*(["']?)([^"')]+)\1\s*\)"#) {
+        Ok(v) => v,
+        Err(_) => return css_text.to_string(),
+    };
+
+    let mut out = css_text.to_string();
+
+    out = import_url_re
+        .replace_all(&out, |caps: &regex::Captures| {
+            let raw = caps.get(2).map(|m| m.as_str()).unwrap_or_default().trim();
+            if raw.is_empty() || is_external_resource_ref(raw) {
+                caps.get(0).map(|m| m.as_str()).unwrap_or_default().to_string()
+            } else {
+                let rewritten = build_epub_resource_absolute_url(port, book_id, raw, Some(css_member_path));
+                format!("@import url(\"{}\")", rewritten)
+            }
+        })
+        .to_string();
+
+    out = import_plain_re
+        .replace_all(&out, |caps: &regex::Captures| {
+            let raw = caps.get(2).map(|m| m.as_str()).unwrap_or_default().trim();
+            if raw.is_empty() || is_external_resource_ref(raw) {
+                caps.get(0).map(|m| m.as_str()).unwrap_or_default().to_string()
+            } else {
+                let rewritten = build_epub_resource_absolute_url(port, book_id, raw, Some(css_member_path));
+                format!("@import url(\"{}\")", rewritten)
+            }
+        })
+        .to_string();
+
+    out = url_re
+        .replace_all(&out, |caps: &regex::Captures| {
+            let raw = caps.get(2).map(|m| m.as_str()).unwrap_or_default().trim();
+            if raw.is_empty() || is_external_resource_ref(raw) {
+                caps.get(0).map(|m| m.as_str()).unwrap_or_default().to_string()
+            } else {
+                let rewritten = build_epub_resource_absolute_url(port, book_id, raw, Some(css_member_path));
+                format!("url(\"{}\")", rewritten)
+            }
+        })
+        .to_string();
+
+    out
+}
+
 /// Generate a streaming URL for an audio track
 /// This URL can be used with HTML5 audio elements for streaming playback
 /// This function ensures the server is running before returning the URL
@@ -67,70 +273,29 @@ pub async fn get_audio_stream_url(
         ));
     }
 
-    // Ensure the server is running before returning the URL
-    // This is especially important on iOS where the server may have been killed
-    let server_started = get_server_started_flag();
-    let is_running = if server_started.load(std::sync::atomic::Ordering::Relaxed) {
-        // Check if it's actually responding
-        check_server_running().await
-    } else {
-        false
-    };
-
-    if !is_running {
-        log::info!("Audio server not running, starting it now...");
-        // Try to start the server
-        match start_audio_server(app.clone()).await {
-            Ok(_) => {
-                log::info!("Audio server started successfully");
-                // Give it a moment to be ready
-                tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-            }
-            Err(e) => {
-                log::error!("Failed to start audio server: {}", e);
-                // Try one more time after a short delay
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                if let Err(e2) = start_audio_server(app.clone()).await {
-                    log::error!("Failed to start audio server on retry: {}", e2);
-                    return Err(AppError::Store(format!(
-                        "Failed to start audio streaming server: {}",
-                        e2
-                    )));
-                }
-            }
-        }
-
-        // Verify it's actually running now
-        let mut retries = 3;
-        while retries > 0 && !check_server_running().await {
-            log::warn!(
-                "Server started but not responding yet, waiting... ({} retries left)",
-                retries - 1
-            );
-            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-            retries -= 1;
-        }
-
-        if !check_server_running().await {
-            log::error!("Audio server failed to become responsive");
-            return Err(AppError::Store(
-                "Audio streaming server is not responding".to_string(),
-            ));
-        }
-    }
-
-    // Get the port number
-    let port = get_server_port().load(std::sync::atomic::Ordering::Relaxed);
-    if port == 0 {
-        return Err(AppError::Store(
-            "Audio streaming server port not initialized".to_string(),
-        ));
-    }
+    let port = ensure_server_started_and_get_port(app).await?;
 
     // Return HTTP URL for the local streaming server
     Ok(format!(
         "http://localhost:{}/audio/{}/{}",
         port, book_id, track_id
+    ))
+}
+
+#[tauri::command]
+pub async fn get_epub_resource_url(
+    book_id: String,
+    href: String,
+    chapter_href: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<String, AppError> {
+    let port = ensure_server_started_and_get_port(app).await?;
+
+    Ok(build_epub_resource_absolute_url(
+        port,
+        &book_id,
+        &href,
+        chapter_href.as_deref(),
     ))
 }
 
@@ -179,6 +344,60 @@ async fn handle_audio_stream(
         .header("Cache-Control", "public, max-age=31536000")
         .header("Access-Control-Allow-Origin", "*")
         .body(axum::body::Body::from(audio_data))
+        .unwrap())
+}
+
+async fn handle_epub_resource(
+    Query(query): Query<EpubResourceQuery>,
+    State(app): State<Arc<AppHandle>>,
+) -> Result<Response<axum::body::Body>, StatusCode> {
+    let db = get_db_connection(&*app)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let Some(epub_file_path) = EpubRepository::file_path_for_book_id(db.as_ref(), &query.book_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+
+    let href = query.href.clone();
+    let chapter_href = query.chapter_href.clone();
+    let path_for_task = epub_file_path.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        crate::book_service::epub_file_storage::read_resource_from_epub_file(
+            std::path::Path::new(&path_for_task),
+            &href,
+            chapter_href.as_deref(),
+        )
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let (mut resource_bytes, resolved_path) = result.map_err(|_| StatusCode::NOT_FOUND)?;
+    let mime_type = detect_resource_mime_type(&resolved_path, &resource_bytes);
+
+    if mime_type == "text/css" {
+        if let Ok(css_text) = String::from_utf8(resource_bytes.clone()) {
+            let port = get_server_port().load(std::sync::atomic::Ordering::Relaxed);
+            let rewritten_css = rewrite_css_urls_for_endpoint(
+                &css_text,
+                port,
+                &query.book_id,
+                &resolved_path,
+            );
+            resource_bytes = rewritten_css.into_bytes();
+        }
+    }
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", mime_type)
+        .header("Content-Length", resource_bytes.len().to_string())
+        .header("Cache-Control", "public, max-age=86400")
+        .header("Access-Control-Allow-Origin", "*")
+        .body(axum::body::Body::from(resource_bytes))
         .unwrap())
 }
 
@@ -242,6 +461,7 @@ pub async fn start_audio_server(
     let router = Router::new()
         .route("/health", get(health_check))
         .route("/audio/:book_id/:track_id", get(handle_audio_stream))
+        .route("/epub-resource", get(handle_epub_resource))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

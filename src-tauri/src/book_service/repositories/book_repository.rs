@@ -346,41 +346,12 @@ impl BookRepository {
         .await
         .map_err(|e| format!("Failed to save book: {}", e))?;
         
-        // Preserve existing chapter content_html before deleting chapters
-        let existing_chapters = if !model.chapters.is_empty() {
-            let existing_rows = sqlx::query("SELECT href, content_html FROM chapters WHERE book_id = ?")
-                .bind(&model.id)
-                .fetch_all(&mut *txn)
-                .await
-                .map_err(|e| format!("Failed to load existing chapters: {}", e))?;
-            
-            let mut content_map = std::collections::HashMap::new();
-            for row in existing_rows {
-                let href: String = row.get::<String, _>("href");
-                let content_html: Option<String> = row.get("content_html");
-                content_map.insert(href, content_html);
-            }
-            Some(content_map)
-        } else {
-            None
-        };
-        
         // Delete existing chapters
         ChapterRepository::delete_by_book_id(&mut *txn, &model.id).await?;
         
         // Batch insert chapters
         if !model.chapters.is_empty() {
-            let mut chapters_to_save = model.chapters.clone();
-            if let Some(ref content_map) = existing_chapters {
-                for chapter in &mut chapters_to_save {
-                    if chapter.content_html.is_none() {
-                        if let Some(existing_content) = content_map.get(&chapter.href) {
-                            chapter.content_html = existing_content.clone();
-                        }
-                    }
-                }
-            }
-            
+            let chapters_to_save = model.chapters.clone();
             // Insert chapters in batches
             for chunk in chapters_to_save.chunks(500) {
                 for chapter in chunk {

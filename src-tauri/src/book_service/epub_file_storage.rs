@@ -46,6 +46,38 @@ pub fn remove_book_library_dir(app: &AppHandle, book_id: &str) -> Result<(), Str
 
 /// Read an audio (or any) member from an on-disk EPUB, using the same path rules as ingestion.
 pub fn read_member_from_epub_file(epub_path: &Path, inner_href: &str) -> Result<Vec<u8>, String> {
+    read_resource_from_epub_file(epub_path, inner_href, None).map(|(bytes, _)| bytes)
+}
+
+fn sanitize_href(href: &str) -> String {
+    let trimmed = href.trim();
+    let no_fragment = trimmed.split('#').next().unwrap_or(trimmed);
+    let no_query = no_fragment.split('?').next().unwrap_or(no_fragment);
+    no_query.trim().to_string()
+}
+
+fn resolve_relative_path(base_path: &str, relative_path: &str) -> String {
+    let mut resolved_parts: Vec<&str> = base_path.split('/').filter(|s| !s.is_empty()).collect();
+    let relative_parts: Vec<&str> = relative_path.split('/').collect();
+
+    for part in relative_parts {
+        if part == ".." {
+            resolved_parts.pop();
+        } else if part != "." && !part.is_empty() {
+            resolved_parts.push(part);
+        }
+    }
+
+    resolved_parts.join("/")
+}
+
+/// Read any EPUB member from an on-disk EPUB with chapter-aware path resolution.
+/// Returns bytes and the member path that matched in the ZIP.
+pub fn read_resource_from_epub_file(
+    epub_path: &Path,
+    resource_href: &str,
+    chapter_href: Option<&str>,
+) -> Result<(Vec<u8>, String), String> {
     let file = File::open(epub_path).map_err(|e| format!("Failed to open EPUB: {}", e))?;
     let mut archive = ZipArchive::new(file).map_err(|e| format!("Invalid EPUB zip: {}", e))?;
 
@@ -54,42 +86,73 @@ pub fn read_member_from_epub_file(epub_path: &Path, inner_href: &str) -> Result<
     let opf_path = find_opf_path(&mut archive)?;
     let base_path = derive_base_path_from_opf(&opf_path);
 
-    let audio_path_primary = if inner_href.starts_with('/') {
-        inner_href[1..].to_string()
-    } else {
-        format!("{}{}", base_path, inner_href)
-    };
+    let raw_href = sanitize_href(resource_href);
+    let cleaned_href = raw_href.trim_start_matches('/').to_string();
 
-    let paths_to_try = vec![
-        audio_path_primary.clone(),
-        inner_href.to_string(),
-        if inner_href.starts_with('/') {
-            inner_href[1..].to_string()
-        } else {
-            inner_href.to_string()
-        },
-        format!(
-            "{}{}",
-            base_path,
-            if inner_href.starts_with('/') {
-                &inner_href[1..]
-            } else {
-                inner_href
-            }
-        ),
+    let mut paths_to_try: Vec<String> = vec![
+        cleaned_href.clone(),
+        raw_href.clone(),
+        format!("{}{}", base_path, cleaned_href),
     ];
+
+    if let Some(ch) = chapter_href {
+        let ch_clean = sanitize_href(ch);
+        let chapter_abs = if ch_clean.starts_with('/') {
+            ch_clean[1..].to_string()
+        } else if !base_path.is_empty() && ch_clean.starts_with(&base_path) {
+            ch_clean
+        } else {
+            format!("{}{}", base_path, ch_clean)
+        };
+
+        let chapter_dir = chapter_abs
+            .rfind('/')
+            .map(|pos| chapter_abs[..pos + 1].to_string())
+            .unwrap_or_else(|| base_path.clone());
+
+        let chapter_relative = resolve_relative_path(&chapter_dir, &raw_href);
+        if !chapter_relative.is_empty() {
+            paths_to_try.push(chapter_relative.clone());
+            paths_to_try.push(chapter_relative.trim_start_matches('/').to_string());
+        }
+    }
+
+    if let Some(filename) = cleaned_href.split('/').last() {
+        if !filename.is_empty() {
+            paths_to_try.push(filename.to_string());
+        }
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    paths_to_try.retain(|p| !p.is_empty() && seen.insert(p.clone()));
 
     for path_to_try in &paths_to_try {
         if let Ok(mut zf) = archive.by_name(path_to_try) {
             let mut buf = Vec::new();
             if zf.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
-                return Ok(buf);
+                return Ok((buf, path_to_try.clone()));
+            }
+        }
+    }
+
+    if !cleaned_href.is_empty() {
+        let suffix = cleaned_href.to_ascii_lowercase();
+        for idx in 0..archive.len() {
+            if let Ok(mut zf) = archive.by_index(idx) {
+                let name = zf.name().to_string();
+                let name_lc = name.to_ascii_lowercase();
+                if name_lc.ends_with(&suffix) || name_lc.ends_with(&format!("/{}", suffix)) {
+                    let mut buf = Vec::new();
+                    if zf.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
+                        return Ok((buf, name));
+                    }
+                }
             }
         }
     }
 
     Err(format!(
-        "Member not found in EPUB (href: {}, tried: {:?})",
-        inner_href, paths_to_try
+        "Resource not found in EPUB (href: {}, chapter: {:?}, tried: {:?})",
+        resource_href, chapter_href, paths_to_try
     ))
 }
