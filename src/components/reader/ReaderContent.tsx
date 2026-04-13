@@ -193,8 +193,11 @@ export function ReaderContent({
   const themeClass = useMemo(() => {
     if (!settings?.theme) return "";
     if (settings.theme === "dark") return "dark";
+    if (settings.theme === "light") return "";
     if (settings.theme === "system") {
-      return isSystemDark ? "dark" : "";
+      // Match SettingsContext `applyTheme` on <html>, not only matchMedia, so shadow
+      // prose stays in sync with the shell (Tailwind darkMode: class).
+      return document.documentElement.classList.contains("dark") ? "dark" : "";
     }
     return "";
   }, [settings?.theme, isSystemDark]);

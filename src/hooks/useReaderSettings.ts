@@ -21,27 +21,37 @@ export function useReaderSettings() {
   const isInitialLoadRef = useRef(true);
   const isSyncingRef = useRef(false);
 
+  // Always point at latest app settings so async reader-prefs load never merges
+  // against a stale `appSettings` from the first render (race with SettingsContext).
+  const appSettingsRef = useRef(appSettings);
+  appSettingsRef.current = appSettings;
+
   // Load settings from backend on mount
   useEffect(() => {
     const loadSettings = async () => {
+      // Prefer live app theme when the invoke returns (fixes ordering vs get_app_settings).
+      const mergeTheme = (stored: string | undefined) => {
+        const fromApp = appSettingsRef.current?.theme;
+        if (fromApp) return fromApp;
+        return stored || "system";
+      };
+
       try {
         const preferences = await invoke<ReaderSettings>(
           "get_reader_preferences"
         );
-        // Sync theme with app settings if available, otherwise use reader preferences theme
         const syncedPreferences: ReaderSettings = {
           ...preferences,
-          theme: appSettings?.theme || preferences.theme || "system",
+          theme: mergeTheme(preferences.theme),
         };
         setReaderSettings(syncedPreferences);
         isInitialLoadRef.current = false;
       } catch (err) {
         logger.error("Failed to load reader preferences:", err);
         toast.error("Failed to load reader preferences");
-        // Use app settings theme as fallback
         setReaderSettings({
           ...defaultSettings,
-          theme: appSettings?.theme || "system",
+          theme: mergeTheme(undefined),
         });
         isInitialLoadRef.current = false;
       }
