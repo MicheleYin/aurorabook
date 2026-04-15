@@ -167,6 +167,7 @@ pub async fn convert_epub_to_audiobook(
     });
 
     let voice_id = options.voice_id.clone();
+    let language = options.language.clone();
 
     convert_epub_core_with_durations(
         epub_data,
@@ -175,6 +176,7 @@ pub async fn convert_epub_to_audiobook(
         engine_pool,
         num_instances,
         voice_id,
+        language,
         Some(app),
         source_path,
         cancel_token,
@@ -293,6 +295,7 @@ pub async fn convert_epub_to_audiobook_standalone(
     });
 
     let voice_id = options.voice_id.clone();
+    let language = options.language.clone();
 
     convert_epub_core_with_durations(
         epub_data,
@@ -301,6 +304,7 @@ pub async fn convert_epub_to_audiobook_standalone(
         engine_pool,
         num_instances,
         voice_id,
+        language,
         None,                  // No AppHandle for standalone version
         None,                  // No source_path for standalone version
         cancel_token,          // Pass cancellation token

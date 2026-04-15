@@ -32,8 +32,8 @@
     "resources": [
       "resources/ffmpeg",
       "resources/kokoro-v1.0.onnx",
-      "resources/voices-v1.0.bin",
-      "resources/voice-samples/**/*.mp3",
+      "resources/voices/**/*",
+      "resources/voice-samples/",
       "resources/espeak-ng-data/"
     ],
     "macOS": {

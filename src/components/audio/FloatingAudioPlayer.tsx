@@ -18,6 +18,7 @@ import { useAudioSyncContext } from "@/context/AudioSyncContext";
 
 import type { AudioTrack } from "../../types/book";
 import { logger } from "../../lib/logger";
+import { useTranslation } from "../../lib/i18n";
 import { cn, formatTime } from "../../lib/utils";
 import { Button } from "../ui/button";
 import {
@@ -43,6 +44,7 @@ export function FloatingAudioPlayer() {
     playbackRate,
     setPlaybackRate,
   } = useAudioProgressContext();
+  const { t } = useTranslation();
   const { library, setLibrary } = useAppContext();
 
   // Local state for UI updates (only this component re-renders)
@@ -353,8 +355,8 @@ export function FloatingAudioPlayer() {
 
   // Get chapter title for current track
   const audioTrackTitle = useMemo(
-    () => currentAudioTrack?.title || "Unknown Audio Track",
-    [currentAudioTrack]
+    () => currentAudioTrack?.title || t("audio.unknown_track"),
+    [currentAudioTrack, t]
   );
 
   if ((!currentBook || !currentAudioTrack) && !isLoadingAudio) {
@@ -378,7 +380,7 @@ export function FloatingAudioPlayer() {
           {/* Track Info */}
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium truncate">
-              {currentBook?.title || "Unknown Book"}
+              {currentBook?.title || t("book.unknown_title")}
             </p>
             <p className="text-xs text-muted-foreground truncate">
               {audioTrackTitle}
@@ -394,7 +396,7 @@ export function FloatingAudioPlayer() {
             )}
             onClick={toggleSync}
             disabled={isLoadingAudio || !currentBook}
-            title={isSyncEnabled ? "Disable text sync" : "Enable text sync"}
+            title={isSyncEnabled ? t("audio.disable_sync") : t("audio.enable_sync")}
           >
             <Link2 className="h-5 w-5 shrink-0" />
           </Button>
@@ -441,7 +443,7 @@ export function FloatingAudioPlayer() {
                 );
               }
             }}
-            title="Close audio player"
+            title={t("audio.close_player")}
           >
             <X className="h-4 w-4" />
           </Button>
@@ -471,7 +473,7 @@ export function FloatingAudioPlayer() {
             className="h-10 w-10"
             onClick={handlePreviousTrack}
             disabled={!hasPreviousTrack || isLoadingAudio}
-            title="Previous track"
+            title={t("audio.previous_track")}
           >
             <SkipBack className="h-5 w-5 shrink-0" />
           </Button>
@@ -482,7 +484,7 @@ export function FloatingAudioPlayer() {
             className="h-10 w-10"
             onClick={handleSkipBackward}
             disabled={isLoadingAudio}
-            title="Skip backward 10 seconds"
+            title={t("audio.skip_back", { seconds: 10 })}
           >
             <Rewind className="h-5 w-5 shrink-0" />
           </Button>
@@ -509,7 +511,7 @@ export function FloatingAudioPlayer() {
             className="h-10 w-10"
             onClick={handleSkipForward}
             disabled={isLoadingAudio}
-            title="Skip forward 10 seconds"
+            title={t("audio.skip_forward", { seconds: 10 })}
           >
             <FastForward className="h-5 w-5 shrink-0" />
           </Button>
@@ -520,7 +522,7 @@ export function FloatingAudioPlayer() {
             className="h-10 w-10"
             onClick={handleNextTrack}
             disabled={!hasNextTrack || isLoadingAudio}
-            title="Next track"
+            title={t("audio.next_track")}
           >
             <SkipForward className="h-5 w-5 shrink-0" />
           </Button>

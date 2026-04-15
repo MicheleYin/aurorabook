@@ -94,6 +94,8 @@ impl ResourcePathResolver {
                     log::info!("✓ Tauri resource directory: {}", resource_dir.display());
                     possible_onnx_paths.push(resource_dir.join("kokoro-v1.0.onnx"));
                     possible_onnx_paths.push(resource_dir.join("resources").join("kokoro-v1.0.onnx"));
+                    possible_voices_paths.push(resource_dir.join("voices"));
+                    possible_voices_paths.push(resource_dir.join("resources").join("voices"));
                     possible_voices_paths.push(resource_dir.join("voices-v1.0.bin"));
                     possible_voices_paths.push(resource_dir.join("resources").join("voices-v1.0.bin"));
                 }
@@ -116,6 +118,13 @@ impl ResourcePathResolver {
                         .join("kokoro-v1.0.onnx"),
                 );
                 possible_onnx_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
+                possible_voices_paths.push(
+                    current_dir
+                        .join("src-tauri")
+                        .join("resources")
+                        .join("voices"),
+                );
+                possible_voices_paths.push(current_dir.join("resources").join("voices"));
                 possible_voices_paths.push(
                     current_dir
                         .join("src-tauri")
@@ -160,13 +169,13 @@ impl ResourcePathResolver {
 
         let voices_path = possible_voices_paths
             .iter()
-            .find(|p| p.exists() && p.is_file())
+            .find(|p| p.exists())
             .cloned();
 
         match (onnx_path, voices_path) {
             (Some(onnx), Some(voices)) => {
                 log::info!("✓ Found ONNX model at: {}", onnx.display());
-                log::info!("✓ Found voices file at: {}", voices.display());
+                log::info!("✓ Found voices at: {}", voices.display());
                 Ok((onnx, voices))
             },
             _ => {

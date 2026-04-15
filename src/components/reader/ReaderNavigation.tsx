@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import type { Book, Chapter } from "../../types/book";
+import { useTranslation } from "../../lib/i18n";
 import { Button } from "../ui/button";
 
 interface ReaderNavigationProps {
@@ -16,6 +17,7 @@ export function ReaderNavigation({
   onPrevious,
   onNext,
 }: Readonly<ReaderNavigationProps>) {
+  const { t } = useTranslation();
   const currentChapterIndex = book.chapters.findIndex(
     (ch) => ch.id === currentChapter.id
   );
@@ -32,10 +34,13 @@ export function ReaderNavigation({
           disabled={!hasPrevious}
         >
           <ChevronLeft className="h-4 w-4" />
-          <span className="hidden md:block">Previous</span>
+          <span className="hidden md:block">{t("common.previous")}</span>
         </Button>
         <div className="text-sm text-muted-foreground">
-          Chapter {currentChapterIndex + 1} of {book.chapters.length}
+          {t("book.chapter_count", {
+            current: currentChapterIndex + 1,
+            total: book.chapters.length,
+          })}
         </div>
         <Button
           variant="outline"
@@ -43,7 +48,7 @@ export function ReaderNavigation({
           disabled={!hasNext}
           className="rounded-full gap-2 shadow-md"
         >
-          <span className="hidden md:block">Next</span>
+          <span className="hidden md:block">{t("common.next")}</span>
           <ChevronRight className="h-4 w-4" />
         </Button>
       </div>

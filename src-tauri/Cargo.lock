@@ -375,6 +375,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
  "tauri-plugin-opener",
+ "tauri-plugin-os",
  "tauri-plugin-sql",
  "tauri-plugin-store",
  "tempfile",
@@ -1858,6 +1859,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gethostname"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bd49230192a3797a9a4d6abe9b3eed6f7fa4c8a8a4947977c6f80025f92cbd8"
+dependencies = [
+ "rustix 1.1.2",
+ "windows-link 0.2.1",
+]
+
+[[package]]
 name = "getopts"
 version = "0.2.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2699,11 +2710,11 @@ dependencies = [
 name = "kokoros"
 version = "0.1.0"
 dependencies = [
+ "espeak-rs",
  "fancy-regex",
  "hound",
  "indicatif",
  "lazy_static",
- "misaki-rs",
  "mp3lame-encoder",
  "ndarray 0.16.1",
  "ndarray-npy",
@@ -2728,22 +2739,6 @@ dependencies = [
  "html5ever 0.29.1",
  "indexmap 2.12.0",
  "selectors 0.24.0",
-]
-
-[[package]]
-name = "language-tokenizer"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed9d23ae923f144698673d87d508ee7cd8627ddae99c23549a43525c4f7a4a23"
-dependencies = [
- "num_enum",
- "strsim",
- "strum",
- "strum_macros",
- "thiserror 2.0.17",
- "unicode-normalization",
- "unicode-segmentation",
- "waken_snowball",
 ]
 
 [[package]]
@@ -3022,23 +3017,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "misaki-rs"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e93650257ef50ccc74057b6248912e844b8874d9c7dfdd145d91f65deef095e"
-dependencies = [
- "espeak-rs",
- "fancy-regex",
- "language-tokenizer",
- "log",
- "num2words",
- "regex",
- "serde",
- "serde_json",
- "thiserror 2.0.17",
-]
-
-[[package]]
 name = "mp3lame-encoder"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3278,12 +3256,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "num2words"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1f9771c0512b6a954a62b5106cc000bb5d77b1f60a792b5f70f531b84baefff"
-
-[[package]]
 name = "num_cpus"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3434,6 +3406,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-core-location"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca347214e24bc973fc025fd0d36ebb179ff30536ed1f80252706db19ee452009"
+dependencies = [
+ "objc2 0.6.3",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
 name = "objc2-core-text"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3552,6 +3534,7 @@ checksum = "96c1358452b371bf9f104e21ec536d37a650eb10f7ee379fff67d2e08d537f1f"
 dependencies = [
  "bitflags 2.10.0",
  "objc2 0.6.3",
+ "objc2-core-foundation",
  "objc2-foundation 0.3.2",
 ]
 
@@ -3573,8 +3556,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d87d638e33c06f577498cbcc50491496a3ed4246998a7fbba7ccb98b1e7eab22"
 dependencies = [
  "bitflags 2.10.0",
+ "block2 0.6.2",
  "objc2 0.6.3",
+ "objc2-cloud-kit",
+ "objc2-core-data",
  "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-core-image",
+ "objc2-core-location",
+ "objc2-core-text",
+ "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "objc2-user-notifications",
+]
+
+[[package]]
+name = "objc2-user-notifications"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9df9128cbbfef73cda168416ccf7f837b62737d748333bfe9ab71c245d76613e"
+dependencies = [
+ "objc2 0.6.3",
  "objc2-foundation 0.3.2",
 ]
 
@@ -3719,6 +3721,22 @@ dependencies = [
  "hmac-sha256",
  "lzma-rust2",
  "ureq",
+]
+
+[[package]]
+name = "os_info"
+version = "3.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4022a17595a00d6a369236fdae483f0de7f0a339960a53118b818238e132224"
+dependencies = [
+ "android_system_properties",
+ "log",
+ "nix",
+ "objc2 0.6.3",
+ "objc2-foundation 0.3.2",
+ "objc2-ui-kit",
+ "serde",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5427,27 +5445,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
-name = "strum"
-version = "0.27.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
-dependencies = [
- "strum_macros",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.27.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
-dependencies = [
- "heck 0.5.0",
- "proc-macro2",
- "quote",
- "syn 2.0.110",
-]
-
-[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5699,6 +5696,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.110",
+]
+
+[[package]]
+name = "sys-locale"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -5983,6 +5989,24 @@ dependencies = [
  "url",
  "windows",
  "zbus",
+]
+
+[[package]]
+name = "tauri-plugin-os"
+version = "2.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8f08346c8deb39e96f86973da0e2d76cbb933d7ac9b750f6dc4daf955a6f997"
+dependencies = [
+ "gethostname",
+ "log",
+ "os_info",
+ "serde",
+ "serde_json",
+ "serialize-to-javascript",
+ "sys-locale",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -6779,12 +6803,6 @@ dependencies = [
  "cc",
  "libc",
 ]
-
-[[package]]
-name = "waken_snowball"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16a3e068c98d5736c4b5d2dfc0ab9f3b1dcb8f9dbc5a22bde166550c5d3788c0"
 
 [[package]]
 name = "walkdir"

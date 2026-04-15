@@ -4,6 +4,7 @@ import type { Book, ChapterWithContent } from "../../types/book";
 import type { ReaderSettings } from "./ReaderSettings";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { useAudioTextSync } from "../../hooks/useAudioTextSync";
+import { useTranslation } from "../../lib/i18n";
 import { logger } from "../../lib/logger";
 import { cn } from "../../lib/utils";
 import { LoadingScreen } from "../app/LoadingScreen";
@@ -32,6 +33,7 @@ export function ReaderContent({
   isHeaderVisible,
 }: Readonly<ReaderContentProps>) {
   const shadowHostRef = useRef<HTMLDivElement>(null);
+  const { t } = useTranslation();
   const contentRef = useRef<HTMLDivElement | null>(null);
   const previousHeaderVisibleRef = useRef<boolean | undefined>(isHeaderVisible);
   const scrollPositionRef = useRef<number>(0);
@@ -311,7 +313,7 @@ export function ReaderContent({
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-2">
           <LoadingScreen />
-          <p className="text-sm text-muted-foreground">Loading chapter...</p>
+          <p className="text-sm text-muted-foreground">{t("reader.loading")}</p>
         </div>
       </div>
     );
@@ -324,7 +326,7 @@ export function ReaderContent({
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       tabIndex={-1}
-      title="Tap to toggle header visibility"
+      title={t("reader.toggle_header_hint")}
     >
       <div className="mx-auto py-8" style={paddingStyle}>
         <div

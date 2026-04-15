@@ -3,6 +3,7 @@ import { List } from "lucide-react";
 
 import type { AudioTrack, Book } from "../../types/book";
 import { useIsMobile } from "../../hooks/useIsMobile";
+import { useTranslation } from "../../lib/i18n";
 import { cn, formatTime } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -31,6 +32,7 @@ export function AudioTracksDrawer({
   onOpenChange,
   onTrackSelect,
 }: Readonly<AudioTracksDrawerProps>) {
+  const { t } = useTranslation();
   const isMobile = useIsMobile();
   const currentTrackRef = useRef<HTMLButtonElement | null>(null);
 
@@ -94,14 +96,14 @@ export function AudioTracksDrawer({
     <>
       <div className="pb-4">
         <DrawerHeader>
-          <DrawerTitle>Audio Tracks</DrawerTitle>
+          <DrawerTitle>{t("audio.tracks")}</DrawerTitle>
         </DrawerHeader>
       </div>
       <ScrollArea className="flex-1 overflow-y-auto">
         <div className="p-4 space-y-1">
           {book.audioTracks.map((track) => {
             const isCurrentTrack = track.id === currentTrackId;
-            const trackName = track.title || `Track ${track.order + 1}`;
+            const trackName = track.title || t("audio.track_count", { count: track.order + 1 });
             const trackHref = track.href || track.filePath;
             const chapterTitle = trackHref
               ? trackChapters.get(trackHref)
@@ -137,7 +139,7 @@ export function AudioTracksDrawer({
                       variant="secondary"
                       className="h-5 px-1.5 text-[10px] shrink-0"
                     >
-                      Playing
+                      {t("audio.playing")}
                     </Badge>
                   )}
                 </div>
@@ -181,6 +183,7 @@ export function AudioTracksButton({
   onClick,
   disabled,
 }: Readonly<AudioTracksButtonProps>) {
+  const { t } = useTranslation();
   return (
     <Button
       variant="ghost"
@@ -188,7 +191,7 @@ export function AudioTracksButton({
       className="h-10 w-10 shrink-0"
       onClick={onClick}
       disabled={disabled}
-      title="Audio tracks"
+      title={t("audio.tracks")}
     >
       <List className="h-5 w-5 shrink-0" />
     </Button>

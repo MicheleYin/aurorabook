@@ -3,11 +3,14 @@ import { getVersion } from "@tauri-apps/api/app";
 import { Pause, Play } from "lucide-react";
 
 import { useSettingsContext } from "@/context/SettingsContext";
+import { useTranslation } from "../../lib/i18n";
 
 import type { UITheme } from "../../types/ui";
 import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
 import { logger } from "../../lib/logger";
 import { ThemeSwitcher } from "../ThemeSwitcher";
+import { LanguageSelect } from "./LanguageSelect";
+import { TtsLanguageSelect } from "./TtsLanguageSelect";
 import {
   Accordion,
   AccordionContent,
@@ -42,9 +45,9 @@ export function Settings() {
     reloadSettings,
     applyTheme,
   } = useSettingsContext();
+  const { t } = useTranslation();
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
-  const [appVersion, setAppVersion] = useState<string>("Loading...");
-  // const [isLogViewerOpen, setIsLogViewerOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>(t("common.loading"));
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
 
@@ -56,7 +59,7 @@ export function Settings() {
         logger.error("Failed to get app version:", err);
         setAppVersion("Unknown");
       });
-  }, []);
+  }, [t]);
 
   const handleThemeChange = useCallback(
     async (newTheme: UITheme) => {
@@ -68,39 +71,33 @@ export function Settings() {
 
   const handlePlaySample = useCallback(
     async (voiceId: string, sampleUrl: string) => {
-      // If clicking the same voice that's playing, pause it
       if (playingVoiceId === voiceId && audioRef.current) {
         audioRef.current.pause();
         setPlayingVoiceId(null);
         return;
       }
 
-      // Stop any currently playing audio
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current = null;
       }
 
-      // Clean up previous blob URL
       if (blobUrlRef.current) {
         URL.revokeObjectURL(blobUrlRef.current);
         blobUrlRef.current = null;
       }
 
       try {
-        // Load the audio file from resources
         const { invoke } = await import("@tauri-apps/api/core");
         const audioData = await invoke<number[]>("read_resource_file", {
           resourcePath: sampleUrl,
         });
 
-        // Convert Uint8Array to Blob
         const audioBytes = new Uint8Array(audioData);
         const blob = new Blob([audioBytes], { type: "audio/mpeg" });
         const blobUrl = URL.createObjectURL(blob);
         blobUrlRef.current = blobUrl;
 
-        // Create and play audio
         const audio = new Audio(blobUrl);
         audioRef.current = audio;
         setPlayingVoiceId(voiceId);
@@ -140,7 +137,6 @@ export function Settings() {
     [saveSettings]
   );
 
-  // Cleanup audio on unmount
   useEffect(() => {
     return () => {
       if (audioRef.current) {
@@ -154,7 +150,6 @@ export function Settings() {
     };
   }, []);
 
-  // Get all voices from groups
   const allVoices = useMemo(
     () => KOKORO_VOICE_GROUPS.flatMap((group) => group.voices),
     []
@@ -169,7 +164,7 @@ export function Settings() {
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-2">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-          <p className="text-sm text-muted-foreground">Loading settings...</p>
+          <p className="text-sm text-muted-foreground">{t("app.loading_settings")}</p>
         </div>
       </div>
     );
@@ -179,12 +174,12 @@ export function Settings() {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-2">
-          <p className="text-sm text-destructive">Failed to load settings</p>
+          <p className="text-sm text-destructive">{t("app.failed_load_settings")}</p>
           <button
             onClick={reloadSettings}
             className="text-sm text-primary hover:underline"
           >
-            Retry
+            {t("app.retry")}
           </button>
         </div>
       </div>
@@ -195,9 +190,9 @@ export function Settings() {
     <div className="flex h-full flex-col overflow-auto">
       <div className="p-6 space-y-6">
         <div className="space-y-2">
-          <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{t("app.settings")}</h1>
           <p className="text-muted-foreground">
-            Manage your application preferences and appearance
+            {t("app.manage_preferences")}
           </p>
         </div>
 
@@ -210,20 +205,22 @@ export function Settings() {
         <Separator />
 
         <div className="space-y-6">
-          {/* Appearance Section */}
+          {/* Language & Appearance Section */}
           <Card>
             <CardHeader>
-              <CardTitle>Appearance</CardTitle>
+              <CardTitle>{t("settings.application")}</CardTitle>
               <CardDescription>
-                Customize the look and feel of the application
+                {t("app.customize_experience")}
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-6">
+              <LanguageSelect />
+              <Separator />
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div className="space-y-1">
-                  <p className="font-medium">Theme</p>
+                  <p className="font-medium">{t("app.theme")}</p>
                   <p className="text-sm text-muted-foreground">
-                    Choose between light, dark, or system theme
+                    {t("settings.theme_description")}
                   </p>
                 </div>
                 <div className="flex items-center justify-center sm:justify-end">
@@ -239,16 +236,17 @@ export function Settings() {
           {/* Voice Selection */}
           <Card>
             <CardHeader>
-              <CardTitle>Text-to-Speech Voice</CardTitle>
+              <CardTitle>{t("settings.tts_language")}</CardTitle>
               <CardDescription>
-                Select and preview the default voice for text-to-speech
-                conversion
+                {t("settings.voice_description")}
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-6">
+              <TtsLanguageSelect />
+              <Separator />
               <div className="flex flex-col sm:flex-row sm:items-center gap-4">
                 <div className="flex-1">
-                  <p className="font-medium mb-2">Default Voice</p>
+                  <p className="font-medium mb-2">{t("settings.voice")}</p>
                   <Select
                     value={settings?.ttsVoiceId || "af_heart"}
                     onValueChange={handleVoiceChange}
@@ -257,7 +255,7 @@ export function Settings() {
                       <SelectValue>
                         {selectedVoice
                           ? `${selectedVoice.name} (${selectedVoice.gender})`
-                          : "Select a voice"}
+                          : t("common.select_voice")}
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
@@ -286,7 +284,7 @@ export function Settings() {
                         <Badge variant="secondary" className="text-xs">
                           {selectedVoice.gender}
                         </Badge>
-                        <div className="text-xs text-muted-foreground">
+                        <div className="text-xs text-muted-foreground min-w-0 truncate">
                           {selectedVoice.summary}
                         </div>
                       </div>
@@ -317,34 +315,20 @@ export function Settings() {
           {/* General Settings */}
           <Card>
             <CardHeader>
-              <CardTitle>General</CardTitle>
-              <CardDescription>General application settings</CardDescription>
+              <CardTitle>{t("settings.general")}</CardTitle>
+              <CardDescription>{t("settings.general_description")}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-col gap-2">
-                <p className="font-medium">Application Version</p>
+                <p className="font-medium">{t("settings.app_version")}</p>
                 <p className="text-sm text-muted-foreground">
-                  Version {appVersion}
+                  {t("app.version")} {appVersion}
                 </p>
               </div>
-              {/* <div className="flex flex-col gap-2">
-                <p className="font-medium">Debug Tools</p>
-                <Button
-                  variant="outline"
-                  onClick={() => setIsLogViewerOpen(true)}
-                  className="w-full sm:w-auto"
-                >
-                  <Terminal className="mr-2 h-4 w-4" />
-                  Open Log Viewer
-                </Button>
-                <p className="text-sm text-muted-foreground">
-                  View frontend and backend logs for debugging
-                </p>
-              </div> */}
               {isSaving && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                  Saving...
+                  {t("app.saving")}
                 </div>
               )}
             </CardContent>
@@ -353,108 +337,82 @@ export function Settings() {
           {/* FAQ Section */}
           <Card>
             <CardHeader>
-              <CardTitle>Frequently Asked Questions</CardTitle>
+              <CardTitle>{t("settings.faq")}</CardTitle>
               <CardDescription>
-                Common questions about the application
+                {t("settings.faq_description")}
               </CardDescription>
             </CardHeader>
             <CardContent>
               <Accordion type="single" collapsible className="w-full">
                 <AccordionItem value="how-it-works">
-                  <AccordionTrigger>How does the app work?</AccordionTrigger>
+                  <AccordionTrigger>{t("faq.how_works.q")}</AccordionTrigger>
                   <AccordionContent>
                     <p className="text-sm text-muted-foreground">
-                      The app uses Kokoro and eSpeak, powerful text-to-speech
-                      (TTS) technologies, to convert your EPUB books into
-                      high-quality audio. Kokoro provides natural-sounding
-                      voices, while eSpeak offers additional language support
-                      and pronunciation accuracy.
+                      {t("faq.how_works.a")}
                     </p>
                   </AccordionContent>
                 </AccordionItem>
 
                 <AccordionItem value="why-slow">
-                  <AccordionTrigger>Why is it so slow?</AccordionTrigger>
+                  <AccordionTrigger>{t("faq.why_slow.q")}</AccordionTrigger>
                   <AccordionContent>
                     <p className="text-sm text-muted-foreground">
-                      Text-to-speech conversion is computationally expensive.
-                      Generating high-quality audio from text requires
-                      significant processing power, especially for longer books.
-                      The app processes each chapter sequentially to ensure
-                      quality and manage system resources efficiently.
+                      {t("faq.why_slow.a")}
                     </p>
                   </AccordionContent>
                 </AccordionItem>
 
                 <AccordionItem value="wait-for-completion">
                   <AccordionTrigger>
-                    Do I have to wait until everything is done?
+                    {t("faq.wait_completion.q")}
                   </AccordionTrigger>
                   <AccordionContent>
                     <p className="text-sm text-muted-foreground">
-                      No! You can start listening as soon as the first chapter
-                      completes. The app allows you to begin playback while
-                      conversion continues in the background. You&apos;ll be
-                      able to listen to completed chapters while others are
-                      still being processed.
+                      {t("faq.wait_completion.a")}
                     </p>
                   </AccordionContent>
                 </AccordionItem>
 
                 <AccordionItem value="can-stop">
                   <AccordionTrigger>
-                    Can I stop the conversion?
+                    {t("faq.can_stop.q")}
                   </AccordionTrigger>
                   <AccordionContent>
                     <p className="text-sm text-muted-foreground">
-                      Yes, you can stop the conversion at any time and resume
-                      later. The app saves your progress, so when you restart,
-                      it will continue from where you left off. Any chapters
-                      that were already converted will remain available for
-                      playback.
+                      {t("faq.can_stop.a")}
                     </p>
                   </AccordionContent>
                 </AccordionItem>
 
                 <AccordionItem value="audio-sync">
                   <AccordionTrigger>
-                    What is audio-text synchronization?
+                    {t("faq.audio_sync.q")}
                   </AccordionTrigger>
                   <AccordionContent>
                     <p className="text-sm text-muted-foreground">
-                      Audio-text synchronization automatically highlights the
-                      text being read as the audio plays. When enabled, the
-                      reader will scroll to and highlight the current text
-                      segment, making it easy to follow along. You can toggle
-                      this feature on or off using the sync button in the audio
-                      player.
+                      {t("faq.audio_sync.a")}
                     </p>
                   </AccordionContent>
                 </AccordionItem>
 
                 <AccordionItem value="multiple-books">
                   <AccordionTrigger>
-                    Can I convert multiple books at once?
+                    {t("faq.multiple_books.q")}
                   </AccordionTrigger>
                   <AccordionContent>
                     <p className="text-sm text-muted-foreground">
-                      Currently, the app processes one book at a time to ensure
-                      optimal performance and resource management.
+                      {t("faq.multiple_books.a")}
                     </p>
                   </AccordionContent>
                 </AccordionItem>
 
                 <AccordionItem value="voice-selection">
                   <AccordionTrigger>
-                    Can I change the voice for a book?
+                    {t("faq.voice_selection.q")}
                   </AccordionTrigger>
                   <AccordionContent>
                     <p className="text-sm text-muted-foreground">
-                      Voice selection is set when you start the conversion
-                      process. If you want to use a different voice, you&apos;ll
-                      need to delete the existing audio tracks and start a new
-                      conversion with your preferred voice. The default voice
-                      can be changed in settings.
+                      {t("faq.voice_selection.a")}
                     </p>
                   </AccordionContent>
                 </AccordionItem>
@@ -463,7 +421,6 @@ export function Settings() {
           </Card>
         </div>
       </div>
-      {/* <LogViewer isOpen={isLogViewerOpen} onOpenChange={setIsLogViewerOpen} /> */}
     </div>
   );
 }

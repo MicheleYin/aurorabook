@@ -10,6 +10,7 @@ import { Settings } from "./components/settings/SettingsPanel";
 import { Toaster } from "./components/ui/sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { AppProvider, TabValue, useAppContext } from "./context/AppContext";
+import { useTranslation } from "./lib/i18n";
 import {
   AudioProgressProvider,
   useAudioProgressContext,
@@ -27,6 +28,7 @@ import { logger } from "./lib/logger";
 
 function AppContent() {
   const { currentTab, setCurrentTab, currentBook } = useAppContext();
+  const { t } = useTranslation();
 
   return (
     <div className="flex h-full flex-col relative">
@@ -57,20 +59,20 @@ function AppContent() {
               value="library"
               className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
             >
-              Library
+              {t("library.title")}
             </TabsTrigger>
             <TabsTrigger
               value="reader"
               disabled={!currentBook}
               className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
             >
-              Reader
+              {t("reader.title")}
             </TabsTrigger>
             <TabsTrigger
               value="settings"
               className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
             >
-              Settings
+              {t("app.settings")}
             </TabsTrigger>
           </TabsList>
         </div>

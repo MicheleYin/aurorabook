@@ -5,7 +5,6 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { filesize } from "filesize";
 import humanizeDuration from "humanize-duration";
 import {
-  AlertTriangle,
   BookOpen,
   Calendar,
   Download,
@@ -21,6 +20,7 @@ import { toast } from "sonner";
 import type { Book } from "../../types/book";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { logger } from "../../lib/logger";
+import { useTranslation } from "../../lib/i18n";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -49,6 +49,7 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Separator } from "../ui/separator";
+import { PreConversionDialog } from "./PreConversionDialog";
 
 interface ConversionProgress {
   currentChapter: number;
@@ -79,7 +80,7 @@ interface BookDetailDialogProps {
   book: Book | null;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  onConvert: () => void;
+  onConvert: (language?: string, voiceId?: string) => void;
   onCancel: () => void;
   onDelete: () => void;
   onOpenBook: (book: Book) => void;
@@ -99,6 +100,8 @@ const BookDetailContent = ({
   conversionProgress: ConversionProgress | null;
   eta: string | null;
 }) => {
+  const { t } = useTranslation();
+  
   return (
     <div className="space-y-6">
       <div className="flex gap-6">
@@ -119,7 +122,7 @@ const BookDetailContent = ({
           <div>
             <div className="flex items-center gap-2 mb-2">
               <User className="h-4 w-4 text-muted-foreground" />
-              <span className="font-medium">Author</span>
+              <span className="font-medium">{t("book.author")}</span>
             </div>
             <p className="text-sm text-muted-foreground">{book.author}</p>
           </div>
@@ -127,7 +130,7 @@ const BookDetailContent = ({
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <FileText className="h-4 w-4 text-muted-foreground" />
-                <span className="font-medium">Publisher</span>
+                <span className="font-medium">{t("book.publisher")}</span>
               </div>
               <p className="text-sm text-muted-foreground">
                 {book.publisher}
@@ -139,7 +142,7 @@ const BookDetailContent = ({
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <Calendar className="h-4 w-4 text-muted-foreground" />
-                <span className="font-medium">Published</span>
+                <span className="font-medium">{t("book.published")}</span>
               </div>
               <p className="text-sm text-muted-foreground">
                 {book.publishedYear}
@@ -153,20 +156,20 @@ const BookDetailContent = ({
 
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <p className="text-sm font-medium mb-1">Chapters</p>
+          <p className="text-sm font-medium mb-1">{t("book.chapters")}</p>
           <p className="text-sm text-muted-foreground">
             {book.chapters.length}
           </p>
         </div>
         {book.pageCount && (
           <div>
-            <p className="text-sm font-medium mb-1">Pages</p>
+            <p className="text-sm font-medium mb-1">{t("book.pages")}</p>
             <p className="text-sm text-muted-foreground">{book.pageCount}</p>
           </div>
         )}
         {book.fileSizeBytes && (
           <div>
-            <p className="text-sm font-medium mb-1">File Size</p>
+            <p className="text-sm font-medium mb-1">{t("book.file_size")}</p>
             <p className="text-sm text-muted-foreground">
               {filesize(book.fileSizeBytes)}
             </p>
@@ -174,7 +177,7 @@ const BookDetailContent = ({
         )}
         {!!book.progress?.bookProgressPercent && (
           <div>
-            <p className="text-sm font-medium mb-1">Progress</p>
+            <p className="text-sm font-medium mb-1">{t("book.progress")}</p>
             <p className="text-sm text-muted-foreground">
               {Math.round(book.progress.bookProgressPercent)}%
             </p>
@@ -186,7 +189,7 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">Subjects</p>
+            <p className="text-sm font-medium mb-2">{t("book.subjects")}</p>
             <div className="flex flex-wrap gap-2">
               {book.subjects.map((subject) => (
                 <Badge key={subject} variant="secondary">
@@ -202,7 +205,7 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">Reading Progress</p>
+            <p className="text-sm font-medium mb-2">{t("book.reading_progress")}</p>
             <div className="h-2 bg-muted rounded-full overflow-hidden">
               <div
                 className="h-full bg-primary"
@@ -217,7 +220,7 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">Conversion Status</p>
+            <p className="text-sm font-medium mb-2">{t("book.conversion_status")}</p>
             <Badge
               variant={
                 book.conversionStatus === "done"
@@ -227,8 +230,7 @@ const BookDetailContent = ({
                     : "outline"
               }
             >
-              {book.conversionStatus.charAt(0).toUpperCase() +
-                book.conversionStatus.slice(1)}
+              {t(`status.${book.conversionStatus}`)}
             </Badge>
           </div>
         </>
@@ -238,14 +240,13 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">Conversion Progress</p>
+            <p className="text-sm font-medium mb-2">{t("book.conversion_progress")}</p>
             <div className="space-y-2">
               <div className="text-sm text-muted-foreground">
                 {conversionProgress.message}
               </div>
               <div className="text-xs text-muted-foreground">
-                Chapter {conversionProgress.currentChapter}/
-                {conversionProgress.totalChapters}
+                {t("book.chapter_count", { current: conversionProgress.currentChapter, total: conversionProgress.totalChapters })}
               </div>
               <Progress
                 value={
@@ -272,7 +273,7 @@ const BookDetailContent = ({
                 </span>
                 {eta && (
                   <span className="text-xs text-muted-foreground">
-                    ETA: {eta}
+                    {t("status.eta", { time: eta })}
                   </span>
                 )}
               </div>
@@ -285,11 +286,11 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">Audiobook</p>
+            <p className="text-sm font-medium mb-2">{t("book.audiobook")}</p>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">
-                  Audio Tracks
+                  {t("audio.tracks")}
                 </span>
                 <span className="text-sm font-medium">
                   {book.audioTracks.length}
@@ -298,7 +299,7 @@ const BookDetailContent = ({
               {book.audioTracks.some((track) => track.duration) && (
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
-                    Total Duration
+                    {t("audio.total_duration")}
                   </span>
                   <span className="text-sm font-medium">
                     {humanizeDuration(
@@ -314,7 +315,7 @@ const BookDetailContent = ({
               {book.audioTracks.some((track) => track.fileSizeBytes) && (
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
-                    Audio Size
+                    {t("audio.size")}
                   </span>
                   <span className="text-sm font-medium">
                     {filesize(
@@ -348,11 +349,12 @@ export function BookDetailDialog({
   conversionProgress,
   eta,
 }: Readonly<BookDetailDialogProps>) {
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const { t } = useTranslation();
   const [exportDropdownKey, setExportDropdownKey] = useState(0);
   const [isExportingM4b, setIsExportingM4b] = useState(false);
   const [isCancellingM4b, setIsCancellingM4b] = useState(false);
   const [isAnyM4bExporting, setIsAnyM4bExporting] = useState(false);
+  const [isPreConversionOpen, setIsPreConversionOpen] = useState(false);
   const [activeM4bExportBookId, setActiveM4bExportBookId] =
     useState<string | null>(null);
   const isMobile = useIsMobile();
@@ -390,14 +392,7 @@ export function BookDetailDialog({
     };
   }, [isOpen, syncM4bExportStatus]);
 
-  const handleDeleteClick = useCallback(() => setShowDeleteConfirm(true), []);
-
-  const handleDeleteConfirm = useCallback(() => {
-    setShowDeleteConfirm(false);
-    onDelete();
-  }, [onDelete]);
-
-  const handleDeleteCancel = useCallback(() => setShowDeleteConfirm(false), []);
+  const handleDeleteClick = useCallback(() => onDelete(), [onDelete]);
 
   const handleExportEpub = useCallback(async () => {
     if (!book) return;
@@ -573,7 +568,10 @@ export function BookDetailDialog({
     [handleExportEpub, handleExportM4b]
   );
 
-  logger.log("isConvertingThisBook", isConvertingThisBook);
+  const handlePreConversionConfirm = (language: string, voiceId: string) => {
+    onConvert(language, voiceId);
+  };
+
   if (!book) return null;
 
   const isExportDisabled =
@@ -589,7 +587,7 @@ export function BookDetailDialog({
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col">
             <DialogHeader>
               <DialogTitle>{book.title}</DialogTitle>
-              <DialogDescription>Book Details</DialogDescription>
+              <DialogDescription>{t("book.details")}</DialogDescription>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto">
               <BookDetailContent
@@ -607,7 +605,7 @@ export function BookDetailDialog({
                 className="gap-2"
               >
                 <BookOpen className="h-4 w-4" />
-                Open Book
+                {t("book.open")}
               </Button>
               <Select
                 key={`desktop-${exportDropdownKey}`}
@@ -620,20 +618,20 @@ export function BookDetailDialog({
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span>
                         {isAnotherBookExporting
-                          ? "Export Busy..."
-                          : "Exporting M4B..."}
+                          ? t("book.export_busy")
+                          : t("book.exporting_m4b")}
                       </span>
                     </>
                   ) : (
                     <>
                       <Download className="h-4 w-4" />
-                      <SelectValue placeholder="Export" />
+                      <SelectValue placeholder={t("book.export")} />
                     </>
                   )}
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="epub">Export as EPUB</SelectItem>
-                  <SelectItem value="m4b">Export as M4B</SelectItem>
+                  <SelectItem value="epub">{t("book.export_epub")}</SelectItem>
+                  <SelectItem value="m4b">{t("book.export_m4b")}</SelectItem>
                 </SelectContent>
               </Select>
               {book.conversionStatus === "started" && isConvertingThisBook && (
@@ -644,7 +642,7 @@ export function BookDetailDialog({
                   className="gap-2"
                 >
                   <X className="h-4 w-4" />
-                  Cancel Conversion
+                  {t("book.cancel")}
                 </Button>
               )}
               {isExportingM4b && (
@@ -655,29 +653,29 @@ export function BookDetailDialog({
                   className="gap-2"
                 >
                   <X className="h-4 w-4" />
-                  {isCancellingM4b ? "Cancelling Export..." : "Cancel Export"}
+                  {isCancellingM4b ? t("book.cancelling_export") : t("book.cancel_export")}
                 </Button>
               )}
               {book.conversionStatus === "started" && !isConvertingThisBook && (
                 <Button
                   variant="outline"
-                  onClick={onConvert}
+                  onClick={() => setIsPreConversionOpen(true)}
                   disabled={isDeleting || isConverting}
                   className="gap-2"
                 >
                   <Play className="h-4 w-4" />
-                  Resume Conversion
+                  {t("book.resume")}
                 </Button>
               )}
               {book.conversionStatus === "notStarted" && (
                 <Button
                   variant="outline"
-                  onClick={onConvert}
+                  onClick={() => setIsPreConversionOpen(true)}
                   className="gap-2"
                   disabled={isDeleting || isConverting}
                 >
                   <Play className="h-4 w-4" />
-                  Convert to Audiobook
+                  {t("book.convert")}
                 </Button>
               )}
               <Button
@@ -687,7 +685,7 @@ export function BookDetailDialog({
                 className="gap-2"
               >
                 <Trash2 className="h-4 w-4" />
-                {isDeleting ? "Deleting..." : "Delete"}
+                {isDeleting ? t("common.deleting") : t("book.delete")}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -701,7 +699,7 @@ export function BookDetailDialog({
             <DrawerHandle />
             <DrawerHeader>
               <DrawerTitle>{book.title}</DrawerTitle>
-              <DrawerDescription>Book Details</DrawerDescription>
+              <DrawerDescription>{t("book.details")}</DrawerDescription>
             </DrawerHeader>
             <div className="flex-1 overflow-y-auto px-6 pb-6">
               <BookDetailContent
@@ -719,7 +717,7 @@ export function BookDetailDialog({
                 className="gap-2"
               >
                 <BookOpen className="h-4 w-4" />
-                Open Book
+                {t("book.open")}
               </Button>
               <Select
                 key={`mobile-${exportDropdownKey}`}
@@ -732,14 +730,14 @@ export function BookDetailDialog({
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span>
                         {isAnotherBookExporting
-                          ? "Export Busy..."
-                          : "Exporting M4B..."}
+                          ? t("book.export_busy")
+                          : t("book.exporting_m4b")}
                       </span>
                     </>
                   ) : (
                     <>
                       <Download className="h-4 w-4" />
-                      <SelectValue placeholder="Export" />
+                      <SelectValue placeholder={t("book.export")} />
                     </>
                   )}
                 </SelectTrigger>
@@ -756,7 +754,7 @@ export function BookDetailDialog({
                   className="gap-2"
                 >
                   <X className="h-4 w-4" />
-                  Cancel Conversion
+                  {t("book.cancel")}
                 </Button>
               )}
               {isExportingM4b && (
@@ -767,29 +765,29 @@ export function BookDetailDialog({
                   className="gap-2"
                 >
                   <X className="h-4 w-4" />
-                  {isCancellingM4b ? "Cancelling Export..." : "Cancel Export"}
+                  {isCancellingM4b ? t("book.cancelling_export") : t("book.cancel_export")}
                 </Button>
               )}
               {book.conversionStatus === "started" && !isConvertingThisBook && (
                 <Button
                   variant="outline"
-                  onClick={onConvert}
+                  onClick={() => setIsPreConversionOpen(true)}
                   disabled={isDeleting || isConverting}
                   className="gap-2"
                 >
                   <Play className="h-4 w-4" />
-                  Resume Conversion
+                  {t("book.resume")}
                 </Button>
               )}
               {book.conversionStatus === "notStarted" && (
                 <Button
                   variant="outline"
-                  onClick={onConvert}
+                  onClick={() => setIsPreConversionOpen(true)}
                   className="gap-2"
                   disabled={isDeleting || isConverting}
                 >
                   <Play className="h-4 w-4" />
-                  Convert to Audiobook
+                  {t("book.convert")}
                 </Button>
               )}
               <Button
@@ -799,49 +797,19 @@ export function BookDetailDialog({
                 className="gap-2"
               >
                 <Trash2 className="h-4 w-4" />
-                {isDeleting ? "Deleting..." : "Delete"}
+                {isDeleting ? t("common.deleting") : t("book.delete")}
               </Button>
             </DrawerFooter>
           </DrawerContent>
         </Drawer>
       )}
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <div className="flex items-center gap-3 mb-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
-                <AlertTriangle className="h-5 w-5 text-destructive" />
-              </div>
-              <DialogTitle>Delete Book</DialogTitle>
-            </div>
-            <DialogDescription>
-              Are you sure you want to delete{" "}
-              <strong>&ldquo;{book.title}&rdquo;</strong>? This action cannot be
-              undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              onClick={handleDeleteCancel}
-              disabled={isDeleting}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDeleteConfirm}
-              disabled={isDeleting}
-              className="gap-2"
-            >
-              <Trash2 className="h-4 w-4" />
-              {isDeleting ? "Deleting..." : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Pre-conversion Config Modal */}
+      <PreConversionDialog
+        isOpen={isPreConversionOpen}
+        onOpenChange={setIsPreConversionOpen}
+        onConfirm={handlePreConversionConfirm}
+      />
     </>
   );
 }

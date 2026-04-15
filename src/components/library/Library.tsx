@@ -9,6 +9,7 @@ import { useAppContext } from "../../context/AppContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
 import { staggerDelay } from "../../lib/animations";
 import { logger } from "../../lib/logger";
+import { useTranslation } from "../../lib/i18n";
 import {
   showLoadingToast,
   updateLoadingToastToError,
@@ -34,6 +35,8 @@ export function Library() {
 
     loadBooks,
   } = useAppContext();
+  const { t } = useTranslation();
+  const { saveAudioProgress, audioRef } = useAudioProgressContext();
 
   const booksRef = useRef(books);
 
@@ -107,9 +110,9 @@ export function Library() {
 
   // Wrap convertBook (no changes needed, callbacks handle everything)
   const convertBook = useCallback(
-    async (bookId: string) => {
+    async (bookId: string, language?: string, voiceId?: string) => {
       try {
-        await convertBookFromContext(bookId);
+        await convertBookFromContext(bookId, language, voiceId);
       } catch (err) {
         // Error is already handled in context
         logger.error("Conversion failed:", err);
@@ -194,9 +197,9 @@ export function Library() {
     setIsDialogOpen(true);
   };
 
-  const handleConvert = async () => {
+  const handleConvert = async (language?: string, voiceId?: string) => {
     if (!selectedBookId) return;
-    convertBook(selectedBookId);
+    convertBook(selectedBookId, language, voiceId);
     setIsDialogOpen(false);
   };
 
@@ -246,7 +249,7 @@ export function Library() {
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-2">
           <LoadingScreen />
-          <p className="text-sm text-muted-foreground">Loading library...</p>
+          <p className="text-sm text-muted-foreground">{t("library.loading")}</p>
         </div>
       </div>
     );
@@ -257,10 +260,9 @@ export function Library() {
       <div className="flex-shrink-0 p-6 space-y-4 border-b">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Library</h1>
+            <h1 className="text-3xl font-bold tracking-tight">{t("library.title")}</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              {filteredBooks.length}{" "}
-              {filteredBooks.length === 1 ? "book" : "books"}
+              {t("library.book_count", { count: filteredBooks.length })}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -270,14 +272,14 @@ export function Library() {
               className="gap-2"
             >
               <Plus className="h-4 w-4" />
-              {isAddingBook ? "Adding..." : "Add Book"}
+              {isAddingBook ? t("library.adding") : t("library.add_book")}
             </Button>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <Input
             type="text"
-            placeholder="Search books by title, author, or subject..."
+            placeholder={t("library.search")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -308,12 +310,12 @@ export function Library() {
             <BookOpen className="h-12 w-12 text-muted-foreground" />
             <div>
               <p className="text-lg font-medium">
-                {searchQuery ? "No books found" : "No books in library"}
+                {searchQuery ? t("library.none_found") : t("library.empty")}
               </p>
               <p className="text-sm text-muted-foreground mt-1">
                 {searchQuery
-                  ? "Try adjusting your search query"
-                  : "Add books to get started"}
+                  ? t("library.search_adjust")
+                  : t("library.add_to_start")}
               </p>
             </div>
           </div>
@@ -448,8 +450,7 @@ export function Library() {
                         {book.pageCount && <span>{book.pageCount} pages</span>}
                         {!!book.progress?.bookProgressPercent && (
                           <span>
-                            {Math.round(book.progress.bookProgressPercent)}%
-                            read
+                            {t("book.read_percent", { percent: Math.round(book.progress.bookProgressPercent) })}
                           </span>
                         )}
                       </div>
@@ -466,9 +467,7 @@ export function Library() {
                       {convertingBookId === book.id && conversionProgress && (
                         <div className="space-y-1">
                           <div className="text-xs text-muted-foreground">
-                            Converting: Chapter{" "}
-                            {conversionProgress.currentChapter}/
-                            {conversionProgress.totalChapters} -{" "}
+                            {t("book.converting_chapter", { current: conversionProgress.currentChapter, total: conversionProgress.totalChapters })} -{" "}
                             {conversionProgress.message}
                           </div>
                           <Progress
@@ -485,7 +484,7 @@ export function Library() {
                           />
                           {eta && (
                             <div className="text-xs text-muted-foreground">
-                              ETA: {eta}
+                              {t("status.eta", { time: eta })}
                             </div>
                           )}
                         </div>
@@ -497,7 +496,7 @@ export function Library() {
                       variant="ghost"
                       onClick={(e) => handleOpenBook(book, e)}
                     >
-                      Open
+                      {t("book.open")}
                     </Button>
                   </div>
                 </CardContent>

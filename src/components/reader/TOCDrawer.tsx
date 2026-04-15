@@ -3,6 +3,7 @@ import { BookOpen, Volume2 } from "lucide-react";
 
 import type { Book, Chapter } from "../../types/book";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
+import { useTranslation } from "../../lib/i18n";
 import { cn, formatTime } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -30,6 +31,7 @@ export function TOCDrawer({
   onOpenChange,
   onChapterSelect,
 }: Readonly<TOCDrawerProps>) {
+  const { t } = useTranslation();
   const currentChapterRef = useRef<HTMLButtonElement | null>(null);
   const { currentAudioTrack } = useAudioProgressContext();
 
@@ -157,7 +159,7 @@ export function TOCDrawer({
       </DrawerTrigger>
       <DrawerContent className="w-80 max-w-[85vw] !max-h-screen top-0 bottom-0 left-0 right-auto rounded-r-none rounded-t-none rounded-l-none safe-area-top">
         <DrawerHeader className="pb-4">
-          <DrawerTitle>Table of Contents</DrawerTitle>
+          <DrawerTitle>{t("reader.toc")}</DrawerTitle>
         </DrawerHeader>
         <ScrollArea className="flex-1">
           <div className="p-4 space-y-1">
@@ -183,14 +185,14 @@ export function TOCDrawer({
                       className="h-5 px-1.5 text-[10px] shrink-0"
                     >
                       <Volume2 className="h-3 w-3 mr-1" />
-                      Playing
+                      {t("audio.playing")}
                     </Badge>
                   )}
                 </div>
                 <div className="flex flex-col gap-0.5 mt-0.5">
                   {chapter.estimatedPageCount && (
                     <div className="text-xs opacity-70">
-                      {chapter.estimatedPageCount} pages
+                      {chapter.estimatedPageCount} {t("book.pages").toLowerCase()}
                     </div>
                   )}
                   {chapterAudioTracks.has(chapter.href) && (

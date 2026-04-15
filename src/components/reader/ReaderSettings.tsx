@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Check, Monitor, Moon, Sun } from "lucide-react";
+import { useTranslation } from "../../lib/i18n";
 
 import { cn } from "../../lib/utils";
 import { Card, CardContent } from "../ui/card";
@@ -32,6 +33,7 @@ export function ReaderSettings({
   isOpen,
   onOpenChange,
 }: Readonly<ReaderSettingsProps>) {
+  const { t } = useTranslation();
   const themeLightRef = useRef<HTMLDivElement>(null);
   const themeDarkRef = useRef<HTMLDivElement>(null);
   const themeSystemRef = useRef<HTMLDivElement>(null);
@@ -135,12 +137,12 @@ export function ReaderSettings({
       <DrawerContent className="max-h-[80vh] flex flex-col">
         <DrawerHandle />
         <DrawerHeader className="pb-4">
-          <DrawerTitle>Reader Settings</DrawerTitle>
+          <DrawerTitle>{t("reader.settings")}</DrawerTitle>
         </DrawerHeader>
         <div className="flex flex-col gap-4 p-4 overflow-y-auto">
           {/* Theme */}
           <div className="space-y-2">
-            <Label className="text-sm">Theme</Label>
+            <Label className="text-sm">{t("reader.theme")}</Label>
             <div className="flex flex-row gap-2 overflow-x-auto p-1">
               <Card
                 ref={themeLightRef}
@@ -153,7 +155,7 @@ export function ReaderSettings({
               >
                 <CardContent className="p-4 flex flex-col items-center gap-1 h-20">
                   <Sun className="h-3 w-3" />
-                  <span className="text-xs font-medium">Light</span>
+                  <span className="text-xs font-medium">{t("reader.theme_light")}</span>
                   <div className="h-3 w-3 flex items-center justify-center">
                     {settings.theme === "light" && (
                       <Check className="h-3 w-3 text-primary" />
@@ -172,7 +174,7 @@ export function ReaderSettings({
               >
                 <CardContent className="p-4 flex flex-col items-center gap-1 h-20">
                   <Moon className="h-3 w-3" />
-                  <span className="text-xs font-medium">Dark</span>
+                  <span className="text-xs font-medium">{t("reader.theme_dark")}</span>
                   <div className="h-3 w-3 flex items-center justify-center">
                     {settings.theme === "dark" && (
                       <Check className="h-3 w-3 text-primary" />
@@ -191,7 +193,7 @@ export function ReaderSettings({
               >
                 <CardContent className="p-4 flex flex-col items-center gap-1 h-20">
                   <Monitor className="h-3 w-3" />
-                  <span className="text-xs font-medium">System</span>
+                  <span className="text-xs font-medium">{t("reader.theme_system")}</span>
                   <div className="h-3 w-3 flex items-center justify-center">
                     {settings.theme === "system" && (
                       <Check className="h-3 w-3 text-primary" />
@@ -204,7 +206,7 @@ export function ReaderSettings({
 
           {/* Font Family */}
           <div className="space-y-3">
-            <Label>Font Family</Label>
+            <Label>{t("reader.font_family")}</Label>
             <div className="flex flex-row gap-3 overflow-x-auto p-1">
               <Card
                 ref={fontFamilyMerriweatherRef}
@@ -218,7 +220,7 @@ export function ReaderSettings({
                 <CardContent className="p-4 flex flex-col items-center gap-2 h-32">
                   <div className="text-2xl font-serif">Aa</div>
                   <span className="text-xs text-center">Merriweather</span>
-                  <span className="text-xs text-muted-foreground">Serif</span>
+                  <span className="text-xs text-muted-foreground">{t("reader.font_serif")}</span>
                   <div className="h-4 w-4 flex items-center justify-center">
                     {settings.fontFamily === "merriweather" && (
                       <Check className="h-4 w-4 text-primary" />
@@ -239,7 +241,7 @@ export function ReaderSettings({
                   <div className="text-2xl font-sans">Aa</div>
                   <span className="text-xs text-center">Inter</span>
                   <span className="text-xs text-muted-foreground">
-                    Sans Serif
+                    {t("reader.font_sans")}
                   </span>
                   <div className="h-4 w-4 flex items-center justify-center">
                     {settings.fontFamily === "inter" && (
@@ -260,7 +262,7 @@ export function ReaderSettings({
                 <CardContent className="p-4 flex flex-col items-center gap-2 h-32">
                   <div className="text-2xl font-mono">Aa</div>
                   <span className="text-xs text-center">Monospace</span>
-                  <span className="text-xs text-muted-foreground">Fixed</span>
+                  <span className="text-xs text-muted-foreground">{t("reader.font_fixed")}</span>
                   <div className="h-4 w-4 flex items-center justify-center">
                     {settings.fontFamily === "monospace" && (
                       <Check className="h-4 w-4 text-primary" />
@@ -273,7 +275,7 @@ export function ReaderSettings({
 
           {/* Font Size */}
           <div className="space-y-3">
-            <Label>Font Size</Label>
+            <Label>{t("reader.font_size")}</Label>
             <div className="flex flex-row gap-3 overflow-x-auto p-1">
               <Card
                 ref={fontSizeSmallRef}
@@ -286,7 +288,7 @@ export function ReaderSettings({
               >
                 <CardContent className="p-4 flex flex-col items-center gap-2 h-24">
                   <div className="text-sm">Aa</div>
-                  <span className="text-xs font-medium">Small</span>
+                  <span className="text-xs font-medium">{t("reader.size_small")}</span>
                   <div className="h-4 w-4 flex items-center justify-center">
                     {settings.fontSize === "small" && (
                       <Check className="h-4 w-4 text-primary" />
@@ -305,7 +307,7 @@ export function ReaderSettings({
               >
                 <CardContent className="p-4 flex flex-col items-center gap-2 h-24">
                   <div className="text-base">Aa</div>
-                  <span className="text-xs font-medium">Medium</span>
+                  <span className="text-xs font-medium">{t("reader.size_medium")}</span>
                   <div className="h-4 w-4 flex items-center justify-center">
                     {settings.fontSize === "medium" && (
                       <Check className="h-4 w-4 text-primary" />
@@ -324,7 +326,7 @@ export function ReaderSettings({
               >
                 <CardContent className="p-4 flex flex-col items-center gap-2 h-24">
                   <div className="text-lg">Aa</div>
-                  <span className="text-xs font-medium">Large</span>
+                  <span className="text-xs font-medium">{t("reader.size_large")}</span>
                   <div className="h-4 w-4 flex items-center justify-center">
                     {settings.fontSize === "large" && (
                       <Check className="h-4 w-4 text-primary" />
@@ -343,7 +345,7 @@ export function ReaderSettings({
               >
                 <CardContent className="p-4 flex flex-col items-center gap-2 h-24">
                   <div className="text-xl">Aa</div>
-                  <span className="text-xs font-medium">Extra Large</span>
+                  <span className="text-xs font-medium">{t("reader.size_xlarge")}</span>
                   <div className="h-4 w-4 flex items-center justify-center">
                     {settings.fontSize === "xlarge" && (
                       <Check className="h-4 w-4 text-primary" />
@@ -356,7 +358,7 @@ export function ReaderSettings({
 
           {/* Padding */}
           <div className="space-y-3">
-            <Label>Content Padding</Label>
+            <Label>{t("reader.padding")}</Label>
             <div className="flex flex-row gap-3 overflow-x-auto p-1">
               <Card
                 ref={paddingCompactRef}
@@ -371,7 +373,7 @@ export function ReaderSettings({
                   <div className="w-full h-16 rounded border-2 border-dashed border-muted-foreground/30 flex items-center justify-center">
                     <div className="w-3/4 h-8 bg-muted rounded"></div>
                   </div>
-                  <span className="text-xs font-medium">Compact</span>
+                  <span className="text-xs font-medium">{t("reader.padding_compact")}</span>
                   <div className="h-4 w-4 flex items-center justify-center">
                     {settings.contentPadding === "compact" && (
                       <Check className="h-4 w-4 text-primary" />
@@ -392,7 +394,7 @@ export function ReaderSettings({
                   <div className="w-full h-16 rounded border-2 border-dashed border-muted-foreground/30 flex items-center justify-center">
                     <div className="w-2/3 h-8 bg-muted rounded"></div>
                   </div>
-                  <span className="text-xs font-medium">Comfortable</span>
+                  <span className="text-xs font-medium">{t("reader.padding_comfortable")}</span>
                   <div className="h-4 w-4 flex items-center justify-center">
                     {settings.contentPadding === "comfortable" && (
                       <Check className="h-4 w-4 text-primary" />
@@ -413,7 +415,7 @@ export function ReaderSettings({
                   <div className="w-full h-16 rounded border-2 border-dashed border-muted-foreground/30 flex items-center justify-center">
                     <div className="w-1/2 h-8 bg-muted rounded"></div>
                   </div>
-                  <span className="text-xs font-medium">Spacious</span>
+                  <span className="text-xs font-medium">{t("reader.padding_spacious")}</span>
                   <div className="h-4 w-4 flex items-center justify-center">
                     {settings.contentPadding === "spacious" && (
                       <Check className="h-4 w-4 text-primary" />

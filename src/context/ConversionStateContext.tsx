@@ -52,7 +52,7 @@ interface ConversionStateContextValue {
   convertingBookId: string | null;
   conversionProgress: ConversionProgress | null;
   eta: string | null; // Estimated time remaining (e.g., "5m 30s")
-  convertBook: (bookId: string) => Promise<void>;
+  convertBook: (bookId: string, language?: string, voiceId?: string) => Promise<void>;
   cancelConversion: (bookId: string | null) => Promise<void>;
   registerCallbacks: (callbacks: ConversionStateCallbacks) => () => void;
 }
@@ -251,7 +251,7 @@ export function ConversionStateProvider({
   ]);
 
   const convertBook = useCallback(
-    async (bookId: string) => {
+    async (bookId: string, language?: string, voiceId?: string) => {
       // Prevent duplicate conversions
       if (isConverting && convertingBookId === bookId) {
         logger.log("Conversion already in progress for this book");
@@ -278,16 +278,17 @@ export function ConversionStateProvider({
           }
         });
 
-        // Get the current voice from settings right before conversion
-        // This ensures we always use the latest voice setting
+        // Get the current voice and language from settings if not provided
         const settings = await invoke<AppSettings>("get_app_settings");
-        const voiceId = settings.ttsVoiceId || "af_heart";
+        const finalVoiceId = voiceId ?? settings.ttsVoiceId ?? "af_heart";
+        const finalLanguage = language ?? settings.ttsLanguage ?? "en";
 
         const book = await invoke<Book | null>(
           "convert_epub_to_audiobook_command",
           {
             bookId,
-            voiceId,
+            voiceId: finalVoiceId,
+            language: finalLanguage,
           }
         );
 

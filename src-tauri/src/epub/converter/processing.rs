@@ -266,6 +266,7 @@ pub(crate) async fn process_sentence(
     engine: &Arc<kokoros::tts::koko::TTSKokoParallel>,
     worker_id: usize,
     voice_id: &str,
+    language: &str,
     cancel_token: Option<Arc<AtomicBool>>,
 ) -> AnyhowResult<(Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String)> {
     // Check for cancellation before starting TTS generation
@@ -291,6 +292,7 @@ pub(crate) async fn process_sentence(
             engine,
             worker_id,
             voice_id,
+            language,
             cancel_token,
         )
         .await;
@@ -311,6 +313,7 @@ pub(crate) async fn process_sentence(
             engine,
             worker_id,
             voice_id,
+            language,
             cancel_token.as_ref().map(Arc::clone),
         )
         .await?;
@@ -351,12 +354,13 @@ async fn process_chunk_direct(
     engine: &Arc<kokoros::tts::koko::TTSKokoParallel>,
     worker_id: usize,
     voice_id: &str,
+    language: &str,
 ) -> Result<Vec<f32>, String> {
     let model_instance = engine.get_model_instance(worker_id);
     engine
         .tts_raw_audio_with_instance(
             text,
-            "en",
+            language,
             voice_id,
             1.0,
             None,
@@ -377,6 +381,7 @@ async fn process_single_chunk(
     engine: &Arc<kokoros::tts::koko::TTSKokoParallel>,
     worker_id: usize,
     voice_id: &str,
+    language: &str,
     cancel_token: Option<Arc<AtomicBool>>,
 ) -> AnyhowResult<(Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String)> {
     let text = clean_text_for_tts(text);
@@ -385,7 +390,7 @@ async fn process_single_chunk(
     }
 
     // Try processing the chunk
-    let result = process_chunk_direct(&text, engine, worker_id, voice_id).await;
+    let result = process_chunk_direct(&text, engine, worker_id, voice_id, language).await;
 
     // If phonemization failed with "No tokens generated", try splitting further
     match result {
@@ -455,7 +460,7 @@ async fn process_single_chunk(
                         check_cancellation!(cancel_token);
 
                         // Use direct processing to avoid recursion
-                        match process_chunk_direct(sub_chunk, engine, worker_id, voice_id).await {
+                        match process_chunk_direct(sub_chunk, engine, worker_id, voice_id, language).await {
                             Ok(audio) => {
                                 if !audio.is_empty() {
                                     // Calculate alignments for this sub-chunk
@@ -549,6 +554,7 @@ pub(crate) async fn process_chapter(
     engine: &Arc<kokoros::tts::koko::TTSKokoParallel>,
     _worker_id: usize, // Not used directly - each sentence gets its own worker_id via round-robin
     voice_id: &str,
+    language: &str,
     progress_callback: &ProgressCallback,
     total_words: usize,
     total_chapters: usize,
@@ -655,6 +661,7 @@ pub(crate) async fn process_chapter(
         let engine = Arc::clone(engine);
         let sentence = sentence.clone();
         let voice_id = voice_id.to_string();
+        let language = language.to_string();
         let cancel_token_clone = cancel_token.as_ref().map(Arc::clone);
 
         handles.spawn(async move {
@@ -677,6 +684,7 @@ pub(crate) async fn process_chapter(
                 &engine,
                 worker_id,
                 &voice_id,
+                &language,
                 cancel_token_clone,
             )
             .await
