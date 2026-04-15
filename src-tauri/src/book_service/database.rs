@@ -379,6 +379,8 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS app_settings (
             id TEXT PRIMARY KEY DEFAULT 'default',
             theme TEXT NOT NULL DEFAULT 'system',
+            language TEXT NOT NULL DEFAULT 'en',
+            tts_language TEXT NOT NULL DEFAULT 'en',
             tts_voice_id TEXT NOT NULL,
             auto_scroll_enabled INTEGER NOT NULL DEFAULT 1,
             audio_playback_speed REAL NOT NULL DEFAULT 1.0,
@@ -389,6 +391,29 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to create app_settings table: {}", e))?;
+    
+    // Migration for app_settings: add language and tts_language columns if they don't exist
+    let row = sqlx::query("SELECT sql FROM sqlite_master WHERE type='table' AND name='app_settings'")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| format!("Failed to check app_settings schema: {}", e))?;
+    let table_sql: String = row.get("sql");
+    
+    if !table_sql.contains("language") {
+        log::info!("Migrating app_settings table (adding language column)");
+        sqlx::query("ALTER TABLE app_settings ADD COLUMN language TEXT NOT NULL DEFAULT 'en'")
+            .execute(pool)
+            .await
+            .map_err(|e| format!("Failed to add language column to app_settings: {}", e))?;
+    }
+    
+    if !table_sql.contains("tts_language") {
+        log::info!("Migrating app_settings table (adding tts_language column)");
+        sqlx::query("ALTER TABLE app_settings ADD COLUMN tts_language TEXT NOT NULL DEFAULT 'en'")
+            .execute(pool)
+            .await
+            .map_err(|e| format!("Failed to add tts_language column to app_settings: {}", e))?;
+    }
     
     // Create reader_preferences table (singleton - only one row)
     sqlx::query(

@@ -21,6 +21,7 @@ import type { Book } from "../../types/book";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { logger } from "../../lib/logger";
 import { useTranslation } from "../../lib/i18n";
+import { useSettingsContext } from "@/context/SettingsContext";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -357,6 +358,7 @@ export function BookDetailDialog({
   const [isPreConversionOpen, setIsPreConversionOpen] = useState(false);
   const [activeM4bExportBookId, setActiveM4bExportBookId] =
     useState<string | null>(null);
+  const { settings } = useSettingsContext();
   const isMobile = useIsMobile();
 
   const syncM4bExportStatus = useCallback(async () => {
@@ -809,6 +811,8 @@ export function BookDetailDialog({
         isOpen={isPreConversionOpen}
         onOpenChange={setIsPreConversionOpen}
         onConfirm={handlePreConversionConfirm}
+        defaultLanguage={settings?.ttsLanguage}
+        defaultVoiceId={settings?.ttsVoiceId}
       />
     </>
   );

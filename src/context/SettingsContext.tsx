@@ -83,6 +83,8 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       // Fallback to default settings
       const defaultSettings: AppSettings = {
         theme: "system",
+        language: "en",
+        ttsLanguage: "en",
         ttsVoiceId: "af_heart",
         autoScrollEnabled: true,
         audioPlaybackSpeed: 1.0,
@@ -148,6 +150,12 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         // Apply theme if it changed
         if (updates.theme) {
           applyTheme(updates.theme as UITheme);
+        }
+
+        // Handle language change if needed (e.g., refresh translations)
+        if (updates.language) {
+          // You might want to call changeLanguage from useTranslation here
+          // but that's a bit circular. Better to let the app respond to settings change.
         }
       } catch (err) {
         logger.error("Failed to save settings:", err);

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useTranslation } from "../../lib/i18n";
 import {
   Dialog,
@@ -32,12 +32,28 @@ export function PreConversionDialog({
   isOpen,
   onOpenChange,
   onConfirm,
-  defaultLanguage = "a",
-  defaultVoiceId = DEFAULT_KOKORO_VOICE_ID,
+  defaultLanguage,
+  defaultVoiceId,
 }: PreConversionDialogProps) {
   const { t } = useTranslation();
-  const [selectedLanguage, setSelectedLanguage] = useState(defaultLanguage);
-  const [selectedVoice, setSelectedVoice] = useState(defaultVoiceId);
+
+  // Normalize settings language code to dialog's ID
+  const normalizedDefaultLang = useMemo(() => {
+    if (!defaultLanguage) return "a";
+    if (defaultLanguage === "en") return "a";
+    return defaultLanguage;
+  }, [defaultLanguage]);
+
+  const [selectedLanguage, setSelectedLanguage] = useState(normalizedDefaultLang);
+  const [selectedVoice, setSelectedVoice] = useState(defaultVoiceId || DEFAULT_KOKORO_VOICE_ID);
+
+  // Sync state when props change or dialog opens
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedLanguage(normalizedDefaultLang);
+      setSelectedVoice(defaultVoiceId || DEFAULT_KOKORO_VOICE_ID);
+    }
+  }, [isOpen, normalizedDefaultLang, defaultVoiceId]);
 
   const TTS_LANGUAGES = useMemo(() => [
     { id: "a", label: t("settings.tts_language_en_us"), code: "en-US" },

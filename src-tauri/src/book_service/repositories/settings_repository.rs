@@ -17,6 +17,8 @@ impl SettingsRepository {
         if let Some(row) = row {
             Ok(AppSettings {
                 theme: row.get("theme"),
+                language: row.get("language"),
+                tts_language: row.get("tts_language"),
                 tts_voice_id: row.get("tts_voice_id"),
                 auto_scroll_enabled: Some(row.get::<i64, _>("auto_scroll_enabled") != 0),
                 audio_playback_speed: Some(row.get("audio_playback_speed")),
@@ -26,6 +28,8 @@ impl SettingsRepository {
             log::info!("App settings not found, returning defaults");
             Ok(AppSettings {
                 theme: "system".to_string(),
+                language: "en".to_string(),
+                tts_language: "en".to_string(),
                 tts_voice_id: "af_heart".to_string(),
                 auto_scroll_enabled: Some(true),
                 audio_playback_speed: Some(1.0),
@@ -44,10 +48,12 @@ impl SettingsRepository {
         
         sqlx::query(
             r#"
-            INSERT INTO app_settings (id, theme, tts_voice_id, auto_scroll_enabled, audio_playback_speed, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO app_settings (id, theme, language, tts_language, tts_voice_id, auto_scroll_enabled, audio_playback_speed, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 theme = excluded.theme,
+                language = excluded.language,
+                tts_language = excluded.tts_language,
                 tts_voice_id = excluded.tts_voice_id,
                 auto_scroll_enabled = excluded.auto_scroll_enabled,
                 audio_playback_speed = excluded.audio_playback_speed,
@@ -56,6 +62,8 @@ impl SettingsRepository {
         )
         .bind(SETTINGS_ID)
         .bind(&model.theme)
+        .bind(&model.language)
+        .bind(&model.tts_language)
         .bind(&model.tts_voice_id)
         .bind(if model.auto_scroll_enabled.unwrap_or(true) { 1 } else { 0 })
         .bind(model.audio_playback_speed.unwrap_or(1.0))

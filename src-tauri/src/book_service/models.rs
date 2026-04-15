@@ -163,6 +163,8 @@ pub struct LibraryFilter {
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub theme: String, // "light", "dark", "system"
+    pub language: String, // "en", "es", "it", "zh"
+    pub tts_language: String, // "en", "es", "it", "zh"
     pub tts_voice_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_scroll_enabled: Option<bool>,

@@ -74,15 +74,6 @@ export function useTranslation() {
     }
     currentLanguage = newLang;
     listeners.forEach(l => l(newLang));
-    
-    // Persist to app settings
-    try {
-      await invoke("update_app_settings", { 
-        settings: { language: newLang } 
-      });
-    } catch (err) {
-      console.error("Failed to save language setting:", err);
-    }
   }, []);
 
   return { t, lang, changeLanguage, loading };

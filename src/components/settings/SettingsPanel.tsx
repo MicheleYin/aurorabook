@@ -150,9 +150,19 @@ export function Settings() {
     };
   }, []);
 
+  const filteredVoiceGroups = useMemo(() => {
+    const ttsLanguage = settings?.ttsLanguage || "en";
+    return KOKORO_VOICE_GROUPS.map((group) => ({
+      ...group,
+      voices: group.voices.filter((voice) =>
+        voice.languageTag.startsWith(ttsLanguage)
+      ),
+    })).filter((group) => group.voices.length > 0);
+  }, [settings?.ttsLanguage]);
+
   const allVoices = useMemo(
-    () => KOKORO_VOICE_GROUPS.flatMap((group) => group.voices),
-    []
+    () => filteredVoiceGroups.flatMap((group) => group.voices),
+    [filteredVoiceGroups]
   );
   const selectedVoice = useMemo(
     () => allVoices.find((voice) => voice.id === settings?.ttsVoiceId),
@@ -259,7 +269,7 @@ export function Settings() {
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
-                      {KOKORO_VOICE_GROUPS.map((group) => (
+                      {filteredVoiceGroups.map((group) => (
                         <div key={group.label}>
                           <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
                             {group.label}

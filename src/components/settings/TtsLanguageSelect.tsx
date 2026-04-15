@@ -8,13 +8,22 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Label } from "../ui/label";
+import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
 
 export function TtsLanguageSelect() {
   const { t } = useTranslation();
   const { settings, saveSettings } = useSettingsContext();
 
   const handleLanguageChange = (value: string) => {
-    void saveSettings({ ttsLanguage: value });
+    // Find the first voice that matches the new language
+    const firstVoice = KOKORO_VOICE_GROUPS.flatMap((g) => g.voices).find((v) =>
+      v.languageTag.startsWith(value)
+    );
+
+    void saveSettings({
+      ttsLanguage: value,
+      ttsVoiceId: firstVoice?.id ?? settings?.ttsVoiceId,
+    });
   };
 
   return (
