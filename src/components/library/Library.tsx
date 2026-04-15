@@ -372,7 +372,7 @@ export function Library() {
                     {convertingBookId === book.id && conversionProgress && (
                       <div className="space-y-1">
                         <div className="text-xs text-muted-foreground">
-                          {conversionProgress.message}
+                          {t(`conversion.step.${conversionProgress.currentStep.replace(/-/g, '_')}`)}
                         </div>
                         <Progress
                           value={
@@ -388,7 +388,7 @@ export function Library() {
                         />
                         {eta && (
                           <div className="text-xs text-muted-foreground">
-                            ETA: {eta}
+                            {t("status.eta", { time: eta })}
                           </div>
                         )}
                       </div>
@@ -468,7 +468,7 @@ export function Library() {
                         <div className="space-y-1">
                           <div className="text-xs text-muted-foreground">
                             {t("book.converting_chapter", { current: conversionProgress.currentChapter, total: conversionProgress.totalChapters })} -{" "}
-                            {conversionProgress.message}
+                            {t(`conversion.step.${conversionProgress.currentStep.replace(/-/g, '_')}`)}
                           </div>
                           <Progress
                             value={

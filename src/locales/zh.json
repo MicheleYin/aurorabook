@@ -163,6 +163,15 @@
   "audio.skip_back": "后退 {{seconds}} 秒",
   "audio.skip_forward": "前进 {{seconds}} 秒",
 
+  "conversion.step.initializing": "正在初始化...",
+  "conversion.step.generating_audio": "正在生成音频...",
+  "conversion.step.converting_audio": "正在转换音频...",
+  "conversion.step.creating_smil": "正在完成章节...",
+  "conversion.step.saving_epub": "正在保存有声书...",
+  "conversion.step.completed": "已完成",
+  "conversion.step.cancelled": "已取消",
+  "conversion.step.skipping": "正在跳过章节...",
+
   "error.something_wrong": "出错了",
   "error.unexpected": "发生了意外错误",
   "error.try_again": "重试"

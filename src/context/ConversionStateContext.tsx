@@ -24,6 +24,7 @@ import { Book } from "@/types/book";
 
 import type { AppSettings } from "../types/settings";
 import { logger } from "../lib/logger";
+import { useTranslation } from "../lib/i18n";
 import { dismissLoadingToast } from "../lib/toast-utils";
 import { useConversionEvents } from "./ConversionEventContext";
 
@@ -67,6 +68,7 @@ interface ConversionStateProviderProps {
 export function ConversionStateProvider({
   children,
 }: Readonly<ConversionStateProviderProps>) {
+  const { lang } = useTranslation();
   const [isConverting, setIsConverting] = useState(false);
   const [convertingBookId, setConvertingBookId] = useState<string | null>(null);
   const [progressToastId, setProgressToastId] = useState<string | null>(null);
@@ -158,7 +160,7 @@ export function ConversionStateProvider({
         progress.totalWords
       );
 
-      setEta(humanizeDuration(measurement?.estimate ?? 0, { round: true }));
+      setEta(humanizeDuration(measurement?.estimate ?? 0, { round: true, language: lang === "zh" ? "zh_CN" : lang }));
 
       // Update progress state for UI components
       setConversionProgress(progress);

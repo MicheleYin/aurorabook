@@ -163,6 +163,15 @@
   "audio.skip_back": "Retroceder {{seconds}} segundos",
   "audio.skip_forward": "Adelantar {{seconds}} segundos",
 
+  "conversion.step.initializing": "Iniciando...",
+  "conversion.step.generating_audio": "Generando audio...",
+  "conversion.step.converting_audio": "Convirtiendo audio...",
+  "conversion.step.creating_smil": "Finalizando capítulo...",
+  "conversion.step.saving_epub": "Guardando audiolibro...",
+  "conversion.step.completed": "Completado",
+  "conversion.step.cancelled": "Cancelado",
+  "conversion.step.skipping": "Omitiendo capítulo...",
+
   "error.something_wrong": "Algo salió mal",
   "error.unexpected": "Ocurrió un error inesperado",
   "error.try_again": "Reintentar"

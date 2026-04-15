@@ -244,7 +244,7 @@ const BookDetailContent = ({
             <p className="text-sm font-medium mb-2">{t("book.conversion_progress")}</p>
             <div className="space-y-2">
               <div className="text-sm text-muted-foreground">
-                {conversionProgress.message}
+                {t(`conversion.step.${conversionProgress.currentStep.replace(/-/g, '_')}`)}
               </div>
               <div className="text-xs text-muted-foreground">
                 {t("book.chapter_count", { current: conversionProgress.currentChapter, total: conversionProgress.totalChapters })}
@@ -350,7 +350,7 @@ export function BookDetailDialog({
   conversionProgress,
   eta,
 }: Readonly<BookDetailDialogProps>) {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [exportDropdownKey, setExportDropdownKey] = useState(0);
   const [isExportingM4b, setIsExportingM4b] = useState(false);
   const [isCancellingM4b, setIsCancellingM4b] = useState(false);
@@ -486,10 +486,11 @@ export function BookDetailDialog({
 
           const etaText =
             progress.etaMs !== null
-              ? ` ETA: ${humanizeDuration(progress.etaMs, { round: true })}`
+              ? ` ${t("status.eta", { time: humanizeDuration(progress.etaMs, { round: true, language: lang === "zh" ? "zh_CN" : lang }) })}`
               : "";
 
-          toast.loading(`${progress.message} (${progress.percent}%)${etaText}`, {
+          const stepLabel = t(`conversion.step.${progress.currentStep.replace(/-/g, '_')}`);
+          toast.loading(`${stepLabel} (${progress.percent}%)${etaText}`, {
             id: toastId,
           });
         }
