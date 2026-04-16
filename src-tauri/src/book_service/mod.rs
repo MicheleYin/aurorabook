@@ -1447,7 +1447,7 @@ pub async fn export_as_m4b(
         .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
     
     // Get bundled FFmpeg path
-    let ffmpeg_path = app.path().resolve("resources-desktop/ffmpeg", tauri::path::BaseDirectory::Resource)
+    let ffmpeg_path = app.path().resolve("resources/ffmpeg", tauri::path::BaseDirectory::Resource)
         .map_err(|e| AppError::Store(format!("Failed to resolve FFmpeg path: {}", e)))?;
     
     if !ffmpeg_path.exists() {

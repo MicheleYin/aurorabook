@@ -3,7 +3,7 @@
  * After `bun run build:macos:appstore`, builds a signed .pkg for App Store Connect upload
  * using xcrun productbuild (Mac Installer certificate).
  *
- * Nested `resources-desktop/ffmpeg` is re-signed with Entitlements.macos-appstore.nested-exec.plist only
+ * Nested `resources/ffmpeg` is re-signed with Entitlements.macos-appstore.nested-exec.plist only
  * (inherit sandbox from parent; no application-identifier) so TestFlight accepts ITMS-90885.
  *
  * Requires:
@@ -107,7 +107,7 @@ const ffmpegPath = path.join(
   appPath,
   "Contents",
   "Resources",
-  "resources-desktop",
+  "resources",
   "ffmpeg"
 );
 if (fs.existsSync(ffmpegPath)) {
