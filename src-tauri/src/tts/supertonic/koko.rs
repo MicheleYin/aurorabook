@@ -241,9 +241,17 @@ impl TTSKokoParallel {
             .lock()
             .map_err(|e| -> Box<dyn Error> { format!("model mutex poisoned: {}", e).into() })?;
         let total_step = self.init_config.total_step.max(1);
+        let normalized_text = text.to_lowercase();
         let (mut audio, _) = guard
             .tts
-            .call(text, &lang, &style, total_step, map_speed(speed), 0.3)
+            .call(
+                &normalized_text,
+                &lang,
+                &style,
+                total_step,
+                map_speed(speed),
+                0.3,
+            )
             .with_context(|| "Supertonic synthesis failed")?;
         let sr = guard.tts.sample_rate.max(1) as u32;
         drop(guard);

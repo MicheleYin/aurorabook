@@ -20,6 +20,85 @@ static SENTENCE_PATTERN: Lazy<Regex> = Lazy::new(|| {
         .expect("Failed to compile sentence regex pattern")
 });
 
+const MIN_SENTENCE_WORDS: usize = 3;
+const MIN_SENTENCE_ALNUM_CHARS: usize = 12;
+
+fn is_too_short_sentence(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let word_count = crate::utils::text::count_words(trimmed);
+    let alnum_char_count = trimmed.chars().filter(|c| c.is_alphanumeric()).count();
+
+    word_count < MIN_SENTENCE_WORDS || alnum_char_count < MIN_SENTENCE_ALNUM_CHARS
+}
+
+/// Merge short sentence fragments into neighboring sentences.
+///
+/// Strategy:
+/// 1. Prefer merging into previous sentence (parent context) when possible.
+/// 2. If fragment is first sentence, merge into next sentence.
+/// 3. Retry until no mergeable short fragments remain.
+fn merge_short_sentences(mut sentences: Vec<SentenceWithSpan>) -> Vec<SentenceWithSpan> {
+    if sentences.len() <= 1 {
+        return sentences;
+    }
+
+    let mut merged_count = 0usize;
+    let mut idx = 0usize;
+
+    while idx < sentences.len() {
+        if !is_too_short_sentence(&sentences[idx].text) {
+            idx += 1;
+            continue;
+        }
+
+        if sentences.len() <= 1 {
+            break;
+        }
+
+        if idx > 0 {
+            let short = sentences.remove(idx);
+            let previous = &mut sentences[idx - 1];
+            previous.text = format!(
+                "{} {}",
+                previous.text.trim_end(),
+                short.text.trim_start()
+            )
+            .trim()
+            .to_string();
+            previous.end_byte = previous.end_byte.max(short.end_byte);
+            merged_count += 1;
+            idx = idx.saturating_sub(1);
+            continue;
+        }
+
+        if idx + 1 < sentences.len() {
+            let next = sentences.remove(idx + 1);
+            let current = &mut sentences[idx];
+            current.text = format!("{} {}", current.text.trim_end(), next.text.trim_start())
+                .trim()
+                .to_string();
+            current.end_byte = current.end_byte.max(next.end_byte);
+            merged_count += 1;
+            continue;
+        }
+
+        idx += 1;
+    }
+
+    if merged_count > 0 {
+        log::debug!(
+            "Merged {} short sentence fragment(s) using adjacent context",
+            merged_count
+        );
+    }
+
+    sentences
+}
+
 /// Extracts all text from HTML and adds span tags for text-audio synchronization.
 ///
 /// This function:
@@ -502,8 +581,15 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
         }
     }
     
-    log::debug!("Extracted {} sentences from HTML body", all_sentences.len());
-    
+    let sentence_count_before_merge = all_sentences.len();
+    all_sentences = merge_short_sentences(all_sentences);
+
+    log::debug!(
+        "Extracted {} sentences from HTML body ({} after short-fragment merge)",
+        sentence_count_before_merge,
+        all_sentences.len()
+    );
+
     Ok(all_sentences)
 }
 

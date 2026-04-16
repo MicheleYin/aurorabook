@@ -60,6 +60,39 @@ fn test_extract_all_sentences_no_text() {
 }
 
 #[test]
+fn test_extract_all_sentences_merges_short_fragment_with_previous() {
+    let html = "<html><body><p>This is the first valid sentence. Ok. This is another valid sentence.</p></body></html>";
+    let result = extract_all_sentences(html).unwrap();
+    assert!(!result.is_empty());
+
+    // Very short fragment "Ok." should not survive as a standalone sentence.
+    assert!(
+        !result.iter().any(|s| s.text.trim().eq_ignore_ascii_case("ok.")),
+        "Short fragment should be merged into adjacent sentence"
+    );
+}
+
+#[test]
+fn test_extract_all_sentences_merges_short_first_fragment_with_next() {
+    let html = "<html><body><p>Hi. This sentence is long enough to stand alone and should absorb the short lead fragment.</p></body></html>";
+    let result = extract_all_sentences(html).unwrap();
+    assert!(!result.is_empty());
+
+    // After merge pass, no standalone sentence should be a tiny fragment.
+    let has_tiny_standalone = result.iter().any(|s| {
+        let text = s.text.trim();
+        let words = text.split_whitespace().count();
+        let alnum = text.chars().filter(|c| c.is_alphanumeric()).count();
+        words < 2 || alnum < 8
+    });
+
+    assert!(
+        !has_tiny_standalone,
+        "Short leading fragment should be merged into next sentence"
+    );
+}
+
+#[test]
 fn test_extract_text_with_spans_simple() {
     // extract_text_with_spans can work with or without body tags
     // It will call extract_all_sentences which requires body tags
