@@ -4,6 +4,7 @@ pub mod database;
 pub mod repositories;
 pub mod audio_stream;
 pub mod epub_file_storage;
+pub mod mp3_export;
 
 pub use models::*;
 use filters::*;
@@ -56,6 +57,14 @@ fn set_active_m4b_export_book_id(book_id: Option<String>) {
 
 #[tauri::command]
 pub async fn get_m4b_export_status() -> AppResult<M4bExportStatus> {
+    #[cfg(target_os = "ios")]
+    {
+        return Ok(M4bExportStatus {
+            in_progress: false,
+            book_id: None,
+        });
+    }
+
     let in_progress = M4B_EXPORT_IN_PROGRESS.load(Ordering::Acquire);
     let book_id = if let Ok(guard) = active_m4b_export_book_id().lock() {
         guard.clone()
@@ -118,6 +127,12 @@ pub fn terminate_active_m4b_exports() {
 
 #[tauri::command]
 pub async fn cancel_m4b_export(app: tauri::AppHandle) -> AppResult<bool> {
+    #[cfg(target_os = "ios")]
+    {
+        let _ = app;
+        return Ok(false);
+    }
+
     let in_progress = M4B_EXPORT_IN_PROGRESS.load(Ordering::Acquire);
     if !in_progress {
         return Ok(false);
@@ -1341,6 +1356,15 @@ pub async fn export_as_m4b(
     output_path: String,
     app: tauri::AppHandle,
 ) -> AppResult<()> {
+    #[cfg(target_os = "ios")]
+    {
+        let _ = (book_id, output_path, app);
+        return Err(AppError::Store(
+            "M4B export requires FFmpeg and is not available on iOS. Use Export as MP3 instead."
+                .to_string(),
+        ));
+    }
+
     use repositories::AudioRepository;
     use std::fs;
     use std::io::{BufRead, BufReader, Read, Write};

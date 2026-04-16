@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { platform } from "@tauri-apps/plugin-os";
 import { save } from "@tauri-apps/plugin-dialog";
 import { filesize } from "filesize";
 import humanizeDuration from "humanize-duration";
@@ -74,6 +75,21 @@ interface M4bExportProgress {
 }
 
 interface M4bExportStatus {
+  inProgress: boolean;
+  bookId: string | null;
+}
+
+interface Mp3ExportProgress {
+  bookId: string;
+  currentStep: string;
+  message: string;
+  processedTracks: number;
+  totalTracks: number;
+  percent: number;
+  etaMs: number | null;
+}
+
+interface Mp3ExportStatus {
   inProgress: boolean;
   bookId: string | null;
 }
@@ -355,28 +371,44 @@ export function BookDetailDialog({
   const { t, lang } = useTranslation();
   const [exportDropdownKey, setExportDropdownKey] = useState(0);
   const [isExportingM4b, setIsExportingM4b] = useState(false);
+  const [isExportingMp3, setIsExportingMp3] = useState(false);
   const [isCancellingM4b, setIsCancellingM4b] = useState(false);
   const [isAnyM4bExporting, setIsAnyM4bExporting] = useState(false);
+  const [isAnyMp3Exporting, setIsAnyMp3Exporting] = useState(false);
+  const [activeMp3ExportBookId, setActiveMp3ExportBookId] =
+    useState<string | null>(null);
   const [isPreConversionOpen, setIsPreConversionOpen] = useState(false);
   const [activeM4bExportBookId, setActiveM4bExportBookId] =
     useState<string | null>(null);
   const { settings } = useSettingsContext();
   const isMobile = useIsMobile();
+  const isIos = platform() === "ios";
 
-  const syncM4bExportStatus = useCallback(async () => {
+  const syncAudioExportStatus = useCallback(async () => {
     try {
-      const status = await invoke<M4bExportStatus>("get_m4b_export_status");
-      setIsAnyM4bExporting(status.inProgress);
-      setActiveM4bExportBookId(status.bookId);
+      const [m4bStatus, mp3Status] = await Promise.all([
+        invoke<M4bExportStatus>("get_m4b_export_status"),
+        invoke<Mp3ExportStatus>("get_mp3_export_status"),
+      ]);
+      setIsAnyM4bExporting(m4bStatus.inProgress);
+      setActiveM4bExportBookId(m4bStatus.bookId);
+      setIsAnyMp3Exporting(mp3Status.inProgress);
+      setActiveMp3ExportBookId(mp3Status.bookId);
 
       if (!book) {
         setIsExportingM4b(false);
+        setIsExportingMp3(false);
         return;
       }
 
-      setIsExportingM4b(status.inProgress && status.bookId === book.id);
+      setIsExportingM4b(
+        m4bStatus.inProgress && m4bStatus.bookId === book.id
+      );
+      setIsExportingMp3(
+        mp3Status.inProgress && mp3Status.bookId === book.id
+      );
     } catch (err) {
-      logger.warn("Failed to sync M4B export status:", err);
+      logger.warn("Failed to sync audio export status:", err);
     }
   }, [book]);
 
@@ -385,16 +417,16 @@ export function BookDetailDialog({
       return;
     }
 
-    void syncM4bExportStatus();
+    void syncAudioExportStatus();
 
     const interval = window.setInterval(() => {
-      void syncM4bExportStatus();
+      void syncAudioExportStatus();
     }, 1500);
 
     return () => {
       window.clearInterval(interval);
     };
-  }, [isOpen, syncM4bExportStatus]);
+  }, [isOpen, syncAudioExportStatus]);
 
   const handleDeleteClick = useCallback(() => onDelete(), [onDelete]);
 
@@ -438,19 +470,23 @@ export function BookDetailDialog({
     let unlistenM4bProgress: (() => void) | null = null;
 
     try {
-      const currentStatus = await invoke<M4bExportStatus>(
-        "get_m4b_export_status"
-      );
+      const [currentM4b, currentMp3] = await Promise.all([
+        invoke<M4bExportStatus>("get_m4b_export_status"),
+        invoke<Mp3ExportStatus>("get_mp3_export_status"),
+      ]);
 
-      if (currentStatus.inProgress) {
-        setIsAnyM4bExporting(true);
-        setActiveM4bExportBookId(currentStatus.bookId);
-        setIsExportingM4b(currentStatus.bookId === book.id);
+      if (currentM4b.inProgress || currentMp3.inProgress) {
+        setIsAnyM4bExporting(currentM4b.inProgress);
+        setActiveM4bExportBookId(currentM4b.bookId);
+        setIsAnyMp3Exporting(currentMp3.inProgress);
+        setActiveMp3ExportBookId(currentMp3.bookId);
+        setIsExportingM4b(currentM4b.bookId === book.id);
+        setIsExportingMp3(currentMp3.bookId === book.id);
 
         toast.error(
-          currentStatus.bookId === book.id
-            ? "An M4B export is already running for this book"
-            : "Another M4B export is already in progress"
+          currentM4b.bookId === book.id || currentMp3.bookId === book.id
+            ? "An export is already running for this book"
+            : "Another export is already in progress"
         );
         return;
       }
@@ -537,9 +573,115 @@ export function BookDetailDialog({
       }
       setIsExportingM4b(false);
       setIsCancellingM4b(false);
-      void syncM4bExportStatus();
+      void syncAudioExportStatus();
     }
-  }, [book, syncM4bExportStatus]);
+  }, [book, syncAudioExportStatus, t, lang]);
+
+  const handleExportMp3 = useCallback(async () => {
+    if (!book) return;
+
+    const toastId = `mp3-export-${book.id}`;
+    let unlistenMp3Progress: (() => void) | null = null;
+
+    try {
+      const [m4bStatus, mp3Status] = await Promise.all([
+        invoke<M4bExportStatus>("get_m4b_export_status"),
+        invoke<Mp3ExportStatus>("get_mp3_export_status"),
+      ]);
+
+      if (m4bStatus.inProgress || mp3Status.inProgress) {
+        setIsAnyM4bExporting(m4bStatus.inProgress);
+        setActiveM4bExportBookId(m4bStatus.bookId);
+        setIsAnyMp3Exporting(mp3Status.inProgress);
+        setActiveMp3ExportBookId(mp3Status.bookId);
+        setIsExportingM4b(
+          m4bStatus.inProgress && m4bStatus.bookId === book.id
+        );
+        setIsExportingMp3(
+          mp3Status.inProgress && mp3Status.bookId === book.id
+        );
+
+        toast.error(
+          m4bStatus.bookId === book.id || mp3Status.bookId === book.id
+            ? "An export is already running for this book"
+            : "Another export is already in progress"
+        );
+        return;
+      }
+
+      setIsExportingMp3(true);
+      setIsAnyMp3Exporting(true);
+      setActiveMp3ExportBookId(book.id);
+      toast.loading("Starting MP3 export...", { id: toastId });
+
+      unlistenMp3Progress = await listen<Mp3ExportProgress>(
+        "mp3-export-progress",
+        (event) => {
+          const progress = event.payload;
+
+          setIsAnyMp3Exporting(progress.currentStep !== "completed");
+          setActiveMp3ExportBookId(
+            progress.currentStep === "completed" ||
+              progress.currentStep === "cancelled"
+              ? null
+              : progress.bookId
+          );
+          setIsExportingMp3(
+            progress.bookId === book.id &&
+              progress.currentStep !== "completed" &&
+              progress.currentStep !== "cancelled"
+          );
+
+          if (progress.bookId !== book.id) {
+            return;
+          }
+
+          const etaText =
+            progress.etaMs !== null
+              ? ` ${t("status.eta", { time: humanizeDuration(progress.etaMs, { round: true, language: humanizeDurationLocale(lang) }) })}`
+              : "";
+
+          const stepKey = progress.currentStep.replace(/-/g, "_");
+          const stepLabel = t(`conversion.step.${stepKey}`);
+          toast.loading(`${stepLabel} (${progress.percent}%)${etaText}`, {
+            id: toastId,
+          });
+        }
+      );
+
+      const filePath = await save({
+        defaultPath: `${book.title}.mp3`,
+        filters: [
+          {
+            name: "MP3 Audio",
+            extensions: ["mp3"],
+          },
+        ],
+      });
+
+      if (!filePath) {
+        return;
+      }
+
+      await invoke("export_as_mp3", {
+        bookId: book.id,
+        outputPath: filePath,
+      });
+
+      toast.success(t("book.export_mp3_success"), { id: toastId });
+    } catch (err) {
+      logger.error("Failed to export MP3:", err);
+      const message =
+        err instanceof Error ? err.message : "Failed to export MP3";
+      toast.error(message, { id: toastId });
+    } finally {
+      if (unlistenMp3Progress) {
+        unlistenMp3Progress();
+      }
+      setIsExportingMp3(false);
+      void syncAudioExportStatus();
+    }
+  }, [book, syncAudioExportStatus, t, lang]);
 
   const handleCancelM4bExport = useCallback(async () => {
     if (!isExportingM4b) {
@@ -567,10 +709,12 @@ export function BookDetailDialog({
         void handleExportEpub();
       } else if (value === "m4b") {
         void handleExportM4b();
+      } else if (value === "mp3") {
+        void handleExportMp3();
       }
       setExportDropdownKey((prev) => prev + 1);
     },
-    [handleExportEpub, handleExportM4b]
+    [handleExportEpub, handleExportM4b, handleExportMp3]
   );
 
   const handlePreConversionConfirm = (language: string, voiceId: string) => {
@@ -580,9 +724,19 @@ export function BookDetailDialog({
   if (!book) return null;
 
   const isExportDisabled =
-    isDeleting || isConvertingThisBook || isExportingM4b || isAnyM4bExporting;
+    isDeleting ||
+    isConvertingThisBook ||
+    isExportingM4b ||
+    isExportingMp3 ||
+    isAnyM4bExporting ||
+    isAnyMp3Exporting;
   const isAnotherBookExporting =
-    isAnyM4bExporting && activeM4bExportBookId !== null && activeM4bExportBookId !== book.id;
+    (isAnyM4bExporting &&
+      activeM4bExportBookId !== null &&
+      activeM4bExportBookId !== book.id) ||
+    (isAnyMp3Exporting &&
+      activeMp3ExportBookId !== null &&
+      activeMp3ExportBookId !== book.id);
 
   return (
     <>
@@ -618,13 +772,17 @@ export function BookDetailDialog({
                 disabled={isExportDisabled}
               >
                 <SelectTrigger className="w-[170px] gap-2">
-                  {isExportingM4b || isAnotherBookExporting ? (
+                  {isExportingM4b ||
+                  isExportingMp3 ||
+                  isAnotherBookExporting ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span>
                         {isAnotherBookExporting
                           ? t("book.export_busy")
-                          : t("book.exporting_m4b")}
+                          : isExportingM4b
+                            ? t("book.exporting_m4b")
+                            : t("book.exporting_mp3")}
                       </span>
                     </>
                   ) : (
@@ -636,7 +794,10 @@ export function BookDetailDialog({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="epub">{t("book.export_epub")}</SelectItem>
-                  <SelectItem value="m4b">{t("book.export_m4b")}</SelectItem>
+                  {!isIos && (
+                    <SelectItem value="m4b">{t("book.export_m4b")}</SelectItem>
+                  )}
+                  <SelectItem value="mp3">{t("book.export_mp3")}</SelectItem>
                 </SelectContent>
               </Select>
               {book.conversionStatus === "started" && isConvertingThisBook && (
@@ -730,13 +891,17 @@ export function BookDetailDialog({
                 disabled={isExportDisabled}
               >
                 <SelectTrigger className="w-full gap-2">
-                  {isExportingM4b || isAnotherBookExporting ? (
+                  {isExportingM4b ||
+                  isExportingMp3 ||
+                  isAnotherBookExporting ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span>
                         {isAnotherBookExporting
                           ? t("book.export_busy")
-                          : t("book.exporting_m4b")}
+                          : isExportingM4b
+                            ? t("book.exporting_m4b")
+                            : t("book.exporting_mp3")}
                       </span>
                     </>
                   ) : (
@@ -747,8 +912,17 @@ export function BookDetailDialog({
                   )}
                 </SelectTrigger>
                 <SelectContent className="w-full">
-                  <SelectItem className="w-full" value="epub">Export as EPUB</SelectItem>
-                  <SelectItem className="w-full" value="m4b">Export as M4B</SelectItem>
+                  <SelectItem className="w-full" value="epub">
+                    {t("book.export_epub")}
+                  </SelectItem>
+                  {!isIos && (
+                    <SelectItem className="w-full" value="m4b">
+                      {t("book.export_m4b")}
+                    </SelectItem>
+                  )}
+                  <SelectItem className="w-full" value="mp3">
+                    {t("book.export_mp3")}
+                  </SelectItem>
                 </SelectContent>
               </Select>
               {book.conversionStatus === "started" && isConvertingThisBook && (

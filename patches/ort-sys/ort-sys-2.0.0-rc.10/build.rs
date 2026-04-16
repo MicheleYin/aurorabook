@@ -741,21 +741,34 @@ fn prepare_libort_dir() -> (PathBuf, bool) {
                 if target.contains("apple-ios") {
                     // Try multiple possible paths - resolve from CARGO_MANIFEST_DIR
                     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+                    let manifest_path = Path::new(&manifest_dir);
+                    let tts_tauri_root = manifest_path
+                        .parent() // ort-sys-2.0.0-rc.10
+                        .and_then(|p| p.parent()) // ort-sys
+                        .and_then(|p| p.parent()); // patches
                     let possible_paths: Vec<PathBuf> = vec![
-						// From src-tauri: go up to project root, then to onnxruntime
-						Path::new(&manifest_dir)
-							.parent() // src-tauri
-							.and_then(|p| p.parent()) // project root
-							.map(|root| root.join("onnxruntime").join("build").join("iOS").join("Release").join("Release-iphoneos")),
-						// Alternative: from patches directory
-						Path::new(&manifest_dir)
-							.parent() // ort-sys-2.0.0-rc.10
-							.and_then(|p| p.parent()) // ort-sys
-							.and_then(|p| p.parent()) // patches
-							.map(|root| root.join("onnxruntime").join("build").join("iOS").join("Release").join("Release-iphoneos")),
-						// Current project location
-						Some(PathBuf::from("/Volumes/Untitled/Synology/ArchivedProjects/tts-tauri/onnxruntime/build/iOS/Release/Release-iphoneos")),
-					].into_iter().flatten().collect();
+                        // tts-tauri/onnxruntime (if ORT source is nested in app repo)
+                        tts_tauri_root.map(|root| {
+                            root.join("onnxruntime")
+                                .join("build")
+                                .join("iOS")
+                                .join("Release")
+                                .join("Release-iphoneos")
+                        }),
+                        // ../onnxruntime (current workspace layout)
+                        tts_tauri_root.map(|root| {
+                            root.parent()
+                                .unwrap_or(root)
+                                .join("onnxruntime")
+                                .join("build")
+                                .join("iOS")
+                                .join("Release")
+                                .join("Release-iphoneos")
+                        }),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect();
 
                     for ort_lib_dir in possible_paths {
                         if ort_lib_dir.exists()

@@ -307,8 +307,8 @@ pub async fn generate_tts_batch(
 /// let mp3_data = convert_pcm_to_mp3(pcm_data, 24000, 1, Some(128))?;
 /// std::fs::write("output.mp3", mp3_data)?;
 /// ```
-#[tauri::command]
-pub fn convert_pcm_to_mp3(
+/// Shared MP3 encoder used by Tauri `convert_pcm_to_mp3` and audiobook MP3 export.
+pub(crate) fn encode_pcm_to_mp3_bytes(
     pcm_data: Vec<u8>,
     sample_rate: u32,
     channels: u32,
@@ -463,4 +463,14 @@ pub fn convert_pcm_to_mp3(
     }
 
     Ok(mp3_output)
+}
+
+#[tauri::command]
+pub fn convert_pcm_to_mp3(
+    pcm_data: Vec<u8>,
+    sample_rate: u32,
+    channels: u32,
+    bitrate: Option<u32>,
+) -> AppResult<Vec<u8>> {
+    encode_pcm_to_mp3_bytes(pcm_data, sample_rate, channels, bitrate)
 }

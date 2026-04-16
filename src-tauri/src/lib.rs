@@ -210,6 +210,8 @@ pub fn run() {
             book_service::export_as_m4b,
             book_service::get_m4b_export_status,
             book_service::cancel_m4b_export,
+            book_service::mp3_export::export_as_mp3,
+            book_service::mp3_export::get_mp3_export_status,
             book_service::update_book_progress,
             book_service::update_book_audio_state,
             book_service::ingest_epub,
