@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "resources-desktop/ffmpeg": "resources/ffmpeg",
+      "resources/voice-samples/": "resources/voice-samples/",
+      "resources/supertonic/onnx/": "resources/supertonic/onnx/",
+      "resources/supertonic/voice_styles/": "resources/supertonic/voice_styles/"
+    }
+  }
+}

@@ -51,3 +51,5 @@ src-tauri/check_output.txt
 src-tauri/check_output_final.txt
 src-tauri/test_output/
 src-tauri/watermark_test.mp3
+
+.cargo-target/
