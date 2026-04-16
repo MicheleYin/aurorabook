@@ -6,7 +6,8 @@ import { useSettingsContext } from "@/context/SettingsContext";
 import { useTranslation } from "../../lib/i18n";
 
 import type { UITheme } from "../../types/ui";
-import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
+import { voiceMatchesTtsLanguage } from "../../constants/languages";
+import { KOKORO_VOICE_GROUPS, voiceSamplePathsToTry } from "../../constants/kokoro";
 import { logger } from "../../lib/logger";
 import { ThemeSwitcher } from "../ThemeSwitcher";
 import { LanguageSelect } from "./LanguageSelect";
@@ -70,7 +71,7 @@ export function Settings() {
   );
 
   const handlePlaySample = useCallback(
-    async (voiceId: string, sampleUrl: string) => {
+    async (voiceId: string, ttsLanguage: string) => {
       if (playingVoiceId === voiceId && audioRef.current) {
         audioRef.current.pause();
         setPlayingVoiceId(null);
@@ -89,9 +90,22 @@ export function Settings() {
 
       try {
         const { invoke } = await import("@tauri-apps/api/core");
-        const audioData = await invoke<number[]>("read_resource_file", {
-          resourcePath: sampleUrl,
-        });
+        const paths = voiceSamplePathsToTry(voiceId, ttsLanguage);
+        let audioData: number[] | null = null;
+        let lastErr: unknown;
+        for (const resourcePath of paths) {
+          try {
+            audioData = await invoke<number[]>("read_resource_file", {
+              resourcePath,
+            });
+            break;
+          } catch (e) {
+            lastErr = e;
+          }
+        }
+        if (!audioData) {
+          throw lastErr ?? new Error("No voice sample found");
+        }
 
         const audioBytes = new Uint8Array(audioData);
         const blob = new Blob([audioBytes], { type: "audio/mpeg" });
@@ -155,7 +169,7 @@ export function Settings() {
     return KOKORO_VOICE_GROUPS.map((group) => ({
       ...group,
       voices: group.voices.filter((voice) =>
-        voice.languageTag.startsWith(ttsLanguage)
+        voiceMatchesTtsLanguage(voice.languageTag, ttsLanguage)
       ),
     })).filter((group) => group.voices.length > 0);
   }, [settings?.ttsLanguage]);
@@ -258,25 +272,29 @@ export function Settings() {
                 <div className="flex-1">
                   <p className="font-medium mb-2">{t("settings.voice")}</p>
                   <Select
-                    value={settings?.ttsVoiceId || "af_heart"}
+                    value={settings?.ttsVoiceId || "F1"}
                     onValueChange={handleVoiceChange}
                   >
                     <SelectTrigger>
                       <SelectValue>
                         {selectedVoice
-                          ? `${selectedVoice.name} (${selectedVoice.gender})`
+                          ? `${t(selectedVoice.nameKey)} (${selectedVoice.gender === "Female" ? t("voice.female") : t("voice.male")})`
                           : t("common.select_voice")}
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {filteredVoiceGroups.map((group) => (
-                        <div key={group.label}>
+                        <div key={group.labelKey}>
                           <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
-                            {group.label}
+                            {t(group.labelKey)}
                           </div>
                           {group.voices.map((voice) => (
                             <SelectItem key={voice.id} value={voice.id}>
-                              {voice.name} ({voice.gender})
+                              {t(voice.nameKey)} (
+                              {voice.gender === "Female"
+                                ? t("voice.female")
+                                : t("voice.male")}
+                              )
                             </SelectItem>
                           ))}
                         </div>
@@ -289,13 +307,17 @@ export function Settings() {
                     <div className="flex flex-col gap-1.5 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Badge variant="outline" className="text-xs">
-                          {selectedVoice.languageTag}
+                          {selectedVoice.languageTag === "mul"
+                            ? t("voice.multilingual")
+                            : selectedVoice.languageTag}
                         </Badge>
                         <Badge variant="secondary" className="text-xs">
-                          {selectedVoice.gender}
+                          {selectedVoice.gender === "Female"
+                            ? t("voice.female")
+                            : t("voice.male")}
                         </Badge>
                         <div className="text-xs text-muted-foreground min-w-0 truncate">
-                          {selectedVoice.summary}
+                          {t(selectedVoice.summaryKey)}
                         </div>
                       </div>
                     </div>
@@ -305,7 +327,7 @@ export function Settings() {
                       onClick={() =>
                         handlePlaySample(
                           selectedVoice.id,
-                          selectedVoice.sampleUrl
+                          settings?.ttsLanguage ?? "en"
                         )
                       }
                       className="h-10 w-10 p-0 shrink-0"

@@ -10,6 +10,8 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+import { normalizeVoiceId } from "../constants/kokoro";
+import { normalizeAppLanguage } from "../constants/languages";
 import type { AppSettings } from "../types/settings";
 import type { UITheme } from "../types/ui";
 import { logger } from "../lib/logger";
@@ -70,7 +72,12 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       setIsLoading(true);
       setError(null);
       const appSettings = await invoke<AppSettings>("get_app_settings");
-      setSettings(appSettings);
+      setSettings({
+        ...appSettings,
+        language: normalizeAppLanguage(appSettings.language),
+        ttsLanguage: normalizeAppLanguage(appSettings.ttsLanguage),
+        ttsVoiceId: normalizeVoiceId(appSettings.ttsVoiceId),
+      });
 
       // Apply theme from backend settings (only once on initial load)
       if (!hasAppliedThemeRef.current && appSettings.theme) {
@@ -85,7 +92,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         theme: "system",
         language: "en",
         ttsLanguage: "en",
-        ttsVoiceId: "af_heart",
+        ttsVoiceId: "F1",
         autoScrollEnabled: true,
         audioPlaybackSpeed: 1.0,
       };

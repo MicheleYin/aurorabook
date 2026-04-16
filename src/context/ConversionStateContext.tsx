@@ -25,6 +25,7 @@ import { Book } from "@/types/book";
 import type { AppSettings } from "../types/settings";
 import { logger } from "../lib/logger";
 import { useTranslation } from "../lib/i18n";
+import { humanizeDurationLocale } from "../constants/languages";
 import { dismissLoadingToast } from "../lib/toast-utils";
 import { useConversionEvents } from "./ConversionEventContext";
 
@@ -160,7 +161,12 @@ export function ConversionStateProvider({
         progress.totalWords
       );
 
-      setEta(humanizeDuration(measurement?.estimate ?? 0, { round: true, language: lang === "zh" ? "zh_CN" : lang }));
+      setEta(
+        humanizeDuration(measurement?.estimate ?? 0, {
+          round: true,
+          language: humanizeDurationLocale(lang),
+        })
+      );
 
       // Update progress state for UI components
       setConversionProgress(progress);
@@ -282,7 +288,7 @@ export function ConversionStateProvider({
 
         // Get the current voice and language from settings if not provided
         const settings = await invoke<AppSettings>("get_app_settings");
-        const finalVoiceId = voiceId ?? settings.ttsVoiceId ?? "af_heart";
+        const finalVoiceId = voiceId ?? settings.ttsVoiceId ?? "F1";
         const finalLanguage = language ?? settings.ttsLanguage ?? "en";
 
         const book = await invoke<Book | null>(

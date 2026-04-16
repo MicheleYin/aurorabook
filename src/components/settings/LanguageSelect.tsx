@@ -1,3 +1,4 @@
+import { AVAILABLE_LANGS } from "../../constants/languages";
 import { useTranslation, type Language } from "../../lib/i18n";
 import { useSettingsContext } from "../../context/SettingsContext";
 import {
@@ -31,10 +32,11 @@ export function LanguageSelect() {
           <SelectValue placeholder={t("app.language")} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="en">English</SelectItem>
-          <SelectItem value="es">Español</SelectItem>
-          <SelectItem value="it">Italiano</SelectItem>
-          <SelectItem value="zh">中文</SelectItem>
+          {AVAILABLE_LANGS.map((code) => (
+            <SelectItem key={code} value={code}>
+              {t(`settings.ui_lang_${code}`)}
+            </SelectItem>
+          ))}
         </SelectContent>
       </Select>
       <p className="text-xs text-muted-foreground">

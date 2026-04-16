@@ -2,18 +2,25 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { locale } from "@tauri-apps/plugin-os";
 
-// Supported languages
-export type Language = "en" | "es" | "it" | "zh";
+import {
+  AVAILABLE_LANGS,
+  type AppLanguageCode,
+  normalizeAppLanguage,
+} from "../constants/languages";
+
+/** App UI locale — matches Supertonic / kokoros `AVAILABLE_LANGS`. */
+export type Language = AppLanguageCode;
 
 // Simple translation store
 type Translations = Record<string, string>;
 
-const translations: Record<Language, Translations> = {
+const translations = {
   en: {},
+  ko: {},
   es: {},
-  it: {},
-  zh: {},
-};
+  pt: {},
+  fr: {},
+} as Record<Language, Translations>;
 
 // Default language
 let currentLanguage: Language = "en";
@@ -25,13 +32,12 @@ const listeners: ((lang: Language) => void)[] = [];
  */
 function mapLocaleToLanguage(tag: string | null): Language | null {
   if (!tag) return null;
-  
+
   const base = tag.split("-")[0].toLowerCase();
-  if (base === "en") return "en";
-  if (base === "es") return "es";
-  if (base === "it") return "it";
-  if (base === "zh") return "zh";
-  
+  if ((AVAILABLE_LANGS as readonly string[]).includes(base)) {
+    return base as Language;
+  }
+
   return null;
 }
 
@@ -94,9 +100,9 @@ async function loadTranslations(lang: Language) {
 export async function initI18n() {
   try {
     // 1. Try to load from user settings (persistence has highest priority)
-    const settings = await invoke<any>("get_app_settings");
-    if (settings && settings.language) {
-      currentLanguage = settings.language as Language;
+    const settings = await invoke<{ language?: string }>("get_app_settings");
+    if (settings?.language) {
+      currentLanguage = normalizeAppLanguage(settings.language);
       await loadTranslations(currentLanguage);
       return;
     }

@@ -21,6 +21,7 @@ import type { Book } from "../../types/book";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { logger } from "../../lib/logger";
 import { useTranslation } from "../../lib/i18n";
+import { humanizeDurationLocale } from "../../constants/languages";
 import { useSettingsContext } from "@/context/SettingsContext";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -101,8 +102,8 @@ const BookDetailContent = ({
   conversionProgress: ConversionProgress | null;
   eta: string | null;
 }) => {
-  const { t } = useTranslation();
-  
+  const { t, lang } = useTranslation();
+
   return (
     <div className="space-y-6">
       <div className="flex gap-6">
@@ -307,7 +308,8 @@ const BookDetailContent = ({
                       book.audioTracks.reduce(
                         (total, track) => total + (track.duration || 0),
                         0
-                      ) * 1000
+                      ) * 1000,
+                      { language: humanizeDurationLocale(lang) }
                     )}
                   </span>
                 </div>
@@ -486,7 +488,7 @@ export function BookDetailDialog({
 
           const etaText =
             progress.etaMs !== null
-              ? ` ${t("status.eta", { time: humanizeDuration(progress.etaMs, { round: true, language: lang === "zh" ? "zh_CN" : lang }) })}`
+              ? ` ${t("status.eta", { time: humanizeDuration(progress.etaMs, { round: true, language: humanizeDurationLocale(lang) }) })}`
               : "";
 
           const stepLabel = t(`conversion.step.${progress.currentStep.replace(/-/g, '_')}`);

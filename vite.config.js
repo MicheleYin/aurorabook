@@ -46,7 +46,6 @@ export default defineConfig(async () => ({
         "**/onnxruntime/**",
         "**/ort/**",
         "**/Kokoros/**",
-        "**/espeak-ng/**",
         "**/misaki/**",
         "**/misaki-rs/**",
         "**/phonetisaurus-g2p-rs/**",

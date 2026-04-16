@@ -27,6 +27,33 @@ pub struct PathCheck {
 }
 
 /// Check a single path and return diagnostic information.
+/// Supertonic expects a directory containing `tts.json`, `unicode_indexer.json`, and the four ONNX graphs.
+fn is_supertonic_onnx_dir(p: &Path) -> bool {
+    p.is_dir()
+        && p.join("tts.json").exists()
+        && p.join("duration_predictor.onnx").exists()
+}
+
+/// Directory containing `voice_styles/*.json` (or `*.json` voice presets at the top level).
+fn is_supertonic_voice_bundle_dir(p: &Path) -> bool {
+    if !p.is_dir() {
+        return false;
+    }
+    let nested = p.join("voice_styles");
+    if nested.is_dir() {
+        return std::fs::read_dir(&nested).map_or(false, |d| {
+            d.flatten().any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        });
+    }
+    std::fs::read_dir(p).map_or(false, |d| {
+        d.flatten().any(|e| {
+            let path = e.path();
+            path.extension().and_then(|x| x.to_str()) == Some("json")
+                && path.file_stem().and_then(|s| s.to_str()) != Some("voice_map")
+        })
+    })
+}
+
 fn check_path(path: &Path) -> PathCheck {
     let path_str = path.display().to_string();
     match path.metadata() {
@@ -59,19 +86,19 @@ fn check_path(path: &Path) -> PathCheck {
 pub struct ResourcePathResolver;
 
 impl ResourcePathResolver {
-    /// Find ONNX model and voices file paths.
+    /// Find Supertonic ONNX directory and voice bundle directory.
     ///
-    /// This function searches for model files in multiple locations in order:
-    /// 1. Tauri resource directory (if AppHandle is provided)
-    /// 2. Current working directory (development mode)
-    /// 3. Environment variables (`KOKORO_MODEL_PATH`, `KOKORO_VOICES_PATH`)
-    /// 4. Home directory (`.aurorabook/`)
+    /// Search order:
+    /// 1. `SUPERTONIC_ONNX_DIR` / `SUPERTONIC_VOICES_DIR`
+    /// 2. `KOKORO_MODEL_DIR` (if it points at a Supertonic ONNX folder) / `KOKORO_VOICES_PATH` (voice bundle dir)
+    /// 3. Tauri resource directory (`supertonic/onnx`, `supertonic/voice_styles`, etc.)
+    /// 4. Current working directory (`src-tauri/resources/...`)
     ///
     /// # Arguments
     /// * `app` - Optional Tauri AppHandle for accessing resource directories
     ///
     /// # Returns
-    /// A tuple of `(onnx_path, voices_path)` if both files are found.
+    /// A tuple of `(onnx_dir, voices_dir)` when both directories are valid.
     ///
     /// # Errors
     /// Returns `AppError::ResourceNotFound` if either file cannot be found
@@ -84,121 +111,101 @@ impl ResourcePathResolver {
     /// println!("Using model: {}", onnx_path.display());
     /// ```
     pub fn find_model_and_voices(app: Option<&AppHandle>) -> AppResult<(PathBuf, PathBuf)> {
-        let mut possible_onnx_paths: Vec<PathBuf> = Vec::new();
-        let mut possible_voices_paths: Vec<PathBuf> = Vec::new();
+        let mut possible_onnx_dirs: Vec<PathBuf> = Vec::new();
+        let mut possible_voice_dirs: Vec<PathBuf> = Vec::new();
 
-        // Try resource directory from app handle
+        if let Ok(p) = std::env::var("SUPERTONIC_ONNX_DIR") {
+            if !p.is_empty() {
+                possible_onnx_dirs.push(PathBuf::from(p));
+            }
+        }
+        if let Ok(p) = std::env::var("SUPERTONIC_VOICES_DIR") {
+            if !p.is_empty() {
+                possible_voice_dirs.push(PathBuf::from(p));
+            }
+        }
+
+        if let Ok(env_dir) = std::env::var("KOKORO_MODEL_DIR") {
+            if !env_dir.is_empty() {
+                let b = PathBuf::from(env_dir);
+                if is_supertonic_onnx_dir(&b) {
+                    possible_onnx_dirs.push(b);
+                }
+            }
+        }
+        if let Ok(env_voices) = std::env::var("KOKORO_VOICES_PATH") {
+            if !env_voices.is_empty() {
+                possible_voice_dirs.push(PathBuf::from(env_voices));
+            }
+        }
+
         if let Some(app) = app {
             match app.path().resource_dir() {
                 Ok(resource_dir) => {
                     log::info!("✓ Tauri resource directory: {}", resource_dir.display());
-                    possible_onnx_paths.push(resource_dir.join("kokoro-v1.0.onnx"));
-                    possible_onnx_paths.push(resource_dir.join("resources").join("kokoro-v1.0.onnx"));
-                    possible_voices_paths.push(resource_dir.join("voices"));
-                    possible_voices_paths.push(resource_dir.join("resources").join("voices"));
-                    possible_voices_paths.push(resource_dir.join("voices-v1.0.bin"));
-                    possible_voices_paths.push(resource_dir.join("resources").join("voices-v1.0.bin"));
+                    let res = resource_dir.join("resources");
+                    possible_onnx_dirs.push(resource_dir.join("supertonic").join("onnx"));
+                    possible_onnx_dirs.push(res.join("supertonic").join("onnx"));
+                    possible_onnx_dirs.push(resource_dir.join("onnx"));
+                    possible_onnx_dirs.push(res.join("onnx"));
+
+                    possible_voice_dirs.push(resource_dir.join("supertonic").join("voice_styles"));
+                    possible_voice_dirs.push(res.join("supertonic").join("voice_styles"));
+                    possible_voice_dirs.push(resource_dir.join("voice_styles"));
+                    possible_voice_dirs.push(res.join("voice_styles"));
                 }
-                Err(e) => {
-                    log::warn!("⚠ Failed to get Tauri resource directory: {}", e);
-                }
+                Err(e) => log::warn!("⚠ Failed to get Tauri resource directory: {}", e),
             }
         } else {
             log::debug!("No AppHandle provided, skipping Tauri resource directory check");
         }
 
-        // Try current directory (dev mode)
-        match std::env::current_dir() {
-            Ok(current_dir) => {
-                log::debug!("Current working directory: {}", current_dir.display());
-                possible_onnx_paths.push(
-                    current_dir
-                        .join("src-tauri")
-                        .join("resources")
-                        .join("kokoro-v1.0.onnx"),
-                );
-                possible_onnx_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
-                possible_voices_paths.push(
-                    current_dir
-                        .join("src-tauri")
-                        .join("resources")
-                        .join("voices"),
-                );
-                possible_voices_paths.push(current_dir.join("resources").join("voices"));
-                possible_voices_paths.push(
-                    current_dir
-                        .join("src-tauri")
-                        .join("resources")
-                        .join("voices-v1.0.bin"),
-                );
-                possible_voices_paths.push(current_dir.join("resources").join("voices-v1.0.bin"));
-            }
-            Err(e) => {
-                log::warn!("⚠ Failed to get current working directory: {}", e);
-            }
+        if let Ok(current_dir) = std::env::current_dir() {
+            let st = current_dir.join("src-tauri").join("resources");
+            possible_onnx_dirs.push(st.join("supertonic").join("onnx"));
+            possible_onnx_dirs.push(st.join("onnx"));
+            possible_onnx_dirs.push(current_dir.join("resources").join("supertonic").join("onnx"));
+            possible_voice_dirs.push(st.join("supertonic").join("voice_styles"));
+            possible_voice_dirs.push(st.join("voice_styles"));
+            possible_voice_dirs.push(current_dir.join("resources").join("supertonic").join("voice_styles"));
         }
 
-        // Try environment variables
-        if let Ok(env_path) = std::env::var("KOKORO_MODEL_PATH") {
-            if !env_path.is_empty() {
-                possible_onnx_paths.push(PathBuf::from(env_path));
-            }
-        }
-        if let Ok(env_voices) = std::env::var("KOKORO_VOICES_PATH") {
-            if !env_voices.is_empty() {
-                possible_voices_paths.push(PathBuf::from(env_voices));
-            }
-        }
-
-        // Try KOKORO_MODEL_DIR (for ONNX model)
-        if let Ok(env_dir) = std::env::var("KOKORO_MODEL_DIR") {
-            if !env_dir.is_empty() {
-                let env_buf = PathBuf::from(&env_dir);
-                if env_buf.is_file() && env_buf.extension().and_then(|s| s.to_str()) == Some("onnx") {
-                    possible_onnx_paths.push(env_buf);
-                } else if env_buf.is_dir() {
-                    possible_onnx_paths.push(env_buf.join("kokoro-v1.0.onnx"));
-                }
-            }
-        }
-
-        let onnx_path = possible_onnx_paths
+        let onnx_dir = possible_onnx_dirs
             .iter()
-            .find(|p| p.exists() && p.is_file())
+            .find(|p| is_supertonic_onnx_dir(p))
             .cloned();
 
-        let voices_path = possible_voices_paths
+        let voices_dir = possible_voice_dirs
             .iter()
-            .find(|p| p.exists())
+            .find(|p| is_supertonic_voice_bundle_dir(p))
             .cloned();
 
-        match (onnx_path, voices_path) {
+        match (onnx_dir, voices_dir) {
             (Some(onnx), Some(voices)) => {
-                log::info!("✓ Found ONNX model at: {}", onnx.display());
-                log::info!("✓ Found voices at: {}", voices.display());
+                log::info!("✓ Found Supertonic ONNX directory at: {}", onnx.display());
+                log::info!("✓ Found Supertonic voice bundle at: {}", voices.display());
                 Ok((onnx, voices))
-            },
+            }
             _ => {
-                let mut error_msg = "Could not find required files. Checked paths:\n".to_string();
-                error_msg.push_str("ONNX model paths:\n");
-                for path in &possible_onnx_paths {
-                    let exists = path.exists();
-                    let is_file = exists && path.is_file();
-                    error_msg.push_str(&format!("  - {} (exists: {}, is_file: {})\n", 
-                        path.display(), exists, is_file));
-                    log::debug!("  ONNX path: {} (exists: {}, is_file: {})", 
-                        path.display(), exists, is_file);
+                let mut error_msg =
+                    "Could not find Supertonic assets. Expected an ONNX directory (tts.json + *.onnx) and a voice bundle (voice_styles/*.json).\n".to_string();
+                error_msg.push_str("Checked ONNX directory candidates:\n");
+                for path in &possible_onnx_dirs {
+                    error_msg.push_str(&format!(
+                        "  - {} (valid: {})\n",
+                        path.display(),
+                        is_supertonic_onnx_dir(path)
+                    ));
                 }
-                error_msg.push_str("Voices file paths:\n");
-                for path in &possible_voices_paths {
-                    let exists = path.exists();
-                    let is_file = exists && path.is_file();
-                    error_msg.push_str(&format!("  - {} (exists: {}, is_file: {})\n", 
-                        path.display(), exists, is_file));
-                    log::debug!("  Voices path: {} (exists: {}, is_file: {})", 
-                        path.display(), exists, is_file);
+                error_msg.push_str("Checked voice bundle candidates:\n");
+                for path in &possible_voice_dirs {
+                    error_msg.push_str(&format!(
+                        "  - {} (valid: {})\n",
+                        path.display(),
+                        is_supertonic_voice_bundle_dir(path)
+                    ));
                 }
-                log::error!("❌ Resource path resolution failed:\n{}", error_msg);
+                log::error!("{}", error_msg);
                 Err(AppError::ResourceNotFound(error_msg))
             }
         }
@@ -336,124 +343,90 @@ impl ResourcePathResolver {
 
         Ok(canonical)
     }
-
-    /// Parent directory `P` such that `P/espeak-ng-data` exists on disk.
-    ///
-    /// Tauri bundles `tauri.conf.json` `bundle.resources` under
-    /// `resource_dir/resources/` on macOS (e.g. `Contents/Resources/resources/`),
-    /// while `resource_dir()` alone is `Contents/Resources`. Misaki / `espeak-rs`
-    /// expect [`PIPER_ESPEAKNG_DATA_DIRECTORY`](https://crates.io/crates/espeak-rs)
-    /// to be that parent (not the inner `espeak-ng-data` folder).
-    pub fn espeak_ng_piper_data_directory(resource_dir: &Path) -> Option<PathBuf> {
-        let nested = resource_dir.join("resources").join("espeak-ng-data");
-        if nested.is_dir() {
-            return Some(resource_dir.join("resources"));
-        }
-        let flat = resource_dir.join("espeak-ng-data");
-        if flat.is_dir() {
-            return Some(resource_dir.to_path_buf());
-        }
-        None
-    }
-
-    /// Resolve the eSpeak-ng bundle parent using the app resource dir, then dev `cwd` fallbacks
-    /// (`src-tauri/resources`, `./resources`).
-    pub fn resolve_espeak_ng_piper_directory(app: &AppHandle) -> Option<PathBuf> {
-        if let Ok(rd) = app.path().resource_dir() {
-            if let Some(p) = Self::espeak_ng_piper_data_directory(&rd) {
-                return Some(p);
-            }
-        }
-        let cwd = std::env::current_dir().ok()?;
-        for base in [
-            cwd.join("src-tauri").join("resources"),
-            cwd.join("resources"),
-        ] {
-            if base.join("espeak-ng-data").is_dir() {
-                return Some(base);
-            }
-        }
-        None
-    }
 }
 
-    /// Get comprehensive path resolution diagnostics.
-    ///
-    /// This function checks all possible paths for TTS resources and returns
-    /// detailed information about what exists and what doesn't. Useful for
-    /// debugging production build issues.
-    ///
-    /// # Arguments
-    /// * `app` - Tauri AppHandle
-    ///
-    /// # Returns
-    /// A `PathDiagnostics` struct with all path information.
-    #[tauri::command]
-    pub fn get_path_diagnostics(app: AppHandle) -> PathDiagnostics {
-        let mut diagnostics = PathDiagnostics {
-            tauri_resource_dir: None,
-            tauri_resource_dir_error: None,
-            current_working_dir: None,
-            current_working_dir_error: None,
-            tauri_resource_dir_env: std::env::var("TAURI_RESOURCE_DIR").ok(),
-            onnx_paths: Vec::new(),
-            voices_paths: Vec::new(),
-        };
+/// Debugging: list candidate Supertonic paths and whether they exist.
+#[tauri::command]
+pub fn get_path_diagnostics(app: AppHandle) -> PathDiagnostics {
+    let mut diagnostics = PathDiagnostics {
+        tauri_resource_dir: None,
+        tauri_resource_dir_error: None,
+        current_working_dir: None,
+        current_working_dir_error: None,
+        tauri_resource_dir_env: std::env::var("TAURI_RESOURCE_DIR").ok(),
+        onnx_paths: Vec::new(),
+        voices_paths: Vec::new(),
+    };
 
-        // Check Tauri resource directory
-        match app.path().resource_dir() {
-            Ok(resource_dir) => {
-                diagnostics.tauri_resource_dir = Some(resource_dir.display().to_string());
-            }
-            Err(e) => {
-                diagnostics.tauri_resource_dir_error = Some(format!("{}", e));
-            }
+    match app.path().resource_dir() {
+        Ok(resource_dir) => {
+            diagnostics.tauri_resource_dir = Some(resource_dir.display().to_string());
         }
-
-        // Check current working directory
-        match std::env::current_dir() {
-            Ok(cwd) => {
-                diagnostics.current_working_dir = Some(cwd.display().to_string());
-            }
-            Err(e) => {
-                diagnostics.current_working_dir_error = Some(format!("{}", e));
-            }
+        Err(e) => {
+            diagnostics.tauri_resource_dir_error = Some(format!("{}", e));
         }
-
-        // Check ONNX model paths
-        let mut onnx_paths = Vec::new();
-        if let Ok(resource_dir) = app.path().resource_dir() {
-            onnx_paths.push(resource_dir.join("kokoro-v1.0.onnx"));
-            onnx_paths.push(resource_dir.join("resources").join("kokoro-v1.0.onnx"));
-        }
-        if let Ok(current_dir) = std::env::current_dir() {
-            onnx_paths.push(current_dir.join("src-tauri").join("resources").join("kokoro-v1.0.onnx"));
-            onnx_paths.push(current_dir.join("resources").join("kokoro-v1.0.onnx"));
-        }
-        if let Ok(env_path) = std::env::var("KOKORO_MODEL_PATH") {
-            if !env_path.is_empty() {
-                onnx_paths.push(PathBuf::from(env_path));
-            }
-        }
-        diagnostics.onnx_paths = onnx_paths.iter().map(|p| check_path(p)).collect();
-
-        // Check voices paths
-        let mut voices_paths = Vec::new();
-        if let Ok(resource_dir) = app.path().resource_dir() {
-            voices_paths.push(resource_dir.join("voices-v1.0.bin"));
-            voices_paths.push(resource_dir.join("resources").join("voices-v1.0.bin"));
-        }
-        if let Ok(current_dir) = std::env::current_dir() {
-            voices_paths.push(current_dir.join("src-tauri").join("resources").join("voices-v1.0.bin"));
-            voices_paths.push(current_dir.join("resources").join("voices-v1.0.bin"));
-        }
-        if let Ok(env_voices) = std::env::var("KOKORO_VOICES_PATH") {
-            if !env_voices.is_empty() {
-                voices_paths.push(PathBuf::from(env_voices));
-            }
-        }
-        diagnostics.voices_paths = voices_paths.iter().map(|p| check_path(p)).collect();
-
-        diagnostics
     }
 
+    match std::env::current_dir() {
+        Ok(cwd) => {
+            diagnostics.current_working_dir = Some(cwd.display().to_string());
+        }
+        Err(e) => {
+            diagnostics.current_working_dir_error = Some(format!("{}", e));
+        }
+    }
+
+    let mut onnx_paths = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        onnx_paths.push(resource_dir.join("supertonic").join("onnx"));
+        onnx_paths.push(resource_dir.join("resources").join("supertonic").join("onnx"));
+    }
+    if let Ok(current_dir) = std::env::current_dir() {
+        onnx_paths.push(
+            current_dir
+                .join("src-tauri")
+                .join("resources")
+                .join("supertonic")
+                .join("onnx"),
+        );
+    }
+    if let Ok(p) = std::env::var("SUPERTONIC_ONNX_DIR") {
+        if !p.is_empty() {
+            onnx_paths.push(PathBuf::from(p));
+        }
+    }
+    diagnostics.onnx_paths = onnx_paths.iter().map(|p| check_path(p)).collect();
+
+    let mut voices_paths = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        voices_paths.push(resource_dir.join("supertonic").join("voice_styles"));
+        voices_paths.push(
+            resource_dir
+                .join("resources")
+                .join("supertonic")
+                .join("voice_styles"),
+        );
+    }
+    if let Ok(current_dir) = std::env::current_dir() {
+        voices_paths.push(
+            current_dir
+                .join("src-tauri")
+                .join("resources")
+                .join("supertonic")
+                .join("voice_styles"),
+        );
+    }
+    if let Ok(p) = std::env::var("SUPERTONIC_VOICES_DIR") {
+        if !p.is_empty() {
+            voices_paths.push(PathBuf::from(p));
+        }
+    }
+    if let Ok(env_voices) = std::env::var("KOKORO_VOICES_PATH") {
+        if !env_voices.is_empty() {
+            voices_paths.push(PathBuf::from(env_voices));
+        }
+    }
+    diagnostics.voices_paths = voices_paths.iter().map(|p| check_path(p)).collect();
+
+    diagnostics
+}

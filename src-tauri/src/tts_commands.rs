@@ -6,14 +6,13 @@ use crate::utils::path_resolver::ResourcePathResolver;
 use mp3lame_encoder::{Builder, FlushNoGap, MonoPcm};
 use std::sync::Arc;
 
-/// Initialize the Kokoros TTS engine (Tauri command).
+/// Initialize the bundled TTS engine (Tauri command).
 ///
-/// This command validates model file paths and logs initialization information.
-/// The actual engine creation is deferred until TTS generation is requested.
+/// Validates paths when non-empty. Models use Supertonic ONNX assets (directory layout).
 ///
 /// # Arguments
-/// * `model_path` - Path to the ONNX model file (e.g., "kokoro-v1.0.onnx")
-/// * `voices_path` - Path to the voices data file (e.g., "voices-v1.0.bin")
+/// * `model_path` - Supertonic ONNX directory (contains `tts.json` and `*.onnx`), or empty to use bundle resolution
+/// * `voices_path` - Voice bundle directory (`voice_styles/*.json`), or empty for bundle resolution
 /// * `_num_instances` - Number of engine instances (currently unused)
 /// * `_app` - Tauri application handle
 ///
@@ -34,21 +33,14 @@ pub async fn init_kokoros_engine(
 
         if !model_path_obj.exists() {
             return Err(AppError::ResourceNotFound(format!(
-                "Model file does not exist: {}. Expected kokoro-v1.0.onnx",
+                "Supertonic ONNX directory does not exist: {}",
                 model_path
             )));
         }
 
-        if !model_path_obj.is_file() {
+        if !model_path_obj.is_dir() {
             return Err(AppError::InvalidPath(format!(
-                "Model path must be a file (ONNX model). Got: {}",
-                model_path
-            )));
-        }
-
-        if !model_path.ends_with(".onnx") {
-            return Err(AppError::Config(format!(
-                "Model file must be an ONNX model (.onnx extension). Got: {}",
+                "Model path must be a directory (Supertonic ONNX bundle with tts.json). Got: {}",
                 model_path
             )));
         }
@@ -82,7 +74,7 @@ pub async fn init_kokoros_engine(
 /// * `app` - Tauri application handle for resource path resolution
 ///
 /// # Returns
-/// PCM audio data as a byte vector (16-bit, little-endian, mono, 24kHz).
+/// PCM audio data as a byte vector (16-bit, little-endian, mono; sample rate matches `SAMPLE_RATE`, typically 44.1 kHz for Supertonic v2).
 ///
 /// # Errors
 /// Returns an error if:
@@ -129,8 +121,6 @@ pub async fn generate_tts_cached(
         .map(|s| s.parse())
         .transpose()?
         .unwrap_or(TtsEngineType::Onnx);
-
-    // espeak-ng data path is configured at app startup (see lib.rs).
 
     let audio_samples = match engine_type {
         TtsEngineType::Onnx => {

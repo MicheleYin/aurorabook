@@ -30,7 +30,7 @@ impl SettingsRepository {
                 theme: "system".to_string(),
                 language: "en".to_string(),
                 tts_language: "en".to_string(),
-                tts_voice_id: "af_heart".to_string(),
+                tts_voice_id: "F1".to_string(),
                 auto_scroll_enabled: Some(true),
                 audio_playback_speed: Some(1.0),
             })

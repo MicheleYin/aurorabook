@@ -100,23 +100,20 @@ impl TtsEnginePool {
             engine_type
         );
 
-        // Misaki G2P (misaki-rs) uses espeak-rs; phoneme tables come from bundled
-        // `espeak-ng-data` with `PIPER_ESPEAKNG_DATA_DIRECTORY` set in `lib.rs` setup.
-
         match engine_type {
             TtsEngineType::Onnx => {
                 // Check if files exist before attempting to create engine
                 // This prevents panics from the kokoros library when files don't exist
                 use std::path::Path;
-                if !Path::new(onnx_path).exists() {
+                if !Path::new(onnx_path).exists() || !Path::new(onnx_path).is_dir() {
                     return Err(AppError::ResourceNotFound(format!(
-                        "ONNX model file not found: {}",
+                        "Supertonic ONNX directory not found: {} (expected a folder with tts.json and *.onnx)",
                         onnx_path
                     )));
                 }
-                if !Path::new(voices_path).exists() {
+                if !Path::new(voices_path).exists() || !Path::new(voices_path).is_dir() {
                     return Err(AppError::ResourceNotFound(format!(
-                        "Voices file not found: {}",
+                        "Supertonic voice assets directory not found: {}",
                         voices_path
                     )));
                 }

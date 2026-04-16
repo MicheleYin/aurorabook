@@ -8,6 +8,7 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Label } from "../ui/label";
+import { AVAILABLE_LANGS } from "../../constants/languages";
 import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
 
 export function TtsLanguageSelect() {
@@ -15,10 +16,7 @@ export function TtsLanguageSelect() {
   const { settings, saveSettings } = useSettingsContext();
 
   const handleLanguageChange = (value: string) => {
-    // Find the first voice that matches the new language
-    const firstVoice = KOKORO_VOICE_GROUPS.flatMap((g) => g.voices).find((v) =>
-      v.languageTag.startsWith(value)
-    );
+    const firstVoice = KOKORO_VOICE_GROUPS.flatMap((g) => g.voices)[0];
 
     void saveSettings({
       ttsLanguage: value,
@@ -37,10 +35,11 @@ export function TtsLanguageSelect() {
           <SelectValue placeholder={t("settings.tts_language")} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="en">English (en-us)</SelectItem>
-          <SelectItem value="es">Español (es-es)</SelectItem>
-          <SelectItem value="it">Italiano (it-it)</SelectItem>
-          <SelectItem value="zh">中文 (zh-cn)</SelectItem>
+          {AVAILABLE_LANGS.map((code) => (
+            <SelectItem key={code} value={code}>
+              {t(`settings.tts_lang_${code}`)}
+            </SelectItem>
+          ))}
         </SelectContent>
       </Select>
       <p className="text-xs text-muted-foreground">

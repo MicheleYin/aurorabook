@@ -257,9 +257,9 @@ fn split_by_words(text: &str, max_length: usize, max_words: usize) -> Vec<String
     chunks
 }
 
-/// Process a single sentence: generate audio and return result
-/// The new model doesn't provide timestamps, so we calculate them from audio duration
-/// Automatically splits very long sentences to avoid phonemizer failures
+/// Process a single sentence: generate audio and return result.
+/// Word timings are estimated uniformly from audio duration (Supertonic path does not expose per-token durations in this integration).
+/// Automatically splits very long sentences to avoid synthesis failures on huge spans.
 pub(crate) async fn process_sentence(
     sentence: &str,
     sentence_index: usize,

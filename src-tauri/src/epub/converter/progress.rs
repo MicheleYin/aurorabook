@@ -46,6 +46,7 @@ pub fn get_parallelism() -> usize {
         }
 
         workers.max(1)
+        // 1
     }
 }
 

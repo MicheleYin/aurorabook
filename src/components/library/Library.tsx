@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import type { Book } from "../../types/book";
 import { useAppContext } from "../../context/AppContext";
+import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
 import { staggerDelay } from "../../lib/animations";
 import { logger } from "../../lib/logger";
@@ -36,7 +37,7 @@ export function Library() {
     loadBooks,
   } = useAppContext();
   const { t } = useTranslation();
-  const { saveAudioProgress, audioRef } = useAudioProgressContext();
+  useAudioProgressContext();
 
   const booksRef = useRef(books);
 

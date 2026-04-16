@@ -31,10 +31,9 @@
     ],
     "resources": [
       "resources/ffmpeg",
-      "resources/kokoro-v1.0.onnx",
-      "resources/voices/**/*",
       "resources/voice-samples/",
-      "resources/espeak-ng-data/"
+      "resources/supertonic/onnx/",
+      "resources/supertonic/voice_styles/"
     ],
     "macOS": {
       "frameworks": [],

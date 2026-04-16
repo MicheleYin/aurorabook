@@ -130,8 +130,6 @@ pub async fn convert_epub_to_audiobook(
     // Find model files
     let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(Some(&app))?;
 
-    // G2P uses bundled espeak-ng data (`PIPER_ESPEAKNG_DATA_DIRECTORY` set in app setup).
-
     let onnx_path_str = onnx_path
         .to_str()
         .ok_or_else(|| AppError::Encoding("ONNX path contains invalid UTF-8".to_string()))?

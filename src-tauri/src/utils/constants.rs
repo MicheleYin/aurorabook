@@ -1,5 +1,6 @@
 /// Audio sample rate for TTS generation (24kHz)
-pub const SAMPLE_RATE: u32 = 24000;
+/// Supertonic v2 ONNX pipeline outputs at the rate declared in `tts.json` (typically 44.1 kHz).
+pub const SAMPLE_RATE: u32 = 44100;
 
 /// Media type for XHTML content
 pub const MEDIA_TYPE_XHTML: &str = "application/xhtml+xml";

@@ -13,7 +13,7 @@ pub mod utils;  // Made public for testing
 mod window;
 mod logging;
 
-// Use kokoros crate directly on all platforms (it uses ONNX Runtime with CoreML EP on macOS/iOS)
+// Local `kokoros` crate wraps Supertonic ONNX (CPU; ONNX Runtime with CoreML EP on Apple platforms when enabled in ort).
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
@@ -69,7 +69,7 @@ pub fn run() {
             log::set_boxed_logger(logger)
                 .map(|()| log::set_max_level(log::LevelFilter::Trace))
                 .expect("Failed to set logger");
-            // Set TAURI_RESOURCE_DIR environment variable for kokoros to find bundled models
+            // Set TAURI_RESOURCE_DIR environment variable for bundled Supertonic assets
             match app.path().resource_dir() {
                 Ok(resource_dir) => {
                     if let Some(resource_str) = resource_dir.to_str() {
@@ -78,44 +78,31 @@ pub fn run() {
                         log::info!("{}", msg);
                         logging::log("info", &msg, None);
 
-                        // misaki-rs → espeak-rs: phoneme data must be on disk. espeak-rs uses
-                        // PIPER_ESPEAKNG_DATA_DIRECTORY as the parent of `espeak-ng-data`.
-                        // Bundled `tauri.conf.json` resources live under resource_dir/resources/
-                        // (e.g. .../Resources/resources/espeak-ng-data), same as ONNX — not
-                        // directly under resource_dir.
-                        if let Some(piper_parent) =
-                            crate::utils::path_resolver::ResourcePathResolver::resolve_espeak_ng_piper_directory(app.handle())
-                        {
-                            if let Some(piper_str) = piper_parent.to_str() {
-                                std::env::set_var("PIPER_ESPEAKNG_DATA_DIRECTORY", piper_str);
-                                log::info!(
-                                    "✓ Set PIPER_ESPEAKNG_DATA_DIRECTORY for eSpeak-ng (misaki G2P): {}",
-                                    piper_str
-                                );
-                            } else {
-                                log::warn!(
-                                    "⚠ eSpeak-ng parent path is not valid UTF-8: {:?}",
-                                    piper_parent
-                                );
-                            }
-                        } else {
-                            log::warn!(
-                                "⚠ espeak-ng-data not found — misaki/eSpeak G2P may fail. Run `cargo build` so build.rs syncs data into src-tauri/resources, and ensure bundle includes resources/espeak-ng-data."
-                            );
-                        }
-                        
                         let exists_msg = format!("  Resource directory exists: {}", resource_dir.exists());
                         log::info!("{}", exists_msg);
                         logging::log("info", &exists_msg, None);
                         
-                        // Verify kokoro model is available
-                        let kokoro_path = resource_dir.join("kokoro-v1.0.onnx");
-                        if kokoro_path.exists() {
-                            let model_msg = format!("✓ Found kokoro-v1.0.onnx model at: {}", kokoro_path.display());
+                        let bundled_onnx = resource_dir
+                            .join("resources")
+                            .join("supertonic")
+                            .join("onnx");
+                        let flat_onnx = resource_dir.join("supertonic").join("onnx");
+                        let supertonic_onnx = if bundled_onnx.join("tts.json").exists() {
+                            bundled_onnx
+                        } else {
+                            flat_onnx
+                        };
+                        if supertonic_onnx.join("tts.json").exists() {
+                            let model_msg = format!(
+                                "✓ Found Supertonic ONNX bundle at: {}",
+                                supertonic_onnx.display()
+                            );
                             log::info!("{}", model_msg);
                             logging::log("info", &model_msg, None);
                         } else {
-                            let warn_msg = format!("⚠ kokoro-v1.0.onnx model not found at: {:?}", kokoro_path);
+                            let warn_msg = format!(
+                                "⚠ Supertonic ONNX bundle not found under Resources (expected resources/supertonic/onnx from build.rs). Ensure ./supertonic-2 exists and run cargo build."
+                            );
                             log::warn!("{}", warn_msg);
                             logging::log("warn", &warn_msg, None);
                         }

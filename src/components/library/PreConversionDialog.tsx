@@ -18,6 +18,11 @@ import {
 } from "../ui/select";
 import { Label } from "../ui/label";
 import { KOKORO_VOICE_GROUPS, DEFAULT_KOKORO_VOICE_ID } from "../../constants/kokoro";
+import {
+  AVAILABLE_LANGS,
+  normalizeAppLanguage,
+  voiceMatchesTtsLanguage,
+} from "../../constants/languages";
 import { Play, X } from "lucide-react";
 
 interface PreConversionDialogProps {
@@ -37,17 +42,16 @@ export function PreConversionDialog({
 }: PreConversionDialogProps) {
   const { t } = useTranslation();
 
-  // Normalize settings language code to dialog's ID
-  const normalizedDefaultLang = useMemo(() => {
-    if (!defaultLanguage) return "a";
-    if (defaultLanguage === "en") return "a";
-    return defaultLanguage;
-  }, [defaultLanguage]);
+  const normalizedDefaultLang = useMemo(
+    () => normalizeAppLanguage(defaultLanguage),
+    [defaultLanguage]
+  );
 
   const [selectedLanguage, setSelectedLanguage] = useState(normalizedDefaultLang);
-  const [selectedVoice, setSelectedVoice] = useState(defaultVoiceId || DEFAULT_KOKORO_VOICE_ID);
+  const [selectedVoice, setSelectedVoice] = useState(
+    defaultVoiceId || DEFAULT_KOKORO_VOICE_ID
+  );
 
-  // Sync state when props change or dialog opens
   useEffect(() => {
     if (isOpen) {
       setSelectedLanguage(normalizedDefaultLang);
@@ -55,30 +59,17 @@ export function PreConversionDialog({
     }
   }, [isOpen, normalizedDefaultLang, defaultVoiceId]);
 
-  const TTS_LANGUAGES = useMemo(() => [
-    { id: "a", label: t("settings.tts_language_en_us"), code: "en-US" },
-    { id: "b", label: t("settings.tts_language_en_gb"), code: "en-GB" },
-    { id: "es", label: t("settings.tts_language_es"), code: "es-ES" },
-    { id: "it", label: t("settings.tts_language_it"), code: "it-IT" },
-    { id: "zh", label: t("settings.tts_language_zh"), code: "zh-CN" },
-  ], [t]);
-
-  // Filter voices based on selected language
   const availableVoices = useMemo(() => {
-    const langCode = TTS_LANGUAGES.find(l => l.id === selectedLanguage)?.code;
-    if (!langCode) return [];
-    
-    return KOKORO_VOICE_GROUPS.flatMap(group => group.voices)
-      .filter(voice => voice.languageTag.startsWith(langCode.split('-')[0]));
-  }, [selectedLanguage, TTS_LANGUAGES]);
+    return KOKORO_VOICE_GROUPS.flatMap((group) => group.voices).filter((voice) =>
+      voiceMatchesTtsLanguage(voice.languageTag, selectedLanguage)
+    );
+  }, [selectedLanguage]);
 
-  // Update selected voice when language changes if current voice is not available
-  const handleLanguageChange = (langId: string) => {
-    setSelectedLanguage(langId);
-    const langCode = TTS_LANGUAGES.find(l => l.id === langId)?.code;
-    const voices = KOKORO_VOICE_GROUPS.flatMap(group => group.voices)
-      .filter(voice => voice.languageTag.startsWith(langCode?.split('-')[0] || ''));
-    
+  const handleLanguageChange = (code: string) => {
+    setSelectedLanguage(code as (typeof AVAILABLE_LANGS)[number]);
+    const voices = KOKORO_VOICE_GROUPS.flatMap((group) => group.voices).filter(
+      (voice) => voiceMatchesTtsLanguage(voice.languageTag, code)
+    );
     if (voices.length > 0) {
       setSelectedVoice(voices[0].id);
     }
@@ -97,9 +88,7 @@ export function PreConversionDialog({
             <Play className="h-5 w-5 text-primary" />
             {t("convert.title")}
           </DialogTitle>
-          <DialogDescription>
-            {t("convert.description")}
-          </DialogDescription>
+          <DialogDescription>{t("convert.description")}</DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4 py-4">
@@ -110,9 +99,9 @@ export function PreConversionDialog({
                 <SelectValue placeholder={t("common.select_language")} />
               </SelectTrigger>
               <SelectContent>
-                {TTS_LANGUAGES.map((lang) => (
-                  <SelectItem key={lang.id} value={lang.id}>
-                    {lang.label}
+                {AVAILABLE_LANGS.map((code) => (
+                  <SelectItem key={code} value={code}>
+                    {t(`settings.tts_lang_${code}`)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -128,7 +117,11 @@ export function PreConversionDialog({
               <SelectContent>
                 {availableVoices.map((voice) => (
                   <SelectItem key={voice.id} value={voice.id}>
-                    {voice.name} ({voice.gender === "Female" ? t("voice.female") : t("voice.male")})
+                    {t(voice.nameKey)} (
+                    {voice.gender === "Female"
+                      ? t("voice.female")
+                      : t("voice.male")}
+                    )
                   </SelectItem>
                 ))}
               </SelectContent>
