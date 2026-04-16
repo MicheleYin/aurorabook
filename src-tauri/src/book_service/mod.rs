@@ -1449,7 +1449,7 @@ pub async fn export_as_m4b(
     // Get bundled FFmpeg path
     let ffmpeg_path = app.path().resolve("resources/ffmpeg", tauri::path::BaseDirectory::Resource)
         .map_err(|e| AppError::Store(format!("Failed to resolve FFmpeg path: {}", e)))?;
-    
+
     if !ffmpeg_path.exists() {
         return Err(AppError::Store(
             format!("FFmpeg binary not found at: {:?}", ffmpeg_path)
