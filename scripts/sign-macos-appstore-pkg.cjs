@@ -3,6 +3,9 @@
  * After `bun run build:macos:appstore`, builds a signed .pkg for App Store Connect upload
  * using xcrun productbuild (Mac Installer certificate).
  *
+ * Nested `resources-desktop/ffmpeg` is re-signed with Entitlements.macos-appstore.nested-exec.plist only
+ * (inherit sandbox from parent; no application-identifier) so TestFlight accepts ITMS-90885.
+ *
  * Requires:
  *   APPLE_MACOS_INSTALLER_SIGNING_IDENTITY — full name from Keychain, e.g.
  *     "3rd Party Mac Developer Installer: Your Name (XXXXXXXXXX)"
@@ -104,7 +107,7 @@ const ffmpegPath = path.join(
   appPath,
   "Contents",
   "Resources",
-  "resources",
+  "resources-desktop",
   "ffmpeg"
 );
 if (fs.existsSync(ffmpegPath)) {
@@ -128,6 +131,12 @@ if (fs.existsSync(ffmpegPath)) {
     process.exit(1);
   }
 
+  // Clear any signature that picked up app-style entitlements (fixes ITMS-90885 on TestFlight).
+  spawnSync("codesign", ["--remove-signature", ffmpegPath], {
+    stdio: "ignore",
+    cwd: root,
+  });
+
   console.log("sign-macos-appstore-pkg: signing nested executable", path.relative(root, ffmpegPath));
   runOrFail(
     "codesign",
@@ -137,10 +146,15 @@ if (fs.existsSync(ffmpegPath)) {
       appSigningIdentity,
       "--entitlements",
       nestedExecEntitlementsPath,
+      "--options",
+      "runtime",
+      "--timestamp",
       ffmpegPath,
     ],
     { cwd: root }
   );
+
+  runOrFail("codesign", ["--verify", "--verbose", ffmpegPath], { cwd: root });
 
   console.log("sign-macos-appstore-pkg: re-signing app bundle after nested signing");
   runOrFail(
