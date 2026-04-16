@@ -207,9 +207,6 @@ pub fn run() {
             book_service::add_book,
             book_service::get_epub_buffer,
             book_service::export_epub_to_file,
-            book_service::export_as_m4b,
-            book_service::get_m4b_export_status,
-            book_service::cancel_m4b_export,
             book_service::mp3_export::export_as_mp3,
             book_service::mp3_export::get_mp3_export_status,
             book_service::update_book_progress,
@@ -233,9 +230,6 @@ pub fn run() {
                 tauri::RunEvent::ExitRequested { code, .. } => {
                     log::info!("App is closing with exit code: {:?}", code);
 
-                    // Ensure any active M4B export ffmpeg child process is terminated.
-                    book_service::terminate_active_m4b_exports();
-                    
                     // Emit event to frontend to save progress before closing
                     if let Some(window) = app_handle.get_webview_window("main") {
                         if let Err(e) = window.emit("app-closing", ()) {
@@ -295,12 +289,6 @@ pub fn run() {
                     log::info!("Cleanup completed, app will now close");
                 }
 
-                // Final safety net: ensure active M4B export processes are terminated
-                // even if only the final exit event is observed.
-                tauri::RunEvent::Exit => {
-                    book_service::terminate_active_m4b_exports();
-                }
-                
                 // Handle app lifecycle events (especially important on iOS)
                 #[cfg(target_os = "ios")]
                 tauri::RunEvent::Ready => {

@@ -57,7 +57,6 @@
   "book.conversion_progress": "Conversion Progress",
   "book.audiobook": "Audiobook",
   "book.export_epub": "Export as EPUB",
-  "book.export_m4b": "Export as M4B",
   "book.export_mp3": "Export as MP3",
   "book.exporting_mp3": "Exporting MP3...",
   "book.export_mp3_success": "MP3 exported successfully",
@@ -65,7 +64,6 @@
   "book.unknown_title": "Unknown Book",
   "book.converting_chapter": "Converting: Chapter {{current}} of {{total}}",
   "book.export_busy": "Export Busy...",
-  "book.exporting_m4b": "Exporting M4B...",
   "book.cancelling_export": "Cancelling Export...",
   "book.cancel_export": "Cancel Export",
   "book.chapter_count": "Chapter {{current}} of {{total}}",
@@ -191,7 +189,6 @@
   "conversion.step.skipping": "Skipping chapter...",
   "conversion.step.extracting_audio": "Preparing audio tracks...",
   "conversion.step.writing_metadata": "Writing chapter metadata...",
-  "conversion.step.encoding_m4b": "Encoding M4B...",
   "conversion.step.encoding_mp3": "Encoding MP3...",
 
   "error.something_wrong": "Something went wrong",

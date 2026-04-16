@@ -3449,6 +3449,7 @@ version = "2.0.0-rc.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7b497d21a8b6fbb4b5a544f8fadb77e801a09ae0add9e411d31c6f89e3c1e90"
 dependencies = [
+ "glob",
  "hmac-sha256",
  "lzma-rust2",
  "ureq",
@@ -7877,7 +7878,3 @@ dependencies = [
 [[patch.unused]]
 name = "audiopus_sys"
 version = "0.2.2"
-
-[[patch.unused]]
-name = "ort-sys"
-version = "2.0.0-rc.10"

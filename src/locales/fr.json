@@ -61,7 +61,6 @@
   "book.unknown_title": "Livre inconnu",
   "book.converting_chapter": "Conversion : chapitre {{current}} sur {{total}}",
   "book.export_busy": "Export occupé...",
-  "book.exporting_m4b": "Export M4B...",
   "book.cancelling_export": "Annulation de l’export...",
   "book.cancel_export": "Annuler l’export",
   "book.chapter_count": "Chapitre {{current}} sur {{total}}",

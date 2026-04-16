@@ -61,7 +61,6 @@
   "book.unknown_title": "제목 없음",
   "book.converting_chapter": "변환 중: {{total}}장 중 {{current}}장",
   "book.export_busy": "내보내기 사용 중...",
-  "book.exporting_m4b": "M4B 내보내는 중...",
   "book.cancelling_export": "내보내기 취소 중...",
   "book.cancel_export": "내보내기 취소",
   "book.chapter_count": "{{total}}장 중 {{current}}장",
