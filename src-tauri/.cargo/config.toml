@@ -4,6 +4,10 @@
 [build]
 target-dir = "../../.cargo-target"
 
+[alias]
+# Generate `resources/voice-samples/{lang}/{F1..M5}.mp3` previews used by settings playback.
+gen-voice-samples = "run --release --bin gen_voice_samples"
+
 [env]
 # espeak-ng defaults to N_PATH_HOME=160 on macOS; long CMake/Cargo OUT_DIR paths overflow
 # path_home buffers during the phoneme/intonation compile steps. Match Linux-style capacity.

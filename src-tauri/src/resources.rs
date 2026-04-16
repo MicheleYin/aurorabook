@@ -8,20 +8,21 @@ pub async fn read_resource_file(
 ) -> Result<Vec<u8>, String> {
     use std::fs;
 
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("Failed to get resource dir: {}", e))?;
-
-    let mut possible_paths = vec![
-        resource_dir.join(&resource_path),
-        resource_dir.join("resources").join(&resource_path),
-    ];
+    let mut possible_paths = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        possible_paths.push(resource_dir.join(&resource_path));
+        possible_paths.push(resource_dir.join("resources").join(&resource_path));
+    }
 
     if let Ok(current_dir) = std::env::current_dir() {
+        // Covers both `cwd = tts-tauri/` and `cwd = tts-tauri/src-tauri/`.
         possible_paths.push(current_dir.join("src-tauri").join("resources").join(&resource_path));
         possible_paths.push(current_dir.join("resources").join(&resource_path));
     }
+
+    // Stable dev fallback independent of working directory.
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    possible_paths.push(manifest_dir.join("resources").join(&resource_path));
 
     for path in &possible_paths {
         if path.exists() && path.is_file() {

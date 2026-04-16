@@ -10,6 +10,12 @@ The UI shows human-readable names (Sora, Luna, …) via translations; file names
 
 ## Generate (Supertonic TTS)
 
+From `tts-tauri/src-tauri` (recommended):
+
+```bash
+cargo gen-voice-samples
+```
+
 From the **repository root**:
 
 ```bash
@@ -17,7 +23,7 @@ chmod +x tts-tauri/scripts/generate_supertonic_voice_samples.sh
 ./tts-tauri/scripts/generate_supertonic_voice_samples.sh
 ```
 
-This runs **`cargo run --release --bin gen_voice_samples`** in `tts-tauri/src-tauri`, which uses the **same** `kokoros` + ONNX Runtime stack as the desktop app. The standalone `koko` CLI under `koko/` can use a different `ort` version and fail to load models; use `gen_voice_samples` instead.
+This runs `gen_voice_samples` in `tts-tauri/src-tauri`, using the same in-tree Supertonic + ONNX Runtime stack as the app.
 
 Requires:
 

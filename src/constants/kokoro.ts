@@ -82,10 +82,11 @@ export function normalizeVoiceId(raw: string): string {
  * `scripts/generate_supertonic_voice_samples.sh`.
  */
 export function voiceSamplePathsToTry(voiceId: string, ttsLanguage: string): string[] {
+  const normalizedVoiceId = normalizeVoiceId(voiceId);
   const lang = normalizeAppLanguage(ttsLanguage);
-  const primary = `voice-samples/${lang}/${voiceId}.mp3`;
+  const primary = `voice-samples/${lang}/${normalizedVoiceId}.mp3`;
   if (lang === "en") {
     return [primary];
   }
-  return [primary, `voice-samples/en/${voiceId}.mp3`];
+  return [primary, `voice-samples/en/${normalizedVoiceId}.mp3`];
 }

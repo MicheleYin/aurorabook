@@ -263,7 +263,12 @@ export function Library() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight">{t("library.title")}</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              {t("library.book_count", { count: filteredBooks.length })}
+              {t(
+                filteredBooks.length === 1
+                  ? "library.book_count_one"
+                  : "library.book_count_other",
+                { count: filteredBooks.length }
+              )}
             </p>
           </div>
           <div className="flex items-center gap-2">
