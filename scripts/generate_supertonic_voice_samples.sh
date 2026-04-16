@@ -9,7 +9,7 @@
 #     tts-tauri/src-tauri/resources/supertonic/ (onnx/ + voice_styles/) after a
 #     sync/build, OR set SUPERONIC_ROOT / SUPERTONIC_ONNX_DIR / SUPERTONIC_VOICES_ROOT
 #   - ffmpeg (for WAV → MP3)
-#   - Rust toolchain (this script runs `cargo run --release --bin gen_voice_samples`)
+#   - Rust toolchain (this script runs `cargo run --release --features gen-voice-samples --bin gen_voice_samples`)
 #
 # Usage (from repo root):
 #   ./tts-tauri/scripts/generate_supertonic_voice_samples.sh
@@ -47,4 +47,4 @@ cd "$SRC_TAURI"
 if [[ -n "${GEN_VOICE_SAMPLES_BIN:-}" ]]; then
   exec "$GEN_VOICE_SAMPLES_BIN"
 fi
-exec cargo run --release --bin gen_voice_samples
+exec cargo run --release --features gen-voice-samples --bin gen_voice_samples

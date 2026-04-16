@@ -10,9 +10,14 @@ default-run = "aurorabook"
 name = "aurorabook_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Dev-only binary: do not ship in Tauri bundles (see required-features below).
+[features]
+gen-voice-samples = []
+
 [[bin]]
 name = "gen_voice_samples"
 path = "src/bin/gen_voice_samples.rs"
+required-features = ["gen-voice-samples"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

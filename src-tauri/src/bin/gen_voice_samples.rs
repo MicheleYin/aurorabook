@@ -5,7 +5,7 @@
 //! and fail to load ONNX with "Protobuf parsing failed"; prefer this binary.
 //!
 //! Run from `tts-tauri/src-tauri`:
-//!   cargo run --release --bin gen_voice_samples
+//!   cargo run --release --features gen-voice-samples --bin gen_voice_samples
 //!
 //! Optional env (defaults: bundled `resources/supertonic/`):
 //!   SUPERTONIC_ONNX_DIR, SUPERTONIC_VOICES_ROOT, VOICE_SAMPLES_OUT

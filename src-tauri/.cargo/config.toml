@@ -3,7 +3,7 @@ target-dir = "../../.cargo-target"
 
 [alias]
 # Generate `resources/voice-samples/{lang}/{F1..M5}.mp3` previews used by settings playback.
-gen-voice-samples = "run --release --bin gen_voice_samples"
+gen-voice-samples = "run --release --features gen-voice-samples --bin gen_voice_samples"
 
 # Do not set ORT_DIRECT_LINK globally: it makes ort-sys skip ONNX prebuilt download and
 # breaks macOS desktop builds (missing static `libonnx`). iOS builds set ORT_DIRECT_LINK=1
