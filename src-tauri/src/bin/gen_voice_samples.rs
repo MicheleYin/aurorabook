@@ -1,6 +1,6 @@
 //! Generate `resources/voice-samples/{lang}/{F1..M5}.mp3` previews.
 //!
-//! Uses the **same** `kokoros` + `ort` + `ort-sys` stack as the Tauri app.
+//! Uses the same in-tree Supertonic ONNX stack as the Tauri app.
 //! The standalone `koko` CLI under `koko/` may use a different `ort` version
 //! and fail to load ONNX with "Protobuf parsing failed"; prefer this binary.
 //!
@@ -13,7 +13,8 @@
 use std::path::Path;
 use std::process::Command;
 
-use kokoros::tts::koko::{TTSKoko, TTSOpts};
+use aurorabook_lib::tts::supertonic::koko::TTSKokoParallel;
+use hound::{SampleFormat, WavSpec, WavWriter};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -52,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Loading TTS (same stack as aurorabook app)…\n  ONNX: {}\n  Voices: {}",
         onnx_dir, voices_root
     );
-    let tts = TTSKoko::new(&onnx_dir, &voices_root).await;
+    let tts = TTSKokoParallel::new_with_instances(&onnx_dir, &voices_root, 1).await;
 
     let langs = ["en", "ko", "es", "pt", "fr"];
     let voices = ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"];
@@ -67,15 +68,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mp3 = lang_out.join(format!("{}.mp3", voice));
             eprintln!("  {} / {} …", lang, voice);
 
-            tts.tts(TTSOpts {
-                txt: text,
-                lan: lang,
-                style_name: voice,
-                save_path: wav_path.to_str().ok_or("invalid wav path")?,
-                mono: true,
-                speed: 1.0,
-                initial_silence: None,
-            })?;
+            let instance = tts.get_model_instance(0);
+            let audio = tts
+                .tts_raw_audio_with_instance(
+                    text,
+                    lang,
+                    voice,
+                    1.0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    instance,
+                )
+                .map_err(|e| format!("TTS failed for {lang}/{voice}: {e}"))?;
+            write_wav_f32(wav_path.as_path(), &audio, 44_100)?;
 
             let st = Command::new("ffmpeg")
                 .args(["-y", "-loglevel", "error", "-i"])
@@ -103,4 +110,19 @@ fn sample_text(lang: &str) -> &'static str {
         "fr" => "Bonjour, c'est AuroraBook. Un aperçu rapide de cette voix.",
         _ => "Hello from AuroraBook.",
     }
+}
+
+fn write_wav_f32(path: &Path, audio: &[f32], sample_rate: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let spec = WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 32,
+        sample_format: SampleFormat::Float,
+    };
+    let mut writer = WavWriter::create(path, spec)?;
+    for &sample in audio {
+        writer.write_sample(sample)?;
+    }
+    writer.finalize()?;
+    Ok(())
 }

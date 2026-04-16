@@ -52,7 +52,7 @@ impl std::str::FromStr for TtsEngineType {
 /// By reusing engines, we avoid this overhead for each TTS generation.
 pub struct TtsEnginePool {
     engine_type: TtsEngineType,
-    onnx_engine: Option<Arc<kokoros::tts::koko::TTSKokoParallel>>,
+    onnx_engine: Option<Arc<crate::tts::supertonic::koko::TTSKokoParallel>>,
     // Candle engine support is not yet implemented in kokoros crate
     // candle_engine: Option<Arc<kokoros::tts::koko_candle::TTSKokoParallelCandle>>,
     instance_counter: Arc<AtomicUsize>,
@@ -127,7 +127,7 @@ impl TtsEnginePool {
                 let onnx_path_clone = onnx_path.to_string();
                 let voices_path_clone = voices_path.to_string();
                 let engine_task = tokio::spawn(async move {
-                    kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+                    crate::tts::supertonic::koko::TTSKokoParallel::new_with_instances(
                         &onnx_path_clone,
                         &voices_path_clone,
                         num_instances,
@@ -252,7 +252,7 @@ impl TtsEnginePool {
     /// Returns a reference to the underlying TTSKokoParallel engine if available.
     /// This is useful when you need to pass the engine directly to functions
     /// that require it (e.g., process_chapter).
-    pub fn get_onnx_engine(&self) -> Option<&Arc<kokoros::tts::koko::TTSKokoParallel>> {
+    pub fn get_onnx_engine(&self) -> Option<&Arc<crate::tts::supertonic::koko::TTSKokoParallel>> {
         self.onnx_engine.as_ref()
     }
 

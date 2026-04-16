@@ -124,7 +124,7 @@ pub async fn generate_tts_cached(
 
     let audio_samples = match engine_type {
         TtsEngineType::Onnx => {
-            let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+            let engine = crate::tts::supertonic::koko::TTSKokoParallel::new_with_instances(
                 onnx_path_str,
                 voices_path_str,
                 1,

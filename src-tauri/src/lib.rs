@@ -1,4 +1,6 @@
 
+extern crate self as kokoros;
+
 // ONNX Runtime with CoreML EP support (macOS/iOS only)
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 
@@ -13,7 +15,7 @@ pub mod utils;  // Made public for testing
 mod window;
 mod logging;
 
-// Local `kokoros` crate wraps Supertonic ONNX (CPU; ONNX Runtime with CoreML EP on Apple platforms when enabled in ort).
+// In-tree Supertonic wrapper uses ONNX Runtime (CPU/CoreML depending on platform and ORT EP configuration).
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
