@@ -5,10 +5,9 @@ target-dir = "../../.cargo-target"
 # Generate `resources/voice-samples/{lang}/{F1..M5}.mp3` previews used by settings playback.
 gen-voice-samples = "run --release --bin gen_voice_samples"
 
-[env]
-# Skip ONNX Runtime binary download for iOS (libraries must be provided separately)
-# This prevents ort-sys from panicking when binaries aren't available for iOS
-ORT_DIRECT_LINK = "1"
+# Do not set ORT_DIRECT_LINK globally: it makes ort-sys skip ONNX prebuilt download and
+# breaks macOS desktop builds (missing static `libonnx`). iOS builds set ORT_DIRECT_LINK=1
+# in package.json (`build:ios`, `build:ios:appstore`) alongside ORT_LIB_LOCATION.
 
 [target.aarch64-apple-ios-sim]
 # Keep default Apple toolchain behavior for Swift and SDK linker paths.

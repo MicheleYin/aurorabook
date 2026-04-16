@@ -16,12 +16,12 @@ pub struct SentenceWithSpan {
 static SENTENCE_PATTERN: Lazy<Regex> = Lazy::new(|| {
     // Match sentences ending with: . ! ? … or ... (three periods)
     // The ellipsis character (U+2026) is included as a sentence ending
-    Regex::new(r"([^.!?…]+(?:[.!?]+|…|\.\.\.))\s*")
+    Regex::new(r"([^.!?…]+(?:[.!?]+|…))\s*")
         .expect("Failed to compile sentence regex pattern")
 });
 
-const MIN_SENTENCE_WORDS: usize = 3;
-const MIN_SENTENCE_ALNUM_CHARS: usize = 12;
+const MIN_SENTENCE_WORDS: usize = 10;
+const MIN_SENTENCE_ALNUM_CHARS: usize = 20;
 
 fn is_too_short_sentence(text: &str) -> bool {
     let trimmed = text.trim();

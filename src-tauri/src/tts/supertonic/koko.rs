@@ -37,7 +37,7 @@ impl Default for InitConfig {
     fn default() -> Self {
         Self {
             sample_rate: 44_100,
-            total_step: 5,
+            total_step: 10,
         }
     }
 }

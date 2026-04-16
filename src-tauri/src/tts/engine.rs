@@ -37,7 +37,7 @@ impl std::str::FromStr for TtsEngineType {
 /// This struct manages a pool of TTS model instances that can be shared
 /// across multiple concurrent TTS generation tasks. Creating a TTS engine
 /// is expensive (loading ONNX models), so reusing engines significantly
-/// improves performance for batch operations.
+/// improves performance when many requests run concurrently.
 ///
 /// The pool uses round-robin distribution to balance load across instances,
 /// enabling true parallel processing without the overhead of creating

@@ -249,7 +249,6 @@ fn sample_noisy_latent(
 }
 
 const MAX_CHUNK_LENGTH: usize = 300;
-const INFER_BATCH_SIZE: usize = 4;
 const ABBREVIATIONS: &[&str] = &[
     "Dr.", "Mr.", "Mrs.", "Ms.", "Prof.", "Sr.", "Jr.", "St.", "Ave.", "Rd.", "Blvd.", "Dept.",
     "Inc.", "Ltd.", "Co.", "Corp.", "etc.", "vs.", "i.e.", "e.g.", "Ph.D.",
@@ -650,28 +649,32 @@ impl TextToSpeech {
         let mut wav_cat: Vec<f32> = Vec::new();
         let mut dur_cat: f32 = 0.0;
 
-        for (batch_idx, chunk_batch) in chunks.chunks(INFER_BATCH_SIZE).enumerate() {
-            let text_batch: Vec<String> = chunk_batch.iter().cloned().collect();
-            let lang_batch: Vec<String> = vec![lang.to_string(); text_batch.len()];
-            let style_batch = expand_style_for_batch(style, text_batch.len())?;
+        // One ONNX inference per text chunk (no multi-segment batching).
+        for (chunk_idx, chunk_text) in chunks.iter().enumerate() {
+            let text_batch = vec![chunk_text.clone()];
+            let lang_batch = vec![lang.to_string()];
+            let style_one = expand_style_for_batch(style, 1)?;
             let (batch_waveforms, durations) =
-                self.infer(&text_batch, &lang_batch, &style_batch, total_step, speed)?;
+                self.infer(&text_batch, &lang_batch, &style_one, total_step, speed)?;
+            let wav = batch_waveforms
+                .first()
+                .ok_or_else(|| anyhow!("infer returned no waveforms"))?;
+            let dur = *durations
+                .first()
+                .ok_or_else(|| anyhow!("infer returned no durations"))?;
 
-            for (item_idx, (wav, dur)) in batch_waveforms.iter().zip(durations.iter()).enumerate() {
-                let global_idx = batch_idx * INFER_BATCH_SIZE + item_idx;
-                let wav_len = (self.sample_rate as f32 * *dur) as usize;
-                let wav_chunk = &wav[..wav_len.min(wav.len())];
+            let wav_len = (self.sample_rate as f32 * dur) as usize;
+            let wav_chunk = &wav[..wav_len.min(wav.len())];
 
-                if global_idx == 0 {
-                    wav_cat.extend_from_slice(wav_chunk);
-                    dur_cat = *dur;
-                } else {
-                    let silence_len = (silence_duration * self.sample_rate as f32) as usize;
-                    let silence = vec![0.0f32; silence_len];
-                    wav_cat.extend_from_slice(&silence);
-                    wav_cat.extend_from_slice(wav_chunk);
-                    dur_cat += silence_duration + *dur;
-                }
+            if chunk_idx == 0 {
+                wav_cat.extend_from_slice(wav_chunk);
+                dur_cat = dur;
+            } else {
+                let silence_len = (silence_duration * self.sample_rate as f32) as usize;
+                let silence = vec![0.0f32; silence_len];
+                wav_cat.extend_from_slice(&silence);
+                wav_cat.extend_from_slice(wav_chunk);
+                dur_cat += silence_duration + dur;
             }
         }
 
