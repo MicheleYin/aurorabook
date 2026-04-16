@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Context, Result};
-use ndarray::{Array, Array3};
+use ndarray::{Array, Array3, Axis};
 use ort::{ep, session::Session, value::Tensor};
 use rand_distr::{Distribution, Normal};
 use regex::Regex;
@@ -249,6 +249,7 @@ fn sample_noisy_latent(
 }
 
 const MAX_CHUNK_LENGTH: usize = 300;
+const INFER_BATCH_SIZE: usize = 4;
 const ABBREVIATIONS: &[&str] = &[
     "Dr.", "Mr.", "Mrs.", "Ms.", "Prof.", "Sr.", "Jr.", "St.", "Ave.", "Rd.", "Blvd.", "Dept.",
     "Inc.", "Ltd.", "Co.", "Corp.", "etc.", "vs.", "i.e.", "e.g.", "Ph.D.",
@@ -402,6 +403,51 @@ pub struct Style {
     pub dp: Array3<f32>,
 }
 
+fn expand_style_for_batch(style: &Style, batch_size: usize) -> Result<Style> {
+    if batch_size == 0 {
+        bail!("Batch size must be greater than 0");
+    }
+
+    let (style_bsz, ttl_dim1, ttl_dim2) = style.ttl.dim();
+    let (dp_bsz, dp_dim1, dp_dim2) = style.dp.dim();
+    if style_bsz != dp_bsz {
+        bail!(
+            "Style TTL/DP batch size mismatch: ttl={}, dp={}",
+            style_bsz,
+            dp_bsz
+        );
+    }
+
+    if style_bsz == batch_size {
+        return Ok(Style {
+            ttl: style.ttl.clone(),
+            dp: style.dp.clone(),
+        });
+    }
+
+    if style_bsz != 1 {
+        bail!(
+            "Cannot expand style batch of {} to {}. Expected style batch size 1 or exact match.",
+            style_bsz,
+            batch_size
+        );
+    }
+
+    let ttl_single = style.ttl.index_axis(Axis(0), 0).to_owned();
+    let dp_single = style.dp.index_axis(Axis(0), 0).to_owned();
+    let mut ttl_batched = Array3::<f32>::zeros((batch_size, ttl_dim1, ttl_dim2));
+    let mut dp_batched = Array3::<f32>::zeros((batch_size, dp_dim1, dp_dim2));
+    for idx in 0..batch_size {
+        ttl_batched.index_axis_mut(Axis(0), idx).assign(&ttl_single);
+        dp_batched.index_axis_mut(Axis(0), idx).assign(&dp_single);
+    }
+
+    Ok(Style {
+        ttl: ttl_batched,
+        dp: dp_batched,
+    })
+}
+
 pub struct TextToSpeech {
     cfgs: Config,
     text_processor: UnicodeProcessor,
@@ -440,7 +486,7 @@ impl TextToSpeech {
         style: &Style,
         total_step: usize,
         speed: f32,
-    ) -> Result<(Vec<f32>, Vec<f32>)> {
+    ) -> Result<(Vec<Vec<f32>>, Vec<f32>)> {
         let bsz = text_list.len();
         let (text_ids, text_mask) = self.text_processor.call(text_list, lang_list)?;
         let text_ids_shape = (bsz, text_ids[0].len());
@@ -524,8 +570,70 @@ impl TextToSpeech {
         let vocoder_outputs = self.vocoder_ort.run(ort::inputs! {
             "latent" => &final_latent_value
         })?;
-        let (_, wav_data) = vocoder_outputs["wav_tts"].try_extract_tensor::<f32>()?;
-        Ok((wav_data.to_vec(), duration))
+        let (wav_shape, wav_data) = vocoder_outputs["wav_tts"].try_extract_tensor::<f32>()?;
+        let wav_shape_usize: Vec<usize> = wav_shape.iter().map(|d| *d as usize).collect();
+        let wav_vec = wav_data.to_vec();
+
+        let per_item_waveforms = match wav_shape_usize.as_slice() {
+            [time_len] => {
+                if bsz != 1 {
+                    bail!(
+                        "Unexpected 1D wav output shape {:?} for batch size {}",
+                        wav_shape_usize,
+                        bsz
+                    );
+                }
+                vec![wav_vec[..(*time_len).min(wav_vec.len())].to_vec()]
+            }
+            [batch, time_len] if *batch == bsz => wav_vec
+                .chunks(*time_len)
+                .take(bsz)
+                .map(|chunk| chunk.to_vec())
+                .collect(),
+            [time_len, batch] if *batch == bsz => {
+                let mut out = vec![vec![0.0f32; *time_len]; bsz];
+                for t in 0..*time_len {
+                    for b in 0..bsz {
+                        let src_idx = t * bsz + b;
+                        if src_idx < wav_vec.len() {
+                            out[b][t] = wav_vec[src_idx];
+                        }
+                    }
+                }
+                out
+            }
+            [batch, 1, time_len] if *batch == bsz => {
+                let stride = *time_len;
+                wav_vec
+                    .chunks(stride)
+                    .take(bsz)
+                    .map(|chunk| chunk.to_vec())
+                    .collect()
+            }
+            [batch, time_len, 1] if *batch == bsz => {
+                let stride = *time_len;
+                wav_vec
+                    .chunks(stride)
+                    .take(bsz)
+                    .map(|chunk| chunk.to_vec())
+                    .collect()
+            }
+            _ => bail!(
+                "Unexpected wav output shape {:?} for batch size {}",
+                wav_shape_usize,
+                bsz
+            ),
+        };
+
+        if per_item_waveforms.len() != bsz {
+            bail!(
+                "Decoded waveform count mismatch: got {}, expected {}",
+                per_item_waveforms.len(),
+                bsz
+            );
+        }
+
+        Ok((per_item_waveforms, duration))
     }
 
     pub fn call(
@@ -542,22 +650,28 @@ impl TextToSpeech {
         let mut wav_cat: Vec<f32> = Vec::new();
         let mut dur_cat: f32 = 0.0;
 
-        for (i, chunk) in chunks.iter().enumerate() {
-            let (wav, duration) =
-                self.infer(&[chunk.clone()], &[lang.to_string()], style, total_step, speed)?;
-            let dur = duration[0];
-            let wav_len = (self.sample_rate as f32 * dur) as usize;
-            let wav_chunk = &wav[..wav_len.min(wav.len())];
+        for (batch_idx, chunk_batch) in chunks.chunks(INFER_BATCH_SIZE).enumerate() {
+            let text_batch: Vec<String> = chunk_batch.iter().cloned().collect();
+            let lang_batch: Vec<String> = vec![lang.to_string(); text_batch.len()];
+            let style_batch = expand_style_for_batch(style, text_batch.len())?;
+            let (batch_waveforms, durations) =
+                self.infer(&text_batch, &lang_batch, &style_batch, total_step, speed)?;
 
-            if i == 0 {
-                wav_cat.extend_from_slice(wav_chunk);
-                dur_cat = dur;
-            } else {
-                let silence_len = (silence_duration * self.sample_rate as f32) as usize;
-                let silence = vec![0.0f32; silence_len];
-                wav_cat.extend_from_slice(&silence);
-                wav_cat.extend_from_slice(wav_chunk);
-                dur_cat += silence_duration + dur;
+            for (item_idx, (wav, dur)) in batch_waveforms.iter().zip(durations.iter()).enumerate() {
+                let global_idx = batch_idx * INFER_BATCH_SIZE + item_idx;
+                let wav_len = (self.sample_rate as f32 * *dur) as usize;
+                let wav_chunk = &wav[..wav_len.min(wav.len())];
+
+                if global_idx == 0 {
+                    wav_cat.extend_from_slice(wav_chunk);
+                    dur_cat = *dur;
+                } else {
+                    let silence_len = (silence_duration * self.sample_rate as f32) as usize;
+                    let silence = vec![0.0f32; silence_len];
+                    wav_cat.extend_from_slice(&silence);
+                    wav_cat.extend_from_slice(wav_chunk);
+                    dur_cat += silence_duration + *dur;
+                }
             }
         }
 
@@ -637,8 +751,7 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
     let build_session = |path: &str| -> Result<Session> {
         let builder = Session::builder().map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
         let mut builder = builder
-            .with_execution_providers([ep::CoreML::default()
-                .build()])
+            .with_execution_providers([ep::CoreML::default().build()])
             .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
         let session = builder
             .commit_from_file(path)
