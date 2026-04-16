@@ -26,13 +26,13 @@ pub fn emit_progress(app: &AppHandle, progress: ConversionProgress) {
 /// ```
 pub fn get_parallelism() -> usize {
     // On iOS, use single-threaded execution for better stability and UI responsiveness
-    #[cfg(target_os = "ios")]
-    {
-        return 1;
-    }
+    // #[cfg(target_os = "ios")]
+    // {
+    //     return 1;
+    // }
 
-    #[cfg(not(target_os = "ios"))]
-    {
+    // #[cfg(not(target_os = "ios"))]
+    // {
         use num_cpus;
         let logical = num_cpus::get();
 
@@ -47,6 +47,6 @@ pub fn get_parallelism() -> usize {
 
         workers.max(1)
         // 1
-    }
+    // }
 }
 
