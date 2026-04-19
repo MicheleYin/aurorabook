@@ -295,6 +295,67 @@ impl TtsEnginePool {
         let audio_samples = self.generate_audio(text, language, voice_id, speed).await?;
         Ok(f32_to_pcm_le_bytes(&audio_samples))
     }
+
+    /// Generate audio for multiple texts using ONNX tensor batching (aligned chunk rounds).
+    ///
+    /// Prefer this over many parallel [`Self::generate_audio`] calls when inputs share the same
+    /// voice and language: it runs fewer forwards through the Supertonic pipeline.
+    pub async fn generate_audio_batch(
+        &self,
+        texts: &[String],
+        language: &str,
+        voice_id: &str,
+        speed: f32,
+    ) -> AppResult<Vec<Vec<f32>>> {
+        let instance_id =
+            self.instance_counter.fetch_add(1, Ordering::Relaxed) % self.num_instances;
+
+        match self.engine_type {
+            TtsEngineType::Onnx => {
+                let engine = self.onnx_engine.as_ref().ok_or_else(|| {
+                    AppError::TtsGeneration("ONNX engine not initialized".to_string())
+                })?;
+                let model_instance = engine.get_model_instance(instance_id);
+                engine
+                    .tts_raw_audio_batch_with_instance(
+                        texts,
+                        language,
+                        voice_id,
+                        speed,
+                        None,
+                        None,
+                        None,
+                        None,
+                        model_instance,
+                    )
+                    .map_err(|e| {
+                        AppError::TtsGeneration(format!("TTS batch generation failed: {}", e))
+                    })
+            }
+            TtsEngineType::Candle => Err(AppError::TtsGeneration(
+                "Candle engine is not yet implemented. Please use TtsEngineType::Onnx instead."
+                    .to_string(),
+            )),
+        }
+    }
+
+    /// Like [`Self::generate_audio_batch`] but returns 16-bit PCM bytes per utterance.
+    pub async fn generate_audio_pcm_batch(
+        &self,
+        texts: &[String],
+        language: &str,
+        voice_id: &str,
+        speed: f32,
+    ) -> AppResult<Vec<Vec<u8>>> {
+        use crate::utils::audio::f32_to_pcm_le_bytes;
+        let batches = self
+            .generate_audio_batch(texts, language, voice_id, speed)
+            .await?;
+        Ok(batches
+            .iter()
+            .map(|s| f32_to_pcm_le_bytes(s))
+            .collect())
+    }
 }
 
 impl Clone for TtsEnginePool {

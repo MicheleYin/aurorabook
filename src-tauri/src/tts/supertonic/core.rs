@@ -141,13 +141,34 @@ pub fn preprocess_text(text: &str, lang: &str) -> Result<String> {
         text = text.replace(from, to);
     }
 
-    text = Regex::new(r" ,").unwrap().replace_all(&text, ",").to_string();
-    text = Regex::new(r" \.").unwrap().replace_all(&text, ".").to_string();
-    text = Regex::new(r" !").unwrap().replace_all(&text, "!").to_string();
-    text = Regex::new(r" \?").unwrap().replace_all(&text, "?").to_string();
-    text = Regex::new(r" ;").unwrap().replace_all(&text, ";").to_string();
-    text = Regex::new(r" :").unwrap().replace_all(&text, ":").to_string();
-    text = Regex::new(r" '").unwrap().replace_all(&text, "'").to_string();
+    text = Regex::new(r" ,")
+        .unwrap()
+        .replace_all(&text, ",")
+        .to_string();
+    text = Regex::new(r" \.")
+        .unwrap()
+        .replace_all(&text, ".")
+        .to_string();
+    text = Regex::new(r" !")
+        .unwrap()
+        .replace_all(&text, "!")
+        .to_string();
+    text = Regex::new(r" \?")
+        .unwrap()
+        .replace_all(&text, "?")
+        .to_string();
+    text = Regex::new(r" ;")
+        .unwrap()
+        .replace_all(&text, ";")
+        .to_string();
+    text = Regex::new(r" :")
+        .unwrap()
+        .replace_all(&text, ":")
+        .to_string();
+    text = Regex::new(r" '")
+        .unwrap()
+        .replace_all(&text, "'")
+        .to_string();
 
     while text.contains("\"\"") {
         text = text.replace("\"\"", "\"");
@@ -159,19 +180,27 @@ pub fn preprocess_text(text: &str, lang: &str) -> Result<String> {
         text = text.replace("``", "`");
     }
 
-    text = Regex::new(r"\s+").unwrap().replace_all(&text, " ").to_string();
+    text = Regex::new(r"\s+")
+        .unwrap()
+        .replace_all(&text, " ")
+        .to_string();
     text = text.trim().to_string();
 
     if !text.is_empty() {
         let ends_with_punct =
-            Regex::new(r#"[.!?;:,'"\u{201C}\u{201D}\u{2018}\u{2019})\]}…。」』】〉》›»]$"#).unwrap();
+            Regex::new(r#"[.!?;:,'"\u{201C}\u{201D}\u{2018}\u{2019})\]}…。」』】〉》›»]$"#)
+                .unwrap();
         if !ends_with_punct.is_match(&text) {
             text.push('.');
         }
     }
 
     if !is_valid_lang(lang) {
-        bail!("Invalid language: {}. Available: {:?}", lang, AVAILABLE_LANGS);
+        bail!(
+            "Invalid language: {}. Available: {:?}",
+            lang,
+            AVAILABLE_LANGS
+        );
     }
 
     Ok(format!("<{}>{}</{}>", lang, text, lang))
@@ -247,6 +276,9 @@ fn sample_noisy_latent(
 
     (noisy_latent, latent_mask)
 }
+
+/// Upper bound on ONNX batch dimension per forward pass (avoids huge padded tensors).
+const MAX_ONNX_BATCH: usize = 32;
 
 const MAX_CHUNK_LENGTH: usize = 300;
 const ABBREVIATIONS: &[&str] = &[
@@ -516,7 +548,8 @@ impl TextToSpeech {
             "style_ttl" => &style_ttl_value,
             "text_mask" => &text_mask_value
         })?;
-        let (text_emb_shape, text_emb_data) = text_enc_outputs["text_emb"].try_extract_tensor::<f32>()?;
+        let (text_emb_shape, text_emb_data) =
+            text_enc_outputs["text_emb"].try_extract_tensor::<f32>()?;
         let text_emb = Array3::from_shape_vec(
             (
                 text_emb_shape[0] as usize,
@@ -680,11 +713,138 @@ impl TextToSpeech {
 
         Ok((wav_cat, dur_cat))
     }
+
+    /// Single forward pass(es) for multiple pre-sized utterances (no internal chunking).
+    ///
+    /// Long inputs should be split by the caller or use [`Self::call_batch`], which applies the
+    /// same chunking rules as [`Self::call`]. When more than [`MAX_ONNX_BATCH`] lines are passed,
+    /// this method runs multiple forwards while preserving output order.
+    pub fn synthesize_batch(
+        &mut self,
+        text_list: &[String],
+        lang_list: &[String],
+        style: &Style,
+        total_step: usize,
+        speed: f32,
+    ) -> Result<(Vec<Vec<f32>>, Vec<f32>)> {
+        if text_list.len() != lang_list.len() {
+            bail!(
+                "text_list and lang_list length mismatch: {} vs {}",
+                text_list.len(),
+                lang_list.len()
+            );
+        }
+        if text_list.is_empty() {
+            bail!("synthesize_batch requires at least one text");
+        }
+
+        if text_list.len() <= MAX_ONNX_BATCH {
+            let style_expanded = expand_style_for_batch(style, text_list.len())?;
+            return self.infer(text_list, lang_list, &style_expanded, total_step, speed);
+        }
+
+        let mut all_wavs = Vec::with_capacity(text_list.len());
+        let mut all_durs = Vec::with_capacity(text_list.len());
+        let mut start = 0;
+        while start < text_list.len() {
+            let end = (start + MAX_ONNX_BATCH).min(text_list.len());
+            let style_expanded = expand_style_for_batch(style, end - start)?;
+            let (w, d) = self.infer(
+                &text_list[start..end],
+                &lang_list[start..end],
+                &style_expanded,
+                total_step,
+                speed,
+            )?;
+            all_wavs.extend(w);
+            all_durs.extend(d);
+            start = end;
+        }
+        Ok((all_wavs, all_durs))
+    }
+
+    /// Like [`Self::call`] but for many strings: chunks each line, then batches ONNX inference
+    /// across texts for each chunk round (and sub-batches when needed).
+    pub fn call_batch(
+        &mut self,
+        texts: &[String],
+        lang: &str,
+        style: &Style,
+        total_step: usize,
+        speed: f32,
+        silence_duration: f32,
+    ) -> Result<Vec<(Vec<f32>, f32)>> {
+        let n = texts.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        let max_len = if lang == "ko" { 120 } else { 300 };
+        let per_text_chunks: Vec<Vec<String>> =
+            texts.iter().map(|t| chunk_text(t, Some(max_len))).collect();
+
+        let max_rounds = per_text_chunks.iter().map(|c| c.len()).max().unwrap_or(0);
+
+        let mut wav_acc: Vec<Vec<f32>> = vec![Vec::new(); n];
+        let mut dur_acc: Vec<f32> = vec![0.0; n];
+
+        for chunk_round in 0..max_rounds {
+            let mut text_batch = Vec::new();
+            let mut lang_batch = Vec::new();
+            let mut row_idx: Vec<usize> = Vec::new();
+
+            for i in 0..n {
+                if chunk_round < per_text_chunks[i].len() {
+                    text_batch.push(per_text_chunks[i][chunk_round].clone());
+                    lang_batch.push(lang.to_string());
+                    row_idx.push(i);
+                }
+            }
+
+            if text_batch.is_empty() {
+                continue;
+            }
+
+            let mut wave_offset = 0;
+            while wave_offset < text_batch.len() {
+                let end = (wave_offset + MAX_ONNX_BATCH).min(text_batch.len());
+                let sub_text = &text_batch[wave_offset..end];
+                let sub_lang = &lang_batch[wave_offset..end];
+                let sub_row = &row_idx[wave_offset..end];
+
+                let style_b = expand_style_for_batch(style, sub_text.len())?;
+                let (batch_waveforms, durations) =
+                    self.infer(sub_text, sub_lang, &style_b, total_step, speed)?;
+
+                for (j, &text_i) in sub_row.iter().enumerate() {
+                    let wav = &batch_waveforms[j];
+                    let dur = durations[j];
+
+                    let wav_len = (self.sample_rate as f32 * dur) as usize;
+                    let wav_chunk = &wav[..wav_len.min(wav.len())];
+
+                    if !wav_acc[text_i].is_empty() {
+                        let silence_len = (silence_duration * self.sample_rate as f32) as usize;
+                        wav_acc[text_i].extend_from_slice(&vec![0.0f32; silence_len]);
+                        dur_acc[text_i] += silence_duration;
+                    }
+
+                    wav_acc[text_i].extend_from_slice(wav_chunk);
+                    dur_acc[text_i] += dur;
+                }
+
+                wave_offset = end;
+            }
+        }
+
+        Ok(wav_acc.into_iter().zip(dur_acc.into_iter()).collect())
+    }
 }
 
 pub fn load_voice_style(voice_style_paths: &[String], verbose: bool) -> Result<Style> {
     let bsz = voice_style_paths.len();
-    let first_file = File::open(&voice_style_paths[0]).context("Failed to open voice style file")?;
+    let first_file =
+        File::open(&voice_style_paths[0]).context("Failed to open voice style file")?;
     let first_reader = BufReader::new(first_file);
     let first_data: VoiceStyleData = serde_json::from_reader(first_reader)?;
     let ttl_dims = &first_data.style_ttl.dims;
@@ -750,11 +910,11 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
     let vector_est_path = format!("{}/vector_estimator.onnx", onnx_dir);
     let vocoder_path = format!("{}/vocoder.onnx", onnx_dir);
 
-
     let build_session = |path: &str| -> Result<Session> {
-        let builder = Session::builder().map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
+        let builder =
+            Session::builder().map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
         let mut builder = builder
-            .with_execution_providers([ep::CPU::default().build().error_on_failure()])
+            .with_execution_providers([ep::WebGPU::default().build().error_on_failure()])
             .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
         let session = builder
             .commit_from_file(path)

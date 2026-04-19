@@ -4,7 +4,6 @@ use crate::utils::constants::{DEFAULT_LAME_QUALITY, DEFAULT_MP3_BITRATE};
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::path_resolver::ResourcePathResolver;
 use mp3lame_encoder::{Builder, FlushNoGap, MonoPcm};
-use std::sync::Arc;
 
 /// Initialize the bundled TTS engine (Tauri command).
 ///
@@ -157,11 +156,11 @@ pub async fn generate_tts_cached(
     Ok(f32_to_pcm_le_bytes(&audio_samples))
 }
 
-/// Generate text-to-speech audio for multiple texts in parallel (Tauri command).
+/// Generate text-to-speech audio for multiple texts using ONNX batching (Tauri command).
 ///
-/// This function efficiently processes multiple texts by creating a single
-/// TTS engine pool and reusing it across all generations. This is significantly
-/// faster than calling `generate_tts_cached` multiple times.
+/// Builds one [`TtsEnginePool`] and runs Supertonic with tensor batching across utterances
+/// (aligned text chunks), which is typically faster than calling [`generate_tts_cached`] once
+/// per line.
 ///
 /// # Arguments
 /// * `texts` - Vector of text strings to convert to speech
@@ -173,7 +172,7 @@ pub async fn generate_tts_cached(
 ///
 /// # Returns
 /// Vector of PCM audio data byte vectors, one for each input text.
-/// Each audio is 16-bit PCM, little-endian, mono, 24kHz.
+/// Each audio is 16-bit PCM, little-endian, mono; sample rate matches the engine (typically 44.1 kHz for Supertonic v2).
 ///
 /// # Errors
 /// Returns an error if:
@@ -182,8 +181,7 @@ pub async fn generate_tts_cached(
 /// - Any TTS generation fails
 ///
 /// # Performance
-/// Uses a TTS engine pool with multiple instances (one per CPU core)
-/// to enable true parallel processing. Much faster than sequential generation.
+/// Uses the pool’s ONNX runtime path with batched inference instead of one forward per string.
 ///
 /// # Example
 /// ```rust
@@ -244,37 +242,14 @@ pub async fn generate_tts_batch(
         parallelism
     );
 
-    let engine_pool_arc = std::sync::Arc::new(engine_pool);
-    // Use Arc<str> for shared strings to avoid unnecessary cloning
-    let language_str: std::sync::Arc<str> = Arc::from(language.as_deref().unwrap_or("en"));
-    let voice_id_arc: std::sync::Arc<str> = Arc::from(voice_id.as_str());
+    let language_str = language.as_deref().unwrap_or("en");
     let speed_val = speed.unwrap_or(1.0);
-    let mut handles = Vec::new();
-    for text in texts.iter() {
-        // Only clone the text (which is unique per task)
-        let text_clone = text.clone();
-        let voice_id_clone = voice_id_arc.clone();
-        let language_clone = language_str.clone();
-        let pool = engine_pool_arc.clone();
 
-        let handle = tokio::spawn(async move {
-            pool.generate_audio_pcm(&text_clone, &language_clone, &voice_id_clone, speed_val)
-                .await
-                .map_err(|e| AppError::TtsGeneration(format!("Failed to generate audio: {}", e)))
-        });
-        handles.push(handle);
-    }
+    let pcm_results = engine_pool
+        .generate_audio_pcm_batch(&texts, language_str, &voice_id, speed_val)
+        .await?;
 
-    let mut results = Vec::new();
-    for handle in handles {
-        match handle.await {
-            Ok(Ok(audio_pcm)) => results.push(audio_pcm),
-            Ok(Err(e)) => return Err(e),
-            Err(e) => return Err(AppError::TtsGeneration(format!("Task failed: {:?}", e))),
-        }
-    }
-
-    Ok(results)
+    Ok(pcm_results)
 }
 
 /// Convert PCM audio data to MP3 format (Tauri command).

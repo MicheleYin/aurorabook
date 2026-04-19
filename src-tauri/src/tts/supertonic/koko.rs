@@ -268,4 +268,66 @@ impl TTSKokoParallel {
 
         Ok(audio)
     }
+
+    /// Synthesize multiple strings in one session using ONNX batching (aligned chunk rounds).
+    ///
+    /// Returns one waveform per input string (same order as `texts`). Empty `texts` yields an empty vec.
+    pub fn tts_raw_audio_batch_with_instance(
+        &self,
+        texts: &[String],
+        language: &str,
+        style_name: &str,
+        speed: f32,
+        initial_silence: Option<usize>,
+        request_id: Option<&str>,
+        instance_id: Option<&str>,
+        chunk_number: Option<usize>,
+        model_instance: Arc<Mutex<OrtKoko>>,
+    ) -> Result<Vec<Vec<f32>>, Box<dyn Error>> {
+        let _ = (request_id, instance_id, chunk_number);
+
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let lang = normalize_lang(language);
+        let path = resolve_voice_path(&self.voice_files, style_name)
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+        let style: Style = load_voice_style(&[path.to_string_lossy().into_owned()], false)?;
+
+        let mut guard = model_instance
+            .lock()
+            .map_err(|e| -> Box<dyn Error> { format!("model mutex poisoned: {}", e).into() })?;
+        let total_step = self.init_config.total_step.max(1);
+        let normalized: Vec<String> = texts.iter().map(|t| t.to_lowercase()).collect();
+        let mut batch = guard
+            .tts
+            .call_batch(
+                &normalized,
+                &lang,
+                &style,
+                total_step,
+                map_speed(speed),
+                0.3,
+            )
+            .with_context(|| "Supertonic batch synthesis failed")?;
+        let sr = guard.tts.sample_rate.max(1) as u32;
+        drop(guard);
+
+        let mut results: Vec<Vec<f32>> = batch.into_iter().map(|(a, _)| a).collect();
+
+        if let Some(ms) = initial_silence {
+            if ms > 0 {
+                let clamped_ms = ms.min(60_000) as f32;
+                let silence_len = ((clamped_ms / 1000.0) * sr as f32).round() as usize;
+                for audio in &mut results {
+                    let mut pad = vec![0.0f32; silence_len];
+                    pad.append(audio);
+                    *audio = pad;
+                }
+            }
+        }
+
+        Ok(results)
+    }
 }
