@@ -7,6 +7,8 @@
  *   APPLE_MACOS_INSTALLER_SIGNING_IDENTITY — full name from Keychain, e.g.
  *     "3rd Party Mac Developer Installer: Your Name (XXXXXXXXXX)"
  *
+ * The .app is expected to be already signed by the Tauri App Store build; this script only runs productbuild.
+ *
  * Optional:
  *   SKIP_MACOS_APPSTORE_PKG=1 — skip this step (e.g. you only need the .app)
  *   MACOS_APPSTORE_PKG_OUT — output .pkg path (default: next to the .app in bundle/macos/)
@@ -49,15 +51,6 @@ if (!identity) {
   process.exit(1);
 }
 
-const appSigningIdentity = (process.env.APPLE_SIGNING_IDENTITY || "").trim();
-if (!appSigningIdentity) {
-  console.error(
-    "sign-macos-appstore-pkg: set APPLE_SIGNING_IDENTITY so bundled executables can be signed with sandbox entitlements."
-  );
-  console.error('  Example: "3rd Party Mac Developer Application: Your Name (TEAMID)"');
-  process.exit(1);
-}
-
 let productName;
 try {
   const conf = JSON.parse(fs.readFileSync(confPath, "utf8"));
@@ -97,71 +90,6 @@ if (!fs.existsSync(appPath)) {
     console.error("  Run build:macos:appstore first (without SKIP_MACOS_APPSTORE_PKG during build).");
     process.exit(1);
   }
-}
-
-// App Store validation requires nested executables to carry sandbox entitlements.
-const ffmpegPath = path.join(
-  appPath,
-  "Contents",
-  "Resources",
-  "resources",
-  "ffmpeg"
-);
-if (fs.existsSync(ffmpegPath)) {
-  const appStoreEntitlementsPath = path.join(tauriDir, "Entitlements.macos-appstore.plist");
-  const nestedExecEntitlementsPath = path.join(
-    tauriDir,
-    "Entitlements.macos-appstore.nested-exec.plist"
-  );
-  if (!fs.existsSync(appStoreEntitlementsPath)) {
-    console.error(
-      "sign-macos-appstore-pkg: missing app entitlements file:",
-      appStoreEntitlementsPath
-    );
-    process.exit(1);
-  }
-  if (!fs.existsSync(nestedExecEntitlementsPath)) {
-    console.error(
-      "sign-macos-appstore-pkg: missing nested executable entitlements file:",
-      nestedExecEntitlementsPath
-    );
-    process.exit(1);
-  }
-
-  // Same as dev: nested ffmpeg gets sandbox entitlements only (no hardened-runtime flags).
-  // Adding --options runtime/--timestamp/--remove-signature can trigger ITMS-90885 on TestFlight.
-  console.log("sign-macos-appstore-pkg: signing nested executable", path.relative(root, ffmpegPath));
-  runOrFail(
-    "codesign",
-    [
-      "--force",
-      "--sign",
-      appSigningIdentity,
-      "--entitlements",
-      nestedExecEntitlementsPath,
-      ffmpegPath,
-    ],
-    { cwd: root }
-  );
-
-  console.log("sign-macos-appstore-pkg: re-signing app bundle after nested signing");
-  runOrFail(
-    "codesign",
-    [
-      "--force",
-      "--sign",
-      appSigningIdentity,
-      "--entitlements",
-      appStoreEntitlementsPath,
-      appPath,
-    ],
-    { cwd: root }
-  );
-} else {
-  console.warn(
-    "sign-macos-appstore-pkg: bundled ffmpeg not found; skipping nested executable signing at",
-    ffmpegPath
-  );
 }
 
 const outPkg =
