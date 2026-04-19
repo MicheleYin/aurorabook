@@ -754,7 +754,7 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
     let build_session = |path: &str| -> Result<Session> {
         let builder = Session::builder().map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
         let mut builder = builder
-            .with_execution_providers([ep::CoreML::default().build()])
+            .with_execution_providers([ep::CPU::default().build().error_on_failure()])
             .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
         let session = builder
             .commit_from_file(path)

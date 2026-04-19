@@ -53,3 +53,4 @@ src-tauri/test_output/
 src-tauri/watermark_test.mp3
 
 .cargo-target/
+src-tauri/resources/espeak-ng-data/
