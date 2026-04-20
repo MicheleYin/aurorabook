@@ -427,5 +427,80 @@ fn main() {
     }
 
     sync_supertonic_assets_for_bundle();
+    copy_ort_webgpu_dylib_for_macos_bundle();
     tauri_build::build()
+}
+
+/// `ort` + `webgpu` links `libwebgpu_dawn.dylib` via `@rpath`; Tauri validates `bundle.resources`
+/// paths during this build script, so the dylib must exist before `tauri_build::build()`.
+/// (See `.cargo/config.toml` rpath + `tauri.macos.conf.json` resources.)
+fn copy_ort_webgpu_dylib_for_macos_bundle() {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if !target.contains("apple-darwin") {
+        return;
+    }
+
+    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
+        Ok(s) => PathBuf::from(s),
+        Err(_) => return,
+    };
+    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
+    // Match `src-tauri/.cargo/config.toml` `[build] target-dir = "../../.cargo-target"`.
+    // Build scripts do not always get `CARGO_TARGET_DIR`, so fall back to the same layout.
+    let cargo_target_from_config = manifest_dir
+        .join("..")
+        .join("..")
+        .join(".cargo-target")
+        .canonicalize()
+        .unwrap_or_else(|_| manifest_dir.join("..").join("..").join(".cargo-target"));
+
+    let mut target_roots: Vec<PathBuf> = Vec::new();
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
+        target_roots.push(PathBuf::from(dir));
+    }
+    target_roots.push(cargo_target_from_config);
+    target_roots.push(manifest_dir.join("target"));
+
+    let dest_dir = manifest_dir.join("resources").join("ort-dylibs");
+    let dest = dest_dir.join("libwebgpu_dawn.dylib");
+
+    'outer: for target_dir in &target_roots {
+        let candidates = [
+            target_dir.join(&profile).join("libwebgpu_dawn.dylib"),
+            target_dir.join(&target).join(&profile).join("libwebgpu_dawn.dylib"),
+        ];
+        for src in candidates.iter() {
+            if !src.is_file() {
+                continue;
+            }
+            if let Err(e) = fs::create_dir_all(&dest_dir) {
+                eprintln!(
+                    "cargo:warning=ort-dylibs: failed to create {}: {}",
+                    dest_dir.display(),
+                    e
+                );
+                return;
+            }
+            match fs::copy(src, &dest) {
+                Ok(_) => {
+                    println!("cargo:rerun-if-changed={}", src.display());
+                    break 'outer;
+                }
+                Err(e) => eprintln!(
+                    "cargo:warning=ort-dylibs: failed to copy {} → {}: {}",
+                    src.display(),
+                    dest.display(),
+                    e
+                ),
+            }
+        }
+    }
+
+    if !dest.is_file() {
+        eprintln!(
+            "cargo:warning=libwebgpu_dawn.dylib not found under any of {:?} (profile={}); ort (webgpu) must have been built first",
+            target_roots,
+            profile
+        );
+    }
 }

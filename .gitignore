@@ -46,6 +46,9 @@ src-tauri/Entitlements.macos-appstore.plist
 src-tauri/signing/*
 !src-tauri/signing/README.md
 
+# Copied at bundle time from Cargo output (see scripts/copy-ort-webgpu-dylib.cjs)
+src-tauri/resources/ort-dylibs/*.dylib
+
 
 src-tauri/check_output.txt
 src-tauri/check_output_final.txt

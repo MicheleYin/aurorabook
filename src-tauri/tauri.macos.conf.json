@@ -4,7 +4,8 @@
     "resources": [
       "resources/voice-samples/",
       "resources/supertonic/onnx/",
-      "resources/supertonic/voice_styles/"
+      "resources/supertonic/voice_styles/",
+      "resources/ort-dylibs/libwebgpu_dawn.dylib"
     ]
   }
 }

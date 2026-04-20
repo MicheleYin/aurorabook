@@ -1,6 +1,21 @@
 [build]
 target-dir = "../../.cargo-target"
 
+# ort links `@rpath/libwebgpu_dawn.dylib`; Tauri 2 places `bundle.resources` under
+# `Contents/Resources/resources/`, so the dylib resolves at
+# `Resources/resources/ort-dylibs/` (see tauri.macos.conf.json + build.rs copy).
+[target.aarch64-apple-darwin]
+rustflags = [
+  "-C", "link-arg=-mmacosx-version-min=12.0",
+  "-C", "link-arg=-Wl,-rpath,@executable_path/../Resources/resources/ort-dylibs",
+]
+
+[target.x86_64-apple-darwin]
+rustflags = [
+  "-C", "link-arg=-mmacosx-version-min=12.0",
+  "-C", "link-arg=-Wl,-rpath,@executable_path/../Resources/resources/ort-dylibs",
+]
+
 [alias]
 # Generate `resources/voice-samples/{lang}/{F1..M5}.mp3` previews used by settings playback.
 gen-voice-samples = "run --release --features gen-voice-samples --bin gen_voice_samples"

@@ -902,7 +902,7 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
     if use_gpu {
         bail!("GPU mode is not supported yet");
     }
-    log::debug!("Supertonic TTS: using CPU for inference");
+    log::debug!("Supertonic TTS: using WebGPU (ONNX Runtime) for inference");
 
     let cfgs = load_cfgs(onnx_dir)?;
     let dp_path = format!("{}/duration_predictor.onnx", onnx_dir);

@@ -4,10 +4,13 @@
  * using xcrun productbuild (Mac Installer certificate).
  *
  * Requires:
- *   APPLE_MACOS_INSTALLER_SIGNING_IDENTITY — full name from Keychain, e.g.
+ *   APPLE_MACOS_INSTALLER_SIGNING_IDENTITY — Mac *Installer* identity for productbuild .pkg, e.g.
  *     "3rd Party Mac Developer Installer: Your Name (XXXXXXXXXX)"
+ *   APPLE_SIGNING_IDENTITY — Required when `libwebgpu_dawn.dylib` is bundled (signs dylib + re-signs .app), e.g.
+ *     "3rd Party Mac Developer Application: Your Name (XXXXXXXXXX)"
  *
- * The .app is expected to be already signed by the Tauri App Store build; this script only runs productbuild.
+ * Bundled `libwebgpu_dawn.dylib` must satisfy the app’s code requirement (ITMS-90238); we sign it with
+ * `Entitlements.macos-appstore.nested-exec.plist` then re-sign the .app with `Entitlements.macos-appstore.plist`.
  *
  * Optional:
  *   SKIP_MACOS_APPSTORE_PKG=1 — skip this step (e.g. you only need the .app)
@@ -90,6 +93,81 @@ if (!fs.existsSync(appPath)) {
     console.error("  Run build:macos:appstore first (without SKIP_MACOS_APPSTORE_PKG during build).");
     process.exit(1);
   }
+}
+
+// ITMS-90238: bundled loadable Mach-O (libwebgpu_dawn.dylib) must be signed with the app cert + nested entitlements.
+const dawnCandidates = [
+  path.join(appPath, "Contents", "Resources", "resources", "ort-dylibs", "libwebgpu_dawn.dylib"),
+  path.join(appPath, "Contents", "Resources", "ort-dylibs", "libwebgpu_dawn.dylib"),
+];
+let dawnPath = null;
+for (const p of dawnCandidates) {
+  if (fs.existsSync(p)) {
+    dawnPath = p;
+    break;
+  }
+}
+
+if (dawnPath) {
+  const appSigningIdentity = (process.env.APPLE_SIGNING_IDENTITY || "").trim();
+  if (!appSigningIdentity) {
+    console.error(
+      "sign-macos-appstore-pkg: libwebgpu_dawn.dylib is present; set APPLE_SIGNING_IDENTITY (Mac App Store Application) to sign it and re-sign the .app."
+    );
+    console.error('  Example: "3rd Party Mac Developer Application: Your Name (TEAMID)"');
+    process.exit(1);
+  }
+
+  const appStoreEntitlementsPath = path.join(tauriDir, "Entitlements.macos-appstore.plist");
+  const nestedExecEntitlementsPath = path.join(tauriDir, "Entitlements.macos-appstore.nested-exec.plist");
+  if (!fs.existsSync(appStoreEntitlementsPath)) {
+    console.error(
+      "sign-macos-appstore-pkg: missing app entitlements file:",
+      appStoreEntitlementsPath
+    );
+    process.exit(1);
+  }
+  if (!fs.existsSync(nestedExecEntitlementsPath)) {
+    console.error(
+      "sign-macos-appstore-pkg: missing nested entitlements file:",
+      nestedExecEntitlementsPath
+    );
+    process.exit(1);
+  }
+
+  // Same pattern as ffmpeg: nested binary only sandbox inherit; avoid hardened-runtime flags on nested dylib (ITMS-90885).
+  console.log("sign-macos-appstore-pkg: signing nested libwebgpu_dawn.dylib", path.relative(root, dawnPath));
+  runOrFail(
+    "codesign",
+    [
+      "--force",
+      "--sign",
+      appSigningIdentity,
+      "--entitlements",
+      nestedExecEntitlementsPath,
+      dawnPath,
+    ],
+    { cwd: root }
+  );
+
+  console.log("sign-macos-appstore-pkg: re-signing app bundle after nested signing");
+  runOrFail(
+    "codesign",
+    [
+      "--force",
+      "--sign",
+      appSigningIdentity,
+      "--entitlements",
+      appStoreEntitlementsPath,
+      appPath,
+    ],
+    { cwd: root }
+  );
+} else {
+  console.warn(
+    "sign-macos-appstore-pkg: libwebgpu_dawn.dylib not found under",
+    dawnCandidates.map((p) => path.relative(root, p)).join(" or ")
+  );
 }
 
 const outPkg =
