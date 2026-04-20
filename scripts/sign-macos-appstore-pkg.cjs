@@ -6,11 +6,12 @@
  * Requires:
  *   APPLE_MACOS_INSTALLER_SIGNING_IDENTITY — Mac *Installer* identity for productbuild .pkg, e.g.
  *     "3rd Party Mac Developer Installer: Your Name (XXXXXXXXXX)"
- *   APPLE_SIGNING_IDENTITY — Required when `libwebgpu_dawn.dylib` is bundled (signs dylib + re-signs .app), e.g.
+ *   APPLE_SIGNING_IDENTITY — Required when nested binaries are bundled (signs nested binaries + re-signs .app), e.g.
  *     "3rd Party Mac Developer Application: Your Name (XXXXXXXXXX)"
  *
- * Bundled `libwebgpu_dawn.dylib` must satisfy the app’s code requirement (ITMS-90238); we sign it with
- * `Entitlements.macos-appstore.nested-exec.plist` then re-sign the .app with `Entitlements.macos-appstore.plist`.
+ * Bundled nested binaries (for example `libwebgpu_dawn.dylib`, `ffmpeg`) must satisfy the app’s code
+ * requirement (ITMS-90238); we sign each with `Entitlements.macos-appstore.nested-exec.plist` then
+ * re-sign the .app with `Entitlements.macos-appstore.plist`.
  *
  * Optional:
  *   SKIP_MACOS_APPSTORE_PKG=1 — skip this step (e.g. you only need the .app)
@@ -95,24 +96,23 @@ if (!fs.existsSync(appPath)) {
   }
 }
 
-// ITMS-90238: bundled loadable Mach-O (libwebgpu_dawn.dylib) must be signed with the app cert + nested entitlements.
-const dawnCandidates = [
+// ITMS-90238: bundled nested Mach-O binaries must be signed with app cert + nested entitlements.
+const nestedBinaryCandidates = [
   path.join(appPath, "Contents", "Resources", "resources", "ort-dylibs", "libwebgpu_dawn.dylib"),
   path.join(appPath, "Contents", "Resources", "ort-dylibs", "libwebgpu_dawn.dylib"),
+  path.join(appPath, "Contents", "Resources", "resources", "ffmpeg"),
+  path.join(appPath, "Contents", "Resources", "ffmpeg"),
+  path.join(appPath, "Contents", "Resources", "resources", "bin", "ffmpeg"),
+  path.join(appPath, "Contents", "Resources", "bin", "ffmpeg"),
 ];
-let dawnPath = null;
-for (const p of dawnCandidates) {
-  if (fs.existsSync(p)) {
-    dawnPath = p;
-    break;
-  }
-}
 
-if (dawnPath) {
+const nestedBinaryPaths = nestedBinaryCandidates.filter((p) => fs.existsSync(p) && fs.statSync(p).isFile());
+
+if (nestedBinaryPaths.length > 0) {
   const appSigningIdentity = (process.env.APPLE_SIGNING_IDENTITY || "").trim();
   if (!appSigningIdentity) {
     console.error(
-      "sign-macos-appstore-pkg: libwebgpu_dawn.dylib is present; set APPLE_SIGNING_IDENTITY (Mac App Store Application) to sign it and re-sign the .app."
+      "sign-macos-appstore-pkg: nested binaries are present; set APPLE_SIGNING_IDENTITY (Mac App Store Application) to sign them and re-sign the .app."
     );
     console.error('  Example: "3rd Party Mac Developer Application: Your Name (TEAMID)"');
     process.exit(1);
@@ -135,20 +135,22 @@ if (dawnPath) {
     process.exit(1);
   }
 
-  // Same pattern as ffmpeg: nested binary only sandbox inherit; avoid hardened-runtime flags on nested dylib (ITMS-90885).
-  console.log("sign-macos-appstore-pkg: signing nested libwebgpu_dawn.dylib", path.relative(root, dawnPath));
-  runOrFail(
-    "codesign",
-    [
-      "--force",
-      "--sign",
-      appSigningIdentity,
-      "--entitlements",
-      nestedExecEntitlementsPath,
-      dawnPath,
-    ],
-    { cwd: root }
-  );
+  // Nested binaries should only inherit sandbox entitlement; avoid hardened-runtime flags (ITMS-90885).
+  for (const nestedPath of nestedBinaryPaths) {
+    console.log("sign-macos-appstore-pkg: signing nested binary", path.relative(root, nestedPath));
+    runOrFail(
+      "codesign",
+      [
+        "--force",
+        "--sign",
+        appSigningIdentity,
+        "--entitlements",
+        nestedExecEntitlementsPath,
+        nestedPath,
+      ],
+      { cwd: root }
+    );
+  }
 
   console.log("sign-macos-appstore-pkg: re-signing app bundle after nested signing");
   runOrFail(
@@ -165,8 +167,8 @@ if (dawnPath) {
   );
 } else {
   console.warn(
-    "sign-macos-appstore-pkg: libwebgpu_dawn.dylib not found under",
-    dawnCandidates.map((p) => path.relative(root, p)).join(" or ")
+    "sign-macos-appstore-pkg: no nested binary found under",
+    nestedBinaryCandidates.map((p) => path.relative(root, p)).join(" or ")
   );
 }
 

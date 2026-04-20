@@ -21,6 +21,25 @@ APPLE_TEAM_ID=XXXXXXXXXX bun run scripts/gen-macos-appstore-entitlements.cjs
 
 Or set `APPLE_TEAM_ID` in your shell environment and run without the prefix.
 
+## Bundled FFmpeg for Mac App Store
+
+`bun run build:macos:appstore` now verifies a bundled FFmpeg binary at `src-tauri/resources/ffmpeg`.
+
+- If the file is already there, it is reused.
+- Otherwise set `MACOS_APPSTORE_FFMPEG=/absolute/path/to/ffmpeg` and the build script copies it into `src-tauri/resources/ffmpeg`.
+
+The App Store signing step re-signs this nested binary with `Entitlements.macos-appstore.nested-exec.plist`.
+
+### Copy FFmpeg into `src-tauri/resources/ffmpeg` (any time)
+
+From `tts-tauri/`:
+
+```bash
+bun run sync:ffmpeg -- /path/to/ffmpeg
+```
+
+Same as `node scripts/copy-ffmpeg-to-resources.cjs /path/to/ffmpeg`. The destination is gitignored.
+
 ## Regenerating src-tauri/gen/apple/ (Xcode project)
 
 The `src-tauri/gen/apple/` directory is also gitignored because it contains your Team ID.

@@ -29,6 +29,7 @@ type ViewMode = "grid" | "list";
 export function Library() {
   const {
     setCurrentTab,
+    currentBook,
     setCurrentBookWithLoading,
     library: books,
     setLibrary: setBooks,
@@ -92,7 +93,13 @@ export function Library() {
 
   const handleOpenBook = (book: Book, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    setCurrentBookWithLoading(book, false);
+    // Opening the already-active book should behave like tab switch only.
+    if (currentBook?.id === book.id) {
+      setCurrentTab("reader");
+      return;
+    }
+
+    void setCurrentBookWithLoading(book, false);
     setCurrentTab("reader");
   };
 

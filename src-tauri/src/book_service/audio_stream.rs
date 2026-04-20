@@ -129,7 +129,7 @@ fn detect_resource_mime_type(path: &str, bytes: &[u8]) -> &'static str {
         "font/otf"
     } else if lower.ends_with(".mp3") {
         "audio/mpeg"
-    } else if lower.ends_with(".m4a") {
+    } else if lower.ends_with(".m4a") || lower.ends_with(".m4b") {
         "audio/mp4"
     } else if lower.ends_with(".ogg") {
         "audio/ogg"
@@ -640,7 +640,11 @@ fn detect_audio_mime_type(audio_path: &str, audio_href: &str) -> &'static str {
 
     if path_lower.ends_with(".mp3") || href_lower.ends_with(".mp3") {
         "audio/mpeg"
-    } else if path_lower.ends_with(".m4a") || href_lower.ends_with(".m4a") {
+    } else if path_lower.ends_with(".m4a")
+        || href_lower.ends_with(".m4a")
+        || path_lower.ends_with(".m4b")
+        || href_lower.ends_with(".m4b")
+    {
         "audio/mp4"
     } else if path_lower.ends_with(".ogg") || href_lower.ends_with(".ogg") {
         "audio/ogg"

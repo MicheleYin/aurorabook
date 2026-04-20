@@ -684,7 +684,11 @@ fn detect_audio_mime_type(audio_path: &str, audio_href: &str) -> &'static str {
         "audio/mpeg"
     } else if audio_path.ends_with(".wav") || audio_href.ends_with(".wav") {
         "audio/wav"
-    } else if audio_path.ends_with(".m4a") || audio_href.ends_with(".m4a") {
+    } else if audio_path.ends_with(".m4a")
+        || audio_href.ends_with(".m4a")
+        || audio_path.ends_with(".m4b")
+        || audio_href.ends_with(".m4b")
+    {
         "audio/mp4"
     } else if audio_path.ends_with(".ogg") || audio_href.ends_with(".ogg") {
         "audio/ogg"

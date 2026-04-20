@@ -215,6 +215,10 @@ pub fn run() {
             book_service::export_epub_to_file,
             book_service::mp3_export::export_as_mp3,
             book_service::mp3_export::get_mp3_export_status,
+            book_service::mp3_export::get_audio_export_status,
+            book_service::mp3_export::export_as_m4a,
+            book_service::mp3_export::export_as_m4b,
+            book_service::mp3_export::cancel_audio_export,
             book_service::update_book_progress,
             book_service::update_book_audio_state,
             book_service::ingest_epub,
@@ -235,6 +239,9 @@ pub fn run() {
                 // Handle app close events (when app is about to close)
                 tauri::RunEvent::ExitRequested { code, .. } => {
                     log::info!("App is closing with exit code: {:?}", code);
+
+                    #[cfg(not(target_os = "ios"))]
+                    book_service::mp3_export::terminate_active_ffmpeg_audio_exports();
 
                     // Emit event to frontend to save progress before closing
                     if let Some(window) = app_handle.get_webview_window("main") {

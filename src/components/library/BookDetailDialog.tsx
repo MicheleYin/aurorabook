@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -63,8 +63,11 @@ interface ConversionProgress {
   message: string;
 }
 
-interface Mp3ExportProgress {
+type AudioExportFormat = "mp3" | "m4a" | "m4b";
+
+interface AudioExportProgress {
   bookId: string;
+  format: AudioExportFormat;
   currentStep: string;
   message: string;
   processedTracks: number;
@@ -73,9 +76,30 @@ interface Mp3ExportProgress {
   etaMs: number | null;
 }
 
-interface Mp3ExportStatus {
+interface AudioExportStatus {
   inProgress: boolean;
   bookId: string | null;
+  format: AudioExportFormat | null;
+}
+
+/** Linear ETA from tracks completed; `startedAtMs` should be wall time when export work began. */
+function linearAudioExportEtaMs(
+  startedAtMs: number,
+  processedTracks: number,
+  totalTracks: number
+): number | null {
+  if (totalTracks <= 0 || processedTracks <= 0) {
+    return null;
+  }
+  if (processedTracks >= totalTracks) {
+    return 0;
+  }
+  const elapsed = Math.max(1, Date.now() - startedAtMs);
+  const rate = processedTracks / elapsed;
+  if (!Number.isFinite(rate) || rate <= 0) {
+    return null;
+  }
+  return (totalTracks - processedTracks) / rate;
 }
 
 interface BookDetailDialogProps {
@@ -96,10 +120,14 @@ interface BookDetailDialogProps {
 const BookDetailContent = ({
   book,
   conversionProgress,
+  audioExportProgress,
+  audioExportEtaMs,
   eta,
 }: {
   book: Book;
   conversionProgress: ConversionProgress | null;
+  audioExportProgress: AudioExportProgress | null;
+  audioExportEtaMs: number | null;
   eta: string | null;
 }) => {
   const { t, lang } = useTranslation();
@@ -284,6 +312,62 @@ const BookDetailContent = ({
         </>
       )}
 
+      {audioExportProgress && (
+        <>
+          <Separator />
+          <div>
+            <p className="text-sm font-medium mb-2">Export Progress</p>
+            <div className="space-y-2">
+              {/*
+                Keep export progress high-level: tracks processed vs total.
+                Avoid noisy per-step updates (e.g. "encoding track ...").
+              */}
+              <div className="text-sm text-muted-foreground">
+                Processing tracks...
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {audioExportProgress.processedTracks}/{audioExportProgress.totalTracks}{" "}
+                tracks ({audioExportProgress.format.toUpperCase()})
+              </div>
+              <Progress
+                value={
+                  audioExportProgress.totalTracks > 0
+                    ? Math.round(
+                        (audioExportProgress.processedTracks /
+                          audioExportProgress.totalTracks) *
+                          100
+                      )
+                    : 0
+                }
+                className="h-2"
+              />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">
+                  {audioExportProgress.totalTracks > 0
+                    ? Math.round(
+                        (audioExportProgress.processedTracks /
+                          audioExportProgress.totalTracks) *
+                          100
+                      )
+                    : 0}
+                  %
+                </span>
+                {audioExportEtaMs !== null && (
+                  <span className="text-xs text-muted-foreground">
+                    {t("status.eta", {
+                      time: humanizeDuration(audioExportEtaMs, {
+                        round: true,
+                        language: humanizeDurationLocale(lang),
+                      }),
+                    })}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       {book.audioTracks && book.audioTracks.length > 0 && (
         <>
           <Separator />
@@ -354,32 +438,70 @@ export function BookDetailDialog({
 }: Readonly<BookDetailDialogProps>) {
   const { t, lang } = useTranslation();
   const [exportDropdownKey, setExportDropdownKey] = useState(0);
-  const [isExportingMp3, setIsExportingMp3] = useState(false);
-  const [isAnyMp3Exporting, setIsAnyMp3Exporting] = useState(false);
-  const [activeMp3ExportBookId, setActiveMp3ExportBookId] =
+  const [isExportingAudio, setIsExportingAudio] = useState(false);
+  const [isAnyAudioExporting, setIsAnyAudioExporting] = useState(false);
+  const [activeAudioExportBookId, setActiveAudioExportBookId] =
     useState<string | null>(null);
+  const [activeAudioExportFormat, setActiveAudioExportFormat] =
+    useState<AudioExportFormat | null>(null);
+  const [audioExportProgress, setAudioExportProgress] =
+    useState<AudioExportProgress | null>(null);
+  const [audioExportStartedAtMs, setAudioExportStartedAtMs] = useState<
+    number | null
+  >(null);
+  const [audioExportEtaTick, setAudioExportEtaTick] = useState(0);
   const [isPreConversionOpen, setIsPreConversionOpen] = useState(false);
   const { settings } = useSettingsContext();
   const isMobile = useIsMobile();
 
   const syncAudioExportStatus = useCallback(async () => {
     try {
-      const mp3Status = await invoke<Mp3ExportStatus>("get_mp3_export_status");
-      setIsAnyMp3Exporting(mp3Status.inProgress);
-      setActiveMp3ExportBookId(mp3Status.bookId);
+      const exportStatus = await invoke<AudioExportStatus>(
+        "get_audio_export_status"
+      );
+      setIsAnyAudioExporting(exportStatus.inProgress);
+      setActiveAudioExportBookId(exportStatus.bookId);
+      setActiveAudioExportFormat(exportStatus.format);
 
       if (!book) {
-        setIsExportingMp3(false);
+        setIsExportingAudio(false);
+        setAudioExportProgress(null);
+        setAudioExportStartedAtMs(null);
         return;
       }
 
-      setIsExportingMp3(
-        mp3Status.inProgress && mp3Status.bookId === book.id
-      );
+      if (exportStatus.inProgress && exportStatus.bookId === book.id) {
+        setIsExportingAudio(true);
+      }
     } catch (err) {
       logger.warn("Failed to sync audio export status:", err);
     }
   }, [book]);
+
+  const audioExportEtaMs = useMemo(() => {
+    if (
+      audioExportStartedAtMs === null ||
+      audioExportProgress === null
+    ) {
+      return null;
+    }
+    void audioExportEtaTick;
+    return linearAudioExportEtaMs(
+      audioExportStartedAtMs,
+      audioExportProgress.processedTracks,
+      audioExportProgress.totalTracks
+    );
+  }, [audioExportEtaTick, audioExportProgress, audioExportStartedAtMs]);
+
+  useEffect(() => {
+    if (audioExportStartedAtMs === null || audioExportProgress === null) {
+      return;
+    }
+    const id = window.setInterval(() => {
+      setAudioExportEtaTick((n) => n + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [audioExportProgress, audioExportStartedAtMs]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -432,76 +554,99 @@ export function BookDetailDialog({
     }
   }, [book]);
 
-  const handleExportMp3 = useCallback(async () => {
+  const formatLabel = useCallback(
+    (format: AudioExportFormat) => format.toUpperCase(),
+    []
+  );
+
+  const handleExportAudio = useCallback(async (format: AudioExportFormat) => {
     if (!book) return;
 
-    const toastId = `mp3-export-${book.id}`;
-    let unlistenMp3Progress: (() => void) | null = null;
+    const toastId = `audio-export-${format}-${book.id}`;
+    let unlistenProgress: (() => void) | null = null;
 
     try {
-      const mp3Status = await invoke<Mp3ExportStatus>("get_mp3_export_status");
+      const exportStatus = await invoke<AudioExportStatus>(
+        "get_audio_export_status"
+      );
 
-      if (mp3Status.inProgress) {
-        setIsAnyMp3Exporting(true);
-        setActiveMp3ExportBookId(mp3Status.bookId);
-        setIsExportingMp3(
-          mp3Status.inProgress && mp3Status.bookId === book.id
+      if (exportStatus.inProgress) {
+        setIsAnyAudioExporting(true);
+        setActiveAudioExportBookId(exportStatus.bookId);
+        setActiveAudioExportFormat(exportStatus.format);
+        setIsExportingAudio(
+          exportStatus.inProgress && exportStatus.bookId === book.id
         );
 
         toast.error(
-          mp3Status.bookId === book.id
+          exportStatus.bookId === book.id
             ? "An export is already running for this book"
             : "Another export is already in progress"
         );
         return;
       }
 
-      setIsExportingMp3(true);
-      setIsAnyMp3Exporting(true);
-      setActiveMp3ExportBookId(book.id);
-      toast.loading("Starting MP3 export...", { id: toastId });
+      setIsExportingAudio(true);
+      setIsAnyAudioExporting(true);
+      setActiveAudioExportBookId(book.id);
+      setActiveAudioExportFormat(format);
+      setAudioExportStartedAtMs(null);
+      setAudioExportEtaTick(0);
+      setAudioExportProgress({
+        bookId: book.id,
+        format,
+        currentStep: "initializing",
+        message: `Starting ${formatLabel(format)} export...`,
+        processedTracks: 0,
+        totalTracks: 0,
+        percent: 0,
+        etaMs: null,
+      });
 
-      unlistenMp3Progress = await listen<Mp3ExportProgress>(
-        "mp3-export-progress",
+      unlistenProgress = await listen<AudioExportProgress>(
+        "audio-export-progress",
         (event) => {
           const progress = event.payload;
 
-          setIsAnyMp3Exporting(progress.currentStep !== "completed");
-          setActiveMp3ExportBookId(
+          setIsAnyAudioExporting(progress.currentStep !== "completed");
+          setActiveAudioExportBookId(
             progress.currentStep === "completed" ||
               progress.currentStep === "cancelled"
               ? null
               : progress.bookId
           );
-          setIsExportingMp3(
+          setActiveAudioExportFormat(
+            progress.currentStep === "completed" ||
+              progress.currentStep === "cancelled"
+              ? null
+              : progress.format
+          );
+          setIsExportingAudio(
             progress.bookId === book.id &&
               progress.currentStep !== "completed" &&
               progress.currentStep !== "cancelled"
+          );
+          setAudioExportProgress(
+            progress.bookId === book.id &&
+              progress.currentStep !== "completed" &&
+              progress.currentStep !== "cancelled"
+              ? progress
+              : null
           );
 
           if (progress.bookId !== book.id) {
             return;
           }
-
-          const etaText =
-            progress.etaMs !== null
-              ? ` ${t("status.eta", { time: humanizeDuration(progress.etaMs, { round: true, language: humanizeDurationLocale(lang) }) })}`
-              : "";
-
-          const stepKey = progress.currentStep.replace(/-/g, "_");
-          const stepLabel = t(`conversion.step.${stepKey}`);
-          toast.loading(`${stepLabel} (${progress.percent}%)${etaText}`, {
-            id: toastId,
-          });
         }
       );
 
+      const extension = format;
       const filePath = await save({
-        defaultPath: `${book.title}.mp3`,
+        defaultPath: `${book.title}.${extension}`,
         filters: [
           {
-            name: "MP3 Audio",
-            extensions: ["mp3"],
+            name: `${formatLabel(format)} Audio`,
+            extensions: [extension],
           },
         ],
       });
@@ -510,36 +655,91 @@ export function BookDetailDialog({
         return;
       }
 
-      await invoke("export_as_mp3", {
-        bookId: book.id,
-        outputPath: filePath,
+      setAudioExportStartedAtMs(Date.now());
+
+      const commandName =
+        format === "m4a"
+          ? "export_as_m4a"
+          : format === "m4b"
+            ? "export_as_m4b"
+            : "export_as_mp3";
+
+      // Full-book re-encode can take a long time; a short timeout clears UI while Rust keeps running.
+      const exportTimeoutMs = 7_200_000;
+      await new Promise<void>((resolve, reject) => {
+        const timeoutId = window.setTimeout(() => {
+          reject(
+            new Error(
+              `${formatLabel(format)} export timed out. Please try again.`
+            )
+          );
+        }, exportTimeoutMs);
+
+        invoke(commandName, {
+          bookId: book.id,
+          outputPath: filePath,
+        })
+          .then(() => {
+            window.clearTimeout(timeoutId);
+            resolve();
+          })
+          .catch((err: unknown) => {
+            window.clearTimeout(timeoutId);
+            reject(err);
+          });
       });
 
-      toast.success(t("book.export_mp3_success"), { id: toastId });
+      toast.success(`${formatLabel(format)} exported successfully`, {
+        id: toastId,
+      });
     } catch (err) {
-      logger.error("Failed to export MP3:", err);
+      logger.error(`Failed to export ${formatLabel(format)}:`, err);
       const message =
-        err instanceof Error ? err.message : "Failed to export MP3";
+        err instanceof Error
+          ? err.message
+          : `Failed to export ${formatLabel(format)}`;
       toast.error(message, { id: toastId });
     } finally {
-      if (unlistenMp3Progress) {
-        unlistenMp3Progress();
+      if (unlistenProgress) {
+        unlistenProgress();
       }
-      setIsExportingMp3(false);
+      // Clear local UI state first; polling sync will re-assert if needed.
+      setIsExportingAudio(false);
+      setIsAnyAudioExporting(false);
+      setActiveAudioExportBookId(null);
+      setActiveAudioExportFormat(null);
+      setAudioExportProgress(null);
+      setAudioExportStartedAtMs(null);
       void syncAudioExportStatus();
     }
-  }, [book, syncAudioExportStatus, t, lang]);
+  }, [book, syncAudioExportStatus, formatLabel]);
+
+  const handleCancelAudioExport = useCallback(async () => {
+    if (!book) return;
+    try {
+      await invoke<boolean>("cancel_audio_export");
+    } catch (err) {
+      logger.error("Failed to cancel audio export:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Failed to cancel audio export"
+      );
+    }
+  }, [book]);
 
   const handleExportDropdownAction = useCallback(
     (value: string) => {
       if (value === "epub") {
         void handleExportEpub();
       } else if (value === "mp3") {
-        void handleExportMp3();
+        void handleExportAudio("mp3");
+      } else if (value === "m4a") {
+        void handleExportAudio("m4a");
+      } else if (value === "m4b") {
+        void handleExportAudio("m4b");
       }
       setExportDropdownKey((prev) => prev + 1);
     },
-    [handleExportEpub, handleExportMp3]
+    [handleExportEpub, handleExportAudio]
   );
 
   const handlePreConversionConfirm = (language: string, voiceId: string) => {
@@ -551,12 +751,12 @@ export function BookDetailDialog({
   const isExportDisabled =
     isDeleting ||
     isConvertingThisBook ||
-    isExportingMp3 ||
-    isAnyMp3Exporting;
+    isExportingAudio ||
+    isAnyAudioExporting;
   const isAnotherBookExporting =
-    isAnyMp3Exporting &&
-    activeMp3ExportBookId !== null &&
-    activeMp3ExportBookId !== book.id;
+    isAnyAudioExporting &&
+    activeAudioExportBookId !== null &&
+    activeAudioExportBookId !== book.id;
 
   return (
     <>
@@ -572,6 +772,8 @@ export function BookDetailDialog({
               <BookDetailContent
                 book={book}
                 conversionProgress={conversionProgress}
+                audioExportProgress={audioExportProgress}
+                audioExportEtaMs={audioExportEtaMs}
                 eta={eta}
               />
             </div>
@@ -592,13 +794,13 @@ export function BookDetailDialog({
                 disabled={isExportDisabled}
               >
                 <SelectTrigger className="w-[170px] gap-2">
-                  {isExportingMp3 || isAnotherBookExporting ? (
+                  {isExportingAudio || isAnotherBookExporting ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span>
                         {isAnotherBookExporting
                           ? t("book.export_busy")
-                          : t("book.exporting_mp3")}
+                          : `Exporting ${formatLabel(activeAudioExportFormat ?? "mp3")}...`}
                       </span>
                     </>
                   ) : (
@@ -611,8 +813,24 @@ export function BookDetailDialog({
                 <SelectContent>
                   <SelectItem value="epub">{t("book.export_epub")}</SelectItem>
                   <SelectItem value="mp3">{t("book.export_mp3")}</SelectItem>
+                  <SelectItem value="m4a">Export M4A</SelectItem>
+                  <SelectItem value="m4b">Export M4B</SelectItem>
                 </SelectContent>
               </Select>
+              {isExportingAudio &&
+                (activeAudioExportFormat === "m4a" ||
+                  activeAudioExportFormat === "m4b") && (
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => void handleCancelAudioExport()}
+                    disabled={isDeleting}
+                    className="gap-2"
+                  >
+                    <X className="h-4 w-4" />
+                    Cancel export
+                  </Button>
+                )}
               {book.conversionStatus === "started" && isConvertingThisBook && (
                 <Button
                   variant="outline"
@@ -673,6 +891,8 @@ export function BookDetailDialog({
               <BookDetailContent
                 book={book}
                 conversionProgress={conversionProgress}
+                audioExportProgress={audioExportProgress}
+                audioExportEtaMs={audioExportEtaMs}
                 eta={eta}
               />
             </div>
@@ -693,13 +913,13 @@ export function BookDetailDialog({
                 disabled={isExportDisabled}
               >
                 <SelectTrigger className="w-full gap-2">
-                  {isExportingMp3 || isAnotherBookExporting ? (
+                  {isExportingAudio || isAnotherBookExporting ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span>
                         {isAnotherBookExporting
                           ? t("book.export_busy")
-                          : t("book.exporting_mp3")}
+                          : `Exporting ${formatLabel(activeAudioExportFormat ?? "mp3")}...`}
                       </span>
                     </>
                   ) : (
@@ -716,8 +936,28 @@ export function BookDetailDialog({
                   <SelectItem className="w-full" value="mp3">
                     {t("book.export_mp3")}
                   </SelectItem>
+                  <SelectItem className="w-full" value="m4a">
+                    Export as M4A
+                  </SelectItem>
+                  <SelectItem className="w-full" value="m4b">
+                    Export as M4B
+                  </SelectItem>
                 </SelectContent>
               </Select>
+              {isExportingAudio &&
+                (activeAudioExportFormat === "m4a" ||
+                  activeAudioExportFormat === "m4b") && (
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => void handleCancelAudioExport()}
+                    disabled={isDeleting}
+                    className="gap-2 w-full"
+                  >
+                    <X className="h-4 w-4" />
+                    Cancel export
+                  </Button>
+                )}
               {book.conversionStatus === "started" && isConvertingThisBook && (
                 <Button
                   variant="outline"

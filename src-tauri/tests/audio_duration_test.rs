@@ -10,7 +10,7 @@ use aurorabook_lib::epub::converter::smil::{generate_smil_file, format_smil_time
 const SAMPLE_RATE: u32 = 24000;
 
 /// Mock WordAlignment structure for testing
-/// This mirrors the structure from kokoros::tts::koko::WordAlignment
+/// This mirrors the structure from aurorabook_lib::tts::koko::WordAlignment
 #[derive(Clone, Debug)]
 struct MockWordAlignment {
     pub start_sec: f32,
@@ -367,6 +367,7 @@ fn test_backend_duration_computation_accuracy() {
             href: wav_path.file_name().unwrap().to_string_lossy().to_string(),
             url: None,
             duration: None,
+            order: 0,
         }];
         
         // Create a minimal EPUB-like structure for testing
@@ -472,6 +473,7 @@ fn test_total_duration_calculation_accuracy() {
                 href: format!("track_{}.wav", i),
                 url: None,
                 duration: None,
+                order: i,
             }
         })
         .collect();
@@ -592,6 +594,7 @@ fn test_duration_edge_cases() {
         href: "short.wav".to_string(),
         url: None,
         duration: None,
+        order: 0,
     }];
     
     let epub_bytes = {
@@ -640,6 +643,7 @@ fn test_duration_edge_cases() {
         href: "long.wav".to_string(),
         url: None,
         duration: None,
+        order: 0,
     }];
     
     let epub_bytes = {

@@ -218,6 +218,10 @@ impl TTSKokoParallel {
         Arc::clone(&self.models[index])
     }
 
+    pub fn sample_rate(&self) -> u32 {
+        self.init_config.sample_rate.max(1)
+    }
+
     pub fn tts_raw_audio_with_instance(
         &self,
         text: &str,
