@@ -13,6 +13,11 @@ pub struct LogEntry {
 static APP_HANDLE: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<Option<AppHandle>>>> =
     std::sync::OnceLock::new();
 
+thread_local! {
+    /// Prevents recursion when reporting `emit("backend-log")` failures via `log::warn!`.
+    static SUPPRESS_UI_LOG_FORWARD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Initialize the log forwarding system
 pub fn init_log_forwarding(app: &AppHandle) {
     let handle = app.clone();
@@ -28,7 +33,9 @@ fn forward_log(entry: LogEntry) {
             if let Some(app) = handle_guard.as_ref() {
                 if let Some(window) = app.get_webview_window("main") {
                     if let Err(e) = window.emit("backend-log", &entry) {
-                        eprintln!("Failed to emit backend log: {}", e);
+                        SUPPRESS_UI_LOG_FORWARD.with(|c| c.set(true));
+                        log::warn!(target: "tauri::log_forward", "Failed to emit backend log: {}", e);
+                        SUPPRESS_UI_LOG_FORWARD.with(|c| c.set(false));
                     }
                 }
             }
@@ -38,6 +45,9 @@ fn forward_log(entry: LogEntry) {
 
 /// Create a log entry and forward it
 pub fn log(level: &str, message: &str, data: Option<serde_json::Value>) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let timestamp = SystemTime::now()
@@ -67,10 +77,14 @@ pub struct FrontendLogger {
 
 impl FrontendLogger {
     pub fn new() -> Self {
-        // Use trace level by default to capture all logs including ONNX Runtime
-        // Can be overridden with RUST_LOG environment variable
+        // Debug: trace by default (override with RUST_LOG). Release: logger never emits (global max level is Off).
+        let default_filter = if cfg!(debug_assertions) {
+            "trace"
+        } else {
+            "off"
+        };
         let inner =
-            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace"))
+            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter))
                 .format(|buf, record| {
                     use std::io::Write;
                     let level = record.level();
@@ -95,8 +109,8 @@ impl log::Log for FrontendLogger {
         // First, let the inner logger handle stderr output
         self.inner.log(record);
 
-        // Then forward to frontend
-        if self.enabled(record.metadata()) {
+        // Then forward to frontend (skip when handling emit failure — avoids re-entrancy)
+        if self.enabled(record.metadata()) && !SUPPRESS_UI_LOG_FORWARD.with(|c| c.get()) {
             let level = match record.level() {
                 log::Level::Error => "error",
                 log::Level::Warn => "warn",

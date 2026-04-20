@@ -219,9 +219,8 @@ pub async fn convert_epub_to_audiobook_standalone(
 ) -> AppResult<Vec<u8>> {
     use crate::utils::path_resolver::ResourcePathResolver;
 
-    // Create console-based progress callback for testing
     let progress_callback: ProgressCallback = Box::new(|progress| {
-        println!(
+        log::trace!(
             "Progress: {} - {} ({}/{})",
             progress.current_step,
             progress.message,

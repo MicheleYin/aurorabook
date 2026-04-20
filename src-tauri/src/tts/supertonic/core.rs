@@ -280,7 +280,7 @@ fn sample_noisy_latent(
 /// Upper bound on ONNX batch dimension per forward pass (avoids huge padded tensors).
 const MAX_ONNX_BATCH: usize = 32;
 
-const MAX_CHUNK_LENGTH: usize = 300;
+const MAX_CHUNK_LENGTH: usize = 500;
 const ABBREVIATIONS: &[&str] = &[
     "Dr.", "Mr.", "Mrs.", "Ms.", "Prof.", "Sr.", "Jr.", "St.", "Ave.", "Rd.", "Blvd.", "Dept.",
     "Inc.", "Ltd.", "Co.", "Corp.", "etc.", "vs.", "i.e.", "e.g.", "Ph.D.",

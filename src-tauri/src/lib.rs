@@ -51,8 +51,8 @@ fn greet(name: &str) -> String {
 /// - Resource management
 ///
 /// # Logging
-/// Initializes `env_logger` with default filter level "info".
-/// Can be overridden with `RUST_LOG` environment variable.
+/// Debug builds: forwards logs to stderr and the webview (`frontend-log`); default `trace`, overridable via `RUST_LOG`.
+/// Release builds: logging is fully disabled (no stderr, no UI forwarding).
 ///
 /// # Panics
 /// Panics if the Tauri application fails to run.
@@ -69,7 +69,13 @@ pub fn run() {
             // Set max level to Trace to capture all logs including ONNX Runtime
             // The env_logger inside FrontendLogger will handle filtering based on RUST_LOG
             log::set_boxed_logger(logger)
-                .map(|()| log::set_max_level(log::LevelFilter::Trace))
+                .map(|()| {
+                    log::set_max_level(if cfg!(debug_assertions) {
+                        log::LevelFilter::Trace
+                    } else {
+                        log::LevelFilter::Off
+                    });
+                })
                 .expect("Failed to set logger");
             // Set TAURI_RESOURCE_DIR environment variable for bundled Supertonic assets
             match app.path().resource_dir() {
