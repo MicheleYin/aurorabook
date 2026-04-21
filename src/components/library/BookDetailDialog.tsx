@@ -359,9 +359,11 @@ const BookDetailContent = ({
                   </span>
                   <span className="text-sm font-medium">
                     {humanizeDuration(
-                      book.audioTracks.reduce(
-                        (total, track) => total + (track.duration || 0),
-                        0
+                      Math.round(
+                        book.audioTracks.reduce(
+                          (total, track) => total + (track.duration || 0),
+                          0
+                        )
                       ) * 1000,
                       { language: humanizeDurationLocale(lang) }
                     )}

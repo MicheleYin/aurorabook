@@ -105,7 +105,7 @@ export function TOCDrawer({
         }
       });
       if (totalDuration > 0) {
-        map.set(chapterHref, totalDuration);
+        map.set(chapterHref, Math.round(totalDuration));
       }
     });
 
