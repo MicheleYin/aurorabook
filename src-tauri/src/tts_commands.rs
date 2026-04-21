@@ -270,7 +270,7 @@ pub async fn generate_tts_batch(
 
 /// Convert PCM audio data to MP3 format (Tauri command).
 ///
-/// Encodes 16-bit PCM via **FFmpeg** (`libmp3lame`). Requires `ffmpeg` on `PATH`.
+/// Encodes 16-bit PCM in-process using `mp3lame-encoder` (no FFmpeg process).
 ///
 /// # Arguments
 /// * `pcm_data` - 16-bit PCM audio data (little-endian) as bytes
@@ -294,7 +294,100 @@ pub(crate) fn encode_pcm_to_mp3_bytes(
     channels: u32,
     bitrate: Option<u32>,
 ) -> AppResult<Vec<u8>> {
-    crate::utils::ffmpeg_audio::encode_pcm_to_mp3_bytes(pcm_data, sample_rate, channels, bitrate)
+    use mp3lame_encoder::{Builder, FlushNoGap, InterleavedPcm, MonoPcm, Quality};
+
+    if pcm_data.is_empty() {
+        return Err(AppError::Encoding("PCM data is empty".to_string()));
+    }
+    if channels == 0 || channels > 2 {
+        return Err(AppError::Encoding(format!(
+            "Unsupported channel count for MP3 encoding: {} (expected 1 or 2)",
+            channels
+        )));
+    }
+    if sample_rate == 0 {
+        return Err(AppError::Encoding(
+            "Sample rate must be greater than zero".to_string(),
+        ));
+    }
+    if pcm_data.len() % (channels as usize * 2) != 0 {
+        return Err(AppError::Encoding(format!(
+            "PCM data length ({}) is not aligned to {} channel 16-bit frames",
+            pcm_data.len(),
+            channels
+        )));
+    }
+
+    let brate = map_bitrate_to_lame(bitrate.unwrap_or(128));
+    let mut builder =
+        Builder::new().ok_or_else(|| AppError::Encoding("Failed to initialize LAME builder".to_string()))?;
+    builder
+        .set_num_channels(channels as u8)
+        .map_err(|e| AppError::Encoding(format!("Failed to set MP3 channel count: {}", e)))?;
+    builder
+        .set_sample_rate(sample_rate)
+        .map_err(|e| AppError::Encoding(format!("Failed to set MP3 sample rate: {}", e)))?;
+    builder
+        .set_brate(brate)
+        .map_err(|e| AppError::Encoding(format!("Failed to set MP3 bitrate: {}", e)))?;
+    builder
+        .set_quality(Quality::Good)
+        .map_err(|e| AppError::Encoding(format!("Failed to set MP3 quality: {}", e)))?;
+
+    let mut encoder = builder
+        .build()
+        .map_err(|e| AppError::Encoding(format!("Failed to build MP3 encoder: {}", e)))?;
+
+    let samples: Vec<i16> = pcm_data
+        .chunks_exact(2)
+        .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
+        .collect();
+
+    let mut output = Vec::new();
+    output.reserve(mp3lame_encoder::max_required_buffer_size(samples.len()));
+
+    if channels == 1 {
+        encoder
+            .encode_to_vec(MonoPcm(&samples), &mut output)
+            .map_err(|e| AppError::Encoding(format!("MP3 encode failed: {}", e)))?;
+    } else {
+        encoder
+            .encode_to_vec(InterleavedPcm(&samples), &mut output)
+            .map_err(|e| AppError::Encoding(format!("MP3 encode failed: {}", e)))?;
+    }
+
+    encoder
+        .flush_to_vec::<FlushNoGap>(&mut output)
+        .map_err(|e| AppError::Encoding(format!("MP3 flush failed: {}", e)))?;
+
+    if output.is_empty() {
+        return Err(AppError::Encoding(
+            "MP3 encoding produced empty output".to_string(),
+        ));
+    }
+    Ok(output)
+}
+
+fn map_bitrate_to_lame(kbps: u32) -> mp3lame_encoder::Bitrate {
+    use mp3lame_encoder::Bitrate;
+    match kbps {
+        0..=8 => Bitrate::Kbps8,
+        9..=16 => Bitrate::Kbps16,
+        17..=24 => Bitrate::Kbps24,
+        25..=32 => Bitrate::Kbps32,
+        33..=40 => Bitrate::Kbps40,
+        41..=48 => Bitrate::Kbps48,
+        49..=64 => Bitrate::Kbps64,
+        65..=80 => Bitrate::Kbps80,
+        81..=96 => Bitrate::Kbps96,
+        97..=112 => Bitrate::Kbps112,
+        113..=128 => Bitrate::Kbps128,
+        129..=160 => Bitrate::Kbps160,
+        161..=192 => Bitrate::Kbps192,
+        193..=224 => Bitrate::Kbps224,
+        225..=256 => Bitrate::Kbps256,
+        _ => Bitrate::Kbps320,
+    }
 }
 
 #[tauri::command]
