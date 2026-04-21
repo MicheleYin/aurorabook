@@ -344,9 +344,6 @@ dependencies = [
  "num_cpus",
  "once_cell",
  "ort",
- "oxideav-aac",
- "oxideav-codec",
- "oxideav-core",
  "percent-encoding",
  "quick-xml 0.31.0",
  "rand 0.8.5",
@@ -3516,34 +3513,6 @@ dependencies = [
  "objc2-ui-kit",
  "serde",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "oxideav-aac"
-version = "0.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7b8a1366e00d915ba2b885a02a2770462bcc30554f7a6f5cb503ccb44b5b6cd"
-dependencies = [
- "oxideav-codec",
- "oxideav-core",
-]
-
-[[package]]
-name = "oxideav-codec"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5968b58ef3e238640b933fa3d43659b8609e77ff0f9457cb5fa544aa3dc995fb"
-dependencies = [
- "oxideav-core",
-]
-
-[[package]]
-name = "oxideav-core"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c6205b6fa8d7cd51b5632ea2f322dd81078f3f1234558015f6bda5993c9cbd2"
-dependencies = [
- "thiserror 1.0.69",
 ]
 
 [[package]]

@@ -1,27 +1,20 @@
-//! Export audiobook tracks to a single MP3 using Symphonia decode + bundled LAME (mp3lame-encoder).
-//! M4A/M4B: on desktop, AAC+MP4 mux uses **FFmpeg** when available (`AURORABOOK_FFMPEG`, bundled
-//! `ffmpeg` next to app resources, or `ffmpeg` on `PATH`). iOS and environments without FFmpeg
-//! fall back to the pure-Rust AAC encoder + `mp4` muxer.
+//! Export audiobook tracks to a single file (MP3, M4A, or M4B) by decoding with Symphonia and
+//! encoding/muxing with the **system FFmpeg** on `PATH` (`ffmpeg`). Metadata and M4B chapter
+//! markers are applied with `mp4ameta` after mux. iOS builds do not ship FFmpeg for export; those
+//! commands return a clear error.
 
 use super::repositories::{AudioRepository, BookRepository};
 use super::get_db_connection;
-use crate::tts_commands::encode_pcm_to_mp3_bytes;
 use crate::utils::constants::DEFAULT_MP3_BITRATE;
 use crate::utils::errors::{AppError, AppResult};
-use mp4::{
-    AacConfig, AudioObjectType, ChannelConfig, Mp4Config, Mp4Sample, Mp4Writer, SampleFreqIndex,
-    TrackConfig,
-};
-use oxideav_aac::adts::parse_adts_header;
-use oxideav_core::{AudioFrame, CodecId, CodecParameters, Frame, SampleFormat, TimeBase};
-use std::io::{Cursor, Write};
-use std::path::{Path, PathBuf};
+use std::io::{Cursor, ErrorKind, Write};
+use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Instant;
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 
 #[cfg(not(target_os = "ios"))]
 use std::collections::HashSet;
@@ -196,7 +189,7 @@ pub async fn get_mp3_export_status() -> AppResult<Mp3ExportStatus> {
     })
 }
 
-/// Cancel an in-progress m4a/m4b export that uses FFmpeg by sending SIGTERM to the child process.
+/// Cancel an in-progress audio export that uses FFmpeg by sending SIGTERM to the child process.
 #[tauri::command]
 pub async fn cancel_audio_export(app: tauri::AppHandle) -> AppResult<bool> {
     #[cfg(target_os = "ios")]
@@ -443,169 +436,185 @@ fn decode_audio_blob_to_pcm(
     Ok((pcm, sr, ch))
 }
 
-fn split_adts_to_raw_frames(adts_bytes: &[u8]) -> AppResult<Vec<Vec<u8>>> {
-    let mut frames = Vec::new();
-    let mut offset = 0usize;
-    while offset < adts_bytes.len() {
-        let header = parse_adts_header(&adts_bytes[offset..]).map_err(|e| {
-            AppError::Encoding(format!("Failed to parse AAC ADTS header at {}: {}", offset, e))
-        })?;
-        if header.frame_length == 0 || offset + header.frame_length > adts_bytes.len() {
-            return Err(AppError::Encoding(
-                "Invalid ADTS frame length while encoding AAC".to_string(),
-            ));
-        }
-        let header_len = header.header_length();
-        let frame_end = offset + header.frame_length;
-        let payload_start = offset + header_len;
-        if payload_start > frame_end {
-            return Err(AppError::Encoding(
-                "Invalid ADTS payload offsets while encoding AAC".to_string(),
-            ));
-        }
-        frames.push(adts_bytes[payload_start..frame_end].to_vec());
-        offset = frame_end;
-    }
-    Ok(frames)
-}
-
-fn encode_pcm_to_aac_frames(
-    pcm: Vec<u8>,
-    sample_rate: u32,
-    channels: u32,
-    bitrate: u64,
-) -> AppResult<Vec<Vec<u8>>> {
-    let channel_count = u16::try_from(channels)
-        .map_err(|_| AppError::Encoding("Channel count out of range for AAC".to_string()))?;
-    let bytes_per_frame = 2usize * channels as usize;
-    if pcm.len() % bytes_per_frame != 0 {
-        return Err(AppError::Encoding(
-            "PCM byte length is not aligned to 16-bit interleaved frames".to_string(),
-        ));
-    }
-    let total_samples = pcm.len() / bytes_per_frame;
-    let pcm = pcm;
-
-    let mut params = CodecParameters::audio(CodecId::new("aac"));
-    params.sample_rate = Some(sample_rate);
-    params.channels = Some(channel_count);
-    params.bit_rate = Some(bitrate);
-
-    let mut encoder = oxideav_aac::encoder::make_encoder(&params)
-        .map_err(|e| AppError::Encoding(format!("Failed to initialize AAC encoder: {}", e)))?;
-
-    // Feed PCM in bounded chunks so `AudioFrame.samples` always fits `u32` and the encoder
-    // stays within reasonable RAM while still preserving cross-chunk AAC state on one encoder.
-    // Keep AAC input chunked close to codec frame cadence. Very large chunks can produce
-    // unstable output quality in long-form content with the current pure-Rust encoder stack.
-    const CHUNK_SAMPLES: usize = 4096;
-
-    let mut encoded_frames = Vec::new();
-    let mut offset_samples = 0usize;
-
-    while offset_samples < total_samples {
-        let chunk_samples = CHUNK_SAMPLES.min(total_samples - offset_samples);
-        let byte_start = offset_samples * bytes_per_frame;
-        let byte_end = (offset_samples + chunk_samples) * bytes_per_frame;
-        let chunk = pcm[byte_start..byte_end].to_vec();
-
-        let frame = Frame::Audio(AudioFrame {
-            format: SampleFormat::S16,
-            channels: channel_count,
-            sample_rate,
-            samples: u32::try_from(chunk_samples).map_err(|_| {
-                AppError::Encoding("AAC PCM chunk sample count overflow".to_string())
-            })?,
-            pts: Some(offset_samples as i64),
-            time_base: TimeBase::new(1, sample_rate as i64),
-            data: vec![chunk],
-        });
-        encoder
-            .send_frame(&frame)
-            .map_err(|e| AppError::Encoding(format!("Failed to encode AAC frame: {}", e)))?;
-
-        while let Ok(packet) = encoder.receive_packet() {
-            let mut raw_frames = split_adts_to_raw_frames(&packet.data)?;
-            encoded_frames.append(&mut raw_frames);
-        }
-
-        offset_samples += chunk_samples;
-    }
-
-    encoder
-        .flush()
-        .map_err(|e| AppError::Encoding(format!("Failed to flush AAC encoder: {}", e)))?;
-
-    while let Ok(packet) = encoder.receive_packet() {
-        let mut raw_frames = split_adts_to_raw_frames(&packet.data)?;
-        encoded_frames.append(&mut raw_frames);
-    }
-
-    if encoded_frames.is_empty() {
-        return Err(AppError::Encoding(
-            "AAC encoder produced no output frames".to_string(),
-        ));
-    }
-
-    Ok(encoded_frames)
+fn ffmpeg_export_forbidden_message() -> String {
+    "Audio export requires FFmpeg (`ffmpeg` on PATH). Install FFmpeg or use a build target where it is available.".to_string()
 }
 
 #[cfg(target_os = "ios")]
-fn resolve_ffmpeg_executable(_app: Option<&tauri::AppHandle>) -> Option<PathBuf> {
-    None
+fn require_ffmpeg_for_export() -> AppResult<()> {
+    Err(AppError::Encoding(ffmpeg_export_forbidden_message()))
 }
 
 #[cfg(not(target_os = "ios"))]
-fn resolve_ffmpeg_executable(app: Option<&tauri::AppHandle>) -> Option<PathBuf> {
-    fn ensure_executable(path: PathBuf) -> PathBuf {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(meta) = std::fs::metadata(&path) {
-                let mut perms = meta.permissions();
-                let mode = perms.mode();
-                if mode & 0o111 == 0 {
-                    perms.set_mode(mode | 0o755);
-                    let _ = std::fs::set_permissions(&path, perms);
-                }
-            }
-        }
-        path
-    }
-
-    if let Ok(p) = std::env::var("AURORABOOK_FFMPEG") {
-        let pb = PathBuf::from(p.trim());
-        if pb.is_file() {
-            return Some(ensure_executable(pb));
-        }
-    }
-    if let Some(app) = app {
-        if let Ok(rd) = app.path().resource_dir() {
-            for rel in [
-                Path::new("ffmpeg"),
-                Path::new("ffmpeg.exe"),
-                Path::new("bin/ffmpeg"),
-                Path::new("bin/ffmpeg.exe"),
-                Path::new("resources/ffmpeg"),
-                Path::new("resources/ffmpeg.exe"),
-            ] {
-                let candidate = rd.join(rel);
-                if candidate.is_file() {
-                    return Some(ensure_executable(candidate));
-                }
-            }
-        }
-    }
+fn require_ffmpeg_for_export() -> AppResult<()> {
     let status = Command::new("ffmpeg")
         .arg("-version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .ok()?;
+        .map_err(|e| {
+            AppError::Encoding(format!(
+                "{} Could not run `ffmpeg`: {}",
+                ffmpeg_export_forbidden_message(),
+                e
+            ))
+        })?;
     if status.success() {
-        return Some(PathBuf::from("ffmpeg"));
+        Ok(())
+    } else {
+        Err(AppError::Encoding(ffmpeg_export_forbidden_message()))
     }
-    None
+}
+
+fn export_cancelled_by_signal(status: &std::process::ExitStatus) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            return sig == 15 || sig == 2;
+        }
+    }
+    let _ = status;
+    false
+}
+
+#[cfg(not(target_os = "ios"))]
+fn ffmpeg_stderr_snippet(stderr: &[u8]) -> String {
+    let s = String::from_utf8_lossy(stderr);
+    if s.len() > 4000 {
+        format!("{}…", &s[..4000])
+    } else {
+        s.into_owned()
+    }
+}
+
+/// Decode all tracks to PCM, then pipe one concatenated s16le stream into FFmpeg. `encoder_args`
+/// are appended after `-i pipe:0` and before the output file path.
+#[cfg(not(target_os = "ios"))]
+fn ffmpeg_concat_pcm_export(
+    output_path: &str,
+    pcm_tracks: &[(Vec<u8>, u32, u32, String)],
+    encoder_args: &[&str],
+    process_label: &str,
+    mut on_track_encoded: impl FnMut(usize, usize) + Send,
+) -> AppResult<()> {
+    if pcm_tracks.is_empty() {
+        return Err(AppError::Store(
+            "No exportable audio tracks found for export".to_string(),
+        ));
+    }
+    let first_sr = pcm_tracks[0].1;
+    let first_ch = pcm_tracks[0].2;
+    for (_, sr, ch, href) in pcm_tracks.iter().skip(1) {
+        if *sr != first_sr || *ch != first_ch {
+            return Err(AppError::Encoding(format!(
+                "Mixed sample rate/channel tracks are not supported (track '{}': {}Hz/{}ch, expected {}Hz/{}ch)",
+                href, sr, ch, first_sr, first_ch
+            )));
+        }
+    }
+
+    let mut cmd = Command::new("ffmpeg");
+    cmd.arg("-nostdin")
+        .arg("-y")
+        .arg("-f")
+        .arg("s16le")
+        .arg("-ar")
+        .arg(first_sr.to_string())
+        .arg("-ac")
+        .arg(first_ch.to_string())
+        .arg("-i")
+        .arg("pipe:0");
+    for a in encoder_args {
+        cmd.arg(a);
+    }
+    cmd.arg(output_path)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null());
+
+    let mut child = cmd.spawn().map_err(|e| {
+        AppError::Encoding(format!(
+            "Failed to spawn FFmpeg for {}: {}",
+            process_label, e
+        ))
+    })?;
+
+    let ffmpeg_pid = child.id();
+    register_ffmpeg_audio_export_pid(ffmpeg_pid);
+
+    struct FfmpegAudioExportPidGuard(u32);
+    impl Drop for FfmpegAudioExportPidGuard {
+        fn drop(&mut self) {
+            unregister_ffmpeg_audio_export_pid(self.0);
+        }
+    }
+    let _ffmpeg_pid_guard = FfmpegAudioExportPidGuard(ffmpeg_pid);
+
+    let stdin = child.stdin.take().ok_or_else(|| {
+        AppError::Encoding("FFmpeg subprocess has no stdin pipe".to_string())
+    })?;
+
+    let total = pcm_tracks.len();
+    let output: Output = thread::scope(|s| -> AppResult<Output> {
+        let writer = s.spawn(|| -> std::io::Result<()> {
+            let mut stdin = stdin;
+            for (index, (pcm, _sr, _ch, _href)) in pcm_tracks.iter().enumerate() {
+                stdin.write_all(pcm)?;
+                on_track_encoded(index + 1, total);
+            }
+            Ok(())
+        });
+
+        let out = child.wait_with_output().map_err(|e| {
+            AppError::Encoding(format!("FFmpeg {} process failed: {}", process_label, e))
+        })?;
+
+        if !out.status.success() && export_cancelled_by_signal(&out.status) {
+            let _ = writer.join();
+            return Ok(out);
+        }
+
+        let writer_res = writer.join().map_err(|_| {
+            AppError::Encoding("FFmpeg stdin writer thread panicked".to_string())
+        })?;
+        writer_res.map_err(|e| {
+            let stderr = ffmpeg_stderr_snippet(&out.stderr);
+            let early_exit = e.kind() == ErrorKind::BrokenPipe;
+            AppError::Encoding(format!(
+                "{}Failed to pipe PCM to FFmpeg: {}{}",
+                if early_exit {
+                    "FFmpeg closed stdin before all PCM was written (it exited early — often a missing encoder, mux error, or bad output path). "
+                } else {
+                    ""
+                },
+                e,
+                if stderr.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n\nFFmpeg stderr:\n{}", stderr)
+                }
+            ))
+        })?;
+
+        Ok(out)
+    })?;
+
+    if !output.status.success() {
+        let _ = std::fs::remove_file(output_path);
+        if export_cancelled_by_signal(&output.status) {
+            return Err(AppError::Store("Audio export cancelled".to_string()));
+        }
+        let tail = ffmpeg_stderr_snippet(&output.stderr);
+        return Err(AppError::Encoding(format!(
+            "FFmpeg {} failed (status {:?}): {}",
+            process_label,
+            output.status.code(),
+            tail
+        )));
+    }
+
+    Ok(())
 }
 
 fn chapter_starts_for_pcm_tracks(
@@ -629,150 +638,6 @@ fn chapter_starts_for_pcm_tracks(
         elapsed_samples += frame_samples;
     }
     chapter_starts
-}
-
-#[cfg(not(target_os = "ios"))]
-fn create_mp4_export_file_ffmpeg(
-    output_path: &str,
-    book: &crate::book_service::models::Book,
-    pcm_tracks: &[(Vec<u8>, u32, u32, String)],
-    format: AudioExportFormat,
-    ffmpeg_bin: &Path,
-    mut on_track_encoded: impl FnMut(usize, usize) + Send,
-) -> AppResult<()> {
-    if pcm_tracks.is_empty() {
-        return Err(AppError::Store(
-            "No exportable audio tracks found for MP4 export".to_string(),
-        ));
-    }
-    let first_sr = pcm_tracks[0].1;
-    let first_ch = pcm_tracks[0].2;
-    for (_, sr, ch, href) in pcm_tracks.iter().skip(1) {
-        if *sr != first_sr || *ch != first_ch {
-            return Err(AppError::Encoding(format!(
-                "Mixed sample rate/channel tracks are not supported for m4a/m4b export (track '{}': {}Hz/{}ch, expected {}Hz/{}ch)",
-                href, sr, ch, first_sr, first_ch
-            )));
-        }
-    }
-    let chapter_starts = chapter_starts_for_pcm_tracks(book, pcm_tracks, first_sr);
-
-    let mut child = Command::new(ffmpeg_bin)
-        .arg("-nostdin")
-        .arg("-y")
-        .arg("-f")
-        .arg("s16le")
-        .arg("-ar")
-        .arg(first_sr.to_string())
-        .arg("-ac")
-        .arg(first_ch.to_string())
-        .arg("-i")
-        .arg("pipe:0")
-        .arg("-c:a")
-        .arg("aac")
-        .arg("-b:a")
-        .arg("128k")
-        .arg("-profile:a")
-        .arg("aac_low")
-        .arg("-movflags")
-        .arg("+faststart")
-        .arg(output_path)
-        .stdin(Stdio::piped())
-        .stderr(Stdio::piped())
-        .stdout(Stdio::null())
-        .spawn()
-        .map_err(|e| {
-            AppError::Encoding(format!(
-                "Failed to spawn FFmpeg for AAC export ({}): {}",
-                ffmpeg_bin.display(),
-                e
-            ))
-        })?;
-
-    let ffmpeg_pid = child.id();
-    register_ffmpeg_audio_export_pid(ffmpeg_pid);
-
-    struct FfmpegAudioExportPidGuard(u32);
-    impl Drop for FfmpegAudioExportPidGuard {
-        fn drop(&mut self) {
-            unregister_ffmpeg_audio_export_pid(self.0);
-        }
-    }
-    let _ffmpeg_pid_guard = FfmpegAudioExportPidGuard(ffmpeg_pid);
-
-    let stdin = child.stdin.take().ok_or_else(|| {
-        AppError::Encoding("FFmpeg subprocess has no stdin pipe".to_string())
-    })?;
-
-    fn export_cancelled_by_signal(status: &std::process::ExitStatus) -> bool {
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::ExitStatusExt;
-            if let Some(sig) = status.signal() {
-                return sig == 15 || sig == 2;
-            }
-        }
-        let _ = status;
-        false
-    }
-
-    let total = pcm_tracks.len();
-    let output: Output = thread::scope(|s| -> AppResult<Output> {
-        let writer = s.spawn(|| -> std::io::Result<()> {
-            let mut stdin = stdin;
-            for (index, (pcm, _sr, _ch, _href)) in pcm_tracks.iter().enumerate() {
-                stdin.write_all(pcm)?;
-                on_track_encoded(index + 1, total);
-            }
-            Ok(())
-        });
-
-        let out = child.wait_with_output().map_err(|e| {
-            AppError::Encoding(format!("FFmpeg AAC export process failed: {}", e))
-        })?;
-
-        if !out.status.success() && export_cancelled_by_signal(&out.status) {
-            let _ = writer.join();
-            return Ok(out);
-        }
-
-        let writer_res = writer.join().map_err(|_| {
-            AppError::Encoding("FFmpeg stdin writer thread panicked".to_string())
-        })?;
-        writer_res.map_err(|e| {
-            AppError::Encoding(format!("Failed to pipe PCM to FFmpeg: {}", e))
-        })?;
-
-        Ok(out)
-    })?;
-
-    if !output.status.success() {
-        let _ = std::fs::remove_file(output_path);
-        if export_cancelled_by_signal(&output.status) {
-            return Err(AppError::Store("Audio export cancelled".to_string()));
-        }
-        let tail = String::from_utf8_lossy(&output.stderr);
-        let tail = if tail.len() > 4000 {
-            format!("{}…", &tail[..4000])
-        } else {
-            tail.into_owned()
-        };
-        return Err(AppError::Encoding(format!(
-            "FFmpeg AAC export failed (status {:?}): {}",
-            output.status.code(),
-            tail
-        )));
-    }
-
-    if let Err(e) = apply_mp4_metadata_and_chapters(output_path, book, format, &chapter_starts) {
-        log::warn!(
-            "Could not embed MP4 metadata/chapters for {} export: {}",
-            format.as_str(),
-            e
-        );
-    }
-
-    Ok(())
 }
 
 fn apply_mp4_metadata_and_chapters(
@@ -816,162 +681,39 @@ fn apply_mp4_metadata_and_chapters(
         .map_err(|e| AppError::Encoding(format!("Failed to write MP4 metadata: {}", e)))
 }
 
-fn create_mp4_export_file_pure_rust(
+fn create_mp3_export_file(
     output_path: &str,
-    book: &crate::book_service::models::Book,
     pcm_tracks: &[(Vec<u8>, u32, u32, String)],
-    format: AudioExportFormat,
-    mut on_track_encoded: impl FnMut(usize, usize),
+    on_track_encoded: impl FnMut(usize, usize) + Send,
 ) -> AppResult<()> {
-    fn to_sample_freq_index(sample_rate: u32) -> AppResult<SampleFreqIndex> {
-        match sample_rate {
-            96_000 => Ok(SampleFreqIndex::Freq96000),
-            88_200 => Ok(SampleFreqIndex::Freq88200),
-            64_000 => Ok(SampleFreqIndex::Freq64000),
-            48_000 => Ok(SampleFreqIndex::Freq48000),
-            44_100 => Ok(SampleFreqIndex::Freq44100),
-            32_000 => Ok(SampleFreqIndex::Freq32000),
-            24_000 => Ok(SampleFreqIndex::Freq24000),
-            22_050 => Ok(SampleFreqIndex::Freq22050),
-            16_000 => Ok(SampleFreqIndex::Freq16000),
-            12_000 => Ok(SampleFreqIndex::Freq12000),
-            11_025 => Ok(SampleFreqIndex::Freq11025),
-            8_000 => Ok(SampleFreqIndex::Freq8000),
-            7_350 => Ok(SampleFreqIndex::Freq7350),
-            _ => Err(AppError::Encoding(format!(
-                "Unsupported AAC sample rate for MP4 writer: {}",
-                sample_rate
-            ))),
-        }
+    require_ffmpeg_for_export()?;
+    #[cfg(not(target_os = "ios"))]
+    {
+        let bitrate_arg = format!("{}k", DEFAULT_MP3_BITRATE);
+        // `-f mp3` is required when the output path uses a non-standard suffix (e.g. `.mp3.part`
+        // from atomic rename) so FFmpeg can still pick the MP3 muxer.
+        let enc_args: [&str; 6] = [
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            bitrate_arg.as_str(),
+            "-f",
+            "mp3",
+        ];
+        ffmpeg_concat_pcm_export(
+            output_path,
+            pcm_tracks,
+            &enc_args,
+            "MP3 export",
+            on_track_encoded,
+        )?;
+        Ok(())
     }
-
-    fn to_channel_config(channels: u32) -> AppResult<ChannelConfig> {
-        match channels {
-            1 => Ok(ChannelConfig::Mono),
-            2 => Ok(ChannelConfig::Stereo),
-            3 => Ok(ChannelConfig::Three),
-            4 => Ok(ChannelConfig::Four),
-            5 => Ok(ChannelConfig::Five),
-            6 => Ok(ChannelConfig::FiveOne),
-            8 => Ok(ChannelConfig::SevenOne),
-            _ => Err(AppError::Encoding(format!(
-                "Unsupported AAC channel count for MP4 writer: {}",
-                channels
-            ))),
-        }
+    #[cfg(target_os = "ios")]
+    {
+        let _ = (output_path, pcm_tracks, on_track_encoded);
+        Ok(())
     }
-
-    if pcm_tracks.is_empty() {
-        return Err(AppError::Store(
-            "No exportable audio tracks found for MP4 export".to_string(),
-        ));
-    }
-
-    let first_sr = pcm_tracks[0].1;
-    let first_ch = pcm_tracks[0].2;
-    for (_, sr, ch, href) in pcm_tracks.iter().skip(1) {
-        if *sr != first_sr || *ch != first_ch {
-            return Err(AppError::Encoding(format!(
-                "Mixed sample rate/channel tracks are not supported for m4a/m4b export (track '{}': {}Hz/{}ch, expected {}Hz/{}ch)",
-                href, sr, ch, first_sr, first_ch
-            )));
-        }
-    }
-
-    let mut out_file = std::fs::File::create(output_path)
-        .map_err(|e| AppError::Store(format!("Failed to create output file: {}", e)))?;
-    let mp4_cfg = Mp4Config {
-        major_brand: "M4A ".parse().map_err(|e| {
-            AppError::Encoding(format!("Failed to set MP4 major brand: {}", e))
-        })?,
-        minor_version: 0,
-        compatible_brands: vec![
-            "M4A ".parse().map_err(|e| {
-                AppError::Encoding(format!("Failed to set MP4 compatible brand: {}", e))
-            })?,
-            "isom".parse().map_err(|e| {
-                AppError::Encoding(format!("Failed to set MP4 compatible brand: {}", e))
-            })?,
-            "mp42".parse().map_err(|e| {
-                AppError::Encoding(format!("Failed to set MP4 compatible brand: {}", e))
-            })?,
-        ],
-        timescale: first_sr,
-    };
-    let mut muxer = Mp4Writer::write_start(&mut out_file, &mp4_cfg)
-        .map_err(|e| AppError::Encoding(format!("Failed to start MP4 writer: {}", e)))?;
-    // `TrackConfig::from(AacConfig)` defaults mdhd timescale to 1000 in mp4-0.14; our sample
-    // durations are in PCM sample ticks (1024 per AAC-LC frame), so the media timescale must
-    // match the audio sample rate or players report the wrong duration / play silence.
-    let mut track_cfg = TrackConfig::from(AacConfig {
-        bitrate: 128_000,
-        profile: AudioObjectType::AacLowComplexity,
-        freq_index: to_sample_freq_index(first_sr)?,
-        chan_conf: to_channel_config(first_ch)?,
-    });
-    track_cfg.timescale = first_sr;
-    muxer
-        .add_track(&track_cfg)
-        .map_err(|e| AppError::Encoding(format!("Failed to add AAC track: {}", e)))?;
-    let track_id = 1u32;
-
-    let mut chapter_starts: Vec<(std::time::Duration, String)> = Vec::new();
-    let mut elapsed_samples = 0u64;
-    let mut sample_start = 0u64;
-    let mut total_samples_written = 0u64;
-
-    for (index, (pcm, sr, ch, _href)) in pcm_tracks.iter().enumerate() {
-        let track_title = book
-            .audio_tracks
-            .get(index)
-            .map(|t| t.title.clone())
-            .unwrap_or_else(|| format!("Track {}", index + 1));
-        chapter_starts.push((
-            std::time::Duration::from_secs_f64(elapsed_samples as f64 / first_sr as f64),
-            track_title,
-        ));
-
-        let frame_samples = (pcm.len() / (2 * *ch as usize)) as u64;
-        let encoded_frames = encode_pcm_to_aac_frames(pcm.clone(), *sr, *ch, 128_000)?;
-        for frame in encoded_frames {
-            muxer
-                .write_sample(
-                    track_id,
-                    &Mp4Sample {
-                        start_time: sample_start,
-                        duration: 1024,
-                        rendering_offset: 0,
-                        is_sync: true,
-                        bytes: frame.into(),
-                    },
-                )
-                .map_err(|e| AppError::Encoding(format!("Failed to mux AAC frame: {}", e)))?;
-            sample_start += 1024;
-            total_samples_written += 1024;
-        }
-        on_track_encoded(index + 1, pcm_tracks.len());
-        elapsed_samples += frame_samples;
-    }
-
-    if total_samples_written == 0 {
-        return Err(AppError::Encoding(
-            "No AAC frames were generated for MP4 export".to_string(),
-        ));
-    }
-
-    muxer
-        .write_end()
-        .map_err(|e| AppError::Encoding(format!("Failed to finalize MP4 file: {}", e)))?;
-
-    if let Err(e) = apply_mp4_metadata_and_chapters(output_path, book, format, &chapter_starts) {
-        log::warn!(
-            "Could not embed MP4 metadata/chapters for {} export: {}",
-            format.as_str(),
-            e
-        );
-    }
-
-    Ok(())
 }
 
 fn create_mp4_export_file(
@@ -979,36 +721,55 @@ fn create_mp4_export_file(
     book: &crate::book_service::models::Book,
     pcm_tracks: &[(Vec<u8>, u32, u32, String)],
     format: AudioExportFormat,
-    app: Option<&tauri::AppHandle>,
     on_track_encoded: impl FnMut(usize, usize) + Send,
 ) -> AppResult<()> {
+    require_ffmpeg_for_export()?;
     #[cfg(not(target_os = "ios"))]
     {
-        if let Some(ffmpeg_bin) = resolve_ffmpeg_executable(app) {
-            log::info!(
-                "Using FFmpeg for {} export: {}",
+        if pcm_tracks.is_empty() {
+            return Err(AppError::Store(
+                "No exportable audio tracks found for MP4 export".to_string(),
+            ));
+        }
+        let first_sr = pcm_tracks[0].1;
+        let chapter_starts = chapter_starts_for_pcm_tracks(book, pcm_tracks, first_sr);
+
+        ffmpeg_concat_pcm_export(
+            output_path,
+            pcm_tracks,
+            &[
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-profile:a",
+                "aac_low",
+                "-movflags",
+                "+faststart",
+                // M4A/M4B are written to a `.m4a.part` temp path; FFmpeg 8+ will not infer MP4 mux
+                // from that extension unless we set the muxer explicitly.
+                "-f",
+                "mp4",
+            ],
+            "M4A/M4B export",
+            on_track_encoded,
+        )?;
+
+        if let Err(e) = apply_mp4_metadata_and_chapters(output_path, book, format, &chapter_starts)
+        {
+            log::warn!(
+                "Could not embed MP4 metadata/chapters for {} export: {}",
                 format.as_str(),
-                ffmpeg_bin.display()
-            );
-            return create_mp4_export_file_ffmpeg(
-                output_path,
-                book,
-                pcm_tracks,
-                format,
-                &ffmpeg_bin,
-                on_track_encoded,
+                e
             );
         }
-        log::warn!(
-            "FFmpeg not found for {} export; falling back to pure-Rust AAC",
-            format.as_str()
-        );
+        Ok(())
     }
     #[cfg(target_os = "ios")]
     {
-        let _ = app;
+        let _ = (output_path, book, pcm_tracks, format, on_track_encoded);
+        Ok(())
     }
-    create_mp4_export_file_pure_rust(output_path, book, pcm_tracks, format, on_track_encoded)
 }
 
 async fn export_as_mp4(
@@ -1134,7 +895,6 @@ async fn export_as_mp4(
         &book,
         &pcm_tracks,
         format,
-        Some(&app),
         |encoded_tracks, total_tracks| {
             emit_progress(
                 &app,
@@ -1180,7 +940,7 @@ async fn export_as_mp4(
     Ok(())
 }
 
-/// Export all audiobook tracks as one concatenated MP3 file (basic: one MP3 frame stream per track appended).
+/// Export all audiobook tracks as one MP3 via Symphonia decode and a single FFmpeg (`libmp3lame`) encode.
 #[tauri::command]
 pub async fn export_as_mp3(
     book_id: String,
@@ -1211,11 +971,11 @@ pub async fn export_as_mp3(
     }
     let _guard = AudioExportLockGuard;
 
-    let db = get_db_connection(&app).await.map_err(|e| AppError::Store(e))?;
+    let db = get_db_connection(&app).await.map_err(AppError::Store)?;
 
     let book = BookRepository::find_by_id(db.as_ref(), &book_id)
         .await
-        .map_err(|e| AppError::Store(e))?
+        .map_err(AppError::Store)?
         .ok_or_else(|| AppError::Store(format!("Book not found: {}", book_id)))?;
 
     let mut sorted_tracks = book.audio_tracks.clone();
@@ -1235,11 +995,7 @@ pub async fn export_as_mp3(
         None,
     );
 
-    let mut out_file = std::fs::File::create(&output_path)
-        .map_err(|e| AppError::Store(format!("Failed to create output file: {}", e)))?;
-
-    let mut wrote_any = false;
-    let mut missing = 0usize;
+    let mut pcm_tracks: Vec<(Vec<u8>, u32, u32, String)> = Vec::new();
 
     for (index, track) in sorted_tracks.iter().enumerate() {
         match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &book_id, &track.id).await {
@@ -1260,79 +1016,87 @@ pub async fn export_as_mp3(
                     None,
                 );
 
-                let (pcm, sample_rate, channels) =
-                    match decode_audio_blob_to_pcm(&audio_bytes, &href, AudioExportFormat::Mp3) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        log::warn!("Skipping track {} ({}): {}", track.id, href, e);
-                        missing += 1;
-                        continue;
-                    }
-                };
-
-                emit_progress(
-                    &app,
-                    AudioExportFormat::Mp3,
-                    &book_id,
-                    "encoding-mp3",
-                    format!("Encoding track {}/{}", index + 1, total_tracks),
-                    index + 1,
-                    total_tracks,
-                    if total_tracks > 0 {
-                        (50 + ((index + 1) * 49) / total_tracks).min(99) as u8
-                    } else {
-                        0
-                    },
-                    None,
-                );
-
-                let mp3_chunk = encode_pcm_to_mp3_bytes(
-                    pcm,
-                    sample_rate,
-                    channels,
-                    Some(DEFAULT_MP3_BITRATE),
-                )?;
-
-                out_file
-                    .write_all(&mp3_chunk)
-                    .map_err(|e| AppError::Store(format!("Failed to write MP3 data: {}", e)))?;
-                wrote_any = true;
+                let decoded = decode_audio_blob_to_pcm(&audio_bytes, &href, AudioExportFormat::Mp3)?;
+                pcm_tracks.push((decoded.0, decoded.1, decoded.2, href));
             }
             Ok(None) => {
-                missing += 1;
                 log::warn!("Missing audio track id='{}'", track.id);
             }
             Err(e) => {
-                missing += 1;
                 log::warn!("Unreadable track id='{}': {}", track.id, e);
             }
         }
 
-        let processed = index + 1;
-        let eta_ms = estimate_eta_ms(&started, processed, total_tracks);
         emit_progress(
             &app,
             AudioExportFormat::Mp3,
             &book_id,
-            "encoding-mp3",
-            format!("Processed {} / {} tracks", processed, total_tracks),
-            processed,
+            "extracting-audio",
+            format!("Decoded track {}/{}", index + 1, total_tracks),
+            0,
             total_tracks,
             if total_tracks > 0 {
-                (50 + (processed * 49) / total_tracks).min(99) as u8
+                ((index + 1) * 40 / total_tracks).min(40) as u8
             } else {
                 0
             },
-            eta_ms,
+            None,
         );
     }
 
-    if !wrote_any {
-        return Err(AppError::Store(format!(
-            "No exportable audio tracks ({} missing or failed)",
-            missing
-        )));
+    if pcm_tracks.is_empty() {
+        return Err(AppError::Store(
+            "No exportable audio tracks found for MP3 export".to_string(),
+        ));
     }
+
+    let final_output = PathBuf::from(&output_path);
+    let ext = final_output
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("mp3");
+    let temp_output = final_output.with_extension(format!("{}.part", ext));
+    let temp_output_str = temp_output
+        .to_str()
+        .ok_or_else(|| AppError::Store("Temporary output path is not valid UTF-8".to_string()))?;
+
+    if temp_output.exists() {
+        let _ = std::fs::remove_file(&temp_output);
+    }
+
+    if let Err(e) = create_mp3_export_file(
+        temp_output_str,
+        &pcm_tracks,
+        |encoded_tracks, total_tracks| {
+            emit_progress(
+                &app,
+                AudioExportFormat::Mp3,
+                &book_id,
+                "encoding-mp3",
+                format!("Processed {} / {} tracks", encoded_tracks, total_tracks),
+                encoded_tracks,
+                total_tracks,
+                if total_tracks > 0 {
+                    (40 + (encoded_tracks * 59) / total_tracks).min(99) as u8
+                } else {
+                    0
+                },
+                estimate_eta_ms(&started, encoded_tracks, total_tracks),
+            );
+        },
+    ) {
+        let _ = std::fs::remove_file(&temp_output);
+        return Err(e);
+    }
+
+    std::fs::rename(&temp_output, &final_output).map_err(|e| {
+        let _ = std::fs::remove_file(&temp_output);
+        AppError::Store(format!(
+            "Failed to finalize export file '{}': {}",
+            final_output.display(),
+            e
+        ))
+    })?;
 
     emit_progress(
         &app,
@@ -1377,7 +1141,25 @@ mod m4b_export_tests {
     use std::fs::File;
     use std::io::Read;
     use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
     use zip::ZipArchive;
+
+    fn ffmpeg_on_path() -> bool {
+        #[cfg(target_os = "ios")]
+        {
+            return false;
+        }
+        #[cfg(not(target_os = "ios"))]
+        {
+            Command::new("ffmpeg")
+                .arg("-version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        }
+    }
 
     fn sine_pcm_16le_mono(sample_rate: u32, hz: f64, seconds: f64) -> Vec<u8> {
         let samples = (sample_rate as f64 * seconds) as usize;
@@ -1446,6 +1228,10 @@ mod m4b_export_tests {
     /// Regression: m4b mux output must be readable by mp4ameta so metadata/chapters can be embedded.
     #[test]
     fn m4b_two_track_export_roundtrips_metadata_and_chapters() {
+        if !ffmpeg_on_path() {
+            eprintln!("Skipping m4b export test: ffmpeg not on PATH");
+            return;
+        }
         let tmp = tempfile::tempdir().expect("tempdir");
         let out_path = tmp.path().join("sample.m4b");
         let out_str = out_path.to_str().expect("utf8 path");
@@ -1458,7 +1244,7 @@ mod m4b_export_tests {
             (pcm2, 44_100u32, 1u32, "track2.raw".to_string()),
         ];
 
-        create_mp4_export_file(out_str, &book, &pcm_tracks, AudioExportFormat::M4b, None, |_, _| {})
+        create_mp4_export_file(out_str, &book, &pcm_tracks, AudioExportFormat::M4b, |_, _| {})
             .expect("create m4b");
 
         let meta = std::fs::metadata(&out_path).expect("stat output");
@@ -1506,6 +1292,10 @@ mod m4b_export_tests {
 
     #[test]
     fn sample_epub_exports_m4a_and_m4b_are_parseable() {
+        if !ffmpeg_on_path() {
+            eprintln!("Skipping sample EPUB export test: ffmpeg not on PATH");
+            return;
+        }
         let epub_path = sample_epub_path();
         if !epub_path.exists() {
             eprintln!(
@@ -1585,9 +1375,9 @@ mod m4b_export_tests {
         let m4a_str = m4a.to_str().expect("utf8 m4a path");
         let m4b_str = m4b.to_str().expect("utf8 m4b path");
 
-        create_mp4_export_file(m4a_str, &book, &pcm_tracks, AudioExportFormat::M4a, None, |_, _| {})
+        create_mp4_export_file(m4a_str, &book, &pcm_tracks, AudioExportFormat::M4a, |_, _| {})
             .expect("export sample m4a");
-        create_mp4_export_file(m4b_str, &book, &pcm_tracks, AudioExportFormat::M4b, None, |_, _| {})
+        create_mp4_export_file(m4b_str, &book, &pcm_tracks, AudioExportFormat::M4b, |_, _| {})
             .expect("export sample m4b");
 
         let m4a_meta = std::fs::metadata(&m4a).expect("stat m4a");

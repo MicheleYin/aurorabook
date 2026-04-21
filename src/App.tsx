@@ -20,7 +20,7 @@ import {
   ChapterProgressProvider,
   useChapterProgressContext,
 } from "./context/ChapterProgressContext";
-import { ConversionEventProvider } from "./context/ConversionEventContext";
+import { AudioExportStateProvider } from "./context/AudioExportStateContext";
 import { ConversionStateProvider } from "./context/ConversionStateContext";
 import { SettingsProvider } from "./context/SettingsContext";
 import { useBookConversion } from "./hooks/useBookConversion";
@@ -42,14 +42,23 @@ function AppContent() {
         <main className="flex-1 overflow-hidden">
           <TabsContent
             value="library"
-            className="h-full overflow-auto m-0"
+            forceMount
+            className="h-full overflow-auto m-0 data-[state=inactive]:hidden"
           >
             <Library />
           </TabsContent>
-          <TabsContent value="reader" className="h-full overflow-auto m-0">
+          <TabsContent
+            value="reader"
+            forceMount
+            className="h-full overflow-auto m-0 data-[state=inactive]:hidden"
+          >
             <Reader />
           </TabsContent>
-          <TabsContent value="settings" className="h-full overflow-auto m-0">
+          <TabsContent
+            value="settings"
+            forceMount
+            className="h-full overflow-auto m-0 data-[state=inactive]:hidden"
+          >
             <Settings />
           </TabsContent>
         </main>
@@ -251,8 +260,8 @@ function AppWithProviders() {
 function App() {
   return (
     <ErrorBoundary>
-      <ConversionEventProvider>
-        <ConversionStateProvider>
+      <ConversionStateProvider>
+        <AudioExportStateProvider>
           <SettingsProvider>
             <AudioSyncProvider>
               <ChapterProgressProvider>
@@ -262,9 +271,9 @@ function App() {
               </ChapterProgressProvider>
             </AudioSyncProvider>
           </SettingsProvider>
-        </ConversionStateProvider>
-        <Toaster richColors position="top-center" className="max-w-sm" />
-      </ConversionEventProvider>
+        </AudioExportStateProvider>
+      </ConversionStateProvider>
+      <Toaster richColors position="top-center" className="max-w-sm" />
     </ErrorBoundary>
   );
 }

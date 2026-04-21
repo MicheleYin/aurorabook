@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import type { Book } from "../../types/book";
 import { useAppContext } from "../../context/AppContext";
+import { useAudioExportState } from "../../context/AudioExportStateContext";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
 import { staggerDelay } from "../../lib/animations";
@@ -110,11 +111,13 @@ export function Library() {
   const {
     convertBook: convertBookFromContext,
     cancelConversion,
-    isConverting,
     convertingBookId,
     conversionProgress,
     eta,
   } = useBookConversion();
+
+  const { isAnyExporting, activeExportBookId, exportProgress } =
+    useAudioExportState();
 
   // Wrap convertBook (no changes needed, callbacks handle everything)
   const convertBook = useCallback(
@@ -387,6 +390,11 @@ export function Library() {
                         <div className="text-xs text-muted-foreground">
                           {t(`conversion.step.${conversionProgress.currentStep.replace(/-/g, '_')}`)}
                         </div>
+                        {conversionProgress.message.trim().length > 0 && (
+                          <div className="text-xs text-muted-foreground line-clamp-2">
+                            {conversionProgress.message}
+                          </div>
+                        )}
                         <Progress
                           value={
                             conversionProgress.totalWords > 0
@@ -406,6 +414,29 @@ export function Library() {
                         )}
                       </div>
                     )}
+                    {isAnyExporting &&
+                      activeExportBookId === book.id &&
+                      exportProgress && (
+                        <div className="space-y-1">
+                          <div className="text-xs text-muted-foreground line-clamp-2">
+                            {exportProgress.message}
+                          </div>
+                          <Progress
+                            value={
+                              exportProgress.percent > 0
+                                ? exportProgress.percent
+                                : exportProgress.totalTracks > 0
+                                  ? Math.round(
+                                      (exportProgress.processedTracks /
+                                        exportProgress.totalTracks) *
+                                        100
+                                    )
+                                  : 0
+                            }
+                            className="h-1.5"
+                          />
+                        </div>
+                      )}
                   </div>
                 </CardContent>
                 <CardFooter className="p-4">
@@ -483,6 +514,11 @@ export function Library() {
                             {t("book.converting_chapter", { current: conversionProgress.currentChapter, total: conversionProgress.totalChapters })} -{" "}
                             {t(`conversion.step.${conversionProgress.currentStep.replace(/-/g, '_')}`)}
                           </div>
+                          {conversionProgress.message.trim().length > 0 && (
+                            <div className="text-xs text-muted-foreground line-clamp-2">
+                              {conversionProgress.message}
+                            </div>
+                          )}
                           <Progress
                             value={
                               conversionProgress.totalWords > 0
@@ -502,6 +538,29 @@ export function Library() {
                           )}
                         </div>
                       )}
+                      {isAnyExporting &&
+                        activeExportBookId === book.id &&
+                        exportProgress && (
+                          <div className="space-y-1">
+                            <div className="text-xs text-muted-foreground line-clamp-2">
+                              {exportProgress.message}
+                            </div>
+                            <Progress
+                              value={
+                                exportProgress.percent > 0
+                                  ? exportProgress.percent
+                                  : exportProgress.totalTracks > 0
+                                    ? Math.round(
+                                        (exportProgress.processedTracks /
+                                          exportProgress.totalTracks) *
+                                          100
+                                      )
+                                    : 0
+                              }
+                              className="h-1.5"
+                            />
+                          </div>
+                        )}
                     </div>
                     <Button
                       size="sm"
@@ -528,13 +587,7 @@ export function Library() {
           onCancel={handleCancelConversion}
           onDelete={handleDelete}
           onOpenBook={handleOpenBook}
-          isConverting={isConverting}
-          isConvertingThisBook={selectedBookId === convertingBookId}
           isDeleting={isDeleting}
-          conversionProgress={
-            selectedBookId === convertingBookId ? conversionProgress : null
-          }
-          eta={selectedBookId === convertingBookId ? eta : null}
         />
       )}
     </div>
