@@ -419,7 +419,14 @@ export function Library() {
                       exportProgress && (
                         <div className="space-y-1">
                           <div className="text-xs text-muted-foreground line-clamp-2">
-                            {exportProgress.message}
+                            {(() => {
+                              const key = `conversion.step.${exportProgress.currentStep.replace(/-/g, "_")}`;
+                              const label = t(key);
+                              return label === key
+                                ? exportProgress.message ||
+                                    exportProgress.currentStep
+                                : label;
+                            })()}
                           </div>
                           <Progress
                             value={
@@ -543,7 +550,14 @@ export function Library() {
                         exportProgress && (
                           <div className="space-y-1">
                             <div className="text-xs text-muted-foreground line-clamp-2">
-                              {exportProgress.message}
+                              {(() => {
+                                const key = `conversion.step.${exportProgress.currentStep.replace(/-/g, "_")}`;
+                                const label = t(key);
+                                return label === key
+                                  ? exportProgress.message ||
+                                      exportProgress.currentStep
+                                  : label;
+                              })()}
                             </div>
                             <Progress
                               value={

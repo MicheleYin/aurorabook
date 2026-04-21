@@ -45,11 +45,7 @@ axum = "0.7"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors"] }
 
-# Audio processing
-mp3lame-encoder = "0.2.1"
-symphonia = { version = "0.5", features = ["all"] }
-mp4 = "0.14.0"
-mp4ameta = "0.13.0"
+# Audio processing (decode/encode/tag via FFmpeg on PATH; see `utils/ffmpeg_audio.rs`)
 
 # EPUB processing
 epub = "2.1"
@@ -90,7 +86,6 @@ ndarray = "0.17"
 rand = "0.8"
 rand_distr = "0.4"
 unicode-normalization = "0.1"
-hound = "3.5.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"

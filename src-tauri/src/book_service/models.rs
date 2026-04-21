@@ -166,10 +166,17 @@ pub struct AppSettings {
     pub language: String, // "en", "es", "it", "zh"
     pub tts_language: String, // "en", "es", "it", "zh"
     pub tts_voice_id: String,
+    /// Supertonic synthesis quality: `fastest` (5 steps), `balanced` (10), `quality` (20).
+    #[serde(default = "default_tts_synthesis_quality")]
+    pub tts_synthesis_quality: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_scroll_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_playback_speed: Option<f64>,
+}
+
+fn default_tts_synthesis_quality() -> String {
+    "balanced".to_string()
 }
 
 /// Reader preferences

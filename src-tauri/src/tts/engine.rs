@@ -57,9 +57,27 @@ pub struct TtsEnginePool {
     // candle_engine: Option<Arc<kokoros::tts::koko_candle::TTSKokoParallelCandle>>,
     instance_counter: Arc<AtomicUsize>,
     num_instances: usize,
+    cache_onnx_path: String,
+    cache_voices_path: String,
+    cache_synthesis_total_steps: usize,
 }
 
 impl TtsEnginePool {
+    fn matches_global_cache(
+        &self,
+        onnx_path: &str,
+        voices_path: &str,
+        num_instances: usize,
+        engine_type: TtsEngineType,
+        synthesis_total_steps: usize,
+    ) -> bool {
+        self.engine_type == engine_type
+            && self.num_instances == num_instances
+            && self.cache_onnx_path == onnx_path
+            && self.cache_voices_path == voices_path
+            && self.cache_synthesis_total_steps == synthesis_total_steps
+    }
+
     /// Create a new TTS engine pool with the specified number of instances.
     ///
     /// The engine pool is created once and can be cloned and shared across
@@ -71,6 +89,7 @@ impl TtsEnginePool {
     /// * `voices_path` - Path to the voices data file (e.g., "voices-v1.0.bin")
     /// * `num_instances` - Number of model instances to create (typically CPU core count)
     /// * `engine_type` - Engine type to use (Onnx or Candle)
+    /// * `init_config` - Supertonic init (notably `total_step` for synthesis quality)
     ///
     /// # Returns
     /// A new `TtsEnginePool` instance ready to generate audio.
@@ -80,12 +99,13 @@ impl TtsEnginePool {
     /// the engine cannot be initialized.
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,ignore
     /// let pool = TtsEnginePool::new(
-    ///     "kokoro-v1.0.onnx",
-    ///     "voices-v1.0.bin",
-    ///     4,  // 4 instances for 4-core CPU
-    ///     TtsEngineType::Onnx  // or TtsEngineType::Candle
+    ///     "path/to/onnx_dir",
+    ///     "path/to/voices_dir",
+    ///     4,
+    ///     TtsEngineType::Onnx,
+    ///     crate::tts::supertonic::koko::InitConfig::default(),
     /// ).await?;
     /// ```
     pub async fn new(
@@ -93,6 +113,7 @@ impl TtsEnginePool {
         voices_path: &str,
         num_instances: usize,
         engine_type: TtsEngineType,
+        init_config: crate::tts::supertonic::koko::InitConfig,
     ) -> AppResult<Self> {
         log::info!(
             "Creating TTS engine pool with {} instances using {:?} engine",
@@ -126,10 +147,12 @@ impl TtsEnginePool {
                 // - Memory allocation fails
                 let onnx_path_clone = onnx_path.to_string();
                 let voices_path_clone = voices_path.to_string();
+                let init_cfg = init_config.clone();
                 let engine_task = tokio::spawn(async move {
-                    crate::tts::supertonic::koko::TTSKokoParallel::new_with_instances(
+                    crate::tts::supertonic::koko::TTSKokoParallel::from_config_with_instances(
                         &onnx_path_clone,
                         &voices_path_clone,
+                        init_cfg,
                         num_instances,
                     )
                     .await
@@ -162,6 +185,9 @@ impl TtsEnginePool {
                     onnx_engine: Some(Arc::new(engine)),
                     instance_counter: Arc::new(AtomicUsize::new(0)),
                     num_instances,
+                    cache_onnx_path: onnx_path.to_string(),
+                    cache_voices_path: voices_path.to_string(),
+                    cache_synthesis_total_steps: init_config.total_step,
                 })
             }
             TtsEngineType::Candle => {
@@ -366,12 +392,15 @@ impl Clone for TtsEnginePool {
             // candle_engine: self.candle_engine.as_ref().map(Arc::clone),
             instance_counter: Arc::clone(&self.instance_counter),
             num_instances: self.num_instances,
+            cache_onnx_path: self.cache_onnx_path.clone(),
+            cache_voices_path: self.cache_voices_path.clone(),
+            cache_synthesis_total_steps: self.cache_synthesis_total_steps,
         }
     }
 }
 
 // Global TTS engine pool singleton - ensures engines are only loaded once
-// Key: (onnx_path, voices_path, num_instances) -> TtsEnginePool
+// Cache key: paths, instance count, engine type, and synthesis `total_step`.
 static GLOBAL_ENGINE_POOL: OnceLock<Mutex<Option<Arc<TtsEnginePool>>>> = OnceLock::new();
 
 impl TtsEnginePool {
@@ -386,6 +415,7 @@ impl TtsEnginePool {
     /// * `voices_path` - Path to the voices data file  
     /// * `num_instances` - Number of model instances to create
     /// * `engine_type` - Engine type to use (Onnx or Candle)
+    /// * `init_config` - Supertonic init; `total_step` must match the cached pool or it is rebuilt.
     ///
     /// # Returns
     /// A shared reference to the global engine pool
@@ -394,33 +424,10 @@ impl TtsEnginePool {
         voices_path: &str,
         num_instances: usize,
         engine_type: TtsEngineType,
+        init_config: &crate::tts::supertonic::koko::InitConfig,
     ) -> AppResult<Arc<Self>> {
-        // Check if already initialized (without holding lock across await)
-        {
-            let guard = GLOBAL_ENGINE_POOL.get_or_init(|| Mutex::new(None));
-            let pool_opt = guard.lock().map_err(|e| {
-                AppError::TtsGeneration(format!(
-                    "Failed to acquire global engine pool lock (mutex poisoned): {:?}",
-                    e
-                ))
-            })?;
+        let total_step = init_config.total_step;
 
-            // If already initialized, return existing pool
-            if let Some(ref existing_pool) = *pool_opt {
-                log::debug!("Reusing existing global TTS engine pool");
-                return Ok(Arc::clone(existing_pool));
-            }
-        } // Guard is dropped here
-
-        // Initialize new engine pool (no guard held, so this is safe)
-        log::info!(
-            "Initializing global TTS engine pool singleton (first initialization) - {} instances",
-            num_instances
-        );
-        let pool = Self::new(onnx_path, voices_path, num_instances, engine_type).await?;
-        let pool_arc = Arc::new(pool);
-
-        // Re-acquire lock to store in global singleton
         {
             let guard = GLOBAL_ENGINE_POOL.get_or_init(|| Mutex::new(None));
             let mut pool_opt = guard.lock().map_err(|e| {
@@ -430,15 +437,63 @@ impl TtsEnginePool {
                 ))
             })?;
 
-            // Double-check pattern: another thread might have initialized it while we were creating
             if let Some(ref existing_pool) = *pool_opt {
-                log::debug!("Another thread initialized the pool, reusing it");
-                return Ok(Arc::clone(existing_pool));
+                if existing_pool.matches_global_cache(
+                    onnx_path,
+                    voices_path,
+                    num_instances,
+                    engine_type,
+                    total_step,
+                ) {
+                    log::debug!("Reusing existing global TTS engine pool");
+                    return Ok(Arc::clone(existing_pool));
+                }
+                log::info!(
+                    "Global TTS engine pool parameters changed (e.g. synthesis steps); evicting cached pool"
+                );
+                *pool_opt = None;
+            }
+        }
+
+        log::info!(
+            "Initializing global TTS engine pool singleton — {} instances, total_step={}",
+            num_instances, total_step
+        );
+        let pool = Self::new(
+            onnx_path,
+            voices_path,
+            num_instances,
+            engine_type,
+            init_config.clone(),
+        )
+        .await?;
+        let pool_arc = Arc::new(pool);
+
+        {
+            let guard = GLOBAL_ENGINE_POOL.get_or_init(|| Mutex::new(None));
+            let mut pool_opt = guard.lock().map_err(|e| {
+                AppError::TtsGeneration(format!(
+                    "Failed to acquire global engine pool lock (mutex poisoned): {:?}",
+                    e
+                ))
+            })?;
+
+            if let Some(ref existing_pool) = *pool_opt {
+                if existing_pool.matches_global_cache(
+                    onnx_path,
+                    voices_path,
+                    num_instances,
+                    engine_type,
+                    total_step,
+                ) {
+                    log::debug!("Another thread initialized a matching pool; reusing it");
+                    return Ok(Arc::clone(existing_pool));
+                }
+                *pool_opt = None;
             }
 
-            // Store in global singleton
             *pool_opt = Some(Arc::clone(&pool_arc));
-        } // Guard is dropped here
+        }
         log::info!("✓ Global TTS engine pool singleton initialized and cached");
 
         Ok(pool_arc)

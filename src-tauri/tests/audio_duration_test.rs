@@ -319,7 +319,7 @@ fn test_timestamp_ordering() {
 /// Test backend duration computation accuracy
 /// 
 /// This test verifies that the backend's `compute_audio_duration` function
-/// accurately computes durations from audio files using symphonia.
+/// accurately computes durations from audio files using ffprobe.
 #[test]
 fn test_backend_duration_computation_accuracy() {
     use std::fs;

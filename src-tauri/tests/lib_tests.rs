@@ -797,79 +797,22 @@ async fn generate_voice_samples() {
                     pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
                 }
 
-                // Convert PCM to MP3 (64 kbps for voice samples)
-                // Use mp3lame-encoder (self-contained, no system LAME required)
-                use mp3lame_encoder::{Builder, FlushNoGap, MonoPcm};
-
-                let bitrate_kbps = 64;
-                let num_samples = pcm_bytes.len() / 2;
-                let mut pcm_samples = Vec::with_capacity(num_samples);
-                for chunk in pcm_bytes.chunks_exact(2) {
-                    let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
-                    pcm_samples.push(sample);
-                }
-
-                let mut encoder_builder = match Builder::new() {
-                    Some(b) => b,
-                    None => {
-                        println!("   ❌ Failed to initialize LAME encoder");
-                        continue;
-                    }
-                };
-
-                if let Err(e) = encoder_builder.set_sample_rate(24000) {
-                    println!("   ❌ Failed to set sample rate: {:?}", e);
-                    continue;
-                }
-                if let Err(e) = encoder_builder.set_num_channels(1) {
-                    println!("   ❌ Failed to set channels: {:?}", e);
-                    continue;
-                }
-                if let Err(e) = encoder_builder.set_quality(mp3lame_encoder::Quality::Good) {
-                    println!("   ❌ Failed to set quality: {:?}", e);
-                    continue;
-                }
-                if let Err(e) = encoder_builder.set_brate(mp3lame_encoder::Bitrate::Kbps64) {
-                    println!("   ❌ Failed to set bitrate: {:?}", e);
-                    continue;
-                }
-
-                let mut encoder = match encoder_builder.build() {
-                    Ok(e) => e,
+                // Convert PCM to MP3 (64 kbps) via FFmpeg on PATH
+                let mp3_data = match aurorabook_lib::utils::ffmpeg_audio::encode_pcm_to_mp3_bytes(
+                    pcm_bytes,
+                    24_000,
+                    1,
+                    Some(64),
+                ) {
+                    Ok(b) => b,
                     Err(e) => {
-                        println!("   ❌ Failed to build encoder: {:?}", e);
+                        println!(
+                            "   ❌ FFmpeg MP3 encode failed: {} (install ffmpeg / ffprobe?)",
+                            e
+                        );
                         continue;
                     }
                 };
-
-                let mut mp3_data = Vec::new();
-                mp3_data.reserve(mp3lame_encoder::max_required_buffer_size(pcm_samples.len()));
-
-                let pcm = MonoPcm(&pcm_samples);
-                let encoded_size = match encoder.encode(pcm, mp3_data.spare_capacity_mut()) {
-                    Ok(size) => size,
-                    Err(e) => {
-                        println!("   ❌ Failed to encode audio: {:?}", e);
-                        continue;
-                    }
-                };
-
-                unsafe {
-                    mp3_data.set_len(mp3_data.len().wrapping_add(encoded_size));
-                }
-
-                let flush_size = match encoder.flush::<FlushNoGap>(mp3_data.spare_capacity_mut()) {
-                    Ok(size) => size,
-                    Err(e) => {
-                        println!("   ❌ Failed to flush encoder: {:?}", e);
-                        continue;
-                    }
-                };
-                if flush_size > 0 {
-                    unsafe {
-                        mp3_data.set_len(mp3_data.len().wrapping_add(flush_size));
-                    }
-                }
 
                 if mp3_data.is_empty() {
                     println!("   ❌ MP3 encoding produced no output");

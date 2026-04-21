@@ -14,9 +14,6 @@ pub const MEDIA_TYPE_HTML_XML: &str = "application/html+xml";
 /// Default MP3 bitrate in kbps (reduced for smaller file size)
 pub const DEFAULT_MP3_BITRATE: u32 = 64;
 
-/// Default LAME encoder quality (0-9, 5 is lower quality for smaller files)
-pub const DEFAULT_LAME_QUALITY: u8 = 5;
-
 /// Maximum EPUB file size (5GB)
 pub const MAX_EPUB_SIZE: usize = 5 * 1024 * 1024 * 1024; // 50GB
 

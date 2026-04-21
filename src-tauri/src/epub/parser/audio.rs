@@ -6,68 +6,13 @@ use super::types::ManifestItem;
 use super::opf::derive_base_path_from_opf;
 use super::utils::generate_audio_track_title;
 
-/// Compute audio duration from audio bytes using symphonia
+/// Compute audio duration from audio bytes using **ffprobe** (requires `ffprobe` on `PATH`).
 fn compute_audio_duration(audio_bytes: &[u8], mime_type: &str) -> Option<f64> {
-    use symphonia::core::formats::FormatOptions;
-    use symphonia::core::io::MediaSourceStream;
-    use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::probe::Hint;
-    use symphonia::default::get_probe;
-    
-    // Create a hint based on MIME type
-    let mut hint = Hint::new();
-    if mime_type.contains("mpeg") || mime_type.contains("mp3") {
-        hint.with_extension("mp3");
-    } else if mime_type.contains("wav") {
-        hint.with_extension("wav");
-    } else if mime_type.contains("mp4") || mime_type.contains("m4a") {
-        hint.with_extension("m4a");
-    } else if mime_type.contains("ogg") {
-        hint.with_extension("ogg");
-    } else if mime_type.contains("opus") {
-        hint.with_extension("opus");
+    let d = crate::utils::ffmpeg_audio::ffprobe_audio_duration_seconds(audio_bytes, mime_type);
+    if d.is_none() {
+        log::debug!("Failed to compute audio duration via ffprobe (mime hint: {})", mime_type);
     }
-    
-    // Create a media source stream from the bytes
-    // Clone bytes to ensure we own them for 'static lifetime
-    let audio_bytes_owned = audio_bytes.to_vec();
-    let mss = MediaSourceStream::new(
-        Box::new(std::io::Cursor::new(audio_bytes_owned)),
-        Default::default(),
-    );
-    
-    // Probe the format
-    match get_probe().format(
-        &hint,
-        mss,
-        &FormatOptions::default(),
-        &MetadataOptions::default(),
-    ) {
-        Ok(probed) => {
-            // Get the format
-            let format = probed.format;
-            
-            // Get the first track
-            let track = format.tracks().first()?;
-            
-            // Get the codec parameters
-            let params = &track.codec_params;
-            
-            // Calculate duration from codec parameters
-            if let (Some(time_base), Some(n_frames)) = (params.time_base, params.n_frames) {
-                let duration_secs = time_base.calc_time(n_frames).seconds as f64;
-                Some(duration_secs)
-            } else {
-                // If we can't get duration from codec params, return None
-                // The duration will need to be computed when the track is actually played
-                None
-            }
-        }
-        Err(e) => {
-            log::debug!("Failed to compute audio duration: {}", e);
-            None
-        }
-    }
+    d
 }
 
 /// Extract audio tracks from EPUB manifest items in spine order.

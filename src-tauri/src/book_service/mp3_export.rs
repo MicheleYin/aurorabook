@@ -1,13 +1,13 @@
-//! Export audiobook tracks to a single file (MP3, M4A, or M4B) by decoding with Symphonia and
-//! encoding/muxing with the **system FFmpeg** on `PATH` (`ffmpeg`). Metadata and M4B chapter
-//! markers are applied with `mp4ameta` after mux. iOS builds do not ship FFmpeg for export; those
-//! commands return a clear error.
+//! Export audiobook tracks to a single file (MP3, M4A, or M4B) by decoding with **FFmpeg** and
+//! encoding/muxing with **FFmpeg** on `PATH`. Metadata and M4B chapter markers are applied with
+//! **FFmpeg** (`ffmetadata`) after mux. iOS builds do not ship FFmpeg for export; those commands
+//! return a clear error.
 
 use super::repositories::{AudioRepository, BookRepository};
 use super::get_db_connection;
 use crate::utils::constants::DEFAULT_MP3_BITRATE;
 use crate::utils::errors::{AppError, AppResult};
-use std::io::{Cursor, ErrorKind, Write};
+use std::io::{ErrorKind, Write};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -295,145 +295,13 @@ fn estimate_eta_ms(started: &Instant, processed: usize, total: usize) -> Option<
     Some((est_total_ms - elapsed_ms).max(0.0).round() as u64)
 }
 
-fn hint_from_href(href: &str, format_hint: AudioExportFormat) -> symphonia::core::probe::Hint {
-    let mut hint = symphonia::core::probe::Hint::new();
-    let lower = href.to_lowercase();
-    if lower.ends_with(".mp3") {
-        hint.with_extension("mp3");
-    } else if lower.ends_with(".m4a")
-        || lower.ends_with(".m4b")
-        || lower.ends_with(".mp4")
-        || lower.ends_with(".aac")
-    {
-        hint.with_extension("m4a");
-    } else if lower.ends_with(".ogg") {
-        hint.with_extension("ogg");
-    } else if lower.ends_with(".opus") {
-        hint.with_extension("opus");
-    } else if lower.ends_with(".wav") {
-        hint.with_extension("wav");
-    } else if lower.ends_with(".flac") {
-        hint.with_extension("flac");
-    } else {
-        hint.with_extension(format_hint.as_str());
-    }
-    hint
-}
-
-fn append_decoded_pcm(
-    decoded: &symphonia::core::audio::AudioBufferRef<'_>,
-    out: &mut Vec<u8>,
-) -> AppResult<(u32, u32)> {
-    use symphonia::core::audio::AudioBufferRef;
-    use symphonia::core::audio::Signal;
-
-    let spec = *decoded.spec();
-    let rate = spec.rate;
-    let n_ch = spec.channels.count();
-    // Use decoded frame count (not buffer capacity) to avoid out-of-bounds reads.
-    let frames = decoded.frames();
-
-    match decoded {
-        AudioBufferRef::F32(buf) => {
-            for f in 0..frames {
-                for c in 0..n_ch {
-                    let s = buf.chan(c)[f];
-                    let i = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
-                    out.extend_from_slice(&i.to_le_bytes());
-                }
-            }
-        }
-        AudioBufferRef::S16(buf) => {
-            for f in 0..frames {
-                for c in 0..n_ch {
-                    let s = buf.chan(c)[f];
-                    out.extend_from_slice(&s.to_le_bytes());
-                }
-            }
-        }
-        _ => {
-            return Err(AppError::Encoding(
-                "Unsupported audio sample format in track (use MP3, M4A, or WAV)".into(),
-            ));
-        }
-    }
-
-    Ok((rate, n_ch as u32))
-}
-
-/// Decode one audio blob to 16-bit little-endian interleaved PCM.
+/// Decode one audio blob to 16-bit little-endian interleaved PCM via FFmpeg.
 fn decode_audio_blob_to_pcm(
     audio_bytes: &[u8],
     href: &str,
     format_hint: AudioExportFormat,
 ) -> AppResult<(Vec<u8>, u32, u32)> {
-    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
-    use symphonia::core::errors::Error as SymphErr;
-    use symphonia::core::formats::FormatOptions;
-    use symphonia::core::io::MediaSourceStream;
-    use symphonia::core::meta::MetadataOptions;
-
-    let hint = hint_from_href(href, format_hint);
-    let cursor = Cursor::new(audio_bytes.to_vec());
-    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
-
-    let probed = symphonia::default::get_probe()
-        .format(
-            &hint,
-            mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
-        )
-        .map_err(|e| AppError::Encoding(format!("Audio probe failed: {}", e)))?;
-
-    let mut format = probed.format;
-    let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or_else(|| AppError::Encoding("No decodable audio track".into()))?;
-
-    let track_id = track.id;
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
-        .map_err(|e| AppError::Encoding(format!("Decoder init failed: {}", e)))?;
-
-    let mut pcm: Vec<u8> = Vec::new();
-    let mut rate_ch: Option<(u32, u32)> = None;
-
-    loop {
-        let packet = match format.next_packet() {
-            Ok(p) => p,
-            Err(SymphErr::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(SymphErr::ResetRequired) => continue,
-            Err(e) => return Err(AppError::Encoding(format!("Read failed: {}", e))),
-        };
-
-        if packet.track_id() != track_id {
-            continue;
-        }
-
-        let decoded = decoder
-            .decode(&packet)
-            .map_err(|e| AppError::Encoding(format!("Decode failed: {}", e)))?;
-
-        let (r, ch) = append_decoded_pcm(&decoded, &mut pcm)?;
-        match rate_ch {
-            None => rate_ch = Some((r, ch)),
-            Some((pr, pch)) if pr == r && pch == ch => {}
-            Some(_) => {
-                return Err(AppError::Encoding(
-                    "Inconsistent audio format within track".into(),
-                ));
-            }
-        }
-    }
-
-    let (sr, ch) = rate_ch.unwrap_or((44100, 1));
-    if pcm.is_empty() {
-        return Err(AppError::Encoding("Decoded no PCM from track".into()));
-    }
-    Ok((pcm, sr, ch))
+    crate::utils::ffmpeg_audio::decode_audio_blob_to_pcm(audio_bytes, href, format_hint.as_str())
 }
 
 fn ffmpeg_export_forbidden_message() -> String {
@@ -640,45 +508,31 @@ fn chapter_starts_for_pcm_tracks(
     chapter_starts
 }
 
+#[cfg(not(target_os = "ios"))]
 fn apply_mp4_metadata_and_chapters(
     output_path: &str,
     book: &crate::book_service::models::Book,
     format: AudioExportFormat,
     chapter_starts: &[(std::time::Duration, String)],
 ) -> AppResult<()> {
-    let mut tag = mp4ameta::Tag::read_from_path(output_path)
-        .map_err(|e| AppError::Encoding(format!("Failed to read MP4 metadata: {}", e)))?;
-
-    tag.set_title(book.title.clone());
-    tag.set_album(book.title.clone());
-    tag.set_artist(book.author.clone());
-    tag.set_album_artist(book.author.clone());
-    if let Some(year) = &book.published_year {
-        tag.set_year(year.clone());
-    }
-    if let Some(subjects) = &book.subjects {
-        let custom_genres: Vec<String> = subjects
+    let genre = book.subjects.as_ref().map(|subjects| {
+        subjects
             .iter()
             .filter(|s| !s.trim().is_empty())
             .cloned()
-            .collect();
-        if !custom_genres.is_empty() {
-            tag.set_custom_genres(custom_genres);
-        }
-    }
-
-    if format == AudioExportFormat::M4b {
-        tag.chapter_list_mut().clear();
-        tag.chapter_track_mut().clear();
-        tag.chapter_list_mut().extend(
-            chapter_starts
-                .iter()
-                .map(|(start, title)| mp4ameta::Chapter::new(*start, title.clone())),
-        );
-    }
-
-    tag.write_to_path(output_path)
-        .map_err(|e| AppError::Encoding(format!("Failed to write MP4 metadata: {}", e)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    });
+    let genre_ref = genre.as_deref().filter(|s| !s.is_empty());
+    crate::utils::ffmpeg_audio::apply_mp4_metadata_and_chapters_ffmpeg(
+        output_path,
+        &book.title,
+        &book.author,
+        book.published_year.as_deref(),
+        genre_ref,
+        chapter_starts,
+        format == AudioExportFormat::M4b,
+    )
 }
 
 fn create_mp3_export_file(
@@ -940,7 +794,7 @@ async fn export_as_mp4(
     Ok(())
 }
 
-/// Export all audiobook tracks as one MP3 via Symphonia decode and a single FFmpeg (`libmp3lame`) encode.
+/// Export all audiobook tracks as one MP3 via FFmpeg decode and a single FFmpeg (`libmp3lame`) encode.
 #[tauri::command]
 pub async fn export_as_mp3(
     book_id: String,
@@ -1138,11 +992,57 @@ mod m4b_export_tests {
     use crate::book_service::models::{
         AudioSyncMap, AudioTrack, Book, BookAudioState, BookProgress, Chapter, ConversionStatus,
     };
+    use serde_json::Value;
     use std::fs::File;
     use std::io::Read;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
     use zip::ZipArchive;
+
+    fn ffprobe_json(path: &str) -> Value {
+        let out = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_format",
+                "-show_chapters",
+                "-print_format",
+                "json",
+                path,
+            ])
+            .output()
+            .expect("ffprobe");
+        assert!(
+            out.status.success(),
+            "ffprobe failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout).expect("ffprobe json")
+    }
+
+    fn ffprobe_duration_sec(path: &str) -> f64 {
+        let out = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                path,
+            ])
+            .output()
+            .expect("ffprobe duration");
+        assert!(
+            out.status.success(),
+            "ffprobe duration failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .expect("duration parse")
+    }
 
     fn ffmpeg_on_path() -> bool {
         #[cfg(target_os = "ios")]
@@ -1225,7 +1125,7 @@ mod m4b_export_tests {
         }
     }
 
-    /// Regression: m4b mux output must be readable by mp4ameta so metadata/chapters can be embedded.
+    /// Regression: m4b mux output must carry tags and chapters (verified via ffprobe).
     #[test]
     fn m4b_two_track_export_roundtrips_metadata_and_chapters() {
         if !ffmpeg_on_path() {
@@ -1250,23 +1150,41 @@ mod m4b_export_tests {
         let meta = std::fs::metadata(&out_path).expect("stat output");
         assert!(meta.len() > 8_000, "m4b output unexpectedly small: {} bytes", meta.len());
 
-        // Metadata read must succeed (this is what failed when mux output was incompatible).
-        let tag = mp4ameta::Tag::read_from_path(out_str).expect("read mp4ameta tag");
-        assert_eq!(tag.title(), Some("M4B Test Book"));
-        assert_eq!(tag.artist(), Some("Test Author"));
+        let v = ffprobe_json(out_str);
+        let fmt_tags = v
+            .pointer("/format/tags")
+            .and_then(Value::as_object)
+            .expect("format tags");
+        assert_eq!(
+            fmt_tags.get("title").and_then(Value::as_str),
+            Some("M4B Test Book")
+        );
+        assert_eq!(
+            fmt_tags.get("artist").and_then(Value::as_str),
+            Some("Test Author")
+        );
 
-        let chapters = tag.chapter_list();
+        let chapters = v
+            .get("chapters")
+            .and_then(Value::as_array)
+            .expect("chapters");
         assert!(
             chapters.len() >= 2,
             "expected at least 2 chapter markers, got {}",
             chapters.len()
         );
-        assert_eq!(chapters[0].title, "Track One");
-        assert_eq!(chapters[1].title, "Track Two");
+        let t0 = chapters[0]
+            .pointer("/tags/title")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let t1 = chapters[1]
+            .pointer("/tags/title")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert_eq!(t0, "Track One");
+        assert_eq!(t1, "Track Two");
 
-        let f = File::open(out_str).expect("open m4b");
-        let mp4 = mp4::read_mp4(f).expect("parse mp4");
-        let secs = mp4.duration().as_secs_f64();
+        let secs = ffprobe_duration_sec(out_str);
         assert!(
             (secs - 0.5).abs() < 0.45,
             "expected ~0.5s of muxed audio (two 0.25s tracks), got {}s",
@@ -1385,17 +1303,17 @@ mod m4b_export_tests {
         assert!(m4a_meta.len() > 16_000, "m4a output too small: {}", m4a_meta.len());
         assert!(m4b_meta.len() > 16_000, "m4b output too small: {}", m4b_meta.len());
 
-        let m4a_reader = mp4::read_mp4(File::open(&m4a).expect("open m4a")).expect("parse m4a");
-        let m4b_reader = mp4::read_mp4(File::open(&m4b).expect("open m4b")).expect("parse m4b");
+        let m4a_secs = ffprobe_duration_sec(m4a_str);
+        let m4b_secs = ffprobe_duration_sec(m4b_str);
         assert!(
-            m4a_reader.duration().as_secs_f64() > 1.0,
+            m4a_secs > 1.0,
             "m4a duration unexpectedly short: {}s",
-            m4a_reader.duration().as_secs_f64()
+            m4a_secs
         );
         assert!(
-            m4b_reader.duration().as_secs_f64() > 1.0,
+            m4b_secs > 1.0,
             "m4b duration unexpectedly short: {}s",
-            m4b_reader.duration().as_secs_f64()
+            m4b_secs
         );
 
         // Optional: persist outputs for manual listening/inspection.

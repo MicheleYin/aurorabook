@@ -19,7 +19,6 @@ fn test_media_types() {
 #[test]
 fn test_mp3_constants() {
     assert_eq!(constants::DEFAULT_MP3_BITRATE, 64);
-    assert_eq!(constants::DEFAULT_LAME_QUALITY, 5);
 }
 
 #[test]

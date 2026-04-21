@@ -85,6 +85,12 @@ const BookDetailContent = ({
   eta: string | null;
 }) => {
   const { t, lang } = useTranslation();
+  const audioExportStepKey = audioExportProgress
+    ? `conversion.step.${audioExportProgress.currentStep.replace(/-/g, "_")}`
+    : "";
+  const audioExportStepLabel = audioExportProgress
+    ? t(audioExportStepKey)
+    : "";
 
   return (
     <div className="space-y-6">
@@ -275,14 +281,19 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">Export Progress</p>
+            <p className="text-sm font-medium mb-2">{t("book.export_progress")}</p>
             <div className="space-y-2">
               <div className="text-sm text-muted-foreground">
-                {audioExportProgress.message}
+                {audioExportStepLabel === audioExportStepKey
+                  ? audioExportProgress.message || audioExportProgress.currentStep
+                  : audioExportStepLabel}
               </div>
               <div className="text-xs text-muted-foreground">
-                {audioExportProgress.processedTracks}/{audioExportProgress.totalTracks}{" "}
-                tracks ({audioExportProgress.format.toUpperCase()})
+                {t("book.export_track_count", {
+                  current: audioExportProgress.processedTracks,
+                  total: audioExportProgress.totalTracks,
+                  format: audioExportProgress.format.toUpperCase(),
+                })}
               </div>
               <Progress
                 value={
@@ -473,12 +484,14 @@ export function BookDetailDialog({
         outputPath: filePath,
       });
 
-      toast.success("EPUB exported successfully");
+      toast.success(t("book.export_epub_success"));
     } catch (err) {
       logger.error("Failed to export EPUB:", err);
-      toast.error(err instanceof Error ? err.message : "Failed to export EPUB");
+      toast.error(
+        err instanceof Error ? err.message : t("book.export_epub_failed")
+      );
     }
-  }, [book]);
+  }, [book, t]);
 
   const formatLabel = useCallback(
     (format: AudioExportFormat) => format.toUpperCase(),
@@ -498,8 +511,8 @@ export function BookDetailDialog({
         if (exportStatus.inProgress) {
           toast.error(
             exportStatus.bookId === book.id
-              ? "An export is already running for this book"
-              : "Another export is already in progress"
+              ? t("book.export_already_running_same")
+              : t("book.export_already_running_other")
           );
           return;
         }
@@ -521,7 +534,7 @@ export function BookDetailDialog({
 
         await runAudioExport(book.id, format, filePath);
 
-        toast.success(`${formatLabel(format)} exported successfully`, {
+        toast.success(t("book.export_success", { format: formatLabel(format) }), {
           id: toastId,
         });
       } catch (err) {
@@ -529,11 +542,11 @@ export function BookDetailDialog({
         const message =
           err instanceof Error
             ? err.message
-            : `Failed to export ${formatLabel(format)}`;
+            : t("book.export_failed", { format: formatLabel(format) });
         toast.error(message, { id: toastId });
       }
     },
-    [book, runAudioExport, formatLabel]
+    [book, runAudioExport, formatLabel, t]
   );
 
   const handleCancelAudioExport = useCallback(async () => {
@@ -617,7 +630,9 @@ export function BookDetailDialog({
                       <span>
                         {isAnotherBookExporting
                           ? t("book.export_busy")
-                          : `Exporting ${formatLabel(activeExportFormat ?? "mp3")}...`}
+                          : t("book.exporting_format", {
+                              format: formatLabel(activeExportFormat ?? "mp3"),
+                            })}
                       </span>
                     </>
                   ) : (
@@ -630,8 +645,8 @@ export function BookDetailDialog({
                 <SelectContent>
                   <SelectItem value="epub">{t("book.export_epub")}</SelectItem>
                   <SelectItem value="mp3">{t("book.export_mp3")}</SelectItem>
-                  <SelectItem value="m4a">Export M4A</SelectItem>
-                  <SelectItem value="m4b">Export M4B</SelectItem>
+                  <SelectItem value="m4a">{t("book.export_m4a")}</SelectItem>
+                  <SelectItem value="m4b">{t("book.export_m4b")}</SelectItem>
                 </SelectContent>
               </Select>
               {isExportingAudio && (
@@ -643,7 +658,7 @@ export function BookDetailDialog({
                     className="gap-2"
                   >
                     <X className="h-4 w-4" />
-                    Cancel export
+                    {t("book.cancel_export")}
                   </Button>
                 )}
               {book.conversionStatus === "started" && isConvertingThisBook && (
@@ -734,7 +749,9 @@ export function BookDetailDialog({
                       <span>
                         {isAnotherBookExporting
                           ? t("book.export_busy")
-                          : `Exporting ${formatLabel(activeExportFormat ?? "mp3")}...`}
+                          : t("book.exporting_format", {
+                              format: formatLabel(activeExportFormat ?? "mp3"),
+                            })}
                       </span>
                     </>
                   ) : (
@@ -752,10 +769,10 @@ export function BookDetailDialog({
                     {t("book.export_mp3")}
                   </SelectItem>
                   <SelectItem className="w-full" value="m4a">
-                    Export as M4A
+                    {t("book.export_m4a")}
                   </SelectItem>
                   <SelectItem className="w-full" value="m4b">
-                    Export as M4B
+                    {t("book.export_m4b")}
                   </SelectItem>
                 </SelectContent>
               </Select>
@@ -768,7 +785,7 @@ export function BookDetailDialog({
                     className="gap-2 w-full"
                   >
                     <X className="h-4 w-4" />
-                    Cancel export
+                    {t("book.cancel_export")}
                   </Button>
                 )}
               {book.conversionStatus === "started" && isConvertingThisBook && (

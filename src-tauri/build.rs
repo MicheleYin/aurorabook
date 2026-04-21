@@ -110,9 +110,6 @@ fn main() {
 
     // Supertonic (kokoros) uses ONNX Runtime; CoreML EP linking is handled below for iOS when ORT libs are present.
 
-    // MP3 encoding is now handled by mp3lame-encoder crate which bundles LAME statically
-    // No need to link system LAME library - the crate is fully self-contained
-
     // Handle ONNX Runtime linking for iOS
     // According to ort documentation: https://ort.pyke.io/setup/linking#static-linking
     // Use ORT_LIB_LOCATION to point ort-sys to the libraries

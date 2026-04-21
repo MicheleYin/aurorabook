@@ -20,6 +20,9 @@ impl SettingsRepository {
                 language: row.get("language"),
                 tts_language: row.get("tts_language"),
                 tts_voice_id: row.get("tts_voice_id"),
+                tts_synthesis_quality: row
+                    .try_get::<String, _>("tts_synthesis_quality")
+                    .unwrap_or_else(|_| "balanced".to_string()),
                 auto_scroll_enabled: Some(row.get::<i64, _>("auto_scroll_enabled") != 0),
                 audio_playback_speed: Some(row.get("audio_playback_speed")),
             })
@@ -31,6 +34,7 @@ impl SettingsRepository {
                 language: "en".to_string(),
                 tts_language: "en".to_string(),
                 tts_voice_id: "F1".to_string(),
+                tts_synthesis_quality: "balanced".to_string(),
                 auto_scroll_enabled: Some(true),
                 audio_playback_speed: Some(1.0),
             })
@@ -48,13 +52,14 @@ impl SettingsRepository {
         
         sqlx::query(
             r#"
-            INSERT INTO app_settings (id, theme, language, tts_language, tts_voice_id, auto_scroll_enabled, audio_playback_speed, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO app_settings (id, theme, language, tts_language, tts_voice_id, tts_synthesis_quality, auto_scroll_enabled, audio_playback_speed, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 theme = excluded.theme,
                 language = excluded.language,
                 tts_language = excluded.tts_language,
                 tts_voice_id = excluded.tts_voice_id,
+                tts_synthesis_quality = excluded.tts_synthesis_quality,
                 auto_scroll_enabled = excluded.auto_scroll_enabled,
                 audio_playback_speed = excluded.audio_playback_speed,
                 updated_at = excluded.updated_at
@@ -65,6 +70,7 @@ impl SettingsRepository {
         .bind(&model.language)
         .bind(&model.tts_language)
         .bind(&model.tts_voice_id)
+        .bind(&model.tts_synthesis_quality)
         .bind(if model.auto_scroll_enabled.unwrap_or(true) { 1 } else { 0 })
         .bind(model.audio_playback_speed.unwrap_or(1.0))
         .bind(&updated_at)

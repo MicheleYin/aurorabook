@@ -100,7 +100,8 @@ async fn test_generate_tts_cached() {
     // Note: This test uses the underlying TtsEnginePool directly since
     // generate_tts_cached requires Tauri AppHandle
     use aurorabook_lib::tts::engine::{TtsEnginePool, TtsEngineType};
-    
+    use aurorabook_lib::tts::supertonic::koko::InitConfig;
+
     let onnx_model = find_onnx_model();
     let resources_dir = find_resources_dir();
     
@@ -118,6 +119,7 @@ async fn test_generate_tts_cached() {
         voices_path.to_str().unwrap(),
         1,
         TtsEngineType::Onnx,
+        InitConfig::default(),
     ).await.unwrap();
     
     let result = pool.generate_audio_pcm(
@@ -148,7 +150,8 @@ async fn test_generate_tts_batch() {
     // Note: This test uses the underlying TtsEnginePool directly since
     // generate_tts_batch requires Tauri AppHandle
     use aurorabook_lib::tts::engine::{TtsEnginePool, TtsEngineType};
-    
+    use aurorabook_lib::tts::supertonic::koko::InitConfig;
+
     let onnx_model = find_onnx_model();
     let resources_dir = find_resources_dir();
     
@@ -166,6 +169,7 @@ async fn test_generate_tts_batch() {
         voices_path.to_str().unwrap(),
         2, // Use 2 instances for parallel processing
         TtsEngineType::Onnx,
+        InitConfig::default(),
     ).await.unwrap();
     
     let texts = vec![

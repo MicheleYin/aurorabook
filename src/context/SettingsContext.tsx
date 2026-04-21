@@ -12,7 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { normalizeVoiceId } from "../constants/kokoro";
 import { normalizeAppLanguage } from "../constants/languages";
-import type { AppSettings } from "../types/settings";
+import type { AppSettings, TtsSynthesisQuality } from "../types/settings";
 import type { UITheme } from "../types/ui";
 import { logger } from "../lib/logger";
 
@@ -40,6 +40,13 @@ export function useSettingsContext() {
 
 interface SettingsProviderProps {
   readonly children: ReactNode;
+}
+
+function normalizeTtsSynthesisQuality(value: unknown): TtsSynthesisQuality {
+  if (value === "fastest" || value === "balanced" || value === "quality") {
+    return value;
+  }
+  return "balanced";
 }
 
 export function SettingsProvider({ children }: SettingsProviderProps) {
@@ -77,6 +84,9 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         language: normalizeAppLanguage(appSettings.language),
         ttsLanguage: normalizeAppLanguage(appSettings.ttsLanguage),
         ttsVoiceId: normalizeVoiceId(appSettings.ttsVoiceId),
+        ttsSynthesisQuality: normalizeTtsSynthesisQuality(
+          appSettings.ttsSynthesisQuality
+        ),
       });
 
       // Apply theme from backend settings (only once on initial load)
@@ -93,6 +103,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         language: "en",
         ttsLanguage: "en",
         ttsVoiceId: "F1",
+        ttsSynthesisQuality: "balanced",
         autoScrollEnabled: true,
         audioPlaybackSpeed: 1.0,
       };

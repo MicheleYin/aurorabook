@@ -6,6 +6,7 @@ import { useSettingsContext } from "@/context/SettingsContext";
 import { useTranslation } from "../../lib/i18n";
 
 import type { UITheme } from "../../types/ui";
+import type { TtsSynthesisQuality } from "../../types/settings";
 import { voiceMatchesTtsLanguage } from "../../constants/languages";
 import { KOKORO_VOICE_GROUPS, voiceSamplePathsToTry } from "../../constants/kokoro";
 import { logger } from "../../lib/logger";
@@ -151,6 +152,15 @@ export function Settings() {
     [saveSettings]
   );
 
+  const handleTtsQualityChange = useCallback(
+    async (value: string) => {
+      if (value === "fastest" || value === "balanced" || value === "quality") {
+        await saveSettings({ ttsSynthesisQuality: value as TtsSynthesisQuality });
+      }
+    },
+    [saveSettings]
+  );
+
   useEffect(() => {
     return () => {
       if (audioRef.current) {
@@ -267,6 +277,34 @@ export function Settings() {
             </CardHeader>
             <CardContent className="space-y-6">
               <TtsLanguageSelect />
+              <Separator />
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="space-y-1 flex-1 min-w-0">
+                  <p className="font-medium">{t("settings.tts_quality")}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {t("settings.tts_quality_description")}
+                  </p>
+                </div>
+                <Select
+                  value={settings?.ttsSynthesisQuality ?? "balanced"}
+                  onValueChange={handleTtsQualityChange}
+                >
+                  <SelectTrigger className="w-full sm:w-[260px] shrink-0">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="fastest">
+                      {t("settings.tts_quality_fastest")}
+                    </SelectItem>
+                    <SelectItem value="balanced">
+                      {t("settings.tts_quality_balanced")}
+                    </SelectItem>
+                    <SelectItem value="quality">
+                      {t("settings.tts_quality_quality")}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <Separator />
               <div className="flex flex-col sm:flex-row sm:items-center gap-4">
                 <div className="flex-1">

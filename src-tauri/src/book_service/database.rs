@@ -382,6 +382,7 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
             language TEXT NOT NULL DEFAULT 'en',
             tts_language TEXT NOT NULL DEFAULT 'en',
             tts_voice_id TEXT NOT NULL,
+            tts_synthesis_quality TEXT NOT NULL DEFAULT 'balanced',
             auto_scroll_enabled INTEGER NOT NULL DEFAULT 1,
             audio_playback_speed REAL NOT NULL DEFAULT 1.0,
             updated_at TEXT NOT NULL
@@ -413,6 +414,16 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
             .execute(pool)
             .await
             .map_err(|e| format!("Failed to add tts_language column to app_settings: {}", e))?;
+    }
+
+    if !table_sql.contains("tts_synthesis_quality") {
+        log::info!("Migrating app_settings table (adding tts_synthesis_quality column)");
+        sqlx::query(
+            "ALTER TABLE app_settings ADD COLUMN tts_synthesis_quality TEXT NOT NULL DEFAULT 'balanced'",
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to add tts_synthesis_quality column to app_settings: {}", e))?;
     }
     
     // Create reader_preferences table (singleton - only one row)

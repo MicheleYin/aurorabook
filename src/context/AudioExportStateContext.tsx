@@ -258,7 +258,7 @@ export function AudioExportStateProvider({
         bookId,
         format,
         currentStep: "initializing",
-        message: `Starting ${format.toUpperCase()} export...`,
+        message: "",
         processedTracks: 0,
         totalTracks: 0,
         percent: 0,

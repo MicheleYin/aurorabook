@@ -42,6 +42,23 @@ impl Default for InitConfig {
     }
 }
 
+impl InitConfig {
+    /// Maps persisted app setting `tts_synthesis_quality` to Supertonic `total_step`.
+    /// `fastest` → 5, `balanced` → 10, `quality` → 20 (unknown values → balanced).
+    pub fn from_tts_synthesis_quality(mode: &str) -> Self {
+        let mut c = Self::default();
+        let m = mode.trim();
+        c.total_step = if m.eq_ignore_ascii_case("fastest") {
+            5
+        } else if m.eq_ignore_ascii_case("quality") {
+            20
+        } else {
+            10
+        };
+        c
+    }
+}
+
 fn normalize_lang(lan: &str) -> String {
     let l = lan.to_lowercase();
     let code = l.split(['-', '_']).next().unwrap_or(&l);
