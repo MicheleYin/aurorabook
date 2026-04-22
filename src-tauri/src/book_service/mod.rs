@@ -1352,20 +1352,32 @@ pub async fn ingest_epub(
         audio_tracks = match tokio::task::spawn_blocking(move || {
             use crate::epub::parser::compute_audio_track_durations;
             let mut tracks = audio_tracks_clone;
+            log::info!("📊 [IMPORT] Computing durations for {} audio tracks...", tracks.len());
             compute_audio_track_durations(
                 epub_data_for_durations.as_slice(),
                 &mut tracks,
                 &opf_path_for_durations,
             );
+            // Log computed durations
+            for track in &tracks {
+                if let Some(dur) = track.duration {
+                    log::info!("📊 [IMPORT] Track '{}' (href='{}') duration computed: {:.2}s", track.title, track.href, dur);
+                } else {
+                    log::warn!("📊 [IMPORT] Track '{}' (href='{}') duration NOT computed", track.title, track.href);
+                }
+            }
             // Ensure tracks remain sorted by order after computing durations
             tracks.sort_by_key(|t| t.order);
             tracks
         })
         .await
         {
-            Ok(tracks) => tracks,
+            Ok(tracks) => {
+                log::info!("📊 [IMPORT] Duration computation completed successfully for {} tracks", tracks.len());
+                tracks
+            }
             Err(e) => {
-                log::warn!("Failed to compute audio track durations in background task: {}", e);
+                log::error!("❌ [IMPORT] Failed to compute audio track durations in background task: {}", e);
                 audio_tracks
             }
         };
@@ -1449,10 +1461,11 @@ pub async fn ingest_epub(
     // Ensure audio tracks are sorted by order before creating Book
     audio_tracks.sort_by_key(|t| t.order);
     
-    // Log track order before creating Book to verify correct ordering
-    log::info!("Audio tracks before creating Book (sorted by order):");
+    // Log track order and durations before creating Book to verify correct ordering
+    log::info!("📊 [IMPORT] Audio tracks before creating Book (sorted by order):");
     for (idx, track) in audio_tracks.iter().enumerate() {
-        log::info!("  Track #{}: href='{}', order={}", idx, track.href, track.order);
+        let duration_str = track.duration.map(|d| format!("{:.2}s", d)).unwrap_or_else(|| "NONE".to_string());
+        log::info!("  Track #{}: href='{}', order={}, duration={}", idx, track.href, track.order, duration_str);
     }
     
     // Create Book object with chapter metadata only (content is loaded lazily from EPUB)
@@ -1487,6 +1500,13 @@ pub async fn ingest_epub(
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
     
+    // Log audio tracks before save
+    log::info!("📊 [IMPORT] Saving book with {} audio tracks to database", book.audio_tracks.len());
+    for (idx, track) in book.audio_tracks.iter().enumerate() {
+        let duration_str = track.duration.map(|d| format!("{:.2}s", d)).unwrap_or_else(|| "NONE".to_string());
+        log::info!("  Track #{}: href='{}', order={}, duration={}", idx, track.href, track.order, duration_str);
+    }
+    
     // Store book with chapter metadata only
     BookRepository::save(db.as_ref(), &book).await
         .map_err(|e| AppError::Store(e))?;
@@ -1506,10 +1526,17 @@ pub async fn ingest_epub(
     
     log::info!("Skipping chapter HTML/image persistence during ingest (EPUB-backed lazy loading enabled)");
     
-// Reload book to get the complete data
+    // Reload book to get the complete data
     let result_book = BookRepository::find_by_id(db.as_ref(), &book_id).await
         .map_err(|e| AppError::Store(e))?
         .ok_or_else(|| AppError::Store("Book not found after ingestion".to_string()))?;
+    
+    // Log durations after reload
+    log::info!("📊 [IMPORT] Book reloaded from database with {} audio tracks", result_book.audio_tracks.len());
+    for (idx, track) in result_book.audio_tracks.iter().enumerate() {
+        let duration_str = track.duration.map(|d| format!("{:.2}s", d)).unwrap_or_else(|| "NONE".to_string());
+        log::info!("  Track #{}: href='{}', order={}, duration={}", idx, track.href, track.order, duration_str);
+    }
     
     Ok(result_book)
 }

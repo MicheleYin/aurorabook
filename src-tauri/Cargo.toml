@@ -52,6 +52,7 @@ mp3lame-encoder = "0.2.3"
 epub = "2.1"
 zip = "0.6"
 quick-xml = { version = "0.31", features = ["serialize"] }
+symphonia = { version = "0.5.5", features = ["aac", "flac", "isomp4", "mp3", "ogg", "pcm", "vorbis", "wav"] }
 
 # Text processing
 scraper = "0.19"

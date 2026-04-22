@@ -1,11 +1,87 @@
-//! Decode, probe, tag, and transcode audio via **FFmpeg** / **ffprobe** on `PATH`.
+//! Decode, tag, and transcode audio via **FFmpeg** on `PATH`.
 //! iOS builds do not invoke these helpers in production export paths; stubs return errors / `None`.
 
 use crate::utils::constants::DEFAULT_MP3_BITRATE;
 use crate::utils::errors::{AppError, AppResult};
+use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::errors::Error as SymphoniaError;
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
+use symphonia::default::{get_codecs, get_probe};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
+
+const EXPORT_DECODE_SAMPLE_RATE: u32 = 44_100;
+const EXPORT_DECODE_CHANNELS: u32 = 2;
+static FFMPEG_BIN_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+fn candidate_if_file(path: PathBuf) -> Option<PathBuf> {
+    if path.is_file() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn detect_ffmpeg_path() -> PathBuf {
+    if let Ok(p) = std::env::var("AURORABOOK_FFMPEG") {
+        let pb = PathBuf::from(p.trim());
+        if let Some(found) = candidate_if_file(pb) {
+            return found;
+        }
+    }
+
+    if let Ok(p) = std::env::var("TAURI_RESOURCE_DIR") {
+        let root = PathBuf::from(p);
+        if let Some(found) = candidate_if_file(root.join("ffmpeg")) {
+            return found;
+        }
+        if let Some(found) = candidate_if_file(root.join("resources").join("ffmpeg")) {
+            return found;
+        }
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(contents_dir) = exe.parent().and_then(|p| p.parent()) {
+            if let Some(found) = candidate_if_file(contents_dir.join("Resources").join("ffmpeg")) {
+                return found;
+            }
+            if let Some(found) =
+                candidate_if_file(contents_dir.join("Resources").join("resources").join("ffmpeg"))
+            {
+                return found;
+            }
+        }
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        if let Some(found) = candidate_if_file(current_dir.join("src-tauri").join("resources").join("ffmpeg")) {
+            return found;
+        }
+        if let Some(found) = candidate_if_file(current_dir.join("resources").join("ffmpeg")) {
+            return found;
+        }
+    }
+
+    if let Some(found) = candidate_if_file(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("ffmpeg"),
+    ) {
+        return found;
+    }
+
+    PathBuf::from("ffmpeg")
+}
+
+pub fn ffmpeg_command() -> Command {
+    let bin = FFMPEG_BIN_PATH.get_or_init(detect_ffmpeg_path);
+    Command::new(bin)
+}
 
 fn stderr_snippet(stderr: &[u8], max: usize) -> String {
     let s = String::from_utf8_lossy(stderr);
@@ -41,109 +117,10 @@ pub fn extension_hint_from_href(href: &str, format_fallback: &str) -> String {
     ext.to_string()
 }
 
-fn extension_from_mime(mime_type: &str) -> &'static str {
-    if mime_type.contains("mpeg") || mime_type.contains("mp3") {
-        "mp3"
-    } else if mime_type.contains("wav") {
-        "wav"
-    } else if mime_type.contains("mp4") || mime_type.contains("m4a") {
-        "m4a"
-    } else if mime_type.contains("ogg") {
-        "ogg"
-    } else if mime_type.contains("opus") {
-        "opus"
-    } else {
-        "mp3"
-    }
-}
-
-#[cfg(not(target_os = "ios"))]
-fn ffprobe_on_path() -> bool {
-    Command::new("ffprobe")
-        .arg("-version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-/// Duration in seconds from audio bytes, or `None` if probing fails / unsupported platform.
-#[cfg(not(target_os = "ios"))]
-pub fn ffprobe_audio_duration_seconds(audio_bytes: &[u8], mime_type: &str) -> Option<f64> {
-    if !ffprobe_on_path() || audio_bytes.is_empty() {
-        return None;
-    }
-    let ext = extension_from_mime(mime_type);
-    let mut tmp = tempfile::Builder::new()
-        .suffix(&format!(".{}", ext))
-        .tempfile()
-        .ok()?;
-    tmp.write_all(audio_bytes).ok()?;
-    tmp.flush().ok()?;
-    let path = tmp.into_temp_path();
-    let out = Command::new("ffprobe")
-        .arg("-v")
-        .arg("error")
-        .arg("-show_entries")
-        .arg("format=duration")
-        .arg("-of")
-        .arg("default=noprint_wrappers=1:nokey=1")
-        .arg(path.as_os_str())
-        .output()
-        .ok()?;
-    let _ = std::fs::remove_file(&path);
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    text.trim().parse::<f64>().ok()
-}
-
-#[cfg(target_os = "ios")]
-pub fn ffprobe_audio_duration_seconds(_audio_bytes: &[u8], _mime_type: &str) -> Option<f64> {
-    None
-}
-
-#[cfg(not(target_os = "ios"))]
-fn ffprobe_sample_rate_channels(path: &Path) -> AppResult<(u32, u32)> {
-    let out = Command::new("ffprobe")
-        .arg("-v")
-        .arg("error")
-        .arg("-select_streams")
-        .arg("a:0")
-        .arg("-show_entries")
-        .arg("stream=sample_rate,channels")
-        .arg("-of")
-        .arg("csv=p=0")
-        .arg(path.as_os_str())
-        .output()
-        .map_err(|e| AppError::Encoding(format!("Failed to run ffprobe: {}", e)))?;
-    if !out.status.success() {
-        return Err(AppError::Encoding(format!(
-            "ffprobe failed: {}",
-            stderr_snippet(&out.stderr, 2000)
-        )));
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let line = text.trim();
-    let mut parts = line.split(',');
-    let sr: u32 = parts
-        .next()
-        .ok_or_else(|| AppError::Encoding("ffprobe: missing sample_rate".into()))?
-        .trim()
-        .parse()
-        .map_err(|_| AppError::Encoding(format!("ffprobe: bad sample_rate {:?}", line)))?;
-    let ch: u32 = parts
-        .next()
-        .ok_or_else(|| AppError::Encoding("ffprobe: missing channels".into()))?
-        .trim()
-        .parse()
-        .map_err(|_| AppError::Encoding(format!("ffprobe: bad channels {:?}", line)))?;
-    Ok((sr, ch.max(1)))
-}
-
-/// Decode `audio_bytes` to interleaved s16le PCM using FFmpeg (native stream sample rate).
+/// Decode `audio_bytes` to interleaved s16le PCM using FFmpeg.
+///
+/// Export decode is normalized to a fixed format to avoid a separate probing step:
+/// 44.1 kHz, stereo, 16-bit PCM.
 #[cfg(not(target_os = "ios"))]
 pub fn decode_audio_blob_to_pcm(
     audio_bytes: &[u8],
@@ -164,15 +141,17 @@ pub fn decode_audio_blob_to_pcm(
         .map_err(|e| AppError::Encoding(format!("Sync temp audio: {}", e)))?;
     let path = tmp.into_temp_path();
 
-    let (sample_rate, channels) = ffprobe_sample_rate_channels(&path)?;
-
-    let out = Command::new("ffmpeg")
+    let out = ffmpeg_command()
         .arg("-nostdin")
         .arg("-hide_banner")
         .arg("-loglevel")
         .arg("error")
         .arg("-i")
         .arg(path.as_os_str())
+        .arg("-ar")
+        .arg(EXPORT_DECODE_SAMPLE_RATE.to_string())
+        .arg("-ac")
+        .arg(EXPORT_DECODE_CHANNELS.to_string())
         .arg("-f")
         .arg("s16le")
         .arg("-acodec")
@@ -199,12 +178,13 @@ pub fn decode_audio_blob_to_pcm(
             "FFmpeg decode produced no PCM output".into(),
         ));
     }
+    let channels = EXPORT_DECODE_CHANNELS;
     if pcm.len() % (2 * channels as usize) != 0 {
         return Err(AppError::Encoding(
             "Decoded PCM size is not aligned to frame size".into(),
         ));
     }
-    Ok((pcm, sample_rate, channels))
+    Ok((pcm, EXPORT_DECODE_SAMPLE_RATE, EXPORT_DECODE_CHANNELS))
 }
 
 #[cfg(target_os = "ios")]
@@ -249,7 +229,7 @@ pub fn encode_pcm_to_mp3_bytes(
     }
 
     let br = format!("{}k", bitrate_kbps);
-    let mut child = Command::new("ffmpeg")
+    let mut child = ffmpeg_command()
         .arg("-nostdin")
         .arg("-hide_banner")
         .arg("-loglevel")
@@ -328,27 +308,68 @@ fn escape_ffmetadata_value(s: &str) -> String {
 }
 
 #[cfg(not(target_os = "ios"))]
-fn ffprobe_format_duration_seconds(path: &Path) -> AppResult<f64> {
-    let out = Command::new("ffprobe")
-        .arg("-v")
-        .arg("error")
-        .arg("-show_entries")
-        .arg("format=duration")
-        .arg("-of")
-        .arg("default=noprint_wrappers=1:nokey=1")
-        .arg(path.as_os_str())
-        .output()
-        .map_err(|e| AppError::Encoding(format!("ffprobe duration: {}", e)))?;
-    if !out.status.success() {
-        return Err(AppError::Encoding(format!(
-            "ffprobe duration failed: {}",
-            stderr_snippet(&out.stderr, 2000)
-        )));
+fn media_format_duration_seconds(path: &Path) -> AppResult<f64> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| AppError::Encoding(format!("Open media for duration failed: {}", e)))?;
+
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
     }
-    let t = String::from_utf8_lossy(&out.stdout);
-    t.trim()
-        .parse::<f64>()
-        .map_err(|_| AppError::Encoding(format!("ffprobe: bad duration {:?}", t)))
+
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let probed = get_probe()
+        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .map_err(|e| AppError::Encoding(format!("Probe media duration failed: {}", e)))?;
+    let mut format = probed.format;
+    let track = format
+        .default_track()
+        .ok_or_else(|| AppError::Encoding("No default audio track for duration probe".into()))?;
+
+    if let (Some(frames), Some(sr)) = (track.codec_params.n_frames, track.codec_params.sample_rate) {
+        if sr > 0 {
+            return Ok(frames as f64 / sr as f64);
+        }
+    }
+
+    let track_id = track.id;
+    let mut decoder = get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| AppError::Encoding(format!("Create decoder for duration failed: {}", e)))?;
+    let mut sample_rate = track.codec_params.sample_rate;
+    let mut total_frames: u64 = 0;
+
+    loop {
+        match format.next_packet() {
+            Ok(packet) => {
+                if packet.track_id() != track_id {
+                    continue;
+                }
+                match decoder.decode(&packet) {
+                    Ok(decoded) => {
+                        if sample_rate.is_none() {
+                            sample_rate = Some(decoded.spec().rate);
+                        }
+                        total_frames = total_frames.saturating_add(decoded.frames() as u64);
+                    }
+                    Err(SymphoniaError::DecodeError(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+            Err(SymphoniaError::IoError(_)) => break,
+            Err(_) => break,
+        }
+    }
+
+    let sr = sample_rate.ok_or_else(|| {
+        AppError::Encoding("Missing sample rate while decoding media duration".into())
+    })?;
+    if total_frames == 0 {
+        return Err(AppError::Encoding(
+            "Decoded zero frames while computing media duration".into(),
+        ));
+    }
+    Ok(total_frames as f64 / sr as f64)
 }
 
 /// Embed MP4/M4A/M4B tags and (for M4B) chapter markers using FFmpeg + ffmetadata.
@@ -384,7 +405,7 @@ pub fn apply_mp4_metadata_and_chapters_ffmpeg(
     }
 
     if embed_chapters && !chapter_starts.is_empty() {
-        let duration_s = ffprobe_format_duration_seconds(in_path)?;
+        let duration_s = media_format_duration_seconds(in_path)?;
         let duration_us = (duration_s * 1_000_000.0).round().max(1.0) as i64;
         let n = chapter_starts.len();
         for (i, (start, chapter_title)) in chapter_starts.iter().enumerate() {
@@ -421,7 +442,7 @@ pub fn apply_mp4_metadata_and_chapters_ffmpeg(
         .map_err(|e| AppError::Encoding(format!("Tagged output temp: {}", e)))?;
     let out_tmp_path = out_tmp.path().to_path_buf();
 
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = ffmpeg_command();
     cmd.arg("-nostdin")
         .arg("-y")
         .arg("-hide_banner")

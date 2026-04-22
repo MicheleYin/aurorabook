@@ -315,7 +315,7 @@ fn require_ffmpeg_for_export() -> AppResult<()> {
 
 #[cfg(not(target_os = "ios"))]
 fn require_ffmpeg_for_export() -> AppResult<()> {
-    let status = Command::new("ffmpeg")
+    let status = crate::utils::ffmpeg_audio::ffmpeg_command()
         .arg("-version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -382,7 +382,7 @@ fn ffmpeg_concat_pcm_export(
         }
     }
 
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = crate::utils::ffmpeg_audio::ffmpeg_command();
     cmd.arg("-nostdin")
         .arg("-y")
         .arg("-f")
@@ -540,7 +540,7 @@ fn create_mp3_export_file(
     pcm_tracks: &[(Vec<u8>, u32, u32, String)],
     on_track_encoded: impl FnMut(usize, usize) + Send,
 ) -> AppResult<()> {
-    require_ffmpeg_for_export()?;
+        let mut cmd = crate::utils::ffmpeg_audio::ffmpeg_command();
     #[cfg(not(target_os = "ios"))]
     {
         let bitrate_arg = format!("{}k", DEFAULT_MP3_BITRATE);
@@ -992,56 +992,90 @@ mod m4b_export_tests {
     use crate::book_service::models::{
         AudioSyncMap, AudioTrack, Book, BookAudioState, BookProgress, Chapter, ConversionStatus,
     };
-    use serde_json::Value;
+    use symphonia::core::codecs::DecoderOptions;
+    use symphonia::core::errors::Error as SymphoniaError;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+    use symphonia::default::{get_codecs, get_probe};
     use std::fs::File;
     use std::io::Read;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
     use zip::ZipArchive;
 
-    fn ffprobe_json(path: &str) -> Value {
-        let out = Command::new("ffprobe")
+    fn ffmpeg_probe_output(path: &str) -> String {
+        let out = crate::utils::ffmpeg_audio::ffmpeg_command()
             .args([
+                "-hide_banner",
                 "-v",
-                "error",
-                "-show_format",
-                "-show_chapters",
-                "-print_format",
-                "json",
+                "info",
+                "-i",
                 path,
+                "-f",
+                "null",
+                "-",
             ])
             .output()
-            .expect("ffprobe");
+            .expect("ffmpeg probe output");
         assert!(
             out.status.success(),
-            "ffprobe failed: {}",
+            "ffmpeg probe output failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        serde_json::from_slice(&out.stdout).expect("ffprobe json")
+        String::from_utf8_lossy(&out.stderr).to_string()
     }
 
-    fn ffprobe_duration_sec(path: &str) -> f64 {
-        let out = Command::new("ffprobe")
-            .args([
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
-                path,
-            ])
-            .output()
-            .expect("ffprobe duration");
-        assert!(
-            out.status.success(),
-            "ffprobe duration failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .parse()
-            .expect("duration parse")
+    fn media_duration_sec(path: &str) -> f64 {
+        let file = File::open(path).expect("open media file for duration");
+        let mut hint = Hint::new();
+        if let Some(ext) = Path::new(path).extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+
+        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        let probed = get_probe()
+            .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+            .expect("probe media format");
+        let mut format = probed.format;
+        let track = format.default_track().expect("default audio track");
+
+        if let (Some(frames), Some(sr)) = (track.codec_params.n_frames, track.codec_params.sample_rate) {
+            return frames as f64 / sr as f64;
+        }
+
+        let track_id = track.id;
+        let mut decoder = get_codecs()
+            .make(&track.codec_params, &DecoderOptions::default())
+            .expect("build decoder");
+        let mut sample_rate = track.codec_params.sample_rate;
+        let mut total_frames: u64 = 0;
+
+        loop {
+            match format.next_packet() {
+                Ok(packet) => {
+                    if packet.track_id() != track_id {
+                        continue;
+                    }
+                    match decoder.decode(&packet) {
+                        Ok(decoded) => {
+                            if sample_rate.is_none() {
+                                sample_rate = Some(decoded.spec().rate);
+                            }
+                            total_frames = total_frames.saturating_add(decoded.frames() as u64);
+                        }
+                        Err(SymphoniaError::DecodeError(_)) => continue,
+                        Err(_) => break,
+                    }
+                }
+                Err(SymphoniaError::IoError(_)) => break,
+                Err(_) => break,
+            }
+        }
+
+        let sr = sample_rate.expect("sample rate for decoded stream") as f64;
+        total_frames as f64 / sr
     }
 
     fn ffmpeg_on_path() -> bool {
@@ -1051,7 +1085,7 @@ mod m4b_export_tests {
         }
         #[cfg(not(target_os = "ios"))]
         {
-            Command::new("ffmpeg")
+            crate::utils::ffmpeg_audio::ffmpeg_command()
                 .arg("-version")
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -1125,7 +1159,7 @@ mod m4b_export_tests {
         }
     }
 
-    /// Regression: m4b mux output must carry tags and chapters (verified via ffprobe).
+    /// Regression: m4b mux output must carry tags and chapters.
     #[test]
     fn m4b_two_track_export_roundtrips_metadata_and_chapters() {
         if !ffmpeg_on_path() {
@@ -1150,41 +1184,13 @@ mod m4b_export_tests {
         let meta = std::fs::metadata(&out_path).expect("stat output");
         assert!(meta.len() > 8_000, "m4b output unexpectedly small: {} bytes", meta.len());
 
-        let v = ffprobe_json(out_str);
-        let fmt_tags = v
-            .pointer("/format/tags")
-            .and_then(Value::as_object)
-            .expect("format tags");
-        assert_eq!(
-            fmt_tags.get("title").and_then(Value::as_str),
-            Some("M4B Test Book")
-        );
-        assert_eq!(
-            fmt_tags.get("artist").and_then(Value::as_str),
-            Some("Test Author")
-        );
+        let probe = ffmpeg_probe_output(out_str).to_lowercase();
+        assert!(probe.contains("title           : m4b test book"));
+        assert!(probe.contains("artist          : test author"));
+        assert!(probe.contains("track one"));
+        assert!(probe.contains("track two"));
 
-        let chapters = v
-            .get("chapters")
-            .and_then(Value::as_array)
-            .expect("chapters");
-        assert!(
-            chapters.len() >= 2,
-            "expected at least 2 chapter markers, got {}",
-            chapters.len()
-        );
-        let t0 = chapters[0]
-            .pointer("/tags/title")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let t1 = chapters[1]
-            .pointer("/tags/title")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        assert_eq!(t0, "Track One");
-        assert_eq!(t1, "Track Two");
-
-        let secs = ffprobe_duration_sec(out_str);
+        let secs = media_duration_sec(out_str);
         assert!(
             (secs - 0.5).abs() < 0.45,
             "expected ~0.5s of muxed audio (two 0.25s tracks), got {}s",
@@ -1303,8 +1309,8 @@ mod m4b_export_tests {
         assert!(m4a_meta.len() > 16_000, "m4a output too small: {}", m4a_meta.len());
         assert!(m4b_meta.len() > 16_000, "m4b output too small: {}", m4b_meta.len());
 
-        let m4a_secs = ffprobe_duration_sec(m4a_str);
-        let m4b_secs = ffprobe_duration_sec(m4b_str);
+        let m4a_secs = media_duration_sec(m4a_str);
+        let m4b_secs = media_duration_sec(m4b_str);
         assert!(
             m4a_secs > 1.0,
             "m4a duration unexpectedly short: {}s",

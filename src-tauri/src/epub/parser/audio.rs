@@ -1,18 +1,84 @@
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
+use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::errors::Error as SymphoniaError;
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
+use symphonia::default::{get_codecs, get_probe};
 use zip::ZipArchive;
 
 use super::types::ManifestItem;
 use super::opf::derive_base_path_from_opf;
 use super::utils::generate_audio_track_title;
 
-/// Compute audio duration from audio bytes using **ffprobe** (requires `ffprobe` on `PATH`).
-fn compute_audio_duration(audio_bytes: &[u8], mime_type: &str) -> Option<f64> {
-    let d = crate::utils::ffmpeg_audio::ffprobe_audio_duration_seconds(audio_bytes, mime_type);
-    if d.is_none() {
-        log::debug!("Failed to compute audio duration via ffprobe (mime hint: {})", mime_type);
+/// Compute audio duration from audio bytes using Symphonia (pure Rust, no external binaries).
+fn compute_audio_duration(audio_bytes: &[u8], _mime_type: &str) -> Option<f64> {
+    if audio_bytes.is_empty() {
+        return None;
     }
-    d
+
+    let source = Cursor::new(audio_bytes.to_vec());
+    let mss = MediaSourceStream::new(Box::new(source), Default::default());
+    let hint = Hint::new();
+
+    let probed = get_probe()
+        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .ok()?;
+
+    let mut format = probed.format;
+    let track = format.default_track()?;
+    let mut sample_rate = track.codec_params.sample_rate;
+
+    // Fast path if container/codec metadata provides both frame count and sample rate.
+    if let (Some(frames), Some(sr)) = (track.codec_params.n_frames, sample_rate) {
+        if sr > 0 {
+            return Some(frames as f64 / sr as f64);
+        }
+    }
+
+    let track_id = track.id;
+    let mut decoder = get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .ok()?;
+
+    let mut total_frames: u64 = 0;
+    loop {
+        match format.next_packet() {
+            Ok(packet) => {
+                if packet.track_id() != track_id {
+                    continue;
+                }
+                match decoder.decode(&packet) {
+                    Ok(decoded) => {
+                        if sample_rate.is_none() {
+                            sample_rate = Some(decoded.spec().rate);
+                        }
+                        total_frames = total_frames.saturating_add(decoded.frames() as u64);
+                    }
+                    Err(SymphoniaError::DecodeError(_)) => {
+                        // Corrupt packet; continue to salvage duration from remaining packets.
+                        continue;
+                    }
+                    Err(_) => break,
+                }
+            }
+            Err(SymphoniaError::IoError(_)) => break,
+            Err(_) => break,
+        }
+    }
+
+    let duration = match sample_rate {
+        Some(sr) if sr > 0 && total_frames > 0 => Some(total_frames as f64 / sr as f64),
+        _ => None,
+    };
+
+    if duration.is_none() {
+        log::debug!("Failed to compute audio duration via Symphonia");
+    }
+
+    duration
 }
 
 /// Extract audio tracks from EPUB manifest items in spine order.
