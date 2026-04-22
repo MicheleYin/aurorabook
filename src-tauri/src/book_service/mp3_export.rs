@@ -582,8 +582,8 @@ fn create_mp4_export_file(
                 "aac_low",
                 "-movflags",
                 "+faststart",
-                // M4A/M4B are written to a `.m4a.part` temp path; FFmpeg 8+ will not infer MP4 mux
-                // from that extension unless we set the muxer explicitly.
+                // Output may use a non-standard extension during processing; FFmpeg 8+ is more
+                // reliable when we set the MP4 muxer explicitly.
                 "-f",
                 "mp4",
             ],
@@ -744,21 +744,16 @@ async fn export_as_mp4(
     let filelist_path = PathBuf::new();
 
     let final_output = PathBuf::from(&output_path);
-    let ext = final_output
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("m4a");
-    let temp_output = final_output.with_extension(format!("{}.part", ext));
-    let temp_output_str = temp_output
-        .to_str()
-        .ok_or_else(|| AppError::Store("Temporary output path is not valid UTF-8".to_string()))?;
-
-    if temp_output.exists() {
-        let _ = std::fs::remove_file(&temp_output);
+    if final_output.exists() {
+        let _ = std::fs::remove_file(&final_output);
     }
 
+    let final_output_str = final_output
+        .to_str()
+        .ok_or_else(|| AppError::Store("Output path is not valid UTF-8".to_string()))?;
+
     if let Err(e) = create_mp4_export_file(
-        temp_output_str,
+        final_output_str,
         &book,
         &prepared_tracks,
         &filelist_path,
@@ -781,18 +776,9 @@ async fn export_as_mp4(
             );
         },
     ) {
-        let _ = std::fs::remove_file(&temp_output);
+        let _ = std::fs::remove_file(&final_output);
         return Err(e);
     }
-
-    std::fs::rename(&temp_output, &final_output).map_err(|e| {
-        let _ = std::fs::remove_file(&temp_output);
-        AppError::Store(format!(
-            "Failed to finalize export file '{}': {}",
-            final_output.display(),
-            e
-        ))
-    })?;
 
     emit_progress(
         &app,
@@ -944,21 +930,16 @@ pub async fn export_as_mp3(
     let filelist_path = PathBuf::new();
 
     let final_output = PathBuf::from(&output_path);
-    let ext = final_output
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("mp3");
-    let temp_output = final_output.with_extension(format!("{}.part", ext));
-    let temp_output_str = temp_output
-        .to_str()
-        .ok_or_else(|| AppError::Store("Temporary output path is not valid UTF-8".to_string()))?;
-
-    if temp_output.exists() {
-        let _ = std::fs::remove_file(&temp_output);
+    if final_output.exists() {
+        let _ = std::fs::remove_file(&final_output);
     }
 
+    let final_output_str = final_output
+        .to_str()
+        .ok_or_else(|| AppError::Store("Output path is not valid UTF-8".to_string()))?;
+
     if let Err(e) = create_mp3_export_file(
-        temp_output_str,
+        final_output_str,
         &filelist_path,
         prepared_tracks.len(),
         |encoded_tracks, total_tracks| {
@@ -979,18 +960,9 @@ pub async fn export_as_mp3(
             );
         },
     ) {
-        let _ = std::fs::remove_file(&temp_output);
+        let _ = std::fs::remove_file(&final_output);
         return Err(e);
     }
-
-    std::fs::rename(&temp_output, &final_output).map_err(|e| {
-        let _ = std::fs::remove_file(&temp_output);
-        AppError::Store(format!(
-            "Failed to finalize export file '{}': {}",
-            final_output.display(),
-            e
-        ))
-    })?;
 
     emit_progress(
         &app,

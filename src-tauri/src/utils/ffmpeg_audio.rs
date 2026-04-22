@@ -449,7 +449,7 @@ pub fn apply_mp4_metadata_and_chapters_ffmpeg(
         .parent()
         .filter(|p| !p.as_os_str().is_empty());
     let out_tmp = tempfile::Builder::new()
-        .suffix(".tagged.mp4.part")
+        .suffix(".tagged.mp4.work")
         .tempfile_in(parent.unwrap_or_else(|| Path::new(".")))
         .map_err(|e| AppError::Encoding(format!("Tagged output temp: {}", e)))?;
     let out_tmp_path = out_tmp.path().to_path_buf();
@@ -471,7 +471,7 @@ pub fn apply_mp4_metadata_and_chapters_ffmpeg(
     if embed_chapters && !chapter_starts.is_empty() {
         cmd.arg("-map_chapters").arg("1");
     }
-    // Temp names use `.mp4.part`; FFmpeg 8+ needs an explicit muxer.
+    // Temp names use a non-standard extension; FFmpeg 8+ needs an explicit muxer.
     cmd.arg("-f").arg("mp4");
     let out = cmd
         .arg(out_tmp_path.as_os_str())
