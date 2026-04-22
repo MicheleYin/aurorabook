@@ -372,6 +372,18 @@ fn media_format_duration_seconds(path: &Path) -> AppResult<f64> {
     Ok(total_frames as f64 / sr as f64)
 }
 
+#[cfg(not(target_os = "ios"))]
+pub fn probe_media_duration_seconds(path: &Path) -> AppResult<f64> {
+    media_format_duration_seconds(path)
+}
+
+#[cfg(target_os = "ios")]
+pub fn probe_media_duration_seconds(_path: &Path) -> AppResult<f64> {
+    Err(AppError::Encoding(
+        "Media duration probing requires FFmpeg-enabled export support.".into(),
+    ))
+}
+
 /// Embed MP4/M4A/M4B tags and (for M4B) chapter markers using FFmpeg + ffmetadata.
 #[cfg(not(target_os = "ios"))]
 pub fn apply_mp4_metadata_and_chapters_ffmpeg(
