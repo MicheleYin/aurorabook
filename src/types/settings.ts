@@ -1,5 +1,7 @@
-/** Matches `AVAILABLE_LANGS` in `koko/kokoros` / `supertonic/rust` helper. */
-export type AppLocaleCode = "en" | "ko" | "es" | "pt" | "fr";
+import type { AppLanguageCode } from "../constants/languages";
+
+/** UI locales with translation files under `src/locales/` (31 Supertonic languages). */
+export type AppLocaleCode = AppLanguageCode;
 
 /** Supertonic synthesis steps: 5 / 10 / 20 — maps to backend `tts_synthesis_quality`. */
 export type TtsSynthesisQuality = "fastest" | "balanced" | "quality";

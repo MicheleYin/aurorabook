@@ -4,7 +4,7 @@ Preview clips for **Settings → Default voice** (play button) are loaded from:
 
 `voice-samples/{language}/{voiceId}.mp3`
 
-where `language` is one of `en`, `ko`, `es`, `pt`, `fr` (same as TTS / UI languages), and `voiceId` is `F1`–`F5` or `M1`–`M5`.
+where `language` is a Supertonic 3 TTS code (31 languages; see `AVAILABLE_LANGS`), and `voiceId` is `F1`–`F5` or `M1`–`M5`. If a language-specific clip is missing, the UI falls back to `en`.
 
 The UI shows human-readable names (Sora, Luna, …) via translations; file names stay as engine ids.
 
@@ -34,7 +34,7 @@ Requires:
 Override paths if needed:
 
 ```bash
-export SUPERONIC_ROOT=/path/to/supertonic-2   # sets ONNX + voices unless overridden
+export SUPERONIC_ROOT=/path/to/supertonic-3   # sets ONNX + voices unless overridden
 export OUT_DIR=/path/to/tts-tauri/src-tauri/resources/voice-samples
 ./tts-tauri/scripts/generate_supertonic_voice_samples.sh
 ```

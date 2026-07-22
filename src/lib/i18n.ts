@@ -8,21 +8,17 @@ import {
   normalizeAppLanguage,
 } from "../constants/languages";
 
-/** App UI locale — matches Supertonic / kokoros `AVAILABLE_LANGS`. */
+/** App UI locale — same 31-language set as Supertonic TTS. */
 export type Language = AppLanguageCode;
 
-// Simple translation store
 type Translations = Record<string, string>;
 
-const translations = {
-  en: {},
-  ko: {},
-  es: {},
-  pt: {},
-  fr: {},
-} as Record<Language, Translations>;
+const localeModules = import.meta.glob<{ default: Translations }>("../locales/*.json");
 
-// Default language
+const translations = Object.fromEntries(
+  AVAILABLE_LANGS.map((code) => [code, {} as Translations])
+) as Record<Language, Translations>;
+
 let currentLanguage: Language = "en";
 const listeners: ((lang: Language) => void)[] = [];
 
@@ -50,7 +46,7 @@ export function useTranslation() {
       setLang(newLang);
     };
     listeners.push(listener);
-    
+
     // Load translations if not already loaded
     if (Object.keys(translations[lang]).length === 0) {
       loadTranslations(lang).then(() => setLoading(false));
@@ -65,7 +61,7 @@ export function useTranslation() {
   }, [lang]);
 
   const t = useCallback((key: string, variables?: Record<string, string | number>) => {
-    let text = translations[lang][key] || key;
+    let text = translations[lang][key] || translations.en[key] || key;
     if (variables) {
       Object.entries(variables).forEach(([name, value]) => {
         text = text.replace(`{{${name}}}`, String(value));
@@ -79,7 +75,7 @@ export function useTranslation() {
       await loadTranslations(newLang);
     }
     currentLanguage = newLang;
-    listeners.forEach(l => l(newLang));
+    listeners.forEach((l) => l(newLang));
   }, []);
 
   return { t, lang, changeLanguage, loading };
@@ -87,18 +83,31 @@ export function useTranslation() {
 
 async function loadTranslations(lang: Language) {
   try {
-    // In a real app, we might fetch these or import them
-    // For simplicity, we'll import them dynamically
-    const data = await import(`../locales/${lang}.json`);
+    const path = `../locales/${lang}.json`;
+    const loader = localeModules[path];
+    if (!loader) {
+      console.error(`No locale module for ${lang}`);
+      return;
+    }
+    const data = await loader();
     translations[lang] = data.default;
   } catch (err) {
     console.error(`Failed to load translations for ${lang}:`, err);
   }
 }
 
+/** Ensure English is available as fallback for missing keys in other locales. */
+async function ensureEnglishFallback() {
+  if (Object.keys(translations.en).length === 0) {
+    await loadTranslations("en");
+  }
+}
+
 // Initial language load with tiered detection
 export async function initI18n() {
   try {
+    await ensureEnglishFallback();
+
     // 1. Try to load from user settings (persistence has highest priority)
     const settings = await invoke<{ language?: string }>("get_app_settings");
     if (settings?.language) {

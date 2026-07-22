@@ -110,7 +110,7 @@ pub fn run() {
                             logging::log("info", &model_msg, None);
                         } else {
                             let warn_msg = format!(
-                                "⚠ Supertonic ONNX bundle not found under Resources (expected resources/supertonic/onnx from build.rs). Ensure ./supertonic-2 exists and run cargo build."
+                                "⚠ Supertonic ONNX bundle not found under Resources (expected resources/supertonic/onnx from build.rs). Ensure ./supertonic-3 exists and run cargo build."
                             );
                             log::warn!("{}", warn_msg);
                             logging::log("warn", &warn_msg, None);

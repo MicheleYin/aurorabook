@@ -9,8 +9,12 @@ use std::io::BufReader;
 use std::path::Path;
 use unicode_normalization::UnicodeNormalization;
 
-// Keep in sync with frontend language constants.
-pub const AVAILABLE_LANGS: &[&str] = &["en", "ko", "es", "pt", "fr"];
+// Supertonic 3 — keep in sync with frontend `AVAILABLE_LANGS` (TTS codes).
+pub const AVAILABLE_LANGS: &[&str] = &[
+    "en", "ko", "ja", "ar", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr",
+    "hi", "hr", "hu", "id", "it", "lt", "lv", "nl", "pl", "pt", "ro", "ru", "sk",
+    "sl", "sv", "tr", "uk", "vi",
+];
 
 pub fn is_valid_lang(lang: &str) -> bool {
     AVAILABLE_LANGS.contains(&lang)

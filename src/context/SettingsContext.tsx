@@ -11,7 +11,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 
 import { normalizeVoiceId } from "../constants/kokoro";
-import { normalizeAppLanguage } from "../constants/languages";
+import { normalizeAppLanguage, normalizeTtsLanguage } from "../constants/languages";
 import type { AppSettings, TtsSynthesisQuality } from "../types/settings";
 import type { UITheme } from "../types/ui";
 import { logger } from "../lib/logger";
@@ -82,7 +82,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       setSettings({
         ...appSettings,
         language: normalizeAppLanguage(appSettings.language),
-        ttsLanguage: normalizeAppLanguage(appSettings.ttsLanguage),
+        ttsLanguage: normalizeTtsLanguage(appSettings.ttsLanguage),
         ttsVoiceId: normalizeVoiceId(appSettings.ttsVoiceId),
         ttsSynthesisQuality: normalizeTtsSynthesisQuality(
           appSettings.ttsSynthesisQuality

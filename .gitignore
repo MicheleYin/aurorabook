@@ -14,6 +14,7 @@ node_modules
 dist
 dist-ssr
 *.local
+.venv-i18n/
 .playwright/
 playwright-report/
 test-results/

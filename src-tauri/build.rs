@@ -2,11 +2,11 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Copy Supertonic v2 assets from the repo’s `supertonic-2/` tree (Hugging Face layout) into
+/// Copy Supertonic 3 assets from the repo’s `supertonic-3/` tree (Hugging Face layout) into
 /// `src-tauri/resources/supertonic/` so Tauri can bundle them.
 ///
-/// Expects `../../supertonic-2/onnx` and `../../supertonic-2/voice_styles` relative to this crate.
-/// Pull large files with Git LFS from [Supertone/supertonic-2](https://huggingface.co/Supertone/supertonic-2).
+/// Expects `../../supertonic-3/onnx` and `../../supertonic-3/voice_styles` relative to this crate.
+/// Pull large files with Git LFS from [Supertone/supertonic-3](https://huggingface.co/Supertone/supertonic-3).
 fn sync_supertonic_assets_for_bundle() {
     let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
         Ok(s) => PathBuf::from(s),
@@ -14,13 +14,13 @@ fn sync_supertonic_assets_for_bundle() {
     };
     // `src-tauri` crate dir → workspace root is two levels up (…/tts-tauri/src-tauri → aurorabook)
     let workspace_root = manifest_dir.join("..").join("..");
-    let src_pack = workspace_root.join("supertonic-2");
+    let src_pack = workspace_root.join("supertonic-3");
     let src_onnx = src_pack.join("onnx");
     let src_voices = src_pack.join("voice_styles");
 
     if !src_onnx.is_dir() {
         eprintln!(
-            "cargo:warning=Supertonic ONNX folder not found at {} — clone https://huggingface.co/Supertone/supertonic-2 into ./supertonic-2 (Git LFS for .onnx)",
+            "cargo:warning=Supertonic ONNX folder not found at {} — clone https://huggingface.co/Supertone/supertonic-3 into ./supertonic-3 (Git LFS for .onnx)",
             src_onnx.display()
         );
         return;
@@ -67,7 +67,7 @@ fn sync_supertonic_assets_for_bundle() {
 
     if !dest_onnx.join("duration_predictor.onnx").exists() {
         println!(
-            "cargo:warning=Supertonic ONNX weights missing (only JSON copied). In repo root: `cd supertonic-2 && git lfs pull`"
+            "cargo:warning=Supertonic ONNX weights missing (only JSON copied). In repo root: `cd supertonic-3 && git lfs pull`"
         );
     }
 }
