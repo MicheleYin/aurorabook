@@ -17,6 +17,8 @@ dist-ssr
 .playwright/
 playwright-report/
 test-results/
+coverage/
+src-tauri/target/llvm-cov/
 
 # Editor directories and files
 .vscode/*

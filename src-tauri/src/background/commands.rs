@@ -22,11 +22,11 @@ pub async fn background_capabilities() -> AppResult<BackgroundCapabilitiesDto> {
 
 /// Submit an iOS 26+ `BGContinuedProcessingTaskRequest` for EPUB conversion.
 ///
-/// Must be invoked from a user gesture before heavy TTS/model work. On non-iOS
-/// (or when continued processing is unavailable) returns a registered job with
-/// `continued_processing: false` so conversion can still proceed in-process.
+/// Must be invoked from a user gesture before heavy TTS/model work. Kept
+/// synchronous so submit reaches the main-queue Swift bridge quickly while the
+/// app is still foregrounded (important for iPhone Live Activity UI).
 #[tauri::command]
-pub async fn start_continued_conversion(
+pub fn start_continued_conversion(
     book_id: String,
     title: String,
     subtitle: String,
@@ -54,7 +54,7 @@ pub async fn start_continued_conversion(
     });
 
     let coordinator = app.state::<BackgroundCoordinator>();
-    let start = coordinator.register_job(&book_id, Arc::clone(&cancel_token))?;
+    let start = coordinator.register_job(&book_id, Arc::clone(&cancel_token), &title)?;
 
     #[cfg(target_os = "ios")]
     {

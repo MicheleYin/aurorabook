@@ -20,7 +20,12 @@ const EXPORT_DECODE_CHANNELS: u32 = 2;
 static FFMPEG_BIN_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 fn candidate_if_file(path: PathBuf) -> Option<PathBuf> {
-    if path.is_file() {
+    // Ignore empty placeholders created for Tauri bundle path validation in CI/tests.
+    if path.is_file()
+        && std::fs::metadata(&path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
         Some(path)
     } else {
         None

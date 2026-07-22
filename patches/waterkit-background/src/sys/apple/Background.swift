@@ -82,6 +82,14 @@ private final class BackgroundRuntimeBridge {
                 return
             }
 
+            // Seed progress immediately so the system Live Activity has a bar to show
+            // (especially important on iPhone; iPadOS often shows UI without this).
+            if #available(iOS 26.0, *), let continued = task as? BGContinuedProcessingTask {
+                continued.progress.totalUnitCount = 100
+                continued.progress.completedUnitCount = 0
+                continued.updateTitle(continued.title, subtitle: continued.subtitle)
+            }
+
             let taskToken = self.allocateTaskToken(task)
             task.expirationHandler = { [weak self] in
                 guard let self else {
@@ -145,38 +153,42 @@ private final class BackgroundRuntimeBridge {
         requiresGPU: Bool
     ) throws {
         if #available(iOS 26.0, *) {
-            // Register the concrete dynamic id immediately before submit (Apple requirement).
-            try registerConcreteTask(identifier: identifier, kind: taskKindContinuedProcessing)
+            // Submit must happen on the main queue while the app is foregrounded.
+            // Off-main IPC (Tauri async) is a common reason the Live Activity never
+            // appears on iPhone even though the same path works on iPadOS.
+            try runOnMainSync {
+                try self.registerConcreteTask(identifier: identifier, kind: taskKindContinuedProcessing)
 
-            let request = BGContinuedProcessingTaskRequest(
-                identifier: identifier,
-                title: title,
-                subtitle: subtitle
-            )
-
-            switch strategy {
-            case 0:
-                request.strategy = .fail
-            case 1:
-                request.strategy = .queue
-            default:
-                throw BackgroundBridgeError.configurationMissing(
-                    "invalid continued-processing strategy value: \(strategy)"
+                let request = BGContinuedProcessingTaskRequest(
+                    identifier: identifier,
+                    title: title,
+                    subtitle: subtitle
                 )
-            }
 
-            if requiresGPU {
-                if BGTaskScheduler.supportedResources.contains(.gpu) {
-                    request.requiredResources = .gpu
-                } else {
-                    throw BackgroundBridgeError.schedulerRejected(
-                        0,
-                        "device does not support background GPU continued-processing resources"
+                switch strategy {
+                case 0:
+                    request.strategy = .fail
+                case 1:
+                    request.strategy = .queue
+                default:
+                    throw BackgroundBridgeError.configurationMissing(
+                        "invalid continued-processing strategy value: \(strategy)"
                     )
                 }
-            }
 
-            try submitTaskRequest(request)
+                if requiresGPU {
+                    if BGTaskScheduler.supportedResources.contains(.gpu) {
+                        request.requiredResources = .gpu
+                    } else {
+                        throw BackgroundBridgeError.schedulerRejected(
+                            0,
+                            "device does not support background GPU continued-processing resources"
+                        )
+                    }
+                }
+
+                try self.submitTaskRequest(request)
+            }
             return
         }
 
@@ -245,6 +257,24 @@ private final class BackgroundRuntimeBridge {
 
     private func removeTaskToken(_ taskToken: UInt64) {
         _ = pendingTasks.removeValue(forKey: taskToken)
+    }
+
+    private func runOnMainSync(_ body: () throws -> Void) throws {
+        if Thread.isMainThread {
+            try body()
+            return
+        }
+        var caught: Error?
+        DispatchQueue.main.sync {
+            do {
+                try body()
+            } catch {
+                caught = error
+            }
+        }
+        if let caught {
+            throw caught
+        }
     }
 
     private func submitTaskRequest(_ request: BGTaskRequest) throws {

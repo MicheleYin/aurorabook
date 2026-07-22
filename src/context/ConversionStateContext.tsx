@@ -393,8 +393,8 @@ export function ConversionStateProvider({
                   started.taskId
                 );
                 toast.message(
-                  "Conversion can continue in the background — check Lock Screen / Dynamic Island after leaving the app.",
-                  { duration: 4000 }
+                  "Leave the app to see conversion progress on Lock Screen or Dynamic Island (iPhone often hides it while AuroraBook is open).",
+                  { duration: 5000 }
                 );
               }
             } else {

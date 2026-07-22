@@ -36,6 +36,7 @@ pub struct JobProgress {
     pub book_id: String,
     pub completed: u64,
     pub total: u64,
+    pub percent: u8,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -55,6 +56,7 @@ struct ConversionJob {
     #[cfg(target_os = "ios")]
     bg_task: Option<BackgroundTask>,
     pending_progress: Option<(u64, u64)>,
+    title: String,
     finished: bool,
 }
 
@@ -82,9 +84,15 @@ impl BackgroundCoordinator {
         &self,
         book_id: &str,
         cancel_token: Arc<AtomicBool>,
+        title: &str,
     ) -> AppResult<ContinuedConversionStart> {
         let job_id = Uuid::new_v4().to_string();
         let task_id = format!("{CONVERT_TASK_PREFIX}{}", Uuid::new_v4());
+        let title = if title.trim().is_empty() {
+            "Converting audiobook".to_string()
+        } else {
+            title.to_string()
+        };
 
         let mut guard = self.inner.lock().map_err(|e| {
             AppError::Store(format!("Failed to lock background coordinator: {e}"))
@@ -107,6 +115,7 @@ impl BackgroundCoordinator {
             #[cfg(target_os = "ios")]
             bg_task: None,
             pending_progress: None,
+            title,
             finished: false,
         };
 
@@ -174,12 +183,16 @@ impl BackgroundCoordinator {
         })?;
 
         if let Some((completed, total)) = job.pending_progress.take() {
-            if let Err(e) = task.update_progress(completed, total) {
+            let percent = progress_percent(completed, total);
+            if let Err(e) = task.update_progress(percent as u64, 100) {
                 log::warn!(
                     "Failed to flush pending progress for {}: {}",
                     task_id,
                     e
                 );
+            }
+            if let Err(e) = task.update_status(job.title.clone(), format!("{percent}%")) {
+                log::warn!("Failed to flush pending status for {}: {}", task_id, e);
             }
         }
 
@@ -226,7 +239,7 @@ impl BackgroundCoordinator {
         let _ = app.emit("background-task-expired", &lifecycle);
     }
 
-    /// Forward conversion progress to the Live Activity / system UI.
+    /// Forward conversion progress to the Live Activity / system UI (percent only).
     pub fn report_progress(
         &self,
         book_id: &str,
@@ -236,6 +249,7 @@ impl BackgroundCoordinator {
     ) {
         let total = total.max(1);
         let completed = completed.min(total);
+        let percent = progress_percent(completed, total);
 
         let payload = {
             let mut guard = match self.inner.lock() {
@@ -254,8 +268,11 @@ impl BackgroundCoordinator {
 
             #[cfg(target_os = "ios")]
             if let Some(ref task) = job.bg_task {
-                if let Err(e) = task.update_progress(completed, total) {
+                if let Err(e) = task.update_progress(percent as u64, 100) {
                     log::debug!("update_progress failed for {}: {}", task_id, e);
+                }
+                if let Err(e) = task.update_status(job.title.clone(), format!("{percent}%")) {
+                    log::debug!("update_status failed for {}: {}", task_id, e);
                 }
             } else {
                 job.pending_progress = Some((completed, total));
@@ -272,6 +289,7 @@ impl BackgroundCoordinator {
                 book_id: job.book_id.clone(),
                 completed,
                 total,
+                percent,
             }
         };
 
@@ -303,6 +321,10 @@ impl BackgroundCoordinator {
 
             #[cfg(target_os = "ios")]
             if let Some(task) = job.bg_task.take() {
+                if success {
+                    let _ = task.update_progress(100, 100);
+                    let _ = task.update_status(job.title.clone(), "100%");
+                }
                 if let Err(e) = task.complete(success) {
                     log::warn!("Failed to complete background task {}: {}", task_id, e);
                 }
@@ -346,4 +368,12 @@ impl Default for BackgroundCoordinator {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn progress_percent(completed: u64, total: u64) -> u8 {
+    let total = total.max(1);
+    let completed = completed.min(total);
+    ((completed as f64 / total as f64) * 100.0)
+        .round()
+        .clamp(0.0, 100.0) as u8
 }

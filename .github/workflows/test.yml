@@ -1,0 +1,87 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (Vitest + Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Unit tests with coverage
+        run: bun run test:coverage
+
+      - name: Install Playwright Chromium
+        run: bunx playwright install --with-deps chromium
+
+      - name: Playwright smoke
+        run: bun run test:playwright
+
+      - name: Upload frontend LCOV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-frontend-lcov
+          path: coverage/lcov.info
+          if-no-files-found: warn
+
+  rust:
+    name: Rust (fast suite + llvm-cov)
+    runs-on: macos-15
+    env:
+      # Keep artifacts inside the checkout (overrides src-tauri/.cargo/config.toml)
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cargo-target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Fast tests with coverage
+        run: |
+          mkdir -p target/llvm-cov
+          # build.rs ensures resources/ffmpeg (and copies system ffmpeg when available)
+          cargo llvm-cov --lcov --output-path target/llvm-cov/lcov.info --lib
+
+      - name: Upload Rust LCOV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-rust-lcov
+          path: src-tauri/target/llvm-cov/lcov.info
+          if-no-files-found: warn

@@ -102,8 +102,6 @@ ort = { version = "2.0.0-rc.12", features = ["coreml"] }
 waterkit-background = { path = "../patches/waterkit-background" }
 
 
-[dev-dependencies]
-
 [patch.crates-io]
 audiopus_sys = { path = "../patches/audiopus_sys" }
 

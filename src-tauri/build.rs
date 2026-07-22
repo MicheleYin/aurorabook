@@ -425,7 +425,171 @@ fn main() {
 
     sync_supertonic_assets_for_bundle();
     copy_ort_webgpu_dylib_for_macos_bundle();
+    ensure_macos_ffmpeg_resource();
+    strip_ffmpeg_from_ios_assets();
     tauri_build::build()
+}
+
+/// `tauri.macos.conf.json` lists `resources/ffmpeg` as a bundle resource, so the path must
+/// exist before `tauri_build::build()` or the build fails with
+/// `resource path resources/ffmpeg doesn't exist`.
+///
+/// Prefer an existing non-empty binary, then env overrides, then a system `ffmpeg` on PATH.
+fn ensure_macos_ffmpeg_resource() {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if !target.contains("apple-darwin") {
+        return;
+    }
+
+    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
+        Ok(s) => PathBuf::from(s),
+        Err(_) => return,
+    };
+    let dest = manifest_dir.join("resources").join("ffmpeg");
+
+    let dest_ok = dest.is_file()
+        && fs::metadata(&dest)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false);
+    if dest_ok {
+        return;
+    }
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for key in ["AURORABOOK_FFMPEG", "MACOS_APPSTORE_FFMPEG"] {
+        if let Ok(p) = std::env::var(key) {
+            let trimmed = p.trim();
+            if !trimmed.is_empty() {
+                candidates.push(PathBuf::from(trimmed));
+            }
+        }
+    }
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/ffmpeg"),
+        PathBuf::from("/usr/local/bin/ffmpeg"),
+        PathBuf::from("/usr/bin/ffmpeg"),
+    ]);
+    if let Ok(path_env) = std::env::var("PATH") {
+        for dir in path_env.split(':') {
+            if dir.is_empty() {
+                continue;
+            }
+            candidates.push(PathBuf::from(dir).join("ffmpeg"));
+        }
+    }
+
+    for src in candidates {
+        if !src.is_file() {
+            continue;
+        }
+        if let Ok(meta) = fs::metadata(&src) {
+            if meta.len() == 0 {
+                continue;
+            }
+        }
+        if let Some(parent) = dest.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                eprintln!(
+                    "cargo:warning=ffmpeg resource: failed to create {}: {}",
+                    parent.display(),
+                    e
+                );
+                return;
+            }
+        }
+        match fs::copy(&src, &dest) {
+            Ok(_) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(meta) = fs::metadata(&dest) {
+                        let mut perms = meta.permissions();
+                        perms.set_mode(perms.mode() | 0o755);
+                        let _ = fs::set_permissions(&dest, perms);
+                    }
+                }
+                println!(
+                    "cargo:warning=Copied ffmpeg for macOS bundle resource: {} → {}",
+                    src.display(),
+                    dest.display()
+                );
+                println!("cargo:rerun-if-changed={}", src.display());
+                return;
+            }
+            Err(e) => eprintln!(
+                "cargo:warning=ffmpeg resource: failed to copy {} → {}: {}",
+                src.display(),
+                dest.display(),
+                e
+            ),
+        }
+    }
+
+    // Last resort: non-empty placeholder so `tauri_build` path validation passes.
+    // Runtime detection ignores empty/invalid binaries and falls back to PATH.
+    if let Some(parent) = dest.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    match fs::write(&dest, b"#!/bin/sh\necho 'placeholder ffmpeg; install a real binary' >&2\nexit 1\n") {
+        Ok(()) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(meta) = fs::metadata(&dest) {
+                    let mut perms = meta.permissions();
+                    perms.set_mode(perms.mode() | 0o755);
+                    let _ = fs::set_permissions(&dest, perms);
+                }
+            }
+            eprintln!(
+                "cargo:warning=Created placeholder {} — install ffmpeg (e.g. brew install ffmpeg) or set AURORABOOK_FFMPEG for a real binary",
+                dest.display()
+            );
+        }
+        Err(e) => eprintln!(
+            "cargo:warning=ffmpeg resource missing at {} and could not create placeholder: {}",
+            dest.display(),
+            e
+        ),
+    }
+}
+
+/// iOS App Store rejects standalone binaries like `ffmpeg` inside the app bundle.
+/// Stale copies can linger under `gen/apple/assets` after older configs; remove them
+/// before `tauri_build` stages resources for Xcode.
+fn strip_ffmpeg_from_ios_assets() {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if !target.contains("apple-ios") {
+        return;
+    }
+
+    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
+        Ok(s) => PathBuf::from(s),
+        Err(_) => return,
+    };
+
+    let candidates = [manifest_dir
+        .join("gen")
+        .join("apple")
+        .join("assets")
+        .join("resources")
+        .join("ffmpeg")];
+
+    for path in candidates {
+        if path.is_file() {
+            match fs::remove_file(&path) {
+                Ok(()) => println!(
+                    "cargo:warning=Removed ffmpeg from iOS bundle path {}",
+                    path.display()
+                ),
+                Err(e) => eprintln!(
+                    "cargo:warning=Failed to remove iOS-forbidden ffmpeg at {}: {}",
+                    path.display(),
+                    e
+                ),
+            }
+        }
+    }
 }
 
 /// `ort` + `webgpu` links `libwebgpu_dawn.dylib` via `@rpath`; Tauri validates `bundle.resources`
