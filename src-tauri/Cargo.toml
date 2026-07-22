@@ -81,9 +81,8 @@ anyhow = "1.0"
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
 
 # In-tree Supertonic TTS runtime
-# Use local ort repository for better iOS support (patched in [patch.crates-io])
-# Enable download-binaries for iOS to get pre-built binaries
-ort = { version = "2.0.0-rc.12", features = ["webgpu"] }
+# Base ort (no EP feature). WebGPU is desktop/macOS; iOS uses CoreML via static ORT.
+ort = { version = "2.0.0-rc.12" }
 ndarray = "0.17"
 rand = "0.8"
 rand_distr = "0.4"
@@ -91,6 +90,16 @@ unicode-normalization = "0.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
+
+# Desktop/macOS: WebGPU EP (links libwebgpu_dawn). iOS cannot use Dawn.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+ort = { version = "2.0.0-rc.12", features = ["webgpu"] }
+
+# iOS: CoreML EP with ORT_DIRECT_LINK + locally built static libs (see LOCAL_IOS_BUILD.md).
+# waterkit-background: BGContinuedProcessingTaskRequest (iOS 26+) via Swift bridge.
+[target.'cfg(target_os = "ios")'.dependencies]
+ort = { version = "2.0.0-rc.12", features = ["coreml"] }
+waterkit-background = { path = "../patches/waterkit-background" }
 
 
 [dev-dependencies]

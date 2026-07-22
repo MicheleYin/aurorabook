@@ -1,12 +1,37 @@
 use crate::epub::converter::types::ConversionProgress;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// Progress callback type for conversion progress updates
 pub type ProgressCallback = Box<dyn Fn(ConversionProgress) + Send + Sync>;
 
 /// Emit progress update to frontend
 pub fn emit_progress(app: &AppHandle, progress: ConversionProgress) {
-    let _ = app.emit("conversion-progress", progress);
+    let _ = app.emit("conversion-progress", &progress);
+
+    // Keep iOS Live Activity / BGContinuedProcessingTask in sync when a job is active.
+    if let Some(book_id) = current_converting_book_id(app) {
+        let completed = progress.words_processed as u64;
+        let total = (progress.total_words as u64).max(1);
+        if let Some(coord) = app.try_state::<crate::background::BackgroundCoordinator>() {
+            coord.report_progress(&book_id, completed, total, app);
+        }
+    }
+}
+
+fn current_converting_book_id(app: &AppHandle) -> Option<String> {
+    use crate::epub::CancellationTokens;
+    let tokens = app.try_state::<CancellationTokens>()?;
+    let tokens_map = tokens.get();
+    let map = tokens_map.lock().ok()?;
+    // Prefer a book that also has a continued-processing job.
+    if let Some(coord) = app.try_state::<crate::background::BackgroundCoordinator>() {
+        for book_id in map.keys() {
+            if coord.task_id_for_book(book_id).is_some() {
+                return Some(book_id.clone());
+            }
+        }
+    }
+    map.keys().next().cloned()
 }
 
 /// Get the number of CPU cores for parallel processing.
@@ -25,28 +50,15 @@ pub fn emit_progress(app: &AppHandle, progress: ConversionProgress) {
 /// println!("Using {} cores for parallel processing", parallelism);
 /// ```
 pub fn get_parallelism() -> usize {
-    // On iOS, use single-threaded execution for better stability and UI responsiveness
-    // #[cfg(target_os = "ios")]
-    // {
-    //     return 1;
-    // }
+    // iOS: single model instance to limit memory (Supertonic ONNX is large).
+    #[cfg(target_os = "ios")]
+    {
+        return 1;
+    }
 
-    // #[cfg(not(target_os = "ios"))]
-    // {
-        // use num_cpus;
-        // let logical = num_cpus::get();
-
-        // // Reserve at least one core for the OS / UI thread / real-time tasks.
-        // let mut workers = logical.saturating_sub(1);
-
-        // // If the machine has many cores, avoid taking *all* of them.
-        // // Example: 32-core machines → use 24 cores. 1 engine uses 300$, a little bit less than all the cores to prevent too much usage and contention
-        // if logical >= 8 {
-        //     workers = workers.min((logical as f64 * 0.50).round() as usize);
-        // }
-
-        // workers.max(1)
+    #[cfg(not(target_os = "ios"))]
+    {
         1
-    // }
+    }
 }
 

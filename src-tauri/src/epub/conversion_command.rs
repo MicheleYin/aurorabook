@@ -18,7 +18,7 @@ use crate::utils::path_validation::validate_file_size;
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// Tauri command wrapper for EPUB to audiobook conversion.
 ///
@@ -612,6 +612,9 @@ async fn prepare_conversion(
 
     // Get cancellation token for this conversion
     let cancel_token = get_cancellation_token(app, book_id)?;
+    if let Some(coord) = app.try_state::<crate::background::BackgroundCoordinator>() {
+        coord.rebind_cancel_token(book_id, Arc::clone(&cancel_token));
+    }
 
     Ok(ConversionPrep { cancel_token })
 }
@@ -663,16 +666,30 @@ async fn perform_conversion(
 
     // Check if conversion was cancelled
     if cancel_token.load(Ordering::Relaxed) {
+        if let Some(coord) = app.try_state::<crate::background::BackgroundCoordinator>() {
+            coord.complete_job(book_id, false, app);
+        }
         handle_conversion_cancellation(app, book_id, source_path).await?;
         return Err(AppError::EpubParse(
             "Conversion cancelled by user".to_string(),
         ));
     }
 
-    let converted_epub = converted_epub_result.map_err(|e| {
-        log::error!("Conversion failed: {}", e);
-        AppError::EpubParse(e.to_string()).with_context("Conversion failed")
-    })?;
+    let converted_epub = match converted_epub_result {
+        Ok(data) => {
+            if let Some(coord) = app.try_state::<crate::background::BackgroundCoordinator>() {
+                coord.complete_job(book_id, true, app);
+            }
+            data
+        }
+        Err(e) => {
+            if let Some(coord) = app.try_state::<crate::background::BackgroundCoordinator>() {
+                coord.complete_job(book_id, false, app);
+            }
+            log::error!("Conversion failed: {}", e);
+            return Err(AppError::EpubParse(e.to_string()).with_context("Conversion failed"));
+        }
+    };
 
     log::info!("EPUB conversion completed successfully");
     Ok(converted_epub)
