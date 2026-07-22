@@ -8,6 +8,7 @@
     "dialog:default",
     "store:default",
     "opener:default",
+    "os:allow-locale",
     {
       "identifier": "fs:allow-read-file",
       "allow": [

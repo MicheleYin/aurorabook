@@ -1,32 +1,33 @@
-# espeak-rs-sys builds espeak-ng; the phoneme compiler uses fixed path buffers
-# (N_PATH_HOME=160 + margin on macOS). A nested `target/` path can hit exactly
-# 180 bytes and truncate filenames. A shorter target-dir avoids silent truncation.
 [build]
 target-dir = "../../.cargo-target"
 
-[env]
-# espeak-ng defaults to N_PATH_HOME=160 on macOS; long CMake/Cargo OUT_DIR paths overflow
-# path_home buffers during the phoneme/intonation compile steps. Match Linux-style capacity.
-CFLAGS = "-DN_PATH_HOME=1024"
-CXXFLAGS = "-DN_PATH_HOME=1024"
-# Fix CMake compatibility issue with espeak-rs-sys for iOS builds
-CMAKE_POLICY_VERSION_MINIMUM = "3.5"
-# Skip ONNX Runtime binary download for iOS (libraries must be provided separately)
-# This prevents ort-sys from panicking when binaries aren't available for iOS
-ORT_DIRECT_LINK = "1"
+# ort links `@rpath/libwebgpu_dawn.dylib`; Tauri 2 places `bundle.resources` under
+# `Contents/Resources/resources/`, so the dylib resolves at
+# `Resources/resources/ort-dylibs/` (see tauri.macos.conf.json + build.rs copy).
+[target.aarch64-apple-darwin]
+rustflags = [
+  "-C", "link-arg=-mmacosx-version-min=12.0",
+  "-C", "link-arg=-Wl,-rpath,@executable_path/../Resources/resources/ort-dylibs",
+]
+
+[target.x86_64-apple-darwin]
+rustflags = [
+  "-C", "link-arg=-mmacosx-version-min=12.0",
+  "-C", "link-arg=-Wl,-rpath,@executable_path/../Resources/resources/ort-dylibs",
+]
+
+[alias]
+# Generate `resources/voice-samples/{lang}/{F1..M5}.mp3` previews used by settings playback.
+gen-voice-samples = "run --release --features gen-voice-samples --bin gen_voice_samples"
+
+# Do not set ORT_DIRECT_LINK globally: it makes ort-sys skip ONNX prebuilt download and
+# breaks macOS desktop builds (missing static `libonnx`). iOS builds set ORT_DIRECT_LINK=1
+# in package.json (`build:ios`, `build:ios:appstore`) alongside ORT_LIB_LOCATION.
 
 [target.aarch64-apple-ios-sim]
-# Help bindgen find iOS SDK headers and configure linker
-rustflags = [
-  "-C", "link-arg=-isysroot",
-  "-C", "link-arg=/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk",
-  "-C", "link-arg=-L/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/iphonesimulator",
-  "-C", "link-arg=-lc++",
-]
+# Keep default Apple toolchain behavior for Swift and SDK linker paths.
+rustflags = []
 
 [target.aarch64-apple-ios]
-# Help bindgen find iOS SDK headers
-rustflags = [
-  "-C", "link-arg=-isysroot",
-  "-C", "link-arg=$(xcrun --show-sdk-path --sdk iphoneos)",
-]
+# Keep default Apple toolchain behavior for Swift and SDK linker paths.
+rustflags = []

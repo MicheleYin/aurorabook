@@ -5,7 +5,8 @@
 //! - TtsEnginePool creation
 //! - Audio generation
 
-use aurorabook_lib::tts::engine::{TtsEngineType, TtsEnginePool};
+use aurorabook_lib::tts::engine::{TtsEnginePool, TtsEngineType};
+use aurorabook_lib::tts::supertonic::koko::InitConfig;
 
 #[path = "../helpers.rs"]
 mod helpers;
@@ -39,6 +40,7 @@ async fn test_tts_engine_pool_creation_invalid_path() {
         "/nonexistent/voices.bin",
         1,
         TtsEngineType::Onnx,
+        InitConfig::default(),
     ).await;
     
     // Should return an error, not panic
@@ -84,6 +86,7 @@ async fn test_tts_engine_pool_creation() {
         voices_path_str,
         1, // Single instance for testing
         TtsEngineType::Onnx,
+        InitConfig::default(),
     ).await;
     
     assert!(pool.is_ok(), "Engine pool creation should succeed with valid model files");
@@ -111,6 +114,7 @@ async fn test_tts_engine_pool_clone() {
         voices_path.to_str().unwrap(),
         1,
         TtsEngineType::Onnx,
+        InitConfig::default(),
     ).await.unwrap();
     
     // Clone the pool
@@ -140,6 +144,7 @@ async fn test_tts_engine_pool_generate_audio() {
         voices_path.to_str().unwrap(),
         1,
         TtsEngineType::Onnx,
+        InitConfig::default(),
     ).await.unwrap();
     
     println!("🎤 Generating audio for test text...");
@@ -188,6 +193,7 @@ async fn test_tts_engine_pool_generate_audio_pcm() {
         voices_path.to_str().unwrap(),
         1,
         TtsEngineType::Onnx,
+        InitConfig::default(),
     ).await.unwrap();
     
     println!("🎤 Generating PCM audio for test text...");
@@ -223,6 +229,7 @@ async fn test_tts_engine_pool_candle_not_implemented() {
         "/nonexistent/voices.bin",
         1,
         TtsEngineType::Candle,
+        InitConfig::default(),
     ).await;
     
     // Should fail with "not yet implemented" error
@@ -258,6 +265,7 @@ async fn test_tts_engine_pool_multiple_instances() {
         voices_path.to_str().unwrap(),
         2, // Two instances for parallel processing
         TtsEngineType::Onnx,
+        InitConfig::default(),
     ).await;
     
     assert!(pool.is_ok(), "Engine pool with multiple instances should be created");
@@ -293,6 +301,7 @@ async fn test_tts_engine_pool_different_voices() {
         voices_path.to_str().unwrap(),
         1,
         TtsEngineType::Onnx,
+        InitConfig::default(),
     ).await.unwrap();
     
     let test_text = "Testing different voices.";

@@ -5,6 +5,7 @@ import { Monitor, Moon, Sun } from "lucide-react";
 import type { UITheme } from "../types/ui";
 import { anim } from "../lib/animations";
 import { cn } from "../lib/utils";
+import { useTranslation } from "../lib/i18n";
 import { Button } from "./ui/button";
 
 interface ThemeSwitcherProps {
@@ -12,27 +13,28 @@ interface ThemeSwitcherProps {
   onChange: (theme: UITheme) => void;
 }
 
-const options: Array<{ id: UITheme; icon: ReactNode; label: string }> = [
-  {
-    id: "light",
-    icon: <Sun className="h-4 w-4" aria-hidden="true" />,
-    label: "Light",
-  },
-  {
-    id: "dark",
-    icon: <Moon className="h-4 w-4" aria-hidden="true" />,
-    label: "Dark",
-  },
-  {
-    id: "system",
-    icon: <Monitor className="h-4 w-4" aria-hidden="true" />,
-    label: "System",
-  },
-];
-
 function ThemeSwitcherComponent({ value, onChange }: ThemeSwitcherProps) {
+  const { t } = useTranslation();
   const [previousValue, setPreviousValue] = useState<UITheme>(value);
   const [isTransitioning, setIsTransitioning] = useState(false);
+
+  const options: Array<{ id: UITheme; icon: ReactNode; label: string }> = [
+    {
+      id: "light",
+      icon: <Sun className="h-4 w-4" aria-hidden="true" />,
+      label: t("reader.theme_light"),
+    },
+    {
+      id: "dark",
+      icon: <Moon className="h-4 w-4" aria-hidden="true" />,
+      label: t("reader.theme_dark"),
+    },
+    {
+      id: "system",
+      icon: <Monitor className="h-4 w-4" aria-hidden="true" />,
+      label: t("reader.theme_system"),
+    },
+  ];
 
   useEffect(() => {
     if (previousValue !== value) {
@@ -63,7 +65,7 @@ function ThemeSwitcherComponent({ value, onChange }: ThemeSwitcherProps) {
               isActive && "bg-primary/10 text-primary",
               isTransitioning && isActive && "animate-pulse"
             )}
-            aria-label={`Switch to ${option.label} theme`}
+            aria-label={t("app.switch_theme", { theme: option.label })}
           >
             <span
               className={cn(

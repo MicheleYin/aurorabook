@@ -220,7 +220,7 @@ async fn test_compare_all_onnx_models() {
         // Initialize engine
         println!("\n   📦 Initializing engine...");
         let init_start = Instant::now();
-        let engine = match kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+        let engine = match aurorabook_lib::tts::koko::TTSKokoParallel::new_with_instances(
             model_path_str,
             voices_path_str,
             1, // Single instance for testing

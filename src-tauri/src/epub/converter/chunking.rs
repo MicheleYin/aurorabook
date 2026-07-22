@@ -16,9 +16,115 @@ pub struct SentenceWithSpan {
 static SENTENCE_PATTERN: Lazy<Regex> = Lazy::new(|| {
     // Match sentences ending with: . ! ? … or ... (three periods)
     // The ellipsis character (U+2026) is included as a sentence ending
-    Regex::new(r"([^.!?…]+(?:[.!?]+|…|\.\.\.))\s*")
+    Regex::new(r"([^.!?…]+(?:[.!?]+|…))\s*")
         .expect("Failed to compile sentence regex pattern")
 });
+
+const MIN_SENTENCE_WORDS: usize = 10;
+const MIN_SENTENCE_ALNUM_CHARS: usize = 20;
+
+fn is_too_short_sentence(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let word_count = crate::utils::text::count_words(trimmed);
+    let alnum_char_count = trimmed.chars().filter(|c| c.is_alphanumeric()).count();
+
+    word_count < MIN_SENTENCE_WORDS || alnum_char_count < MIN_SENTENCE_ALNUM_CHARS
+}
+
+/// Two adjacent sentences may only be merged when their HTML byte ranges are not separated by
+/// markup. Otherwise `extract_text_with_spans` closes spans at element boundaries and the merged
+/// `SentenceWithSpan` (one `start_byte`/`end_byte` covering both) no longer matches span `id`s in
+/// the rebuilt HTML — breaking sentence-id lookup for highlighting.
+fn can_merge_adjacent_in_html(html: &str, left: &SentenceWithSpan, right: &SentenceWithSpan) -> bool {
+    if left.end_byte > right.start_byte {
+        return false;
+    }
+    if left.end_byte > html.len() || right.start_byte > html.len() {
+        return false;
+    }
+    !html[left.end_byte..right.start_byte].contains('<')
+}
+
+/// Merge short sentence fragments into neighboring sentences.
+///
+/// Strategy:
+/// 1. Prefer merging into previous sentence (parent context) when possible.
+/// 2. If fragment is first sentence, merge into next sentence.
+/// 3. If merging with previous is impossible (markup between), try merging into the next sentence.
+/// 4. Retry until no mergeable short fragments remain.
+fn merge_short_sentences(html: &str, mut sentences: Vec<SentenceWithSpan>) -> Vec<SentenceWithSpan> {
+    if sentences.len() <= 1 {
+        return sentences;
+    }
+
+    let mut merged_count = 0usize;
+    let mut idx = 0usize;
+
+    while idx < sentences.len() {
+        if !is_too_short_sentence(&sentences[idx].text) {
+            idx += 1;
+            continue;
+        }
+
+        if sentences.len() <= 1 {
+            break;
+        }
+
+        let mut merged = false;
+
+        if idx > 0 {
+            let (prev, cur) = (&sentences[idx - 1], &sentences[idx]);
+            if can_merge_adjacent_in_html(html, prev, cur) {
+                let short = sentences.remove(idx);
+                let previous = &mut sentences[idx - 1];
+                previous.text = format!(
+                    "{} {}",
+                    previous.text.trim_end(),
+                    short.text.trim_start()
+                )
+                .trim()
+                .to_string();
+                previous.end_byte = previous.end_byte.max(short.end_byte);
+                merged_count += 1;
+                merged = true;
+                idx = idx.saturating_sub(1);
+            }
+        }
+
+        if merged {
+            continue;
+        }
+
+        if idx + 1 < sentences.len() {
+            let (cur, next) = (&sentences[idx], &sentences[idx + 1]);
+            if can_merge_adjacent_in_html(html, cur, next) {
+                let next = sentences.remove(idx + 1);
+                let current = &mut sentences[idx];
+                current.text = format!("{} {}", current.text.trim_end(), next.text.trim_start())
+                    .trim()
+                    .to_string();
+                current.end_byte = current.end_byte.max(next.end_byte);
+                merged_count += 1;
+                continue;
+            }
+        }
+
+        idx += 1;
+    }
+
+    if merged_count > 0 {
+        log::debug!(
+            "Merged {} short sentence fragment(s) using adjacent context",
+            merged_count
+        );
+    }
+
+    sentences
+}
 
 /// Extracts all text from HTML and adds span tags for text-audio synchronization.
 ///
@@ -502,12 +608,41 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
         }
     }
     
-    log::debug!("Extracted {} sentences from HTML body", all_sentences.len());
-    
+    let sentence_count_before_merge = all_sentences.len();
+    all_sentences = merge_short_sentences(html, all_sentences);
+
+    log::debug!(
+        "Extracted {} sentences from HTML body ({} after short-fragment merge)",
+        sentence_count_before_merge,
+        all_sentences.len()
+    );
+
     Ok(all_sentences)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn merge_short_into_previous_still_works_in_one_text_run() {
+        let html = "<html><body><p>This is the first valid sentence. Ok. This is another valid sentence.</p></body></html>";
+        let s = extract_all_sentences(html).unwrap();
+        assert!(
+            !s.iter().any(|x| x.text.trim().eq_ignore_ascii_case("ok.")),
+            "Ok. should merge into the previous sentence when only whitespace separates them in HTML"
+        );
+    }
 
-
+    #[test]
+    fn merge_does_not_span_block_markup_so_sentence_ids_match_spans() {
+        let html = r#"<html><body><p>First sentence is long enough to pass minimum length.</p><p>Ok.</p></body></html>"#;
+        let s = extract_all_sentences(html).unwrap();
+        assert!(
+            s.iter()
+                .any(|x| x.text.trim().eq_ignore_ascii_case("ok.")),
+            "Ok. must stay its own sentence when </p>…<p> lies between; merging would break span/highlight alignment"
+        );
+    }
+}
 

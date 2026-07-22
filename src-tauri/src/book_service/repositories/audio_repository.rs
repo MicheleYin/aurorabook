@@ -46,8 +46,8 @@ impl AudioRepository {
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(book_id, href) DO UPDATE SET
                 title = excluded.title,
-                url = excluded.url,
-                duration = excluded.duration,
+                url = COALESCE(excluded.url, audio_tracks.url),
+                duration = COALESCE(excluded.duration, audio_tracks.duration),
                 track_order = excluded.track_order
             "#
         )

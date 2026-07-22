@@ -6,9 +6,12 @@ import { toast } from "sonner";
 
 import type { Book } from "../../types/book";
 import { useAppContext } from "../../context/AppContext";
+import { useAudioExportState } from "../../context/AudioExportStateContext";
+import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
 import { staggerDelay } from "../../lib/animations";
 import { logger } from "../../lib/logger";
+import { useTranslation } from "../../lib/i18n";
 import {
   showLoadingToast,
   updateLoadingToastToError,
@@ -27,6 +30,7 @@ type ViewMode = "grid" | "list";
 export function Library() {
   const {
     setCurrentTab,
+    currentBook,
     setCurrentBookWithLoading,
     library: books,
     setLibrary: setBooks,
@@ -34,6 +38,8 @@ export function Library() {
 
     loadBooks,
   } = useAppContext();
+  const { t } = useTranslation();
+  useAudioProgressContext();
 
   const booksRef = useRef(books);
 
@@ -88,7 +94,13 @@ export function Library() {
 
   const handleOpenBook = (book: Book, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    setCurrentBookWithLoading(book, false);
+    // Opening the already-active book should behave like tab switch only.
+    if (currentBook?.id === book.id) {
+      setCurrentTab("reader");
+      return;
+    }
+
+    void setCurrentBookWithLoading(book, false);
     setCurrentTab("reader");
   };
 
@@ -99,17 +111,19 @@ export function Library() {
   const {
     convertBook: convertBookFromContext,
     cancelConversion,
-    isConverting,
     convertingBookId,
     conversionProgress,
     eta,
   } = useBookConversion();
 
+  const { isAnyExporting, activeExportBookId, exportProgress } =
+    useAudioExportState();
+
   // Wrap convertBook (no changes needed, callbacks handle everything)
   const convertBook = useCallback(
-    async (bookId: string) => {
+    async (bookId: string, language?: string, voiceId?: string) => {
       try {
-        await convertBookFromContext(bookId);
+        await convertBookFromContext(bookId, language, voiceId);
       } catch (err) {
         // Error is already handled in context
         logger.error("Conversion failed:", err);
@@ -194,9 +208,9 @@ export function Library() {
     setIsDialogOpen(true);
   };
 
-  const handleConvert = async () => {
+  const handleConvert = async (language?: string, voiceId?: string) => {
     if (!selectedBookId) return;
-    convertBook(selectedBookId);
+    convertBook(selectedBookId, language, voiceId);
     setIsDialogOpen(false);
   };
 
@@ -246,7 +260,7 @@ export function Library() {
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-2">
           <LoadingScreen />
-          <p className="text-sm text-muted-foreground">Loading library...</p>
+          <p className="text-sm text-muted-foreground">{t("library.loading")}</p>
         </div>
       </div>
     );
@@ -257,10 +271,14 @@ export function Library() {
       <div className="flex-shrink-0 p-6 space-y-4 border-b">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Library</h1>
+            <h1 className="text-3xl font-bold tracking-tight">{t("library.title")}</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              {filteredBooks.length}{" "}
-              {filteredBooks.length === 1 ? "book" : "books"}
+              {t(
+                filteredBooks.length === 1
+                  ? "library.book_count_one"
+                  : "library.book_count_other",
+                { count: filteredBooks.length }
+              )}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -270,14 +288,14 @@ export function Library() {
               className="gap-2"
             >
               <Plus className="h-4 w-4" />
-              {isAddingBook ? "Adding..." : "Add Book"}
+              {isAddingBook ? t("library.adding") : t("library.add_book")}
             </Button>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <Input
             type="text"
-            placeholder="Search books by title, author, or subject..."
+            placeholder={t("library.search")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -308,12 +326,12 @@ export function Library() {
             <BookOpen className="h-12 w-12 text-muted-foreground" />
             <div>
               <p className="text-lg font-medium">
-                {searchQuery ? "No books found" : "No books in library"}
+                {searchQuery ? t("library.none_found") : t("library.empty")}
               </p>
               <p className="text-sm text-muted-foreground mt-1">
                 {searchQuery
-                  ? "Try adjusting your search query"
-                  : "Add books to get started"}
+                  ? t("library.search_adjust")
+                  : t("library.add_to_start")}
               </p>
             </div>
           </div>
@@ -370,8 +388,13 @@ export function Library() {
                     {convertingBookId === book.id && conversionProgress && (
                       <div className="space-y-1">
                         <div className="text-xs text-muted-foreground">
-                          {conversionProgress.message}
+                          {t(`conversion.step.${conversionProgress.currentStep.replace(/-/g, '_')}`)}
                         </div>
+                        {conversionProgress.message.trim().length > 0 && (
+                          <div className="text-xs text-muted-foreground line-clamp-2">
+                            {conversionProgress.message}
+                          </div>
+                        )}
                         <Progress
                           value={
                             conversionProgress.totalWords > 0
@@ -386,11 +409,41 @@ export function Library() {
                         />
                         {eta && (
                           <div className="text-xs text-muted-foreground">
-                            ETA: {eta}
+                            {t("status.eta", { time: eta })}
                           </div>
                         )}
                       </div>
                     )}
+                    {isAnyExporting &&
+                      activeExportBookId === book.id &&
+                      exportProgress && (
+                        <div className="space-y-1">
+                          <div className="text-xs text-muted-foreground line-clamp-2">
+                            {(() => {
+                              const key = `conversion.step.${exportProgress.currentStep.replace(/-/g, "_")}`;
+                              const label = t(key);
+                              return label === key
+                                ? exportProgress.message ||
+                                    exportProgress.currentStep
+                                : label;
+                            })()}
+                          </div>
+                          <Progress
+                            value={
+                              exportProgress.percent > 0
+                                ? exportProgress.percent
+                                : exportProgress.totalTracks > 0
+                                  ? Math.round(
+                                      (exportProgress.processedTracks /
+                                        exportProgress.totalTracks) *
+                                        100
+                                    )
+                                  : 0
+                            }
+                            className="h-1.5"
+                          />
+                        </div>
+                      )}
                   </div>
                 </CardContent>
                 <CardFooter className="p-4">
@@ -448,8 +501,7 @@ export function Library() {
                         {book.pageCount && <span>{book.pageCount} pages</span>}
                         {!!book.progress?.bookProgressPercent && (
                           <span>
-                            {Math.round(book.progress.bookProgressPercent)}%
-                            read
+                            {t("book.read_percent", { percent: Math.round(book.progress.bookProgressPercent) })}
                           </span>
                         )}
                       </div>
@@ -466,11 +518,14 @@ export function Library() {
                       {convertingBookId === book.id && conversionProgress && (
                         <div className="space-y-1">
                           <div className="text-xs text-muted-foreground">
-                            Converting: Chapter{" "}
-                            {conversionProgress.currentChapter}/
-                            {conversionProgress.totalChapters} -{" "}
-                            {conversionProgress.message}
+                            {t("book.converting_chapter", { current: conversionProgress.currentChapter, total: conversionProgress.totalChapters })} -{" "}
+                            {t(`conversion.step.${conversionProgress.currentStep.replace(/-/g, '_')}`)}
                           </div>
+                          {conversionProgress.message.trim().length > 0 && (
+                            <div className="text-xs text-muted-foreground line-clamp-2">
+                              {conversionProgress.message}
+                            </div>
+                          )}
                           <Progress
                             value={
                               conversionProgress.totalWords > 0
@@ -485,11 +540,41 @@ export function Library() {
                           />
                           {eta && (
                             <div className="text-xs text-muted-foreground">
-                              ETA: {eta}
+                              {t("status.eta", { time: eta })}
                             </div>
                           )}
                         </div>
                       )}
+                      {isAnyExporting &&
+                        activeExportBookId === book.id &&
+                        exportProgress && (
+                          <div className="space-y-1">
+                            <div className="text-xs text-muted-foreground line-clamp-2">
+                              {(() => {
+                                const key = `conversion.step.${exportProgress.currentStep.replace(/-/g, "_")}`;
+                                const label = t(key);
+                                return label === key
+                                  ? exportProgress.message ||
+                                      exportProgress.currentStep
+                                  : label;
+                              })()}
+                            </div>
+                            <Progress
+                              value={
+                                exportProgress.percent > 0
+                                  ? exportProgress.percent
+                                  : exportProgress.totalTracks > 0
+                                    ? Math.round(
+                                        (exportProgress.processedTracks /
+                                          exportProgress.totalTracks) *
+                                          100
+                                      )
+                                    : 0
+                              }
+                              className="h-1.5"
+                            />
+                          </div>
+                        )}
                     </div>
                     <Button
                       size="sm"
@@ -497,7 +582,7 @@ export function Library() {
                       variant="ghost"
                       onClick={(e) => handleOpenBook(book, e)}
                     >
-                      Open
+                      {t("book.open")}
                     </Button>
                   </div>
                 </CardContent>
@@ -516,13 +601,7 @@ export function Library() {
           onCancel={handleCancelConversion}
           onDelete={handleDelete}
           onOpenBook={handleOpenBook}
-          isConverting={isConverting}
-          isConvertingThisBook={selectedBookId === convertingBookId}
           isDeleting={isDeleting}
-          conversionProgress={
-            selectedBookId === convertingBookId ? conversionProgress : null
-          }
-          eta={selectedBookId === convertingBookId ? eta : null}
         />
       )}
     </div>

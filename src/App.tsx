@@ -10,6 +10,7 @@ import { Settings } from "./components/settings/SettingsPanel";
 import { Toaster } from "./components/ui/sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { AppProvider, TabValue, useAppContext } from "./context/AppContext";
+import { useTranslation } from "./lib/i18n";
 import {
   AudioProgressProvider,
   useAudioProgressContext,
@@ -19,7 +20,7 @@ import {
   ChapterProgressProvider,
   useChapterProgressContext,
 } from "./context/ChapterProgressContext";
-import { ConversionEventProvider } from "./context/ConversionEventContext";
+import { AudioExportStateProvider } from "./context/AudioExportStateContext";
 import { ConversionStateProvider } from "./context/ConversionStateContext";
 import { SettingsProvider } from "./context/SettingsContext";
 import { useBookConversion } from "./hooks/useBookConversion";
@@ -27,6 +28,7 @@ import { logger } from "./lib/logger";
 
 function AppContent() {
   const { currentTab, setCurrentTab, currentBook } = useAppContext();
+  const { t } = useTranslation();
 
   return (
     <div className="flex h-full flex-col relative">
@@ -40,14 +42,23 @@ function AppContent() {
         <main className="flex-1 overflow-hidden">
           <TabsContent
             value="library"
-            className="h-full overflow-auto m-0"
+            forceMount
+            className="h-full overflow-auto m-0 data-[state=inactive]:hidden"
           >
             <Library />
           </TabsContent>
-          <TabsContent value="reader" className="h-full overflow-auto m-0">
+          <TabsContent
+            value="reader"
+            forceMount
+            className="h-full overflow-auto m-0 data-[state=inactive]:hidden"
+          >
             <Reader />
           </TabsContent>
-          <TabsContent value="settings" className="h-full overflow-auto m-0">
+          <TabsContent
+            value="settings"
+            forceMount
+            className="h-full overflow-auto m-0 data-[state=inactive]:hidden"
+          >
             <Settings />
           </TabsContent>
         </main>
@@ -57,20 +68,20 @@ function AppContent() {
               value="library"
               className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
             >
-              Library
+              {t("library.title")}
             </TabsTrigger>
             <TabsTrigger
               value="reader"
               disabled={!currentBook}
               className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
             >
-              Reader
+              {t("reader.title")}
             </TabsTrigger>
             <TabsTrigger
               value="settings"
               className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
             >
-              Settings
+              {t("app.settings")}
             </TabsTrigger>
           </TabsList>
         </div>
@@ -249,8 +260,8 @@ function AppWithProviders() {
 function App() {
   return (
     <ErrorBoundary>
-      <ConversionEventProvider>
-        <ConversionStateProvider>
+      <ConversionStateProvider>
+        <AudioExportStateProvider>
           <SettingsProvider>
             <AudioSyncProvider>
               <ChapterProgressProvider>
@@ -260,9 +271,9 @@ function App() {
               </ChapterProgressProvider>
             </AudioSyncProvider>
           </SettingsProvider>
-        </ConversionStateProvider>
-        <Toaster richColors position="top-center" className="max-w-sm" />
-      </ConversionEventProvider>
+        </AudioExportStateProvider>
+      </ConversionStateProvider>
+      <Toaster richColors position="top-center" className="max-w-sm" />
     </ErrorBoundary>
   );
 }

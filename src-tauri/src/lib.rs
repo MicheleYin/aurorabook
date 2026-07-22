@@ -1,4 +1,6 @@
 
+extern crate self as kokoros;
+
 // ONNX Runtime with CoreML EP support (macOS/iOS only)
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 
@@ -13,7 +15,7 @@ pub mod utils;  // Made public for testing
 mod window;
 mod logging;
 
-// Use kokoros crate directly on all platforms (it uses ONNX Runtime with CoreML EP on macOS/iOS)
+// In-tree Supertonic wrapper uses ONNX Runtime (CPU/CoreML depending on platform and ORT EP configuration).
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
@@ -49,8 +51,8 @@ fn greet(name: &str) -> String {
 /// - Resource management
 ///
 /// # Logging
-/// Initializes `env_logger` with default filter level "info".
-/// Can be overridden with `RUST_LOG` environment variable.
+/// Debug builds: forwards logs to stderr and the webview (`frontend-log`); default `trace`, overridable via `RUST_LOG`.
+/// Release builds: logging is fully disabled (no stderr, no UI forwarding).
 ///
 /// # Panics
 /// Panics if the Tauri application fails to run.
@@ -67,9 +69,15 @@ pub fn run() {
             // Set max level to Trace to capture all logs including ONNX Runtime
             // The env_logger inside FrontendLogger will handle filtering based on RUST_LOG
             log::set_boxed_logger(logger)
-                .map(|()| log::set_max_level(log::LevelFilter::Trace))
+                .map(|()| {
+                    log::set_max_level(if cfg!(debug_assertions) {
+                        log::LevelFilter::Trace
+                    } else {
+                        log::LevelFilter::Off
+                    });
+                })
                 .expect("Failed to set logger");
-            // Set TAURI_RESOURCE_DIR environment variable for kokoros to find bundled models
+            // Set TAURI_RESOURCE_DIR environment variable for bundled Supertonic assets
             match app.path().resource_dir() {
                 Ok(resource_dir) => {
                     if let Some(resource_str) = resource_dir.to_str() {
@@ -78,44 +86,31 @@ pub fn run() {
                         log::info!("{}", msg);
                         logging::log("info", &msg, None);
 
-                        // misaki-rs → espeak-rs: phoneme data must be on disk. espeak-rs uses
-                        // PIPER_ESPEAKNG_DATA_DIRECTORY as the parent of `espeak-ng-data`.
-                        // Bundled `tauri.conf.json` resources live under resource_dir/resources/
-                        // (e.g. .../Resources/resources/espeak-ng-data), same as ONNX — not
-                        // directly under resource_dir.
-                        if let Some(piper_parent) =
-                            crate::utils::path_resolver::ResourcePathResolver::resolve_espeak_ng_piper_directory(app.handle())
-                        {
-                            if let Some(piper_str) = piper_parent.to_str() {
-                                std::env::set_var("PIPER_ESPEAKNG_DATA_DIRECTORY", piper_str);
-                                log::info!(
-                                    "✓ Set PIPER_ESPEAKNG_DATA_DIRECTORY for eSpeak-ng (misaki G2P): {}",
-                                    piper_str
-                                );
-                            } else {
-                                log::warn!(
-                                    "⚠ eSpeak-ng parent path is not valid UTF-8: {:?}",
-                                    piper_parent
-                                );
-                            }
-                        } else {
-                            log::warn!(
-                                "⚠ espeak-ng-data not found — misaki/eSpeak G2P may fail. Run `cargo build` so build.rs syncs data into src-tauri/resources, and ensure bundle includes resources/espeak-ng-data."
-                            );
-                        }
-                        
                         let exists_msg = format!("  Resource directory exists: {}", resource_dir.exists());
                         log::info!("{}", exists_msg);
                         logging::log("info", &exists_msg, None);
                         
-                        // Verify kokoro model is available
-                        let kokoro_path = resource_dir.join("kokoro-v1.0.onnx");
-                        if kokoro_path.exists() {
-                            let model_msg = format!("✓ Found kokoro-v1.0.onnx model at: {}", kokoro_path.display());
+                        let bundled_onnx = resource_dir
+                            .join("resources")
+                            .join("supertonic")
+                            .join("onnx");
+                        let flat_onnx = resource_dir.join("supertonic").join("onnx");
+                        let supertonic_onnx = if bundled_onnx.join("tts.json").exists() {
+                            bundled_onnx
+                        } else {
+                            flat_onnx
+                        };
+                        if supertonic_onnx.join("tts.json").exists() {
+                            let model_msg = format!(
+                                "✓ Found Supertonic ONNX bundle at: {}",
+                                supertonic_onnx.display()
+                            );
                             log::info!("{}", model_msg);
                             logging::log("info", &model_msg, None);
                         } else {
-                            let warn_msg = format!("⚠ kokoro-v1.0.onnx model not found at: {:?}", kokoro_path);
+                            let warn_msg = format!(
+                                "⚠ Supertonic ONNX bundle not found under Resources (expected resources/supertonic/onnx from build.rs). Ensure ./supertonic-2 exists and run cargo build."
+                            );
                             log::warn!("{}", warn_msg);
                             logging::log("warn", &warn_msg, None);
                         }
@@ -191,6 +186,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_sql::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
@@ -217,9 +213,12 @@ pub fn run() {
             book_service::add_book,
             book_service::get_epub_buffer,
             book_service::export_epub_to_file,
-            book_service::export_as_m4b,
-            book_service::get_m4b_export_status,
-            book_service::cancel_m4b_export,
+            book_service::mp3_export::export_as_mp3,
+            book_service::mp3_export::get_mp3_export_status,
+            book_service::mp3_export::get_audio_export_status,
+            book_service::mp3_export::export_as_m4a,
+            book_service::mp3_export::export_as_m4b,
+            book_service::mp3_export::cancel_audio_export,
             book_service::update_book_progress,
             book_service::update_book_audio_state,
             book_service::ingest_epub,
@@ -241,9 +240,9 @@ pub fn run() {
                 tauri::RunEvent::ExitRequested { code, .. } => {
                     log::info!("App is closing with exit code: {:?}", code);
 
-                    // Ensure any active M4B export ffmpeg child process is terminated.
-                    book_service::terminate_active_m4b_exports();
-                    
+                    #[cfg(not(target_os = "ios"))]
+                    book_service::mp3_export::terminate_active_ffmpeg_audio_exports();
+
                     // Emit event to frontend to save progress before closing
                     if let Some(window) = app_handle.get_webview_window("main") {
                         if let Err(e) = window.emit("app-closing", ()) {
@@ -303,12 +302,6 @@ pub fn run() {
                     log::info!("Cleanup completed, app will now close");
                 }
 
-                // Final safety net: ensure active M4B export processes are terminated
-                // even if only the final exit event is observed.
-                tauri::RunEvent::Exit => {
-                    book_service::terminate_active_m4b_exports();
-                }
-                
                 // Handle app lifecycle events (especially important on iOS)
                 #[cfg(target_os = "ios")]
                 tauri::RunEvent::Ready => {

@@ -10,7 +10,9 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-import type { AppSettings } from "../types/settings";
+import { normalizeVoiceId } from "../constants/kokoro";
+import { normalizeAppLanguage } from "../constants/languages";
+import type { AppSettings, TtsSynthesisQuality } from "../types/settings";
 import type { UITheme } from "../types/ui";
 import { logger } from "../lib/logger";
 
@@ -38,6 +40,13 @@ export function useSettingsContext() {
 
 interface SettingsProviderProps {
   readonly children: ReactNode;
+}
+
+function normalizeTtsSynthesisQuality(value: unknown): TtsSynthesisQuality {
+  if (value === "fastest" || value === "balanced" || value === "quality") {
+    return value;
+  }
+  return "balanced";
 }
 
 export function SettingsProvider({ children }: SettingsProviderProps) {
@@ -70,7 +79,15 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       setIsLoading(true);
       setError(null);
       const appSettings = await invoke<AppSettings>("get_app_settings");
-      setSettings(appSettings);
+      setSettings({
+        ...appSettings,
+        language: normalizeAppLanguage(appSettings.language),
+        ttsLanguage: normalizeAppLanguage(appSettings.ttsLanguage),
+        ttsVoiceId: normalizeVoiceId(appSettings.ttsVoiceId),
+        ttsSynthesisQuality: normalizeTtsSynthesisQuality(
+          appSettings.ttsSynthesisQuality
+        ),
+      });
 
       // Apply theme from backend settings (only once on initial load)
       if (!hasAppliedThemeRef.current && appSettings.theme) {
@@ -83,7 +100,10 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       // Fallback to default settings
       const defaultSettings: AppSettings = {
         theme: "system",
-        ttsVoiceId: "af_heart",
+        language: "en",
+        ttsLanguage: "en",
+        ttsVoiceId: "F1",
+        ttsSynthesisQuality: "balanced",
         autoScrollEnabled: true,
         audioPlaybackSpeed: 1.0,
       };
@@ -148,6 +168,12 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         // Apply theme if it changed
         if (updates.theme) {
           applyTheme(updates.theme as UITheme);
+        }
+
+        // Handle language change if needed (e.g., refresh translations)
+        if (updates.language) {
+          // You might want to call changeLanguage from useTranslation here
+          // but that's a bit circular. Better to let the app respond to settings change.
         }
       } catch (err) {
         logger.error("Failed to save settings:", err);

@@ -22,7 +22,10 @@ pub use progress::{emit_progress, get_parallelism};
 pub use smil::*;
 pub use types::*;
 
+use crate::book_service::database::get_db_connection;
+use crate::book_service::repositories::SettingsRepository;
 use crate::epub::converter::conversion::convert_epub_core_with_durations;
+use crate::tts::supertonic::koko::InitConfig;
 use crate::utils::errors::{AppError, AppResult};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -130,8 +133,6 @@ pub async fn convert_epub_to_audiobook(
     // Find model files
     let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(Some(&app))?;
 
-    // G2P uses bundled espeak-ng data (`PIPER_ESPEAKNG_DATA_DIRECTORY` set in app setup).
-
     let onnx_path_str = onnx_path
         .to_str()
         .ok_or_else(|| AppError::Encoding("ONNX path contains invalid UTF-8".to_string()))?
@@ -141,6 +142,14 @@ pub async fn convert_epub_to_audiobook(
         .ok_or_else(|| AppError::Encoding("Voices path contains invalid UTF-8".to_string()))?
         .to_string();
 
+    let db = get_db_connection(&app)
+        .await
+        .map_err(|e| AppError::Store(e))?;
+    let app_settings = SettingsRepository::get(db.as_ref())
+        .await
+        .map_err(|e| AppError::Store(e))?;
+    let tts_init = InitConfig::from_tts_synthesis_quality(&app_settings.tts_synthesis_quality);
+
     // Create or get global TTS engine pool with round-robin distribution
     // This ensures engines and phonemizers are only loaded once
     let num_instances = get_parallelism();
@@ -149,6 +158,7 @@ pub async fn convert_epub_to_audiobook(
         &voices_path_str,
         num_instances,
         crate::tts::engine::TtsEngineType::Onnx,
+        &tts_init,
     )
     .await?;
 
@@ -167,6 +177,7 @@ pub async fn convert_epub_to_audiobook(
     });
 
     let voice_id = options.voice_id.clone();
+    let language = options.language.clone();
 
     convert_epub_core_with_durations(
         epub_data,
@@ -175,6 +186,7 @@ pub async fn convert_epub_to_audiobook(
         engine_pool,
         num_instances,
         voice_id,
+        language,
         Some(app),
         source_path,
         cancel_token,
@@ -219,9 +231,8 @@ pub async fn convert_epub_to_audiobook_standalone(
 ) -> AppResult<Vec<u8>> {
     use crate::utils::path_resolver::ResourcePathResolver;
 
-    // Create console-based progress callback for testing
     let progress_callback: ProgressCallback = Box::new(|progress| {
-        println!(
+        log::trace!(
             "Progress: {} - {} ({}/{})",
             progress.current_step,
             progress.message,
@@ -264,6 +275,8 @@ pub async fn convert_epub_to_audiobook_standalone(
         .ok_or_else(|| AppError::Encoding("Voices path contains invalid UTF-8".to_string()))?
         .to_string();
 
+    let tts_init = InitConfig::default();
+
     // Create or get global TTS engine pool with round-robin distribution
     // This ensures engines and phonemizers are only loaded once
     let num_instances = get_parallelism();
@@ -272,6 +285,7 @@ pub async fn convert_epub_to_audiobook_standalone(
         &voices_path_str,
         num_instances,
         crate::tts::engine::TtsEngineType::Onnx,
+        &tts_init,
     )
     .await?;
 
@@ -293,6 +307,7 @@ pub async fn convert_epub_to_audiobook_standalone(
     });
 
     let voice_id = options.voice_id.clone();
+    let language = options.language.clone();
 
     convert_epub_core_with_durations(
         epub_data,
@@ -301,6 +316,7 @@ pub async fn convert_epub_to_audiobook_standalone(
         engine_pool,
         num_instances,
         voice_id,
+        language,
         None,                  // No AppHandle for standalone version
         None,                  // No source_path for standalone version
         cancel_token,          // Pass cancellation token

@@ -106,7 +106,7 @@ async fn test_onnx_model_and_voices_file() {
     println!("   ⚠️  If this panics with 'Protobuf parsing failed', the ONNX file format may be invalid");
     println!("   ⚠️  Note: kokoros expects the full path to the ONNX file, not just the directory");
 
-    let _engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+    let _engine = aurorabook_lib::tts::koko::TTSKokoParallel::new_with_instances(
         model_path_str,
         voices_path_str,
         1, // Use 1 instance for testing

@@ -363,7 +363,7 @@ async fn test_prologue_with_real_tts() {
     let model_path_str = onnx_model.to_str().expect("Model path should be valid UTF-8");
     let voices_path_str = voices_path.to_str().expect("Voices path should be valid UTF-8");
     
-    let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+    let engine = aurorabook_lib::tts::koko::TTSKokoParallel::new_with_instances(
         model_path_str,
         voices_path_str,
         1, // Single instance for testing
@@ -387,10 +387,10 @@ async fn test_prologue_with_real_tts() {
     let speed = 1.0;
     const SAMPLE_RATE: f32 = 24000.0;
     
-    let mut all_word_alignments: Vec<kokoros::tts::koko::WordAlignment> = Vec::new();
+    let mut all_word_alignments: Vec<aurorabook_lib::tts::koko::WordAlignment> = Vec::new();
     let mut merged_audio: Vec<f32> = Vec::new();
     let mut cumulative_duration = 0.0f32;
-    let mut sentence_results: Vec<(usize, Vec<f32>, Vec<kokoros::tts::koko::WordAlignment>, String)> = Vec::new();
+    let mut sentence_results: Vec<(usize, Vec<f32>, Vec<aurorabook_lib::tts::koko::WordAlignment>, String)> = Vec::new();
     
     // Process sentences sequentially (for testing, can be parallelized)
     for (idx, sentence) in sentences.iter().enumerate() {
@@ -430,7 +430,7 @@ async fn test_prologue_with_real_tts() {
                     for (word_idx, word) in words.iter().enumerate() {
                         let start_sec = word_idx as f32 * duration_per_word;
                         let end_sec = (word_idx + 1) as f32 * duration_per_word;
-                        word_alignments.push(kokoros::tts::koko::WordAlignment {
+                        word_alignments.push(aurorabook_lib::tts::koko::WordAlignment {
                             word: word.to_string(),
                             start_sec: start_sec + cumulative_duration,
                             end_sec: end_sec + cumulative_duration,
@@ -439,9 +439,9 @@ async fn test_prologue_with_real_tts() {
                 }
                 
                 // Offset word alignments by cumulative duration
-                let mut offset_alignments: Vec<kokoros::tts::koko::WordAlignment> = word_alignments
+                let mut offset_alignments: Vec<aurorabook_lib::tts::koko::WordAlignment> = word_alignments
                     .iter()
-                    .map(|wa| kokoros::tts::koko::WordAlignment {
+                    .map(|wa| aurorabook_lib::tts::koko::WordAlignment {
                         word: wa.word.clone(),
                         start_sec: wa.start_sec,
                         end_sec: wa.end_sec,
@@ -579,7 +579,7 @@ async fn test_prologue_with_real_tts() {
 // Helper function for real TTS word alignments
 fn map_alignments_to_segments_real_tts(
     span_mappings: Vec<(String, usize, usize)>,
-    word_alignments: &[kokoros::tts::koko::WordAlignment],
+    word_alignments: &[aurorabook_lib::tts::koko::WordAlignment],
     audio_samples: &[f32],
     full_text: &str,
 ) -> Vec<(String, f64, f64)> {

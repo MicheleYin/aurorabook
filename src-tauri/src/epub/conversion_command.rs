@@ -54,18 +54,20 @@ use tauri::{AppHandle, Emitter};
 pub async fn convert_epub_to_audiobook_command(
     book_id: String,
     voice_id: String,
+    language: String,
     app: AppHandle,
 ) -> AppResult<Option<Book>> {
     log::info!(
-        "convert_epub_to_audiobook_command called: book_id={}, voice_id={}",
+        "convert_epub_to_audiobook_command called: book_id={}, voice_id={}, language={}",
         book_id,
-        voice_id
+        voice_id,
+        language
     );
     crate::logging::log(
         "info",
         &format!(
-            "Conversion started: book_id={}, voice_id={}",
-            book_id, voice_id
+            "Conversion started: book_id={}, voice_id={}, language={}",
+            book_id, voice_id, language
         ),
         None,
     );
@@ -119,7 +121,7 @@ pub async fn convert_epub_to_audiobook_command(
 
     // Load and prepare book data
     let book_data =
-        load_and_prepare_book(&app, &source_path, &voice_id, &all_conversion_chapters).await?;
+        load_and_prepare_book(&app, &source_path, &voice_id, &language, &all_conversion_chapters).await?;
 
     // Check if all chapters are already converted
     if book_data.conversion_chapters.is_empty() {
@@ -433,6 +435,7 @@ struct BookData {
     conversion_chapters: Vec<ConversionChapter>,
     total_chapters: usize,
     voice_id: String,
+    language: String,
 }
 
 /// Load existing book and prepare conversion data
@@ -440,6 +443,7 @@ async fn load_and_prepare_book(
     app: &AppHandle,
     source_path: &str,
     voice_id: &str,
+    language: &str,
     all_conversion_chapters: &[ConversionChapter],
 ) -> AppResult<BookData> {
     let db = get_db_connection(app)
@@ -518,6 +522,7 @@ async fn load_and_prepare_book(
         conversion_chapters,
         total_chapters,
         voice_id: voice_id.to_string(),
+        language: language.to_string(),
     })
 }
 
@@ -624,6 +629,7 @@ async fn perform_conversion(
 
     let options = ConversionOptions {
         voice_id: book_data.voice_id.clone(),
+        language: book_data.language.clone(),
         chapters: book_data.conversion_chapters.clone(),
     };
 

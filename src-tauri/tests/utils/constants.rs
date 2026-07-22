@@ -6,7 +6,7 @@ use aurorabook_lib::utils::constants;
 
 #[test]
 fn test_sample_rate() {
-    assert_eq!(constants::SAMPLE_RATE, 24000);
+    assert_eq!(constants::SAMPLE_RATE, 44100);
 }
 
 #[test]
@@ -19,7 +19,6 @@ fn test_media_types() {
 #[test]
 fn test_mp3_constants() {
     assert_eq!(constants::DEFAULT_MP3_BITRATE, 64);
-    assert_eq!(constants::DEFAULT_LAME_QUALITY, 5);
 }
 
 #[test]

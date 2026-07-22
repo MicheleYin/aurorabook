@@ -4,8 +4,14 @@
  * using xcrun productbuild (Mac Installer certificate).
  *
  * Requires:
- *   APPLE_MACOS_INSTALLER_SIGNING_IDENTITY — full name from Keychain, e.g.
+ *   APPLE_MACOS_INSTALLER_SIGNING_IDENTITY — Mac *Installer* identity for productbuild .pkg, e.g.
  *     "3rd Party Mac Developer Installer: Your Name (XXXXXXXXXX)"
+ *   APPLE_SIGNING_IDENTITY — Required when nested binaries are bundled (signs nested binaries + re-signs .app), e.g.
+ *     "3rd Party Mac Developer Application: Your Name (XXXXXXXXXX)"
+ *
+ * Bundled nested binaries (for example `libwebgpu_dawn.dylib`, `ffmpeg`) must satisfy the app’s code
+ * requirement (ITMS-90238); we sign each with `Entitlements.macos-appstore.nested-exec.plist` then
+ * re-sign the .app with `Entitlements.macos-appstore.plist`.
  *
  * Optional:
  *   SKIP_MACOS_APPSTORE_PKG=1 — skip this step (e.g. you only need the .app)
@@ -46,15 +52,6 @@ if (!identity) {
   );
   console.error('  Example: "3rd Party Mac Developer Installer: Your Name (TEAMID)"');
   console.error("  List identities: security find-identity -v");
-  process.exit(1);
-}
-
-const appSigningIdentity = (process.env.APPLE_SIGNING_IDENTITY || "").trim();
-if (!appSigningIdentity) {
-  console.error(
-    "sign-macos-appstore-pkg: set APPLE_SIGNING_IDENTITY so bundled executables can be signed with sandbox entitlements."
-  );
-  console.error('  Example: "3rd Party Mac Developer Application: Your Name (TEAMID)"');
   process.exit(1);
 }
 
@@ -99,20 +96,30 @@ if (!fs.existsSync(appPath)) {
   }
 }
 
-// App Store validation requires nested executables to carry sandbox entitlements.
-const ffmpegPath = path.join(
-  appPath,
-  "Contents",
-  "Resources",
-  "resources",
-  "ffmpeg"
-);
-if (fs.existsSync(ffmpegPath)) {
+// ITMS-90238: bundled nested Mach-O binaries must be signed with app cert + nested entitlements.
+const nestedBinaryCandidates = [
+  path.join(appPath, "Contents", "Resources", "resources", "ort-dylibs", "libwebgpu_dawn.dylib"),
+  path.join(appPath, "Contents", "Resources", "ort-dylibs", "libwebgpu_dawn.dylib"),
+  path.join(appPath, "Contents", "Resources", "resources", "ffmpeg"),
+  path.join(appPath, "Contents", "Resources", "ffmpeg"),
+  path.join(appPath, "Contents", "Resources", "resources", "bin", "ffmpeg"),
+  path.join(appPath, "Contents", "Resources", "bin", "ffmpeg"),
+];
+
+const nestedBinaryPaths = nestedBinaryCandidates.filter((p) => fs.existsSync(p) && fs.statSync(p).isFile());
+
+if (nestedBinaryPaths.length > 0) {
+  const appSigningIdentity = (process.env.APPLE_SIGNING_IDENTITY || "").trim();
+  if (!appSigningIdentity) {
+    console.error(
+      "sign-macos-appstore-pkg: nested binaries are present; set APPLE_SIGNING_IDENTITY (Mac App Store Application) to sign them and re-sign the .app."
+    );
+    console.error('  Example: "3rd Party Mac Developer Application: Your Name (TEAMID)"');
+    process.exit(1);
+  }
+
   const appStoreEntitlementsPath = path.join(tauriDir, "Entitlements.macos-appstore.plist");
-  const nestedExecEntitlementsPath = path.join(
-    tauriDir,
-    "Entitlements.macos-appstore.nested-exec.plist"
-  );
+  const nestedExecEntitlementsPath = path.join(tauriDir, "Entitlements.macos-appstore.nested-exec.plist");
   if (!fs.existsSync(appStoreEntitlementsPath)) {
     console.error(
       "sign-macos-appstore-pkg: missing app entitlements file:",
@@ -122,25 +129,28 @@ if (fs.existsSync(ffmpegPath)) {
   }
   if (!fs.existsSync(nestedExecEntitlementsPath)) {
     console.error(
-      "sign-macos-appstore-pkg: missing nested executable entitlements file:",
+      "sign-macos-appstore-pkg: missing nested entitlements file:",
       nestedExecEntitlementsPath
     );
     process.exit(1);
   }
 
-  console.log("sign-macos-appstore-pkg: signing nested executable", path.relative(root, ffmpegPath));
-  runOrFail(
-    "codesign",
-    [
-      "--force",
-      "--sign",
-      appSigningIdentity,
-      "--entitlements",
-      nestedExecEntitlementsPath,
-      ffmpegPath,
-    ],
-    { cwd: root }
-  );
+  // Nested binaries should only inherit sandbox entitlement; avoid hardened-runtime flags (ITMS-90885).
+  for (const nestedPath of nestedBinaryPaths) {
+    console.log("sign-macos-appstore-pkg: signing nested binary", path.relative(root, nestedPath));
+    runOrFail(
+      "codesign",
+      [
+        "--force",
+        "--sign",
+        appSigningIdentity,
+        "--entitlements",
+        nestedExecEntitlementsPath,
+        nestedPath,
+      ],
+      { cwd: root }
+    );
+  }
 
   console.log("sign-macos-appstore-pkg: re-signing app bundle after nested signing");
   runOrFail(
@@ -157,8 +167,8 @@ if (fs.existsSync(ffmpegPath)) {
   );
 } else {
   console.warn(
-    "sign-macos-appstore-pkg: bundled ffmpeg not found; skipping nested executable signing at",
-    ffmpegPath
+    "sign-macos-appstore-pkg: no nested binary found under",
+    nestedBinaryCandidates.map((p) => path.relative(root, p)).join(" or ")
   );
 }
 

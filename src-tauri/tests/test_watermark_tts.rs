@@ -3,6 +3,7 @@
 //! This test generates TTS audio for the watermark text and converts it to MP3
 
 use aurorabook_lib::tts::engine::{TtsEnginePool, TtsEngineType};
+use aurorabook_lib::tts::supertonic::koko::InitConfig;
 use aurorabook_lib::tts_commands;
 
 #[path = "helpers.rs"]
@@ -35,6 +36,7 @@ async fn test_watermark_tts_to_mp3() {
         voices_path.to_str().unwrap(),
         1,
         TtsEngineType::Onnx,
+        InitConfig::default(),
     )
     .await
     .unwrap();

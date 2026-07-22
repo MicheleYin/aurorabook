@@ -8,6 +8,7 @@ import type { Chapter } from "../../types/book";
 import { useAppContext } from "../../context/AppContext";
 import { useReaderSettings } from "../../hooks/useReaderSettings";
 import { logger } from "../../lib/logger";
+import { useTranslation } from "../../lib/i18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { ReaderContent } from "./ReaderContent";
@@ -17,6 +18,7 @@ import { ReaderSettings } from "./ReaderSettings";
 
 export function Reader() {
   const { currentBook, setCurrentTab } = useAppContext();
+  const { t } = useTranslation();
   const {
     currentChapter,
     isLoadingChapter,
@@ -89,8 +91,8 @@ export function Reader() {
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-4">
           <BookOpen className="h-12 w-12 text-muted-foreground mx-auto" />
-          <p className="text-lg font-medium">No book selected</p>
-          <Button onClick={handleBack}>Back to Library</Button>
+          <p className="text-lg font-medium">{t("reader.no_book")}</p>
+          <Button onClick={handleBack}>{t("reader.back_to_library")}</Button>
         </div>
       </div>
     );

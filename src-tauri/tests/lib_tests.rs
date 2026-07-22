@@ -4,7 +4,6 @@
 // NOTE: This file is kept for backward compatibility.
 // New tests should be added to the modular test structure in tests/mod.rs
 
-use kokoros::onn::ort_base::OrtBase;
 use std::env;
 use std::path::PathBuf;
 
@@ -98,7 +97,7 @@ async fn test_onnx_model_and_voices_file() {
     );
     println!("   ⚠️  Note: kokoros expects the full path to the ONNX file, not just the directory");
 
-    let _engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+    let _engine = aurorabook_lib::tts::koko::TTSKokoParallel::new_with_instances(
         model_path_str,
         voices_path_str,
         1, // Use 1 instance for testing
@@ -142,7 +141,7 @@ async fn test_simple_tts_generation() {
 
     // Initialize engine (following kokoros usage pattern)
     println!("\n📦 Initializing kokoros engine...");
-    let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+    let engine = aurorabook_lib::tts::koko::TTSKokoParallel::new_with_instances(
         model_path_str,
         voices_path_str,
         1, // Use 1 instance for simple test
@@ -259,7 +258,7 @@ async fn test_onnx_only() {
 
     // Initialize ONNX engine
     println!("\n📦 Initializing ONNX engine...");
-    let engine = kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+    let engine = aurorabook_lib::tts::koko::TTSKokoParallel::new_with_instances(
         model_path_str,
         voices_path_str,
         1, // Use 1 instance for testing
@@ -387,18 +386,10 @@ async fn test_generate_and_save_audio() {
     println!("   Model file: {}", model_path_str);
     println!("   Voices path: {}", voices_path_str);
 
-    // Initialize kokoros engine
+    // Initialize Supertonic-backed engine (legacy tests referred to this as "kokoros").
     let engine =
-        kokoros::tts::koko::TTSKokoParallel::new_with_instances(model_path_str, voices_path_str, 1)
+        aurorabook_lib::tts::koko::TTSKokoParallel::new_with_instances(model_path_str, voices_path_str, 1)
             .await;
-
-    // Print model info to see inputs/outputs
-    println!("\n📋 Model Information:");
-    let model_instance = engine.get_model_instance(0);
-    {
-        let model = model_instance.lock().unwrap();
-        model.print_info();
-    }
 
     // Generate audio
     let test_text = "Hello, this is a test of the text to speech system. How does it sound?";
@@ -414,8 +405,7 @@ async fn test_generate_and_save_audio() {
 
     let model_instance = engine.get_model_instance(0);
 
-    // Use timestamped version to get durations/alignments
-    let (audio_samples, durations_opt) = match engine.tts_timestamped_raw_audio_with_instance(
+    let audio_samples = match engine.tts_raw_audio_with_instance(
         test_text,
         language,
         voice_id,
@@ -424,54 +414,9 @@ async fn test_generate_and_save_audio() {
         None,
         None,
         None,
-        model_instance.clone(),
+        model_instance,
     ) {
-        Ok(Some((audio, alignments))) => {
-            println!("✅ Audio generated successfully with timestamps!");
-            println!("   Word alignments: {} words", alignments.len());
-
-            // Print first few alignments
-            if !alignments.is_empty() {
-                println!("   First few word timings:");
-                for (i, alignment) in alignments.iter().take(5).enumerate() {
-                    println!(
-                        "     {}. '{}': {:.3}s - {:.3}s",
-                        i + 1,
-                        alignment.word,
-                        alignment.start_sec,
-                        alignment.end_sec
-                    );
-                }
-                if alignments.len() > 5 {
-                    println!("     ... and {} more words", alignments.len() - 5);
-                }
-            }
-
-            (audio, Some(alignments))
-        }
-        Ok(None) => {
-            // Fallback to non-timestamped version
-            match engine.tts_raw_audio_with_instance(
-                test_text,
-                language,
-                voice_id,
-                speed,
-                None,
-                None,
-                None,
-                None,
-                model_instance,
-            ) {
-                Ok(audio) => {
-                    println!("✅ Audio generated successfully (no timestamps available)!");
-                    (audio, None)
-                }
-                Err(e) => {
-                    println!("❌ Failed to generate audio: {}", e);
-                    return;
-                }
-            }
-        }
+        Ok(audio) => audio,
         Err(e) => {
             println!("❌ Failed to generate audio: {}", e);
             return;
@@ -480,40 +425,17 @@ async fn test_generate_and_save_audio() {
 
     println!("✅ Audio generated successfully!");
     println!("   Samples: {}", audio_samples.len());
+    let sr = engine.sample_rate();
     println!(
-        "   Duration: {:.2}s (at 24kHz)",
-        audio_samples.len() as f32 / 24000.0
+        "   Duration: {:.2}s (at {} Hz)",
+        audio_samples.len() as f32 / sr as f32,
+        sr
     );
-
-    // Print durations if available
-    if let Some(alignments) = &durations_opt {
-        let total_duration: f32 = alignments.iter().map(|a| a.end_sec - a.start_sec).sum();
-        println!("   Total word duration: {:.3}s", total_duration);
-        println!("   Number of words: {}", alignments.len());
-
-        // Show detailed word timing breakdown
-        println!("\n📊 Word Timing Breakdown (derived from durations):");
-        println!("   Note: Durations are in frames (80 frames/sec), converted to seconds");
-        println!("   Word timing details:");
-        for (i, alignment) in alignments.iter().enumerate() {
-            let duration = alignment.end_sec - alignment.start_sec;
-            println!(
-                "     {}. '{}': {:.3}s - {:.3}s (duration: {:.3}s, {:.1} frames)",
-                i + 1,
-                alignment.word,
-                alignment.start_sec,
-                alignment.end_sec,
-                duration,
-                duration * 80.0
-            );
-        }
-    } else {
-        println!("   ⚠️ No durations/alignments available");
-    }
+    println!("   ⚠️ Word-level timestamps are not exposed by the Supertonic path in this build.");
 
     // Save to WAV file
     let output_path = "test_output.wav";
-    match save_audio_as_wav(&audio_samples, 24000, output_path) {
+    match save_audio_as_wav(&audio_samples, sr, output_path) {
         Ok(_) => {
             println!("✅ Audio saved to: {}", output_path);
             println!(
@@ -644,7 +566,7 @@ async fn test_quantized_model_tts() {
 
     // Initialize kokoros engine with the quantized model
     println!("\n📦 Initializing kokoros engine with quantized model...");
-    let engine = match kokoros::tts::koko::TTSKokoParallel::new_with_instances(
+    let engine = match aurorabook_lib::tts::koko::TTSKokoParallel::new_with_instances(
         model_path_str,
         voices_path_str,
         1, // Use 1 instance for testing
@@ -839,7 +761,7 @@ async fn generate_voice_samples() {
 
     println!("\n📦 Initializing TTS engine...");
     let engine =
-        kokoros::tts::koko::TTSKokoParallel::new_with_instances(model_path_str, voices_path_str, 1)
+        aurorabook_lib::tts::koko::TTSKokoParallel::new_with_instances(model_path_str, voices_path_str, 1)
             .await;
 
     println!("✅ Engine initialized\n");
@@ -875,79 +797,22 @@ async fn generate_voice_samples() {
                     pcm_bytes.extend_from_slice(&pcm_value.to_le_bytes());
                 }
 
-                // Convert PCM to MP3 (64 kbps for voice samples)
-                // Use mp3lame-encoder (self-contained, no system LAME required)
-                use mp3lame_encoder::{Builder, FlushNoGap, MonoPcm};
-
-                let bitrate_kbps = 64;
-                let num_samples = pcm_bytes.len() / 2;
-                let mut pcm_samples = Vec::with_capacity(num_samples);
-                for chunk in pcm_bytes.chunks_exact(2) {
-                    let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
-                    pcm_samples.push(sample);
-                }
-
-                let mut encoder_builder = match Builder::new() {
-                    Some(b) => b,
-                    None => {
-                        println!("   ❌ Failed to initialize LAME encoder");
-                        continue;
-                    }
-                };
-
-                if let Err(e) = encoder_builder.set_sample_rate(24000) {
-                    println!("   ❌ Failed to set sample rate: {:?}", e);
-                    continue;
-                }
-                if let Err(e) = encoder_builder.set_num_channels(1) {
-                    println!("   ❌ Failed to set channels: {:?}", e);
-                    continue;
-                }
-                if let Err(e) = encoder_builder.set_quality(mp3lame_encoder::Quality::Good) {
-                    println!("   ❌ Failed to set quality: {:?}", e);
-                    continue;
-                }
-                if let Err(e) = encoder_builder.set_brate(mp3lame_encoder::Bitrate::Kbps64) {
-                    println!("   ❌ Failed to set bitrate: {:?}", e);
-                    continue;
-                }
-
-                let mut encoder = match encoder_builder.build() {
-                    Ok(e) => e,
+                // Convert PCM to MP3 (64 kbps) via FFmpeg on PATH
+                let mp3_data = match aurorabook_lib::utils::ffmpeg_audio::encode_pcm_to_mp3_bytes(
+                    pcm_bytes,
+                    24_000,
+                    1,
+                    Some(64),
+                ) {
+                    Ok(b) => b,
                     Err(e) => {
-                        println!("   ❌ Failed to build encoder: {:?}", e);
+                        println!(
+                            "   ❌ FFmpeg MP3 encode failed: {} (install ffmpeg / ffprobe?)",
+                            e
+                        );
                         continue;
                     }
                 };
-
-                let mut mp3_data = Vec::new();
-                mp3_data.reserve(mp3lame_encoder::max_required_buffer_size(pcm_samples.len()));
-
-                let pcm = MonoPcm(&pcm_samples);
-                let encoded_size = match encoder.encode(pcm, mp3_data.spare_capacity_mut()) {
-                    Ok(size) => size,
-                    Err(e) => {
-                        println!("   ❌ Failed to encode audio: {:?}", e);
-                        continue;
-                    }
-                };
-
-                unsafe {
-                    mp3_data.set_len(mp3_data.len().wrapping_add(encoded_size));
-                }
-
-                let flush_size = match encoder.flush::<FlushNoGap>(mp3_data.spare_capacity_mut()) {
-                    Ok(size) => size,
-                    Err(e) => {
-                        println!("   ❌ Failed to flush encoder: {:?}", e);
-                        continue;
-                    }
-                };
-                if flush_size > 0 {
-                    unsafe {
-                        mp3_data.set_len(mp3_data.len().wrapping_add(flush_size));
-                    }
-                }
 
                 if mp3_data.is_empty() {
                     println!("   ❌ MP3 encoding produced no output");

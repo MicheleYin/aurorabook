@@ -80,6 +80,7 @@ async fn test_complete_audiobook_conversion() {
     let voice_id = "af_heart"; // Default voice
     let options = ConversionOptions {
         voice_id: voice_id.to_string(),
+        language: "en".to_string(),
         chapters: chapters.clone(),
     };
     

@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { filesize } from "filesize";
 import humanizeDuration from "humanize-duration";
 import {
-  AlertTriangle,
   BookOpen,
   Calendar,
   Download,
@@ -21,6 +19,17 @@ import { toast } from "sonner";
 import type { Book } from "../../types/book";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { logger } from "../../lib/logger";
+import { useTranslation } from "../../lib/i18n";
+import { humanizeDurationLocale } from "../../constants/languages";
+import {
+  type AudioExportFormat,
+  type AudioExportProgressPayload,
+  type AudioExportStatusPayload,
+  useAudioExportState,
+} from "@/context/AudioExportStateContext";
+import type { ConversionProgress } from "@/context/ConversionStateContext";
+import { useConversionState } from "@/context/ConversionStateContext";
+import { useSettingsContext } from "@/context/SettingsContext";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -49,56 +58,40 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Separator } from "../ui/separator";
-
-interface ConversionProgress {
-  currentChapter: number;
-  totalChapters: number;
-  wordsProcessed: number;
-  totalWords: number;
-  wordsInCurrentChapter: number;
-  currentStep: string;
-  message: string;
-}
-
-interface M4bExportProgress {
-  bookId: string;
-  currentStep: string;
-  message: string;
-  processedTracks: number;
-  totalTracks: number;
-  percent: number;
-  etaMs: number | null;
-}
-
-interface M4bExportStatus {
-  inProgress: boolean;
-  bookId: string | null;
-}
+import { PreConversionDialog } from "./PreConversionDialog";
 
 interface BookDetailDialogProps {
   book: Book | null;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  onConvert: () => void;
+  onConvert: (language?: string, voiceId?: string) => void;
   onCancel: () => void;
   onDelete: () => void;
   onOpenBook: (book: Book) => void;
-  isConverting: boolean;
-  isConvertingThisBook: boolean;
   isDeleting: boolean;
-  conversionProgress: ConversionProgress | null;
-  eta: string | null;
 }
 
 const BookDetailContent = ({
   book,
   conversionProgress,
+  audioExportProgress,
+  audioExportEtaMs,
   eta,
 }: {
   book: Book;
   conversionProgress: ConversionProgress | null;
+  audioExportProgress: AudioExportProgressPayload | null;
+  audioExportEtaMs: number | null;
   eta: string | null;
 }) => {
+  const { t, lang } = useTranslation();
+  const audioExportStepKey = audioExportProgress
+    ? `conversion.step.${audioExportProgress.currentStep.replace(/-/g, "_")}`
+    : "";
+  const audioExportStepLabel = audioExportProgress
+    ? t(audioExportStepKey)
+    : "";
+
   return (
     <div className="space-y-6">
       <div className="flex gap-6">
@@ -119,7 +112,7 @@ const BookDetailContent = ({
           <div>
             <div className="flex items-center gap-2 mb-2">
               <User className="h-4 w-4 text-muted-foreground" />
-              <span className="font-medium">Author</span>
+              <span className="font-medium">{t("book.author")}</span>
             </div>
             <p className="text-sm text-muted-foreground">{book.author}</p>
           </div>
@@ -127,7 +120,7 @@ const BookDetailContent = ({
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <FileText className="h-4 w-4 text-muted-foreground" />
-                <span className="font-medium">Publisher</span>
+                <span className="font-medium">{t("book.publisher")}</span>
               </div>
               <p className="text-sm text-muted-foreground">
                 {book.publisher}
@@ -139,7 +132,7 @@ const BookDetailContent = ({
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <Calendar className="h-4 w-4 text-muted-foreground" />
-                <span className="font-medium">Published</span>
+                <span className="font-medium">{t("book.published")}</span>
               </div>
               <p className="text-sm text-muted-foreground">
                 {book.publishedYear}
@@ -153,20 +146,20 @@ const BookDetailContent = ({
 
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <p className="text-sm font-medium mb-1">Chapters</p>
+          <p className="text-sm font-medium mb-1">{t("book.chapters")}</p>
           <p className="text-sm text-muted-foreground">
             {book.chapters.length}
           </p>
         </div>
         {book.pageCount && (
           <div>
-            <p className="text-sm font-medium mb-1">Pages</p>
+            <p className="text-sm font-medium mb-1">{t("book.pages")}</p>
             <p className="text-sm text-muted-foreground">{book.pageCount}</p>
           </div>
         )}
         {book.fileSizeBytes && (
           <div>
-            <p className="text-sm font-medium mb-1">File Size</p>
+            <p className="text-sm font-medium mb-1">{t("book.file_size")}</p>
             <p className="text-sm text-muted-foreground">
               {filesize(book.fileSizeBytes)}
             </p>
@@ -174,7 +167,7 @@ const BookDetailContent = ({
         )}
         {!!book.progress?.bookProgressPercent && (
           <div>
-            <p className="text-sm font-medium mb-1">Progress</p>
+            <p className="text-sm font-medium mb-1">{t("book.progress")}</p>
             <p className="text-sm text-muted-foreground">
               {Math.round(book.progress.bookProgressPercent)}%
             </p>
@@ -186,7 +179,7 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">Subjects</p>
+            <p className="text-sm font-medium mb-2">{t("book.subjects")}</p>
             <div className="flex flex-wrap gap-2">
               {book.subjects.map((subject) => (
                 <Badge key={subject} variant="secondary">
@@ -202,7 +195,7 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">Reading Progress</p>
+            <p className="text-sm font-medium mb-2">{t("book.reading_progress")}</p>
             <div className="h-2 bg-muted rounded-full overflow-hidden">
               <div
                 className="h-full bg-primary"
@@ -217,7 +210,7 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">Conversion Status</p>
+            <p className="text-sm font-medium mb-2">{t("book.conversion_status")}</p>
             <Badge
               variant={
                 book.conversionStatus === "done"
@@ -227,8 +220,7 @@ const BookDetailContent = ({
                     : "outline"
               }
             >
-              {book.conversionStatus.charAt(0).toUpperCase() +
-                book.conversionStatus.slice(1)}
+              {t(`status.${book.conversionStatus}`)}
             </Badge>
           </div>
         </>
@@ -238,15 +230,19 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">Conversion Progress</p>
+            <p className="text-sm font-medium mb-2">{t("book.conversion_progress")}</p>
             <div className="space-y-2">
               <div className="text-sm text-muted-foreground">
-                {conversionProgress.message}
+                {t(`conversion.step.${conversionProgress.currentStep.replace(/-/g, '_')}`)}
               </div>
               <div className="text-xs text-muted-foreground">
-                Chapter {conversionProgress.currentChapter}/
-                {conversionProgress.totalChapters}
+                {t("book.chapter_count", { current: conversionProgress.currentChapter, total: conversionProgress.totalChapters })}
               </div>
+              {conversionProgress.message.trim().length > 0 && (
+                <div className="text-xs text-muted-foreground leading-snug">
+                  {conversionProgress.message}
+                </div>
+              )}
               <Progress
                 value={
                   conversionProgress.totalWords > 0
@@ -272,7 +268,68 @@ const BookDetailContent = ({
                 </span>
                 {eta && (
                   <span className="text-xs text-muted-foreground">
-                    ETA: {eta}
+                    {t("status.eta", { time: eta })}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {audioExportProgress && (
+        <>
+          <Separator />
+          <div>
+            <p className="text-sm font-medium mb-2">{t("book.export_progress")}</p>
+            <div className="space-y-2">
+              <div className="text-sm text-muted-foreground">
+                {audioExportStepLabel === audioExportStepKey
+                  ? audioExportProgress.message || audioExportProgress.currentStep
+                  : audioExportStepLabel}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {t("book.export_track_count", {
+                  current: audioExportProgress.processedTracks,
+                  total: audioExportProgress.totalTracks,
+                  format: audioExportProgress.format.toUpperCase(),
+                })}
+              </div>
+              <Progress
+                value={
+                  audioExportProgress.percent > 0
+                    ? audioExportProgress.percent
+                    : audioExportProgress.totalTracks > 0
+                      ? Math.round(
+                          (audioExportProgress.processedTracks /
+                            audioExportProgress.totalTracks) *
+                            100
+                        )
+                      : 0
+                }
+                className="h-2"
+              />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">
+                  {audioExportProgress.percent > 0
+                    ? audioExportProgress.percent
+                    : audioExportProgress.totalTracks > 0
+                      ? Math.round(
+                          (audioExportProgress.processedTracks /
+                            audioExportProgress.totalTracks) *
+                            100
+                        )
+                      : 0}
+                  %
+                </span>
+                {audioExportEtaMs !== null && (
+                  <span className="text-xs text-muted-foreground">
+                    {t("status.eta", {
+                      time: humanizeDuration(audioExportEtaMs, {
+                        round: true,
+                        language: humanizeDurationLocale(lang),
+                      }),
+                    })}
                   </span>
                 )}
               </div>
@@ -285,11 +342,11 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">Audiobook</p>
+            <p className="text-sm font-medium mb-2">{t("book.audiobook")}</p>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">
-                  Audio Tracks
+                  {t("audio.tracks")}
                 </span>
                 <span className="text-sm font-medium">
                   {book.audioTracks.length}
@@ -298,14 +355,17 @@ const BookDetailContent = ({
               {book.audioTracks.some((track) => track.duration) && (
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
-                    Total Duration
+                    {t("audio.total_duration")}
                   </span>
                   <span className="text-sm font-medium">
                     {humanizeDuration(
-                      book.audioTracks.reduce(
-                        (total, track) => total + (track.duration || 0),
-                        0
-                      ) * 1000
+                      Math.round(
+                        book.audioTracks.reduce(
+                          (total, track) => total + (track.duration || 0),
+                          0
+                        )
+                      ) * 1000,
+                      { language: humanizeDurationLocale(lang) }
                     )}
                   </span>
                 </div>
@@ -314,7 +374,7 @@ const BookDetailContent = ({
               {book.audioTracks.some((track) => track.fileSizeBytes) && (
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
-                    Audio Size
+                    {t("audio.size")}
                   </span>
                   <span className="text-sm font-medium">
                     {filesize(
@@ -342,62 +402,63 @@ export function BookDetailDialog({
   onCancel,
   onDelete,
   onOpenBook,
-  isConverting,
-  isConvertingThisBook,
   isDeleting,
-  conversionProgress,
-  eta,
 }: Readonly<BookDetailDialogProps>) {
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const { t } = useTranslation();
   const [exportDropdownKey, setExportDropdownKey] = useState(0);
-  const [isExportingM4b, setIsExportingM4b] = useState(false);
-  const [isCancellingM4b, setIsCancellingM4b] = useState(false);
-  const [isAnyM4bExporting, setIsAnyM4bExporting] = useState(false);
-  const [activeM4bExportBookId, setActiveM4bExportBookId] =
-    useState<string | null>(null);
+  const [isPreConversionOpen, setIsPreConversionOpen] = useState(false);
+  const { settings } = useSettingsContext();
   const isMobile = useIsMobile();
 
-  const syncM4bExportStatus = useCallback(async () => {
-    try {
-      const status = await invoke<M4bExportStatus>("get_m4b_export_status");
-      setIsAnyM4bExporting(status.inProgress);
-      setActiveM4bExportBookId(status.bookId);
+  const {
+    convertingBookId,
+    conversionProgress,
+    eta,
+    isConverting,
+  } = useConversionState();
 
-      if (!book) {
-        setIsExportingM4b(false);
-        return;
-      }
-
-      setIsExportingM4b(status.inProgress && status.bookId === book.id);
-    } catch (err) {
-      logger.warn("Failed to sync M4B export status:", err);
-    }
-  }, [book]);
+  const {
+    isAnyExporting,
+    activeExportBookId,
+    activeExportFormat,
+    exportProgress,
+    derivedExportEtaMs,
+    syncAudioExportStatus,
+    cancelAudioExport,
+    runAudioExport,
+  } = useAudioExportState();
 
   useEffect(() => {
     if (!isOpen) {
       return;
     }
+    void syncAudioExportStatus();
+  }, [isOpen, syncAudioExportStatus]);
 
-    void syncM4bExportStatus();
+  const isConvertingThisBook = Boolean(
+    book && convertingBookId === book.id
+  );
+  const bookConversionProgress =
+    book && convertingBookId === book.id ? conversionProgress : null;
+  const bookEta = book && convertingBookId === book.id ? eta : null;
+  const bookExportProgress =
+    book && exportProgress?.bookId === book.id ? exportProgress : null;
+  const bookExportEtaMs =
+    book && exportProgress?.bookId === book.id ? derivedExportEtaMs : null;
 
-    const interval = window.setInterval(() => {
-      void syncM4bExportStatus();
-    }, 1500);
+  const isExportingAudio = Boolean(
+    book &&
+      isAnyExporting &&
+      activeExportBookId === book.id
+  );
+  const isAnotherBookExporting = Boolean(
+    isAnyExporting &&
+      activeExportBookId !== null &&
+      book &&
+      activeExportBookId !== book.id
+  );
 
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [isOpen, syncM4bExportStatus]);
-
-  const handleDeleteClick = useCallback(() => setShowDeleteConfirm(true), []);
-
-  const handleDeleteConfirm = useCallback(() => {
-    setShowDeleteConfirm(false);
-    onDelete();
-  }, [onDelete]);
-
-  const handleDeleteCancel = useCallback(() => setShowDeleteConfirm(false), []);
+  const handleDeleteClick = useCallback(() => onDelete(), [onDelete]);
 
   const handleExportEpub = useCallback(async () => {
     if (!book) return;
@@ -425,161 +486,109 @@ export function BookDetailDialog({
         outputPath: filePath,
       });
 
-      toast.success("EPUB exported successfully");
+      toast.success(t("book.export_epub_success"));
     } catch (err) {
       logger.error("Failed to export EPUB:", err);
-      toast.error(err instanceof Error ? err.message : "Failed to export EPUB");
+      toast.error(
+        err instanceof Error ? err.message : t("book.export_epub_failed")
+      );
     }
-  }, [book]);
+  }, [book, t]);
 
-  const handleExportM4b = useCallback(async () => {
-    if (!book) return;
+  const formatLabel = useCallback(
+    (format: AudioExportFormat) => format.toUpperCase(),
+    []
+  );
 
-    const toastId = `m4b-export-${book.id}`;
-    let unlistenM4bProgress: (() => void) | null = null;
+  const handleExportAudio = useCallback(
+    async (format: AudioExportFormat) => {
+      if (!book) return;
 
-    try {
-      const currentStatus = await invoke<M4bExportStatus>(
-        "get_m4b_export_status"
-      );
-
-      if (currentStatus.inProgress) {
-        setIsAnyM4bExporting(true);
-        setActiveM4bExportBookId(currentStatus.bookId);
-        setIsExportingM4b(currentStatus.bookId === book.id);
-
-        toast.error(
-          currentStatus.bookId === book.id
-            ? "An M4B export is already running for this book"
-            : "Another M4B export is already in progress"
+      const toastId = `audio-export-${format}-${book.id}`;
+      try {
+        const exportStatus = await invoke<AudioExportStatusPayload>(
+          "get_audio_export_status"
         );
-        return;
-      }
 
-      setIsExportingM4b(true);
-      setIsAnyM4bExporting(true);
-      setActiveM4bExportBookId(book.id);
-      toast.loading("Starting M4B export...", { id: toastId });
-
-      unlistenM4bProgress = await listen<M4bExportProgress>(
-        "m4b-export-progress",
-        (event) => {
-          const progress = event.payload;
-
-          setIsAnyM4bExporting(progress.currentStep !== "completed");
-          setActiveM4bExportBookId(
-            progress.currentStep === "completed" || progress.currentStep === "cancelled"
-              ? null
-              : progress.bookId
+        if (exportStatus.inProgress) {
+          toast.error(
+            exportStatus.bookId === book.id
+              ? t("book.export_already_running_same")
+              : t("book.export_already_running_other")
           );
-          setIsExportingM4b(
-            progress.bookId === book.id &&
-              progress.currentStep !== "completed" &&
-              progress.currentStep !== "cancelled"
-          );
-
-          if (progress.bookId !== book.id) {
-            return;
-          }
-
-          if (progress.currentStep === "cancelled") {
-            toast("M4B export cancelled", { id: toastId });
-            return;
-          }
-
-          const etaText =
-            progress.etaMs !== null
-              ? ` ETA: ${humanizeDuration(progress.etaMs, { round: true })}`
-              : "";
-
-          toast.loading(`${progress.message} (${progress.percent}%)${etaText}`, {
-            id: toastId,
-          });
+          return;
         }
-      );
 
-      // Open save dialog
-      const filePath = await save({
-        defaultPath: `${book.title}.m4b`,
-        filters: [
-          {
-            name: "M4B Audio Files",
-            extensions: ["m4b"],
-          },
-        ],
-      });
+        const extension = format;
+        const filePath = await save({
+          defaultPath: `${book.title}.${extension}`,
+          filters: [
+            {
+              name: `${formatLabel(format)} Audio`,
+              extensions: [extension],
+            },
+          ],
+        });
 
-      if (!filePath) {
-        // User cancelled
-        return;
-      }
+        if (!filePath) {
+          return;
+        }
 
-      // Call backend to export M4B
-      await invoke("export_as_m4b", {
-        bookId: book.id,
-        outputPath: filePath,
-      });
+        await runAudioExport(book.id, format, filePath);
 
-      toast.success("M4B exported successfully", { id: toastId });
-    } catch (err) {
-      logger.error("Failed to export M4B:", err);
-      const message = err instanceof Error ? err.message : "Failed to export M4B";
-      if (message.toLowerCase().includes("cancel")) {
-        toast("M4B export cancelled", { id: toastId });
-      } else {
-        toast.error(message, {
+        toast.success(t("book.export_success", { format: formatLabel(format) }), {
           id: toastId,
         });
+      } catch (err) {
+        logger.error(`Failed to export ${formatLabel(format)}:`, err);
+        const message =
+          err instanceof Error
+            ? err.message
+            : t("book.export_failed", { format: formatLabel(format) });
+        toast.error(message, { id: toastId });
       }
-    } finally {
-      if (unlistenM4bProgress) {
-        unlistenM4bProgress();
-      }
-      setIsExportingM4b(false);
-      setIsCancellingM4b(false);
-      void syncM4bExportStatus();
-    }
-  }, [book, syncM4bExportStatus]);
+    },
+    [book, runAudioExport, formatLabel, t]
+  );
 
-  const handleCancelM4bExport = useCallback(async () => {
-    if (!isExportingM4b) {
-      return;
-    }
-
+  const handleCancelAudioExport = useCallback(async () => {
     try {
-      setIsCancellingM4b(true);
-      const cancelled = await invoke<boolean>("cancel_m4b_export");
-      if (!cancelled) {
-        toast("No M4B export is currently running");
-      }
+      await cancelAudioExport();
     } catch (err) {
-      logger.error("Failed to cancel M4B export:", err);
+      logger.error("Failed to cancel audio export:", err);
       toast.error(
-        err instanceof Error ? err.message : "Failed to cancel M4B export"
+        err instanceof Error ? err.message : "Failed to cancel audio export"
       );
-      setIsCancellingM4b(false);
     }
-  }, [isExportingM4b]);
+  }, [cancelAudioExport]);
 
   const handleExportDropdownAction = useCallback(
     (value: string) => {
       if (value === "epub") {
         void handleExportEpub();
+      } else if (value === "mp3") {
+        void handleExportAudio("mp3");
+      } else if (value === "m4a") {
+        void handleExportAudio("m4a");
       } else if (value === "m4b") {
-        void handleExportM4b();
+        void handleExportAudio("m4b");
       }
       setExportDropdownKey((prev) => prev + 1);
     },
-    [handleExportEpub, handleExportM4b]
+    [handleExportEpub, handleExportAudio]
   );
 
-  logger.log("isConvertingThisBook", isConvertingThisBook);
+  const handlePreConversionConfirm = (language: string, voiceId: string) => {
+    onConvert(language, voiceId);
+  };
+
   if (!book) return null;
 
   const isExportDisabled =
-    isDeleting || isConvertingThisBook || isExportingM4b || isAnyM4bExporting;
-  const isAnotherBookExporting =
-    isAnyM4bExporting && activeM4bExportBookId !== null && activeM4bExportBookId !== book.id;
+    isDeleting ||
+    isConvertingThisBook ||
+    isExportingAudio ||
+    isAnyExporting;
 
   return (
     <>
@@ -589,13 +598,15 @@ export function BookDetailDialog({
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col">
             <DialogHeader>
               <DialogTitle>{book.title}</DialogTitle>
-              <DialogDescription>Book Details</DialogDescription>
+              <DialogDescription>{t("book.details")}</DialogDescription>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto">
               <BookDetailContent
                 book={book}
-                conversionProgress={conversionProgress}
-                eta={eta}
+                conversionProgress={bookConversionProgress}
+                audioExportProgress={bookExportProgress}
+                audioExportEtaMs={bookExportEtaMs}
+                eta={bookEta}
               />
             </div>
             <DialogFooter className="flex-shrink-0 gap-2">
@@ -607,7 +618,7 @@ export function BookDetailDialog({
                 className="gap-2"
               >
                 <BookOpen className="h-4 w-4" />
-                Open Book
+                {t("book.open")}
               </Button>
               <Select
                 key={`desktop-${exportDropdownKey}`}
@@ -615,27 +626,43 @@ export function BookDetailDialog({
                 disabled={isExportDisabled}
               >
                 <SelectTrigger className="w-[170px] gap-2">
-                  {isExportingM4b || isAnotherBookExporting ? (
+                  {isExportingAudio || isAnotherBookExporting ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span>
                         {isAnotherBookExporting
-                          ? "Export Busy..."
-                          : "Exporting M4B..."}
+                          ? t("book.export_busy")
+                          : t("book.exporting_format", {
+                              format: formatLabel(activeExportFormat ?? "mp3"),
+                            })}
                       </span>
                     </>
                   ) : (
                     <>
                       <Download className="h-4 w-4" />
-                      <SelectValue placeholder="Export" />
+                      <SelectValue placeholder={t("book.export")} />
                     </>
                   )}
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="epub">Export as EPUB</SelectItem>
-                  <SelectItem value="m4b">Export as M4B</SelectItem>
+                  <SelectItem value="epub">{t("book.export_epub")}</SelectItem>
+                  <SelectItem value="mp3">{t("book.export_mp3")}</SelectItem>
+                  <SelectItem value="m4a">{t("book.export_m4a")}</SelectItem>
+                  <SelectItem value="m4b">{t("book.export_m4b")}</SelectItem>
                 </SelectContent>
               </Select>
+              {isExportingAudio && (
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => void handleCancelAudioExport()}
+                    disabled={isDeleting}
+                    className="gap-2"
+                  >
+                    <X className="h-4 w-4" />
+                    {t("book.cancel_export")}
+                  </Button>
+                )}
               {book.conversionStatus === "started" && isConvertingThisBook && (
                 <Button
                   variant="outline"
@@ -644,40 +671,29 @@ export function BookDetailDialog({
                   className="gap-2"
                 >
                   <X className="h-4 w-4" />
-                  Cancel Conversion
-                </Button>
-              )}
-              {isExportingM4b && (
-                <Button
-                  variant="outline"
-                  onClick={handleCancelM4bExport}
-                  disabled={isDeleting || isCancellingM4b}
-                  className="gap-2"
-                >
-                  <X className="h-4 w-4" />
-                  {isCancellingM4b ? "Cancelling Export..." : "Cancel Export"}
+                  {t("book.cancel")}
                 </Button>
               )}
               {book.conversionStatus === "started" && !isConvertingThisBook && (
                 <Button
                   variant="outline"
-                  onClick={onConvert}
+                  onClick={() => setIsPreConversionOpen(true)}
                   disabled={isDeleting || isConverting}
                   className="gap-2"
                 >
                   <Play className="h-4 w-4" />
-                  Resume Conversion
+                  {t("book.resume")}
                 </Button>
               )}
               {book.conversionStatus === "notStarted" && (
                 <Button
                   variant="outline"
-                  onClick={onConvert}
+                  onClick={() => setIsPreConversionOpen(true)}
                   className="gap-2"
                   disabled={isDeleting || isConverting}
                 >
                   <Play className="h-4 w-4" />
-                  Convert to Audiobook
+                  {t("book.convert")}
                 </Button>
               )}
               <Button
@@ -687,7 +703,7 @@ export function BookDetailDialog({
                 className="gap-2"
               >
                 <Trash2 className="h-4 w-4" />
-                {isDeleting ? "Deleting..." : "Delete"}
+                {isDeleting ? t("common.deleting") : t("book.delete")}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -701,13 +717,15 @@ export function BookDetailDialog({
             <DrawerHandle />
             <DrawerHeader>
               <DrawerTitle>{book.title}</DrawerTitle>
-              <DrawerDescription>Book Details</DrawerDescription>
+              <DrawerDescription>{t("book.details")}</DrawerDescription>
             </DrawerHeader>
             <div className="flex-1 overflow-y-auto px-6 pb-6">
               <BookDetailContent
                 book={book}
-                conversionProgress={conversionProgress}
-                eta={eta}
+                conversionProgress={bookConversionProgress}
+                audioExportProgress={bookExportProgress}
+                audioExportEtaMs={bookExportEtaMs}
+                eta={bookEta}
               />
             </div>
             <DrawerFooter className="flex-shrink-0 gap-2 p-4">
@@ -719,7 +737,7 @@ export function BookDetailDialog({
                 className="gap-2"
               >
                 <BookOpen className="h-4 w-4" />
-                Open Book
+                {t("book.open")}
               </Button>
               <Select
                 key={`mobile-${exportDropdownKey}`}
@@ -727,27 +745,51 @@ export function BookDetailDialog({
                 disabled={isExportDisabled}
               >
                 <SelectTrigger className="w-full gap-2">
-                  {isExportingM4b || isAnotherBookExporting ? (
+                  {isExportingAudio || isAnotherBookExporting ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span>
                         {isAnotherBookExporting
-                          ? "Export Busy..."
-                          : "Exporting M4B..."}
+                          ? t("book.export_busy")
+                          : t("book.exporting_format", {
+                              format: formatLabel(activeExportFormat ?? "mp3"),
+                            })}
                       </span>
                     </>
                   ) : (
                     <>
                       <Download className="h-4 w-4" />
-                      <SelectValue placeholder="Export" />
+                      <SelectValue placeholder={t("book.export")} />
                     </>
                   )}
                 </SelectTrigger>
                 <SelectContent className="w-full">
-                  <SelectItem className="w-full" value="epub">Export as EPUB</SelectItem>
-                  <SelectItem className="w-full" value="m4b">Export as M4B</SelectItem>
+                  <SelectItem className="w-full" value="epub">
+                    {t("book.export_epub")}
+                  </SelectItem>
+                  <SelectItem className="w-full" value="mp3">
+                    {t("book.export_mp3")}
+                  </SelectItem>
+                  <SelectItem className="w-full" value="m4a">
+                    {t("book.export_m4a")}
+                  </SelectItem>
+                  <SelectItem className="w-full" value="m4b">
+                    {t("book.export_m4b")}
+                  </SelectItem>
                 </SelectContent>
               </Select>
+              {isExportingAudio && (
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => void handleCancelAudioExport()}
+                    disabled={isDeleting}
+                    className="gap-2 w-full"
+                  >
+                    <X className="h-4 w-4" />
+                    {t("book.cancel_export")}
+                  </Button>
+                )}
               {book.conversionStatus === "started" && isConvertingThisBook && (
                 <Button
                   variant="outline"
@@ -756,40 +798,29 @@ export function BookDetailDialog({
                   className="gap-2"
                 >
                   <X className="h-4 w-4" />
-                  Cancel Conversion
-                </Button>
-              )}
-              {isExportingM4b && (
-                <Button
-                  variant="outline"
-                  onClick={handleCancelM4bExport}
-                  disabled={isDeleting || isCancellingM4b}
-                  className="gap-2"
-                >
-                  <X className="h-4 w-4" />
-                  {isCancellingM4b ? "Cancelling Export..." : "Cancel Export"}
+                  {t("book.cancel")}
                 </Button>
               )}
               {book.conversionStatus === "started" && !isConvertingThisBook && (
                 <Button
                   variant="outline"
-                  onClick={onConvert}
+                  onClick={() => setIsPreConversionOpen(true)}
                   disabled={isDeleting || isConverting}
                   className="gap-2"
                 >
                   <Play className="h-4 w-4" />
-                  Resume Conversion
+                  {t("book.resume")}
                 </Button>
               )}
               {book.conversionStatus === "notStarted" && (
                 <Button
                   variant="outline"
-                  onClick={onConvert}
+                  onClick={() => setIsPreConversionOpen(true)}
                   className="gap-2"
                   disabled={isDeleting || isConverting}
                 >
                   <Play className="h-4 w-4" />
-                  Convert to Audiobook
+                  {t("book.convert")}
                 </Button>
               )}
               <Button
@@ -799,49 +830,21 @@ export function BookDetailDialog({
                 className="gap-2"
               >
                 <Trash2 className="h-4 w-4" />
-                {isDeleting ? "Deleting..." : "Delete"}
+                {isDeleting ? t("common.deleting") : t("book.delete")}
               </Button>
             </DrawerFooter>
           </DrawerContent>
         </Drawer>
       )}
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <div className="flex items-center gap-3 mb-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
-                <AlertTriangle className="h-5 w-5 text-destructive" />
-              </div>
-              <DialogTitle>Delete Book</DialogTitle>
-            </div>
-            <DialogDescription>
-              Are you sure you want to delete{" "}
-              <strong>&ldquo;{book.title}&rdquo;</strong>? This action cannot be
-              undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              onClick={handleDeleteCancel}
-              disabled={isDeleting}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDeleteConfirm}
-              disabled={isDeleting}
-              className="gap-2"
-            >
-              <Trash2 className="h-4 w-4" />
-              {isDeleting ? "Deleting..." : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Pre-conversion Config Modal */}
+      <PreConversionDialog
+        isOpen={isPreConversionOpen}
+        onOpenChange={setIsPreConversionOpen}
+        onConfirm={handlePreConversionConfirm}
+        defaultLanguage={settings?.ttsLanguage}
+        defaultVoiceId={settings?.ttsVoiceId}
+      />
     </>
   );
 }

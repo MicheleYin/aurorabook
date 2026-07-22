@@ -1,111 +1,92 @@
-export const DEFAULT_KOKORO_MODEL_ID = "onnx-community/Kokoro-82M-v1.0-ONNX";
-export const DEFAULT_KOKORO_VOICE_ID = "af_heart";
+import { MULTILINGUAL_VOICE_TAG, normalizeAppLanguage } from "./languages";
+
+export const DEFAULT_KOKORO_MODEL_ID = "Supertone/supertonic-2";
+export const DEFAULT_KOKORO_VOICE_ID = "F1";
 export const KOKORO_MODEL_CARD_URL = `https://huggingface.co/${DEFAULT_KOKORO_MODEL_ID}`;
-export const KOKORO_VOICE_DATASET_URL =
-  "https://huggingface.co/datasets/hexgrad/Kokoro-voices";
+export const KOKORO_VOICE_DATASET_URL = KOKORO_MODEL_CARD_URL;
 
 export type KokoroVoiceOption = {
   id: string;
-  name: string;
+  /** i18n key under `locales/*.json` (e.g. `voice.supertonic_sora`). */
+  nameKey: string;
   gender: "Female" | "Male";
+  /** Use `mul` for Supertonic multilingual voices (any TTS language). */
   languageTag: string;
-  summary: string;
-  sampleUrl: string;
+  /** Short i18n line for settings card. */
+  summaryKey: string;
 };
 
 export type KokoroVoiceGroup = {
-  label: string;
+  labelKey: string;
   voices: KokoroVoiceOption[];
 };
 
-const americanVoices: KokoroVoiceOption[] = [
-  {
-    id: "af_heart",
-    name: "Heart",
-    gender: "Female",
-    languageTag: "en-US",
-    summary: "Expressive default, Grade A",
-    sampleUrl: "voice-samples/af_heart.mp3",
-  },
-
-  {
-    id: "af_bella",
-    name: "Bella",
-    gender: "Female",
-    languageTag: "en-US",
-    summary: "Warm storyteller, Grade A-",
-    sampleUrl: "voice-samples/af_bella.mp3",
-  },
-  {
-    id: "af_jessica",
-    name: "Jessica",
-    gender: "Female",
-    languageTag: "en-US",
-    summary: "Soft conversational, Grade D",
-    sampleUrl: "voice-samples/af_jessica.mp3",
-  },
-
-  {
-    id: "am_fenrir",
-    name: "Fenrir",
-    gender: "Male",
-    languageTag: "en-US",
-    summary: "Deep & bold, Grade C+",
-    sampleUrl: "voice-samples/am_fenrir.mp3",
-  },
-
-  {
-    id: "am_michael",
-    name: "Michael",
-    gender: "Male",
-    languageTag: "en-US",
-    summary: "Presenter feel, Grade C+",
-    sampleUrl: "voice-samples/am_michael.mp3",
-  },
+/** Human-friendly display names (i18n keys). IDs stay F1…M5 for the engine. */
+const FEMALE_VOICES: { id: string; nameKey: string; summaryKey: string }[] = [
+  { id: "F1", nameKey: "voice.supertonic_sora", summaryKey: "voice.supertonic_summary_female" },
+  { id: "F2", nameKey: "voice.supertonic_luna", summaryKey: "voice.supertonic_summary_female" },
+  { id: "F3", nameKey: "voice.supertonic_mira", summaryKey: "voice.supertonic_summary_female" },
+  { id: "F4", nameKey: "voice.supertonic_vera", summaryKey: "voice.supertonic_summary_female" },
+  { id: "F5", nameKey: "voice.supertonic_iris", summaryKey: "voice.supertonic_summary_female" },
 ];
 
-const britishVoices: KokoroVoiceOption[] = [
-  {
-    id: "bf_emma",
-    name: "Emma",
-    gender: "Female",
-    languageTag: "en-GB",
-    summary: "Premium narrator, Grade B-",
-    sampleUrl: "voice-samples/bf_emma.mp3",
-  },
-  {
-    id: "bf_isabella",
-    name: "Isabella",
-    gender: "Female",
-    languageTag: "en-GB",
-    summary: "Polished neutral, Grade C",
-    sampleUrl: "voice-samples/bf_isabella.mp3",
-  },
-  {
-    id: "bm_fable",
-    name: "Fable",
-    gender: "Male",
-    languageTag: "en-GB",
-    summary: "Dramatic baritone, Grade C",
-    sampleUrl: "voice-samples/bm_fable.mp3",
-  },
-  {
-    id: "bm_george",
-    name: "George",
-    gender: "Male",
-    languageTag: "en-GB",
-    summary: "Clean RP read, Grade C",
-    sampleUrl: "voice-samples/bm_george.mp3",
-  },
+const MALE_VOICES: { id: string; nameKey: string; summaryKey: string }[] = [
+  { id: "M1", nameKey: "voice.supertonic_leo", summaryKey: "voice.supertonic_summary_male" },
+  { id: "M2", nameKey: "voice.supertonic_kai", summaryKey: "voice.supertonic_summary_male" },
+  { id: "M3", nameKey: "voice.supertonic_rex", summaryKey: "voice.supertonic_summary_male" },
+  { id: "M4", nameKey: "voice.supertonic_omar", summaryKey: "voice.supertonic_summary_male" },
+  { id: "M5", nameKey: "voice.supertonic_axel", summaryKey: "voice.supertonic_summary_male" },
 ];
+
+const femaleVoices: KokoroVoiceOption[] = FEMALE_VOICES.map((v) => ({
+  id: v.id,
+  nameKey: v.nameKey,
+  gender: "Female" as const,
+  languageTag: MULTILINGUAL_VOICE_TAG,
+  summaryKey: v.summaryKey,
+}));
+
+const maleVoices: KokoroVoiceOption[] = MALE_VOICES.map((v) => ({
+  id: v.id,
+  nameKey: v.nameKey,
+  gender: "Male" as const,
+  languageTag: MULTILINGUAL_VOICE_TAG,
+  summaryKey: v.summaryKey,
+}));
 
 export const KOKORO_VOICE_GROUPS: KokoroVoiceGroup[] = [
-  {
-    label: "American English",
-    voices: americanVoices,
-  },
-  {
-    label: "British English",
-    voices: britishVoices,
-  },
+  { labelKey: "voice.group_female", voices: femaleVoices },
+  { labelKey: "voice.group_male", voices: maleVoices },
 ];
+
+const ALL_VOICE_IDS = new Set(
+  KOKORO_VOICE_GROUPS.flatMap((g) => g.voices).map((v) => v.id)
+);
+
+/** Map legacy Kokoro voice ids to Supertonic styles (see `kokoros` `builtin_voice_aliases`). */
+const LEGACY_VOICE_TO_SUPER: Record<string, string> = {
+  af_heart: "M1",
+  af_bella: "F1",
+  am_adam: "M1",
+  af_sarah: "F1",
+};
+
+export function normalizeVoiceId(raw: string): string {
+  if (ALL_VOICE_IDS.has(raw)) return raw;
+  return LEGACY_VOICE_TO_SUPER[raw] ?? "F1";
+}
+
+/**
+ * Bundled preview MP3 path: one file per TTS language and voice id
+ * (`resources/voice-samples/{lang}/{voiceId}.mp3`). Generated by
+ * `scripts/generate_supertonic_voice_samples.sh`.
+ */
+export function voiceSamplePathsToTry(voiceId: string, ttsLanguage: string): string[] {
+  const normalizedVoiceId = normalizeVoiceId(voiceId);
+  const lang = normalizeAppLanguage(ttsLanguage);
+  const primary = `voice-samples/${lang}/${normalizedVoiceId}.mp3`;
+  if (lang === "en") {
+    return [primary];
+  }
+  return [primary, `voice-samples/en/${normalizedVoiceId}.mp3`];
+}

@@ -110,6 +110,7 @@ async fn test_convert_epub_to_audiobook_standalone_small() {
     
     let options = ConversionOptions {
         voice_id: "af_heart".to_string(),
+        language: "en".to_string(),
         chapters: vec![conversion_chapter],
     };
     
@@ -204,6 +205,7 @@ async fn test_convert_epub_to_audiobook_standalone_cancellation() {
     // Create minimal conversion options
     let options = ConversionOptions {
         voice_id: "af_heart".to_string(),
+        language: "en".to_string(),
         chapters: vec![], // Empty chapters to test cancellation early
     };
     
@@ -233,6 +235,7 @@ fn test_conversion_options_serialization() {
     
     let options = ConversionOptions {
         voice_id: "af_heart".to_string(),
+        language: "en".to_string(),
         chapters: vec![chapter],
     };
     
@@ -241,7 +244,7 @@ fn test_conversion_options_serialization() {
     assert!(json.is_ok());
     let json_str = json.unwrap();
     
-    assert!(json_str.contains("voice_id"));
+    assert!(json_str.contains("voiceId") || json_str.contains("voice_id"));
     assert!(json_str.contains("chapters"));
     assert!(json_str.contains("af_heart"));
     assert!(json_str.contains("Chapter 1"));
@@ -251,6 +254,7 @@ fn test_conversion_options_serialization() {
     assert!(deserialized.is_ok());
     let deserialized = deserialized.unwrap();
     assert_eq!(deserialized.voice_id, "af_heart");
+    assert_eq!(deserialized.language, "en");
     assert_eq!(deserialized.chapters.len(), 1);
     assert_eq!(deserialized.chapters[0].title, "Chapter 1");
 }

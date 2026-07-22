@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AuroraBook",
-  "version": "1.4.20",
+  "version": "2.1.7",
   "identifier": "com.micheleyin.aurorabook",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -30,11 +30,10 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "resources/ffmpeg",
-      "resources/kokoro-v1.0.onnx",
-      "resources/voices-v1.0.bin",
-      "resources/voice-samples/**/*.mp3",
-      "resources/espeak-ng-data/"
+      "resources/voice-samples/",
+      "resources/supertonic/onnx/",
+      "resources/supertonic/voice_styles/",
+      "resources/ffmpeg"
     ],
     "macOS": {
       "frameworks": [],
@@ -42,10 +41,10 @@
       "exceptionDomain": "",
       "hardenedRuntime": true,
       "signingIdentity": null,
-      "entitlements": "gen/apple/aurorabook_macOS/aurorabook_macOS.entitlements"
+      "entitlements": "Entitlements.macos-appstore.plist"
     },
     "iOS": {
-      "developmentTeam": "YOUR_DEVELOPMENT_TEAM_ID",
+      "developmentTeam": "YOUR_TEAM_ID",
       "frameworks": [],
       "minimumSystemVersion": "15.1"
     }

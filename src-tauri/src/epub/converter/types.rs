@@ -54,6 +54,7 @@ pub struct ConversionChapter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversionOptions {
     pub voice_id: String,
+    pub language: String,
     pub chapters: Vec<ConversionChapter>,
 }
 

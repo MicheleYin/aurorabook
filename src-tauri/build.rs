@@ -2,114 +2,74 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// eSpeak-ng loads voice/phoneme data from disk at runtime (see `espeak-rs` / `PIPER_ESPEAKNG_DATA_DIRECTORY`).
-/// After `espeak-rs-sys` builds, copy that tree into `resources/espeak-ng-data` so Tauri can bundle it.
-fn sync_espeak_ng_data_for_bundle() {
-    let target = std::env::var("TARGET").unwrap_or_default();
-    if target.contains("apple-ios") {
-        return;
-    }
-
+/// Copy Supertonic v2 assets from the repo’s `supertonic-2/` tree (Hugging Face layout) into
+/// `src-tauri/resources/supertonic/` so Tauri can bundle them.
+///
+/// Expects `../../supertonic-2/onnx` and `../../supertonic-2/voice_styles` relative to this crate.
+/// Pull large files with Git LFS from [Supertone/supertonic-2](https://huggingface.co/Supertone/supertonic-2).
+fn sync_supertonic_assets_for_bundle() {
     let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
         Ok(s) => PathBuf::from(s),
         Err(_) => return,
     };
-    let dest_root = manifest_dir.join("resources").join("espeak-ng-data");
+    // `src-tauri` crate dir → workspace root is two levels up (…/tts-tauri/src-tauri → aurorabook)
+    let workspace_root = manifest_dir.join("..").join("..");
+    let src_pack = workspace_root.join("supertonic-2");
+    let src_onnx = src_pack.join("onnx");
+    let src_voices = src_pack.join("voice_styles");
 
-    // Prefer CARGO_TARGET_DIR, but also check the repo's `.cargo-target` when tools override
-    // CARGO_TARGET_DIR (e.g. sandbox) while espeak-rs-sys artifacts live next to the project.
-    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".into());
-    let fallback_target = manifest_dir
-        .join("..")
-        .join("..")
-        .join(".cargo-target")
-        .join(&profile);
-
-    let mut target_roots: Vec<PathBuf> = Vec::new();
-    if let Ok(t) = std::env::var("CARGO_TARGET_DIR") {
-        target_roots.push(PathBuf::from(t));
-    }
-    if !target_roots.iter().any(|p| p == &fallback_target) {
-        target_roots.push(fallback_target);
-    }
-
-    let Some(src_root) = target_roots
-        .iter()
-        .find_map(|root| find_built_espeak_ng_data(root))
-    else {
+    if !src_onnx.is_dir() {
         eprintln!(
-            "cargo:warning=espeak-ng-data not found under any of: {:?} — run cargo build so espeak-rs-sys completes first",
-            target_roots
+            "cargo:warning=Supertonic ONNX folder not found at {} — clone https://huggingface.co/Supertone/supertonic-2 into ./supertonic-2 (Git LFS for .onnx)",
+            src_onnx.display()
         );
         return;
-    };
-
-    if should_skip_sync(&src_root, &dest_root) {
-        return;
     }
 
-    let readme_src = manifest_dir.join("resources/espeak-ng-data/README.md");
-    let readme_backup = fs::read(&readme_src).ok();
+    let dest_root = manifest_dir.join("resources").join("supertonic");
+    let dest_onnx = dest_root.join("onnx");
+    let dest_voices = dest_root.join("voice_styles");
 
-    if let Err(e) = copy_dir_all(&src_root, &dest_root) {
+    if let Err(e) = copy_dir_all(&src_onnx, &dest_onnx) {
         eprintln!(
-            "cargo:warning=failed to sync espeak-ng-data to {}: {}",
-            dest_root.display(),
+            "cargo:warning=failed to sync Supertonic ONNX {} → {}: {}",
+            src_onnx.display(),
+            dest_onnx.display(),
             e
         );
-        return;
+    } else {
+        println!(
+            "cargo:warning=Synced Supertonic ONNX → {}",
+            dest_onnx.display()
+        );
     }
 
-    if let Some(bytes) = readme_backup {
-        let _ = fs::write(dest_root.join("README.md"), bytes);
-    }
-
-    eprintln!(
-        "cargo:warning=Synced espeak-ng-data into {} for Tauri bundle / dev resources",
-        dest_root.display()
-    );
-}
-
-fn find_built_espeak_ng_data(target_dir: &Path) -> Option<PathBuf> {
-    let build_dir = target_dir.join("build");
-    let entries = fs::read_dir(&build_dir).ok()?;
-    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if !name.starts_with("espeak-rs-sys-") {
-            continue;
+    if src_voices.is_dir() {
+        if let Err(e) = copy_dir_all(&src_voices, &dest_voices) {
+            eprintln!(
+                "cargo:warning=failed to sync Supertonic voice_styles {} → {}: {}",
+                src_voices.display(),
+                dest_voices.display(),
+                e
+            );
+        } else {
+            println!(
+                "cargo:warning=Synced Supertonic voice_styles → {}",
+                dest_voices.display()
+            );
         }
-        let base = entry.path().join("out");
-        for rel in ["build/espeak-ng-data", "share/espeak-ng-data"] {
-            let cand = base.join(rel);
-            let phondata = cand.join("phondata");
-            if cand.is_dir() && phondata.is_file() {
-                let Ok(mtime) = fs::metadata(&phondata).and_then(|m| m.modified()) else {
-                    continue;
-                };
-                best = match best {
-                    None => Some((mtime, cand)),
-                    Some((t0, _)) if mtime > t0 => Some((mtime, cand)),
-                    Some(prev) => Some(prev),
-                };
-            }
-        }
+    } else {
+        eprintln!(
+            "cargo:warning=Supertonic voice_styles not found at {}",
+            src_voices.display()
+        );
     }
-    best.map(|(_, p)| p)
-}
 
-fn should_skip_sync(src_root: &Path, dest_root: &Path) -> bool {
-    let dest_phondata = dest_root.join("phondata");
-    let Ok(src_meta) = fs::metadata(src_root.join("phondata")) else {
-        return true;
-    };
-    let Ok(dest_meta) = fs::metadata(&dest_phondata) else {
-        return false;
-    };
-    let (Ok(st), Ok(dt)) = (src_meta.modified(), dest_meta.modified()) else {
-        return false;
-    };
-    dt >= st
+    if !dest_onnx.join("duration_predictor.onnx").exists() {
+        println!(
+            "cargo:warning=Supertonic ONNX weights missing (only JSON copied). In repo root: `cd supertonic-2 && git lfs pull`"
+        );
+    }
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
@@ -148,12 +108,7 @@ fn main() {
         }
     }
 
-    // Note: We're using kokoro-tiny crate which uses ONNX Runtime with CoreML Execution Provider
-    // ONNX Runtime handles CoreML/Swift linking internally, so we don't need to link Swift here
-    // The kokoro-tiny crate manages all the necessary dependencies
-
-    // MP3 encoding is now handled by mp3lame-encoder crate which bundles LAME statically
-    // No need to link system LAME library - the crate is fully self-contained
+    // Supertonic (kokoros) uses ONNX Runtime; CoreML EP linking is handled below for iOS when ORT libs are present.
 
     // Handle ONNX Runtime linking for iOS
     // According to ort documentation: https://ort.pyke.io/setup/linking#static-linking
@@ -177,6 +132,15 @@ fn main() {
             let possible_paths: Vec<std::path::PathBuf> = vec![
                 // Relative to project root (most common) - Release build
                 project_root
+                    .join("onnxruntime")
+                    .join("build")
+                    .join("iOS")
+                    .join("Release")
+                    .join("Release-iphoneos"),
+                // Workspace layout where ONNX Runtime sits beside tts-tauri/
+                project_root
+                    .parent()
+                    .unwrap_or(project_root)
                     .join("onnxruntime")
                     .join("build")
                     .join("iOS")
@@ -459,6 +423,81 @@ fn main() {
         }
     }
 
-    sync_espeak_ng_data_for_bundle();
+    sync_supertonic_assets_for_bundle();
+    copy_ort_webgpu_dylib_for_macos_bundle();
     tauri_build::build()
+}
+
+/// `ort` + `webgpu` links `libwebgpu_dawn.dylib` via `@rpath`; Tauri validates `bundle.resources`
+/// paths during this build script, so the dylib must exist before `tauri_build::build()`.
+/// (See `.cargo/config.toml` rpath + `tauri.macos.conf.json` resources.)
+fn copy_ort_webgpu_dylib_for_macos_bundle() {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if !target.contains("apple-darwin") {
+        return;
+    }
+
+    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
+        Ok(s) => PathBuf::from(s),
+        Err(_) => return,
+    };
+    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
+    // Match `src-tauri/.cargo/config.toml` `[build] target-dir = "../../.cargo-target"`.
+    // Build scripts do not always get `CARGO_TARGET_DIR`, so fall back to the same layout.
+    let cargo_target_from_config = manifest_dir
+        .join("..")
+        .join("..")
+        .join(".cargo-target")
+        .canonicalize()
+        .unwrap_or_else(|_| manifest_dir.join("..").join("..").join(".cargo-target"));
+
+    let mut target_roots: Vec<PathBuf> = Vec::new();
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
+        target_roots.push(PathBuf::from(dir));
+    }
+    target_roots.push(cargo_target_from_config);
+    target_roots.push(manifest_dir.join("target"));
+
+    let dest_dir = manifest_dir.join("resources").join("ort-dylibs");
+    let dest = dest_dir.join("libwebgpu_dawn.dylib");
+
+    'outer: for target_dir in &target_roots {
+        let candidates = [
+            target_dir.join(&profile).join("libwebgpu_dawn.dylib"),
+            target_dir.join(&target).join(&profile).join("libwebgpu_dawn.dylib"),
+        ];
+        for src in candidates.iter() {
+            if !src.is_file() {
+                continue;
+            }
+            if let Err(e) = fs::create_dir_all(&dest_dir) {
+                eprintln!(
+                    "cargo:warning=ort-dylibs: failed to create {}: {}",
+                    dest_dir.display(),
+                    e
+                );
+                return;
+            }
+            match fs::copy(src, &dest) {
+                Ok(_) => {
+                    println!("cargo:rerun-if-changed={}", src.display());
+                    break 'outer;
+                }
+                Err(e) => eprintln!(
+                    "cargo:warning=ort-dylibs: failed to copy {} → {}: {}",
+                    src.display(),
+                    dest.display(),
+                    e
+                ),
+            }
+        }
+    }
+
+    if !dest.is_file() {
+        eprintln!(
+            "cargo:warning=libwebgpu_dawn.dylib not found under any of {:?} (profile={}); ort (webgpu) must have been built first",
+            target_roots,
+            profile
+        );
+    }
 }
