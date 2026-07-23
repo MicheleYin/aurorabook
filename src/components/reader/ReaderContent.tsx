@@ -44,32 +44,59 @@ export function ReaderContent({
   const previousAudioTrackRef =
     useRef<typeof currentAudioTrack>(currentAudioTrack);
 
-  let themeClass = "";
-  if (
+  const isResolvedDarkTheme =
     settings?.theme === "dark" ||
-    (settings?.theme === "system" && isSystemDark)
-  ) {
-    themeClass = "dark";
-  }
+    (settings?.theme === "system" &&
+      (document.documentElement.classList.contains("dark") || isSystemDark));
+
+  const themeClass = isResolvedDarkTheme ? "dark" : "";
 
   const applyResolvedThemeToShadow = useCallback(
     (wrapper: HTMLDivElement, content: HTMLDivElement | null) => {
-      const host = shadowHostRef.current;
-      const themeSource = scrollContainerRef?.current ?? host;
-      if (!themeSource) return;
+      const rootStyles = window.getComputedStyle(document.documentElement);
+      const foregroundToken = rootStyles
+        .getPropertyValue("--foreground")
+        .trim();
+      const backgroundToken = rootStyles
+        .getPropertyValue("--background")
+        .trim();
+      const resolvedForeground = foregroundToken
+        ? `hsl(${foregroundToken})`
+        : window.getComputedStyle(document.body).color;
+      const resolvedBackground = backgroundToken
+        ? `hsl(${backgroundToken})`
+        : window.getComputedStyle(document.body).backgroundColor;
 
-      const computed = window.getComputedStyle(themeSource);
       wrapper.className = themeClass;
       wrapper.style.colorScheme = themeClass === "dark" ? "dark" : "light";
-      wrapper.style.color = computed.color;
-      wrapper.style.backgroundColor = computed.backgroundColor;
+      wrapper.style.color = resolvedForeground;
+      wrapper.style.backgroundColor = resolvedBackground;
 
       if (content) {
-        content.style.color = computed.color;
-        content.style.caretColor = computed.color;
+        content.style.color = resolvedForeground;
+        content.style.backgroundColor = resolvedBackground;
+        content.style.caretColor = resolvedForeground;
+        content.style.setProperty("--tw-prose-body", resolvedForeground);
+        content.style.setProperty("--tw-prose-headings", resolvedForeground);
+        content.style.setProperty("--tw-prose-lead", resolvedForeground);
+        content.style.setProperty("--tw-prose-links", resolvedForeground);
+        content.style.setProperty("--tw-prose-bold", resolvedForeground);
+        content.style.setProperty("--tw-prose-counters", resolvedForeground);
+        content.style.setProperty("--tw-prose-bullets", resolvedForeground);
+        content.style.setProperty("--tw-prose-hr", resolvedForeground);
+        content.style.setProperty("--tw-prose-quotes", resolvedForeground);
+        content.style.setProperty(
+          "--tw-prose-quote-borders",
+          resolvedForeground
+        );
+        content.style.setProperty("--tw-prose-captions", resolvedForeground);
+        content.style.setProperty("--tw-prose-code", resolvedForeground);
+        content.style.setProperty("--tw-prose-pre-code", resolvedForeground);
+        content.style.setProperty("--tw-prose-th-borders", resolvedForeground);
+        content.style.setProperty("--tw-prose-td-borders", resolvedForeground);
       }
     },
-    [scrollContainerRef, themeClass]
+    [themeClass]
   );
 
   // Keep resolved system theme in sync so shadow DOM dark variants match app theme.
@@ -320,7 +347,7 @@ export function ReaderContent({
     <div
       ref={scrollContainerRef}
       className={cn(
-        "flex-1 min-w-0 overflow-y-auto overflow-x-hidden cursor-pointer",
+        "flex-1 min-w-0 overflow-y-auto overflow-x-hidden cursor-pointer bg-background text-foreground",
         themeClass
       )}
       onPointerUp={handlePointerUp}

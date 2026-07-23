@@ -52,8 +52,11 @@ function normalizeContentPadding(value: string | undefined): string {
 }
 
 export function useReaderSettings() {
-  const { settings: appSettings, saveSettings: saveAppSettings } =
-    useSettingsContext();
+  const {
+    settings: appSettings,
+    saveSettings: saveAppSettings,
+    applyTheme,
+  } = useSettingsContext();
   const [readerSettings, setReaderSettings] =
     useState<ReaderSettings>(defaultSettings);
   const isInitialLoadRef = useRef(true);
@@ -138,6 +141,14 @@ export function useReaderSettings() {
           fontSize: normalizeFontSize(settings.fontSize),
           contentPadding: normalizeContentPadding(settings.contentPadding),
         };
+
+        if (
+          normalizedSettings.theme &&
+          appSettings?.theme !== normalizedSettings.theme
+        ) {
+          applyTheme(normalizedSettings.theme as "light" | "dark" | "system");
+        }
+
         setReaderSettings(normalizedSettings);
         await invoke("update_reader_preferences", {
           preferences: normalizedSettings,
@@ -157,7 +168,7 @@ export function useReaderSettings() {
         isSyncingRef.current = false;
       }
     },
-    [appSettings?.theme, saveAppSettings]
+    [appSettings?.theme, applyTheme, saveAppSettings]
   );
 
   return { readerSettings, setReaderSettings: saveSettings };
