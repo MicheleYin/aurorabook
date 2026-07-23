@@ -18,6 +18,7 @@ fn test_extract_audio_tracks_from_manifest() {
         href: "Audio/ch1.mp3".to_string(),
         media_type: Some("audio/mpeg".to_string()),
         properties: None,
+        media_overlay: None,
     });
     
     // Add non-audio item
@@ -26,6 +27,7 @@ fn test_extract_audio_tracks_from_manifest() {
         href: "ch1.xhtml".to_string(),
         media_type: Some("application/xhtml+xml".to_string()),
         properties: None,
+        media_overlay: None,
     });
     
     let audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
@@ -43,6 +45,7 @@ fn test_extract_audio_tracks_from_manifest_multiple() {
         href: "Audio/ch1.mp3".to_string(),
         media_type: Some("audio/mpeg".to_string()),
         properties: None,
+        media_overlay: None,
     });
     
     manifest_items.insert("audio2".to_string(), ManifestItem {
@@ -50,6 +53,7 @@ fn test_extract_audio_tracks_from_manifest_multiple() {
         href: "Audio/ch2.mp3".to_string(),
         media_type: Some("audio/mpeg".to_string()),
         properties: None,
+        media_overlay: None,
     });
     
     let audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
@@ -65,6 +69,7 @@ fn test_extract_audio_tracks_from_manifest_no_audio() {
         href: "ch1.xhtml".to_string(),
         media_type: Some("application/xhtml+xml".to_string()),
         properties: None,
+        media_overlay: None,
     });
     
     let audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);
@@ -81,6 +86,7 @@ fn test_extract_audio_tracks_from_manifest_different_formats() {
         href: "audio.mp3".to_string(),
         media_type: Some("audio/mpeg".to_string()),
         properties: None,
+        media_overlay: None,
     });
     
     manifest_items.insert("wav".to_string(), ManifestItem {
@@ -88,6 +94,7 @@ fn test_extract_audio_tracks_from_manifest_different_formats() {
         href: "audio.wav".to_string(),
         media_type: Some("audio/wav".to_string()),
         properties: None,
+        media_overlay: None,
     });
     
     manifest_items.insert("m4a".to_string(), ManifestItem {
@@ -95,6 +102,7 @@ fn test_extract_audio_tracks_from_manifest_different_formats() {
         href: "audio.m4a".to_string(),
         media_type: Some("audio/mp4".to_string()),
         properties: None,
+        media_overlay: None,
     });
     
     let audio_tracks = extract_audio_tracks_from_manifest(&manifest_items);

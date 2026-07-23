@@ -52,21 +52,19 @@ tests/
 
 ### Fast suite (default CI)
 
-Runs library unit tests (`#[cfg(test)]` modules under `src/`). This is the
-coverage / PR CI path.
+Runs library unit tests (`#[cfg(test)]` under `src/`) plus the modular
+integration harness (`tests/mod.rs`). This is the coverage / PR CI path.
 
 ```bash
 # From tts-tauri/
 bun run test:rust
 
 # Or from src-tauri/
-cargo test --lib
+cargo test --lib --test mod
 ```
 
-> **Note:** The modular integration harness (`cargo test --test mod`, rooted at
-> [`mod.rs`](./mod.rs)) currently fails to compile against the live book/EPUB
-> APIs (missing struct fields / changed signatures). Prefer co-located
-> `#[cfg(test)]` modules until that harness is repaired.
+> **Note:** Slow/model/FFmpeg binaries under `tests/*.rs` (outside the `mod`
+> harness) are not part of the fast path.
 
 ### Coverage (fast suite)
 
@@ -82,11 +80,11 @@ bun run test:rust:coverage
 # → src-tauri/target/llvm-cov/lcov.info
 
 # HTML report
-cd src-tauri && cargo llvm-cov --html --open --lib
+cd src-tauri && cargo llvm-cov --html --open --lib --test mod
 ```
 
 On macOS, `tauri.macos.conf.json` requires `resources/ffmpeg` (and the ORT
-WebGPU dylib path) to exist for `tauri_build`. The coverage script stubs
+WebGPU dylib path) to exist for `tauri_build`. The coverage / test scripts stub
 `resources/ffmpeg` when missing; CI does the same.
 
 ### Full local suite
@@ -223,7 +221,7 @@ The `helpers.rs` module provides:
 PR CI (`/.github/workflows/test.yml`) runs the **fast** suite with coverage:
 
 ```bash
-cargo llvm-cov --lcov --output-path target/llvm-cov/lcov.info --lib
+cargo llvm-cov --lcov --output-path target/llvm-cov/lcov.info --lib --test mod
 ```
 
 Ensure:

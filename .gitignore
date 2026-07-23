@@ -63,3 +63,10 @@ src-tauri/watermark_test.mp3
 
 .cargo-target/
 src-tauri/resources/espeak-ng-data/
+
+#Ignore cursor AI rules
+.cursor/rules/codacy.mdc
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md

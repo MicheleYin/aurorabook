@@ -8,10 +8,7 @@
 //! - Deleting books
 //! - EPUB cache operations
 
-use aurorabook_lib::book_service::storage::*;
 use aurorabook_lib::book_service::models::*;
-use tempfile::TempDir;
-use std::path::PathBuf;
 
 #[tokio::test]
 #[ignore] // Requires Tauri app context
@@ -47,6 +44,7 @@ async fn test_add_book() {
         voice_id: None,
         total_words: None,
         words_processed: None,
+        last_opened_time: None,
     };
     
     // Test adding a book
@@ -133,6 +131,7 @@ async fn test_book_serialization() {
         voice_id: None,
         total_words: None,
         words_processed: None,
+        last_opened_time: None,
     };
     
     // Serialize

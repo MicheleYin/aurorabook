@@ -101,12 +101,16 @@ Co-locate tests as `src/**/*.{test,spec}.{ts,tsx}`. Tauri APIs are stubbed in
 ### Rust
 
 ```bash
-# Fast suite (lib unit tests) — same as CI
+# Fast suite (lib + modular harness) — same as CI
 bun run test:rust
 
-# Coverage via cargo-llvm-cov (install once: cargo install cargo-llvm-cov --locked
-# and rustup component add llvm-tools-preview)
+# Coverage via cargo-llvm-cov (install once:
+#   cargo install cargo-llvm-cov --locked
+#   rustup component add llvm-tools-preview)
 bun run test:rust:coverage   # → src-tauri/target/llvm-cov/lcov.info
+
+# Lib unit tests only
+bun run test:rust:lib
 
 # Full suite including slow/model/FFmpeg binaries
 cd src-tauri && cargo test

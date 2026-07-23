@@ -74,9 +74,15 @@ jobs:
 
       - name: Fast tests with coverage
         run: |
-          mkdir -p target/llvm-cov
-          # build.rs ensures resources/ffmpeg (and copies system ffmpeg when available)
-          cargo llvm-cov --lcov --output-path target/llvm-cov/lcov.info --lib
+          mkdir -p resources/ort-dylibs
+          if [ ! -f resources/ffmpeg ]; then
+            : > resources/ffmpeg
+            chmod +x resources/ffmpeg
+          fi
+          # Stable path under src-tauri/ (independent of CARGO_TARGET_DIR)
+          OUT="${{ github.workspace }}/src-tauri/target/llvm-cov/lcov.info"
+          mkdir -p "$(dirname "$OUT")"
+          cargo llvm-cov --lcov --output-path "$OUT" --lib --test mod
 
       - name: Upload Rust LCOV
         if: always()

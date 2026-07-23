@@ -7,7 +7,7 @@
 use aurorabook_lib::epub::book_update::order_audio_tracks_by_chapters;
 use aurorabook_lib::epub::parser::ManifestItem;
 use aurorabook_lib::book_service::models::{AudioTrack, Chapter};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[test]
 fn test_order_audio_tracks_by_chapters() {
@@ -86,7 +86,22 @@ fn test_order_audio_tracks_by_chapters() {
         media_overlay: None,
     });
     
-    let ordered = order_audio_tracks_by_chapters(&audio_tracks, &chapters, &manifest_items);
+    let archive_paths: HashSet<String> = [
+        "chapter1.xhtml",
+        "chapter2.xhtml",
+        "Audio/chapter1.mp3",
+        "Audio/chapter2.mp3",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+
+    let ordered = order_audio_tracks_by_chapters(
+        &audio_tracks,
+        &chapters,
+        &manifest_items,
+        &archive_paths,
+    );
     assert_eq!(ordered.len(), 2);
     assert_eq!(ordered[0].href, "Audio/chapter1.mp3");
     assert_eq!(ordered[0].order, 0);
@@ -137,7 +152,20 @@ fn test_order_audio_tracks_mismatch() {
         media_overlay: None,
     });
     
-    let ordered = order_audio_tracks_by_chapters(&audio_tracks, &chapters, &manifest_items);
+    let archive_paths: HashSet<String> = [
+        "chapter1.xhtml",
+        "Audio/other.mp3",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+
+    let ordered = order_audio_tracks_by_chapters(
+        &audio_tracks,
+        &chapters,
+        &manifest_items,
+        &archive_paths,
+    );
     // Should still include unmatched tracks at the end
     assert_eq!(ordered.len(), 1);
 }

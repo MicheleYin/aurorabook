@@ -161,7 +161,8 @@ pub fn f32_to_pcm_le_bytes_for_wav(samples: &[f32]) -> Vec<u8> {
     pcm_bytes
 }
 
-/// Find a test EPUB file from the test_data directory
+/// Find a test EPUB file from the test_data directory (or sample_audio fallback).
+/// Skips Git LFS pointer files so callers don't treat text stubs as ZIP/EPUB.
 pub fn find_test_epub(filename: &str) -> Option<PathBuf> {
     use std::env;
     
@@ -177,6 +178,8 @@ pub fn find_test_epub(filename: &str) -> Option<PathBuf> {
         possible_paths.push(manifest_path.join("tests").join("test_data").join(filename));
         possible_paths.push(manifest_path.join("test_data").join(filename));
         if let Some(parent) = manifest_path.parent() {
+            // tts-tauri/sample_audio/ often has real EPUB fixtures when test_data is LFS
+            possible_paths.push(parent.join("sample_audio").join(filename));
             possible_paths.push(parent.join("src-tauri").join("tests").join("test_data").join(filename));
         }
     }
@@ -186,14 +189,30 @@ pub fn find_test_epub(filename: &str) -> Option<PathBuf> {
         possible_paths.push(current_dir.join("src-tauri").join("tests").join("test_data").join(filename));
         possible_paths.push(current_dir.join("tests").join("test_data").join(filename));
         possible_paths.push(current_dir.join("test_data").join(filename));
+        possible_paths.push(current_dir.join("sample_audio").join(filename));
+        if let Some(parent) = current_dir.parent() {
+            possible_paths.push(parent.join("sample_audio").join(filename));
+        }
     }
 
     for path in possible_paths {
-        if path.exists() && path.is_file() {
+        if path.exists() && path.is_file() && !is_git_lfs_pointer(&path) {
             return Some(path);
         }
     }
     None
+}
+
+fn is_git_lfs_pointer(path: &PathBuf) -> bool {
+    use std::io::Read;
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let mut buf = [0u8; 64];
+    let n = file.read(&mut buf).unwrap_or(0);
+    let head = String::from_utf8_lossy(&buf[..n]);
+    head.starts_with("version https://git-lfs.github.com/spec/")
 }
 
 /// Helper function to save audio samples as WAV file

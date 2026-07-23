@@ -9,9 +9,47 @@ import { logger } from "../lib/logger";
 const defaultSettings: ReaderSettings = {
   theme: "system",
   fontFamily: "merriweather",
-  fontSize: "medium",
-  contentPadding: "comfortable",
+  fontSize: "16",
+  contentPadding: "24",
 };
+
+function normalizeFontSize(value: string | undefined): string {
+  switch (value) {
+    case "small":
+      return "14";
+    case "medium":
+      return "16";
+    case "large":
+      return "18";
+    case "xlarge":
+      return "20";
+    default: {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return String(Math.min(28, Math.max(12, Math.round(parsed))));
+      }
+      return defaultSettings.fontSize;
+    }
+  }
+}
+
+function normalizeContentPadding(value: string | undefined): string {
+  switch (value) {
+    case "compact":
+      return "16";
+    case "comfortable":
+      return "24";
+    case "spacious":
+      return "48";
+    default: {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return String(Math.min(64, Math.max(8, Math.round(parsed / 2) * 2)));
+      }
+      return defaultSettings.contentPadding;
+    }
+  }
+}
 
 export function useReaderSettings() {
   const { settings: appSettings, saveSettings: saveAppSettings } =
@@ -43,6 +81,8 @@ export function useReaderSettings() {
         const syncedPreferences: ReaderSettings = {
           ...preferences,
           theme: mergeTheme(preferences.theme),
+          fontSize: normalizeFontSize(preferences.fontSize),
+          contentPadding: normalizeContentPadding(preferences.contentPadding),
         };
         setReaderSettings(syncedPreferences);
         isInitialLoadRef.current = false;
@@ -93,14 +133,22 @@ export function useReaderSettings() {
     async (settings: ReaderSettings) => {
       try {
         isSyncingRef.current = true;
-        setReaderSettings(settings);
+        const normalizedSettings = {
+          ...settings,
+          fontSize: normalizeFontSize(settings.fontSize),
+          contentPadding: normalizeContentPadding(settings.contentPadding),
+        };
+        setReaderSettings(normalizedSettings);
         await invoke("update_reader_preferences", {
-          preferences: settings,
+          preferences: normalizedSettings,
         });
 
         // Sync theme change to app settings if it changed
-        if (settings.theme && appSettings?.theme !== settings.theme) {
-          await saveAppSettings({ theme: settings.theme });
+        if (
+          normalizedSettings.theme &&
+          appSettings?.theme !== normalizedSettings.theme
+        ) {
+          await saveAppSettings({ theme: normalizedSettings.theme });
         }
       } catch (err) {
         logger.error("Failed to save reader preferences:", err);

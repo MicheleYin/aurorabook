@@ -37,6 +37,7 @@ fn test_book_creation() {
         voice_id: None,
         total_words: None,
         words_processed: None,
+        last_opened_time: None,
     };
     
     assert_eq!(book.id, "book-1");
@@ -70,6 +71,7 @@ fn test_audio_track_creation() {
         href: "Audio/ch1.mp3".to_string(),
         url: Some("data:audio/mpeg;base64,...".to_string()),
         duration: Some(120.5),
+        order: 0,
     };
     
     assert_eq!(track.id, "track-1");
@@ -172,6 +174,7 @@ fn test_book_with_all_fields() {
             href: "Audio/ch1.mp3".to_string(),
             url: None,
             duration: None,
+            order: 0,
         }],
         audio_state: Some(BookAudioState {
             current_track_id: "track-1".to_string(),
@@ -200,6 +203,7 @@ fn test_book_with_all_fields() {
         voice_id: Some("af_heart".to_string()),
         total_words: Some(1000),
         words_processed: Some(1000),
+        last_opened_time: Some("2024-01-01T00:00:00Z".to_string()),
     };
     
     // Verify all fields are set

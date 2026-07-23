@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Check, Monitor, Moon, Sun } from "lucide-react";
-import { useTranslation } from "../../lib/i18n";
 
+import { useTranslation } from "../../lib/i18n";
 import { cn } from "../../lib/utils";
 import { Card, CardContent } from "../ui/card";
 import {
@@ -12,12 +12,13 @@ import {
   DrawerTitle,
 } from "../ui/drawer";
 import { Label } from "../ui/label";
+import { Slider } from "../ui/slider";
 
 export interface ReaderSettings {
-  theme: string; // "light", "dark", "system"
-  fontFamily: string; // "merriweather", "inter", etc.
-  fontSize: string; // "small", "medium", "large", "xlarge"
-  contentPadding: string; // "compact", "comfortable", "spacious"
+  theme: string;
+  fontFamily: string;
+  fontSize: string;
+  contentPadding: string;
 }
 
 interface ReaderSettingsProps {
@@ -40,13 +41,6 @@ export function ReaderSettings({
   const fontFamilyMerriweatherRef = useRef<HTMLDivElement>(null);
   const fontFamilyInterRef = useRef<HTMLDivElement>(null);
   const fontFamilyMonospaceRef = useRef<HTMLDivElement>(null);
-  const fontSizeSmallRef = useRef<HTMLDivElement>(null);
-  const fontSizeMediumRef = useRef<HTMLDivElement>(null);
-  const fontSizeLargeRef = useRef<HTMLDivElement>(null);
-  const fontSizeXlargeRef = useRef<HTMLDivElement>(null);
-  const paddingCompactRef = useRef<HTMLDivElement>(null);
-  const paddingComfortableRef = useRef<HTMLDivElement>(null);
-  const paddingSpaciousRef = useRef<HTMLDivElement>(null);
 
   const handleThemeChange = (theme: string) => {
     onSettingsChange({ ...settings, theme });
@@ -56,81 +50,49 @@ export function ReaderSettings({
     onSettingsChange({ ...settings, fontFamily });
   };
 
-  const handleFontSizeChange = (fontSize: string) => {
-    onSettingsChange({ ...settings, fontSize });
+  const handleFontSizeChange = ([fontSize]: number[]) => {
+    onSettingsChange({ ...settings, fontSize: String(fontSize) });
   };
 
-  const handlePaddingChange = (contentPadding: string) => {
-    onSettingsChange({ ...settings, contentPadding });
+  const handlePaddingChange = ([contentPadding]: number[]) => {
+    onSettingsChange({ ...settings, contentPadding: String(contentPadding) });
   };
 
-  // Scroll to selected items when drawer opens
+  const fontSizeValue = Number(settings.fontSize) || 16;
+  const contentPaddingValue = Number(settings.contentPadding) || 24;
+
   useEffect(() => {
     if (!isOpen) return;
 
     const scrollToElement = (ref: React.RefObject<HTMLDivElement | null>) => {
-      if (ref.current) {
-        ref.current.scrollIntoView({
-          behavior: "smooth",
-          block: "nearest",
-          inline: "center",
-        });
-      }
+      ref.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "center",
+      });
     };
 
-    const scrollToSelected = () => {
-      // Theme
-      const themeRefs: Record<
-        string,
-        React.RefObject<HTMLDivElement | null>
-      > = {
-        light: themeLightRef,
-        dark: themeDarkRef,
-        system: themeSystemRef,
-      };
+    const themeRefs: Record<string, React.RefObject<HTMLDivElement | null>> = {
+      light: themeLightRef,
+      dark: themeDarkRef,
+      system: themeSystemRef,
+    };
+    const fontFamilyRefs: Record<
+      string,
+      React.RefObject<HTMLDivElement | null>
+    > = {
+      merriweather: fontFamilyMerriweatherRef,
+      inter: fontFamilyInterRef,
+      monospace: fontFamilyMonospaceRef,
+    };
+
+    const timeoutId = setTimeout(() => {
       scrollToElement(themeRefs[settings.theme]);
-
-      // Font Family
-      const fontFamilyRefs: Record<
-        string,
-        React.RefObject<HTMLDivElement | null>
-      > = {
-        merriweather: fontFamilyMerriweatherRef,
-        inter: fontFamilyInterRef,
-        monospace: fontFamilyMonospaceRef,
-      };
       scrollToElement(fontFamilyRefs[settings.fontFamily]);
+    }, 100);
 
-      // Font Size
-      const fontSizeRefs: Record<
-        string,
-        React.RefObject<HTMLDivElement | null>
-      > = {
-        small: fontSizeSmallRef,
-        medium: fontSizeMediumRef,
-        large: fontSizeLargeRef,
-        xlarge: fontSizeXlargeRef,
-      };
-      scrollToElement(fontSizeRefs[settings.fontSize]);
-
-      // Content Padding
-      const paddingRefs: Record<
-        string,
-        React.RefObject<HTMLDivElement | null>
-      > = {
-        compact: paddingCompactRef,
-        comfortable: paddingComfortableRef,
-        spacious: paddingSpaciousRef,
-      };
-      scrollToElement(paddingRefs[settings.contentPadding]);
-    };
-
-    // Small delay to ensure drawer is fully rendered
-    const timeoutId = setTimeout(scrollToSelected, 100);
     return () => clearTimeout(timeoutId);
-    // Only scroll when drawer opens, not when settings change
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+  }, [isOpen, settings.fontFamily, settings.theme]);
 
   return (
     <Drawer open={isOpen} onOpenChange={onOpenChange}>
@@ -139,24 +101,25 @@ export function ReaderSettings({
         <DrawerHeader className="pb-4">
           <DrawerTitle>{t("reader.settings")}</DrawerTitle>
         </DrawerHeader>
-        <div className="flex flex-col gap-4 p-4 overflow-y-auto">
-          {/* Theme */}
+        <div className="flex flex-col gap-4 overflow-y-auto p-4">
           <div className="space-y-2">
             <Label className="text-sm">{t("reader.theme")}</Label>
             <div className="flex flex-row gap-2 overflow-x-auto p-1">
               <Card
                 ref={themeLightRef}
                 className={cn(
-                  "cursor-pointer transition-all hover:border-primary flex-shrink-0 w-24",
+                  "w-24 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
                   settings.theme === "light" &&
                     "border-primary ring-2 ring-primary"
                 )}
                 onClick={() => handleThemeChange("light")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-1 h-20">
+                <CardContent className="flex h-20 flex-col items-center gap-1 p-4">
                   <Sun className="h-3 w-3" />
-                  <span className="text-xs font-medium">{t("reader.theme_light")}</span>
-                  <div className="h-3 w-3 flex items-center justify-center">
+                  <span className="text-xs font-medium">
+                    {t("reader.theme_light")}
+                  </span>
+                  <div className="flex h-3 w-3 items-center justify-center">
                     {settings.theme === "light" && (
                       <Check className="h-3 w-3 text-primary" />
                     )}
@@ -166,16 +129,18 @@ export function ReaderSettings({
               <Card
                 ref={themeDarkRef}
                 className={cn(
-                  "cursor-pointer transition-all hover:border-primary flex-shrink-0 w-24",
+                  "w-24 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
                   settings.theme === "dark" &&
                     "border-primary ring-2 ring-primary"
                 )}
                 onClick={() => handleThemeChange("dark")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-1 h-20">
+                <CardContent className="flex h-20 flex-col items-center gap-1 p-4">
                   <Moon className="h-3 w-3" />
-                  <span className="text-xs font-medium">{t("reader.theme_dark")}</span>
-                  <div className="h-3 w-3 flex items-center justify-center">
+                  <span className="text-xs font-medium">
+                    {t("reader.theme_dark")}
+                  </span>
+                  <div className="flex h-3 w-3 items-center justify-center">
                     {settings.theme === "dark" && (
                       <Check className="h-3 w-3 text-primary" />
                     )}
@@ -185,16 +150,18 @@ export function ReaderSettings({
               <Card
                 ref={themeSystemRef}
                 className={cn(
-                  "cursor-pointer transition-all hover:border-primary flex-shrink-0 w-24",
+                  "w-24 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
                   settings.theme === "system" &&
                     "border-primary ring-2 ring-primary"
                 )}
                 onClick={() => handleThemeChange("system")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-1 h-20">
+                <CardContent className="flex h-20 flex-col items-center gap-1 p-4">
                   <Monitor className="h-3 w-3" />
-                  <span className="text-xs font-medium">{t("reader.theme_system")}</span>
-                  <div className="h-3 w-3 flex items-center justify-center">
+                  <span className="text-xs font-medium">
+                    {t("reader.theme_system")}
+                  </span>
+                  <div className="flex h-3 w-3 items-center justify-center">
                     {settings.theme === "system" && (
                       <Check className="h-3 w-3 text-primary" />
                     )}
@@ -204,24 +171,25 @@ export function ReaderSettings({
             </div>
           </div>
 
-          {/* Font Family */}
           <div className="space-y-3">
             <Label>{t("reader.font_family")}</Label>
             <div className="flex flex-row gap-3 overflow-x-auto p-1">
               <Card
                 ref={fontFamilyMerriweatherRef}
                 className={cn(
-                  "cursor-pointer transition-all hover:border-primary flex-shrink-0 w-28",
+                  "w-28 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
                   settings.fontFamily === "merriweather" &&
                     "border-primary ring-2 ring-primary"
                 )}
                 onClick={() => handleFontFamilyChange("merriweather")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-2 h-32">
+                <CardContent className="flex h-32 flex-col items-center gap-2 p-4">
                   <div className="text-2xl font-serif">Aa</div>
-                  <span className="text-xs text-center">Merriweather</span>
-                  <span className="text-xs text-muted-foreground">{t("reader.font_serif")}</span>
-                  <div className="h-4 w-4 flex items-center justify-center">
+                  <span className="text-center text-xs">Merriweather</span>
+                  <span className="text-xs text-muted-foreground">
+                    {t("reader.font_serif")}
+                  </span>
+                  <div className="flex h-4 w-4 items-center justify-center">
                     {settings.fontFamily === "merriweather" && (
                       <Check className="h-4 w-4 text-primary" />
                     )}
@@ -231,19 +199,19 @@ export function ReaderSettings({
               <Card
                 ref={fontFamilyInterRef}
                 className={cn(
-                  "cursor-pointer transition-all hover:border-primary flex-shrink-0 w-28",
+                  "w-28 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
                   settings.fontFamily === "inter" &&
                     "border-primary ring-2 ring-primary"
                 )}
                 onClick={() => handleFontFamilyChange("inter")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-2 h-32">
+                <CardContent className="flex h-32 flex-col items-center gap-2 p-4">
                   <div className="text-2xl font-sans">Aa</div>
-                  <span className="text-xs text-center">Inter</span>
+                  <span className="text-center text-xs">Inter</span>
                   <span className="text-xs text-muted-foreground">
                     {t("reader.font_sans")}
                   </span>
-                  <div className="h-4 w-4 flex items-center justify-center">
+                  <div className="flex h-4 w-4 items-center justify-center">
                     {settings.fontFamily === "inter" && (
                       <Check className="h-4 w-4 text-primary" />
                     )}
@@ -253,17 +221,19 @@ export function ReaderSettings({
               <Card
                 ref={fontFamilyMonospaceRef}
                 className={cn(
-                  "cursor-pointer transition-all hover:border-primary flex-shrink-0 w-28",
+                  "w-28 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
                   settings.fontFamily === "monospace" &&
                     "border-primary ring-2 ring-primary"
                 )}
                 onClick={() => handleFontFamilyChange("monospace")}
               >
-                <CardContent className="p-4 flex flex-col items-center gap-2 h-32">
+                <CardContent className="flex h-32 flex-col items-center gap-2 p-4">
                   <div className="text-2xl font-mono">Aa</div>
-                  <span className="text-xs text-center">Monospace</span>
-                  <span className="text-xs text-muted-foreground">{t("reader.font_fixed")}</span>
-                  <div className="h-4 w-4 flex items-center justify-center">
+                  <span className="text-center text-xs">Monospace</span>
+                  <span className="text-xs text-muted-foreground">
+                    {t("reader.font_fixed")}
+                  </span>
+                  <div className="flex h-4 w-4 items-center justify-center">
                     {settings.fontFamily === "monospace" && (
                       <Check className="h-4 w-4 text-primary" />
                     )}
@@ -273,157 +243,76 @@ export function ReaderSettings({
             </div>
           </div>
 
-          {/* Font Size */}
           <div className="space-y-3">
             <Label>{t("reader.font_size")}</Label>
-            <div className="flex flex-row gap-3 overflow-x-auto p-1">
-              <Card
-                ref={fontSizeSmallRef}
-                className={cn(
-                  "cursor-pointer transition-all hover:border-primary flex-shrink-0 w-24",
-                  settings.fontSize === "small" &&
-                    "border-primary ring-2 ring-primary"
-                )}
-                onClick={() => handleFontSizeChange("small")}
-              >
-                <CardContent className="p-4 flex flex-col items-center gap-2 h-24">
-                  <div className="text-sm">Aa</div>
-                  <span className="text-xs font-medium">{t("reader.size_small")}</span>
-                  <div className="h-4 w-4 flex items-center justify-center">
-                    {settings.fontSize === "small" && (
-                      <Check className="h-4 w-4 text-primary" />
-                    )}
+            <Card>
+              <CardContent className="space-y-4 p-4">
+                <div className="flex items-end justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium">{fontSizeValue}px</p>
+                    <p className="text-xs text-muted-foreground">
+                      {t("reader.font_size")}
+                    </p>
                   </div>
-                </CardContent>
-              </Card>
-              <Card
-                ref={fontSizeMediumRef}
-                className={cn(
-                  "cursor-pointer transition-all hover:border-primary flex-shrink-0 w-24",
-                  settings.fontSize === "medium" &&
-                    "border-primary ring-2 ring-primary"
-                )}
-                onClick={() => handleFontSizeChange("medium")}
-              >
-                <CardContent className="p-4 flex flex-col items-center gap-2 h-24">
-                  <div className="text-base">Aa</div>
-                  <span className="text-xs font-medium">{t("reader.size_medium")}</span>
-                  <div className="h-4 w-4 flex items-center justify-center">
-                    {settings.fontSize === "medium" && (
-                      <Check className="h-4 w-4 text-primary" />
-                    )}
+                  <div
+                    className="text-right leading-none"
+                    style={{ fontSize: `${fontSizeValue}px` }}
+                  >
+                    Aa
                   </div>
-                </CardContent>
-              </Card>
-              <Card
-                ref={fontSizeLargeRef}
-                className={cn(
-                  "cursor-pointer transition-all hover:border-primary flex-shrink-0 w-24",
-                  settings.fontSize === "large" &&
-                    "border-primary ring-2 ring-primary"
-                )}
-                onClick={() => handleFontSizeChange("large")}
-              >
-                <CardContent className="p-4 flex flex-col items-center gap-2 h-24">
-                  <div className="text-lg">Aa</div>
-                  <span className="text-xs font-medium">{t("reader.size_large")}</span>
-                  <div className="h-4 w-4 flex items-center justify-center">
-                    {settings.fontSize === "large" && (
-                      <Check className="h-4 w-4 text-primary" />
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-              <Card
-                ref={fontSizeXlargeRef}
-                className={cn(
-                  "cursor-pointer transition-all hover:border-primary flex-shrink-0 w-24",
-                  settings.fontSize === "xlarge" &&
-                    "border-primary ring-2 ring-primary"
-                )}
-                onClick={() => handleFontSizeChange("xlarge")}
-              >
-                <CardContent className="p-4 flex flex-col items-center gap-2 h-24">
-                  <div className="text-xl">Aa</div>
-                  <span className="text-xs font-medium">{t("reader.size_xlarge")}</span>
-                  <div className="h-4 w-4 flex items-center justify-center">
-                    {settings.fontSize === "xlarge" && (
-                      <Check className="h-4 w-4 text-primary" />
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+                </div>
+                <Slider
+                  value={[fontSizeValue]}
+                  min={12}
+                  max={28}
+                  step={1}
+                  onValueChange={handleFontSizeChange}
+                  aria-label={t("reader.font_size")}
+                />
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>12px</span>
+                  <span>28px</span>
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
-          {/* Padding */}
           <div className="space-y-3">
             <Label>{t("reader.padding")}</Label>
-            <div className="flex flex-row gap-3 overflow-x-auto p-1">
-              <Card
-                ref={paddingCompactRef}
-                className={cn(
-                  "cursor-pointer transition-all hover:border-primary flex-shrink-0 w-28",
-                  settings.contentPadding === "compact" &&
-                    "border-primary ring-2 ring-primary"
-                )}
-                onClick={() => handlePaddingChange("compact")}
-              >
-                <CardContent className="p-4 flex flex-col items-center gap-2 h-36">
-                  <div className="w-full h-16 rounded border-2 border-dashed border-muted-foreground/30 flex items-center justify-center">
-                    <div className="w-3/4 h-8 bg-muted rounded"></div>
+            <Card>
+              <CardContent className="space-y-4 p-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium">
+                      {contentPaddingValue}px
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {t("reader.padding")}
+                    </p>
                   </div>
-                  <span className="text-xs font-medium">{t("reader.padding_compact")}</span>
-                  <div className="h-4 w-4 flex items-center justify-center">
-                    {settings.contentPadding === "compact" && (
-                      <Check className="h-4 w-4 text-primary" />
-                    )}
+                  <div className="w-24 rounded border-2 border-dashed border-muted-foreground/30 p-2">
+                    <div
+                      className="h-8 rounded bg-muted"
+                      style={{
+                        marginInline: `${Math.min(contentPaddingValue / 2, 24)}px`,
+                      }}
+                    />
                   </div>
-                </CardContent>
-              </Card>
-              <Card
-                ref={paddingComfortableRef}
-                className={cn(
-                  "cursor-pointer transition-all hover:border-primary flex-shrink-0 w-28",
-                  settings.contentPadding === "comfortable" &&
-                    "border-primary ring-2 ring-primary"
-                )}
-                onClick={() => handlePaddingChange("comfortable")}
-              >
-                <CardContent className="p-4 flex flex-col items-center gap-2 h-36">
-                  <div className="w-full h-16 rounded border-2 border-dashed border-muted-foreground/30 flex items-center justify-center">
-                    <div className="w-2/3 h-8 bg-muted rounded"></div>
-                  </div>
-                  <span className="text-xs font-medium">{t("reader.padding_comfortable")}</span>
-                  <div className="h-4 w-4 flex items-center justify-center">
-                    {settings.contentPadding === "comfortable" && (
-                      <Check className="h-4 w-4 text-primary" />
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-              <Card
-                ref={paddingSpaciousRef}
-                className={cn(
-                  "cursor-pointer transition-all hover:border-primary flex-shrink-0 w-28",
-                  settings.contentPadding === "spacious" &&
-                    "border-primary ring-2 ring-primary"
-                )}
-                onClick={() => handlePaddingChange("spacious")}
-              >
-                <CardContent className="p-4 flex flex-col items-center gap-2 h-36">
-                  <div className="w-full h-16 rounded border-2 border-dashed border-muted-foreground/30 flex items-center justify-center">
-                    <div className="w-1/2 h-8 bg-muted rounded"></div>
-                  </div>
-                  <span className="text-xs font-medium">{t("reader.padding_spacious")}</span>
-                  <div className="h-4 w-4 flex items-center justify-center">
-                    {settings.contentPadding === "spacious" && (
-                      <Check className="h-4 w-4 text-primary" />
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+                </div>
+                <Slider
+                  value={[contentPaddingValue]}
+                  min={8}
+                  max={64}
+                  step={2}
+                  onValueChange={handlePaddingChange}
+                  aria-label={t("reader.padding")}
+                />
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>8px</span>
+                  <span>64px</span>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </DrawerContent>

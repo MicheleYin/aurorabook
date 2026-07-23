@@ -29,6 +29,7 @@ fn test_manifest_item_creation() {
         href: "item1.xhtml".to_string(),
         media_type: Some("application/xhtml+xml".to_string()),
         properties: Some("nav".to_string()),
+        media_overlay: None,
     };
     
     assert_eq!(item.id, "item1");

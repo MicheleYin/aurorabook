@@ -659,3 +659,70 @@ fn detect_audio_mime_type(audio_path: &str, audio_href: &str) -> &'static str {
         "audio/mpeg"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        append_reader_css_width_guards, build_epub_resource_absolute_url,
+        detect_audio_mime_type, detect_resource_mime_type, is_external_resource_ref,
+        rewrite_css_urls_for_endpoint,
+    };
+
+    #[test]
+    fn detects_resource_mime_types_from_extension_and_signature() {
+        assert_eq!(detect_resource_mime_type("styles/main.css", b"body{}"), "text/css");
+        assert_eq!(detect_resource_mime_type("chapter.xhtml", b"<html />"), "text/html");
+        assert_eq!(detect_resource_mime_type("cover.unknown", &[0x89, 0x50, 0x4E, 0x47]), "image/png");
+        assert_eq!(detect_resource_mime_type("cover.bin", &[0x00, 0x01]), "application/octet-stream");
+    }
+
+    #[test]
+    fn detects_audio_mime_types_with_reasonable_default() {
+        assert_eq!(detect_audio_mime_type("track.m4b", "track.bin"), "audio/mp4");
+        assert_eq!(detect_audio_mime_type("track.bin", "track.ogg"), "audio/ogg");
+        assert_eq!(detect_audio_mime_type("track.bin", "track.unknown"), "audio/mpeg");
+    }
+
+    #[test]
+    fn recognizes_external_resource_references() {
+        assert!(is_external_resource_ref("https://example.com/a.css"));
+        assert!(is_external_resource_ref(" data:image/png;base64,abc"));
+        assert!(is_external_resource_ref("#chapter-1"));
+        assert!(!is_external_resource_ref("../images/cover.png"));
+    }
+
+    #[test]
+    fn builds_epub_resource_urls_with_encoded_query_values() {
+        let url = build_epub_resource_absolute_url(
+            4321,
+            "book 1",
+            "Text/chapter 1.xhtml",
+            Some("OPS/chapter 1.xhtml"),
+        );
+
+        assert_eq!(
+            url,
+            "http://localhost:4321/epub-resource?book_id=book%201&href=Text%2Fchapter%201%2Exhtml&chapter_href=OPS%2Fchapter%201%2Exhtml"
+        );
+    }
+
+    #[test]
+    fn preserves_external_css_urls_and_appends_reader_guards() {
+        let css = ".keep-http { background-image: url(\"https://example.com/bg.png\"); } .keep-anchor { mask-image: url(#mask); }";
+
+        let rewritten = rewrite_css_urls_for_endpoint(css, 8080, "book-id", "OPS/styles/main.css");
+
+        assert!(rewritten.contains("https://example.com/bg.png"));
+        assert!(rewritten.contains("url(#mask)"));
+        assert!(rewritten.contains("[data-reader-chapter-content=\"true\"]{max-width:100%!important"));
+    }
+
+    #[test]
+    fn appends_reader_width_guards_to_css() {
+        let guarded = append_reader_css_width_guards("body { color: black; }");
+
+        assert!(guarded.starts_with("body { color: black; }"));
+        assert!(guarded.contains("Aurorabook reader guard"));
+        assert!(guarded.contains("overflow-wrap:break-word"));
+    }
+}
