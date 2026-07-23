@@ -12,6 +12,7 @@ import {
 } from "react";
 import { getName } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
 import { AppSettings } from "@/types/settings";
@@ -65,6 +66,19 @@ export function useAudioProgressContext() {
 
 interface AudioProgressProviderProps {
   readonly children: ReactNode;
+}
+
+function tryResumePlayback(
+  el: HTMLAudioElement,
+  savedTime: number,
+  wasPlaying: boolean
+) {
+  el.currentTime = savedTime;
+  if (wasPlaying) {
+    el.play().catch((err: unknown) =>
+      logger.warn("Could not auto-resume after server restart:", err)
+    );
+  }
 }
 
 export function AudioProgressProvider({
@@ -125,6 +139,44 @@ export function AudioProgressProvider({
     },
     [audioRef, saveSettings]
   );
+
+  // When the streaming server restarts (iOS app resume), reconnect the audio element.
+  // The server binds to a new random port on each restart, making the old URL stale.
+  useEffect(() => {
+    const currentTrackRef = { current: currentAudioTrack };
+    currentTrackRef.current = currentAudioTrack;
+
+    const unlisten = listen<number>("audio-server-restarted", async () => {
+      const track = currentTrackRef.current;
+      if (!track || !audioRef.current) return;
+
+      const el = audioRef.current;
+      const savedTime = el.currentTime;
+      const wasPlaying = !el.paused;
+
+      try {
+        const newUrl = await invoke<string>("get_audio_stream_url", {
+          bookId: track.bookId,
+          trackId: track.id,
+        });
+
+        el.src = newUrl;
+        el.load();
+
+        const onReady = () => {
+          tryResumePlayback(el, savedTime, wasPlaying);
+          el.removeEventListener("loadedmetadata", onReady);
+        };
+        el.addEventListener("loadedmetadata", onReady);
+      } catch (err) {
+        logger.error("Failed to reconnect audio after server restart:", err);
+      }
+    });
+
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [currentAudioTrack, audioRef]);
 
   // Load playback speed from backend on mount
   useEffect(() => {

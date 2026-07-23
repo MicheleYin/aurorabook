@@ -630,7 +630,21 @@ pub async fn restart_audio_server(
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
     log::info!("Restarting audio streaming server...");
-    start_audio_server(app).await
+    start_audio_server(app.clone()).await?;
+
+    // Notify the frontend so it can reconnect the audio element with the new URL.
+    // The port changes on every restart because we bind to :0 (OS-assigned).
+    let port = get_server_port().load(std::sync::atomic::Ordering::Relaxed);
+    if port > 0 {
+        use tauri::Emitter;
+        if let Err(e) = app.emit("audio-server-restarted", port) {
+            log::warn!("Failed to emit audio-server-restarted event: {}", e);
+        } else {
+            log::info!("Emitted audio-server-restarted (port={})", port);
+        }
+    }
+
+    Ok(())
 }
 
 /// Detect audio MIME type from file extension
