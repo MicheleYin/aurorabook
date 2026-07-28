@@ -5,51 +5,11 @@ import { toast } from "sonner";
 import type { ReaderSettings } from "../components/reader/ReaderSettings";
 import { useSettingsContext } from "../context/SettingsContext";
 import { logger } from "../lib/logger";
-
-const defaultSettings: ReaderSettings = {
-  theme: "system",
-  fontFamily: "merriweather",
-  fontSize: "16",
-  contentPadding: "24",
-};
-
-function normalizeFontSize(value: string | undefined): string {
-  switch (value) {
-    case "small":
-      return "14";
-    case "medium":
-      return "16";
-    case "large":
-      return "18";
-    case "xlarge":
-      return "20";
-    default: {
-      const parsed = Number(value);
-      if (Number.isFinite(parsed)) {
-        return String(Math.min(28, Math.max(12, Math.round(parsed))));
-      }
-      return defaultSettings.fontSize;
-    }
-  }
-}
-
-function normalizeContentPadding(value: string | undefined): string {
-  switch (value) {
-    case "compact":
-      return "16";
-    case "comfortable":
-      return "24";
-    case "spacious":
-      return "48";
-    default: {
-      const parsed = Number(value);
-      if (Number.isFinite(parsed)) {
-        return String(Math.min(64, Math.max(8, Math.round(parsed / 2) * 2)));
-      }
-      return defaultSettings.contentPadding;
-    }
-  }
-}
+import {
+  DEFAULT_READER_SETTINGS,
+  normalizeContentPadding,
+  normalizeFontSize,
+} from "../lib/reader-settings-utils";
 
 export function useReaderSettings() {
   const {
@@ -58,7 +18,7 @@ export function useReaderSettings() {
     applyTheme,
   } = useSettingsContext();
   const [readerSettings, setReaderSettings] =
-    useState<ReaderSettings>(defaultSettings);
+    useState<ReaderSettings>(DEFAULT_READER_SETTINGS);
   const isInitialLoadRef = useRef(true);
   const isSyncingRef = useRef(false);
 
@@ -93,7 +53,7 @@ export function useReaderSettings() {
         logger.error("Failed to load reader preferences:", err);
         toast.error("Failed to load reader preferences");
         setReaderSettings({
-          ...defaultSettings,
+          ...DEFAULT_READER_SETTINGS,
           theme: mergeTheme(undefined),
         });
         isInitialLoadRef.current = false;

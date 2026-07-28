@@ -143,4 +143,73 @@ describe("AudioExportStateProvider", () => {
     });
     expect(invoke).toHaveBeenCalledWith("cancel_audio_export");
   });
+
+  it("rejects when the same book is already exporting", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_audio_export_status") {
+        return { inProgress: true, bookId: "book-1", format: "mp3" };
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useAudioExportState(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isAnyExporting).toBe(true);
+    });
+
+    await expect(
+      result.current.runAudioExport("book-1", "m4b", "/tmp/out.m4b")
+    ).rejects.toThrow(/already running for this book/);
+  });
+
+  it("runs m4a/m4b export commands and resets optimistic UI", async () => {
+    const { result } = renderHook(() => useAudioExportState(), { wrapper });
+
+    await act(async () => {
+      await result.current.runAudioExport("book-1", "m4a", "/tmp/out.m4a");
+    });
+    expect(invoke).toHaveBeenCalledWith("export_as_m4a", {
+      bookId: "book-1",
+      outputPath: "/tmp/out.m4a",
+    });
+
+    await act(async () => {
+      await result.current.runAudioExport("book-1", "m4b", "/tmp/out.m4b");
+    });
+    expect(invoke).toHaveBeenCalledWith("export_as_m4b", {
+      bookId: "book-1",
+      outputPath: "/tmp/out.m4b",
+    });
+
+    act(() => {
+      result.current.resetExportUi();
+    });
+    await waitFor(() => {
+      expect(result.current.exportProgress).toBeNull();
+    });
+  });
+
+  it("clears optimistic state when export invoke fails", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_audio_export_status") {
+        return { inProgress: false, bookId: null, format: null };
+      }
+      if (cmd === "export_as_mp3") {
+        throw new Error("encode failed");
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useAudioExportState(), { wrapper });
+
+    await expect(
+      result.current.runAudioExport("book-1", "mp3", "/tmp/out.mp3")
+    ).rejects.toThrow(/encode failed/);
+
+    await waitFor(() => {
+      expect(result.current.isAnyExporting).toBe(false);
+      expect(result.current.exportProgress).toBeNull();
+    });
+  });
 });

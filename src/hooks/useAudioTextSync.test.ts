@@ -260,4 +260,102 @@ describe("useAudioTextSync", () => {
       expect.objectContaining({ href: "ch2.xhtml" })
     );
   });
+
+  it("advances highlight to the next segment and scrolls when offscreen", () => {
+    const { scrollContainer, span1, span2 } = mountReaderDom();
+    scrollContainer.scrollTo = vi.fn();
+    const book = createBook();
+
+    const { result: refs } = renderHook(() => {
+      const scrollContainerRef = useRef<HTMLDivElement | null>(scrollContainer);
+      return { scrollContainerRef };
+    });
+
+    renderHook(() =>
+      useAudioTextSync(book, refs.current.scrollContainerRef, null, true)
+    );
+
+    act(() => {
+      if (audioRef.current) audioRef.current.currentTime = 1.0;
+      vi.advanceTimersByTime(250);
+    });
+    expect(span1.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
+
+    act(() => {
+      if (audioRef.current) audioRef.current.currentTime = 6.0;
+      vi.advanceTimersByTime(250);
+    });
+
+    expect(span2.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
+    expect(scrollContainer.scrollTo).toHaveBeenCalled();
+  });
+
+  it("preserves scroll position when sync is toggled", () => {
+    const { scrollContainer } = mountReaderDom();
+    scrollContainer.scrollTop = 240;
+    const book = createBook();
+
+    const { result: refs } = renderHook(() => {
+      const scrollContainerRef = useRef<HTMLDivElement | null>(scrollContainer);
+      return { scrollContainerRef };
+    });
+
+    const { rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => {
+        isSyncEnabled = enabled;
+        return useAudioTextSync(
+          book,
+          refs.current.scrollContainerRef,
+          null,
+          true
+        );
+      },
+      { initialProps: { enabled: true } }
+    );
+
+    rerender({ enabled: false });
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    expect(scrollContainer.scrollTop).toBe(240);
+  });
+
+  it("re-applies the active highlight when header visibility changes", () => {
+    const { scrollContainer, span1 } = mountReaderDom();
+    const book = createBook();
+
+    const { result: refs } = renderHook(() => {
+      const scrollContainerRef = useRef<HTMLDivElement | null>(scrollContainer);
+      return { scrollContainerRef };
+    });
+
+    const { rerender } = renderHook(
+      ({ headerVisible }: { headerVisible: boolean }) =>
+        useAudioTextSync(
+          book,
+          refs.current.scrollContainerRef,
+          null,
+          headerVisible
+        ),
+      { initialProps: { headerVisible: true } }
+    );
+
+    act(() => {
+      if (audioRef.current) audioRef.current.currentTime = 1.0;
+      vi.advanceTimersByTime(250);
+      vi.advanceTimersByTime(100);
+    });
+    expect(span1.classList.contains(HIGHLIGHT_ACTIVE_CLASS)).toBe(true);
+
+    // Simulate a layout flash that clears highlight classes (e.g. header hide/show).
+    span1.classList.remove(HIGHLIGHT_CLASS, HIGHLIGHT_ACTIVE_CLASS);
+
+    rerender({ headerVisible: false });
+    act(() => {
+      vi.advanceTimersByTime(350);
+    });
+
+    expect(span1.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
+    expect(span1.classList.contains(HIGHLIGHT_ACTIVE_CLASS)).toBe(true);
+  });
 });

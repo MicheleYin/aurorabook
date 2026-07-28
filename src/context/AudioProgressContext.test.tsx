@@ -9,6 +9,7 @@ import {
 import type { AudioTrack, Book } from "../types/book";
 import {
   emitTauriEvent,
+  getName,
   invoke,
   listen,
   osType,
@@ -223,5 +224,279 @@ describe("AudioProgressProvider", () => {
       emitTauriEvent("native-player-event", { type: "ended" });
     });
     expect(ended).toHaveBeenCalled();
+  });
+
+  it("updates playback rate on the audio element and persists settings", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_app_settings") {
+        return { audioPlaybackSpeed: 1 };
+      }
+      if (cmd === "update_app_settings") {
+        return { audioPlaybackSpeed: 1.5 };
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    result.current.audioRef.current = audio;
+
+    await waitFor(() => {
+      expect(result.current.playbackRate).toBe(1);
+    });
+
+    await act(async () => {
+      result.current.setPlaybackRate(1.5);
+    });
+
+    expect(result.current.playbackRate).toBe(1.5);
+    expect(audio.playbackRate).toBe(1.5);
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        "update_app_settings",
+        expect.objectContaining({
+          settings: expect.objectContaining({ audioPlaybackSpeed: 1.5 }),
+        })
+      );
+    });
+  });
+
+  it("restores saved track time after metadata loads", async () => {
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    result.current.audioRef.current = audio;
+
+    const track = createTrack();
+    const book = createBook({
+      audioState: {
+        currentTrackId: track.id,
+        currentTimeSeconds: 33,
+      },
+    });
+
+    act(() => {
+      result.current.restoreAudioProgress(book, track, true);
+    });
+
+    audio.dispatchEvent(new Event("loadedmetadata"));
+    expect(audio.currentTime).toBe(33);
+    expect(audio.play).toHaveBeenCalled();
+  });
+
+  it("loads the last opened track from the backend book state", async () => {
+    const track = createTrack({ id: "track-2", order: 1, title: "Next" });
+    const book = createBook({
+      audioTracks: [createTrack(), track],
+      audioState: { currentTrackId: "track-2", currentTimeSeconds: 10 },
+    });
+
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_app_settings") return { audioPlaybackSpeed: 1 };
+      if (cmd === "read_one_book") return book;
+      if (cmd === "get_audio_stream_url") {
+        return "https://stream.local/track-2.mp3";
+      }
+      if (cmd === "update_book_audio_state") return undefined;
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    result.current.audioRef.current = audio;
+
+    await act(async () => {
+      await result.current.loadLastOpenedAudioTrack(book, false);
+    });
+
+    expect(result.current.currentAudioTrack?.id).toBe("track-2");
+    expect(audio.src).toContain("track-2.mp3");
+  });
+
+  it("clears playback when the book has no audio tracks", async () => {
+    const book = createBook({ audioTracks: [], audioState: undefined });
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_app_settings") return { audioPlaybackSpeed: 1 };
+      if (cmd === "read_one_book") return book;
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    result.current.audioRef.current = audio;
+    result.current.blobUrlRef.current = "blob:old";
+
+    await act(async () => {
+      await result.current.loadLastOpenedAudioTrack(book, false);
+    });
+
+    expect(result.current.currentAudioTrack).toBeNull();
+    expect(audio.pause).toHaveBeenCalled();
+    expect(audio.currentTime).toBe(0);
+  });
+
+  it("saves progress and clears state when closing the player", async () => {
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    result.current.audioRef.current = audio;
+
+    const book = createBook({
+      audioState: { currentTrackId: "track-1", currentTimeSeconds: 5 },
+    });
+
+    await act(async () => {
+      await result.current.loadAudioTrack(book.id, book.audioTracks[0], book);
+    });
+
+    audio.currentTime = 55;
+    await act(async () => {
+      await result.current.closeAudioPlayer(book);
+    });
+
+    expect(invoke).toHaveBeenCalledWith(
+      "update_book_audio_state",
+      expect.objectContaining({ bookId: "book-1" })
+    );
+    expect(result.current.currentAudioTrack).toBeNull();
+    expect(audio.pause).toHaveBeenCalled();
+  });
+
+  it("reconnects the stream URL after audio-server-restarted", async () => {
+    let paused = false;
+    const audio = createAudioElement();
+    Object.defineProperty(audio, "paused", {
+      configurable: true,
+      get: () => paused,
+    });
+
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_app_settings") return { audioPlaybackSpeed: 1 };
+      if (cmd === "get_audio_stream_url") {
+        return "https://stream.local/reconnect.mp3";
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    result.current.audioRef.current = audio;
+
+    await act(async () => {
+      await result.current.loadAudioTrack(
+        "book-1",
+        createTrack(),
+        createBook()
+      );
+    });
+
+    audio.currentTime = 17;
+    paused = false;
+
+    await waitFor(() => {
+      expect(
+        listen.mock.calls.some((c) => c[0] === "audio-server-restarted")
+      ).toBe(true);
+    });
+
+    await act(async () => {
+      emitTauriEvent("audio-server-restarted", 9);
+    });
+
+    await waitFor(() => {
+      expect(audio.src).toContain("reconnect.mp3");
+    });
+
+    audio.dispatchEvent(new Event("loadedmetadata"));
+    expect(audio.currentTime).toBe(17);
+    expect(audio.play).toHaveBeenCalled();
+  });
+
+  it("sets MediaSession metadata with cover artwork and chapter title", async () => {
+    class FakeMediaMetadata {
+      title?: string;
+      artist?: string;
+      album?: string;
+      artwork?: MediaImage[];
+      constructor(init?: MediaMetadataInit) {
+        Object.assign(this, init);
+      }
+    }
+    Object.defineProperty(window, "MediaMetadata", {
+      configurable: true,
+      writable: true,
+      value: FakeMediaMetadata,
+    });
+    Object.defineProperty(navigator, "mediaSession", {
+      configurable: true,
+      writable: true,
+      value: { metadata: null },
+    });
+
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    result.current.audioRef.current = audio;
+
+    const book = createBook({
+      coverUrl: "https://cdn.example/cover.jpg",
+      author: "Ada",
+    });
+
+    await act(async () => {
+      await result.current.loadAudioTrack(book.id, book.audioTracks[0], book);
+    });
+
+    await waitFor(() => {
+      expect(navigator.mediaSession.metadata).toMatchObject({
+        title: "Intro - Chapter 1",
+        artist: "Ada",
+        album: "Test Book - AuroraBook",
+        artwork: [
+          expect.objectContaining({
+            src: "https://cdn.example/cover.jpg",
+            sizes: "512x512",
+          }),
+        ],
+      });
+    });
+  });
+
+  it("falls back to album-only MediaSession metadata when getName fails", async () => {
+    class FakeMediaMetadata {
+      title?: string;
+      artist?: string;
+      album?: string;
+      artwork?: MediaImage[];
+      constructor(init?: MediaMetadataInit) {
+        Object.assign(this, init);
+      }
+    }
+    Object.defineProperty(window, "MediaMetadata", {
+      configurable: true,
+      writable: true,
+      value: FakeMediaMetadata,
+    });
+    Object.defineProperty(navigator, "mediaSession", {
+      configurable: true,
+      writable: true,
+      value: { metadata: null },
+    });
+    getName.mockRejectedValueOnce(new Error("no app name"));
+
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    result.current.audioRef.current = audio;
+
+    const book = createBook({ coverUrl: undefined, author: "Ada" });
+
+    await act(async () => {
+      await result.current.loadAudioTrack(book.id, book.audioTracks[0], book);
+    });
+
+    await waitFor(() => {
+      expect(navigator.mediaSession.metadata).toMatchObject({
+        title: "Intro - Chapter 1",
+        artist: "Ada",
+        album: "Test Book",
+        artwork: [],
+      });
+    });
   });
 });

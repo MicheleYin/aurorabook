@@ -32,11 +32,11 @@ export default defineConfig({
         "src/main.tsx",
       ],
       thresholds: {
-        // Stepwise gate after Phase 2–3 (~55% today). Raise as more contexts/hooks gain tests.
-        lines: 50,
-        functions: 50,
-        branches: 45,
-        statements: 50,
+        // Dense FE logic: ~91% lines today.
+        lines: 85,
+        functions: 85,
+        branches: 75,
+        statements: 85,
       },
     },
   },

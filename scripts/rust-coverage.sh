@@ -3,7 +3,8 @@
 # Skips slow/model/FFmpeg/AppHandle binaries under tests/*.rs.
 #
 # Also enforces a fail-under gate on dense, AppHandle-light modules:
-#   native_player, epub chunking, book_service filters, utils/text
+#   native_player, epub chunking/smil/vtt, book_service filters,
+#   utils/text + ffmpeg_audio, background/jobs
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -45,21 +46,27 @@ cargo llvm-cov --lcov --output-path "$OUT_DIR/lcov.info" --lib --test mod "$@"
 echo "LCOV written to src-tauri/target/llvm-cov/lcov.info"
 
 # Dense-module gate (no AppHandle-heavy command surfaces).
-# Fail if line coverage on these files falls below FAIL_UNDER.
+# Default fail-under applies unless a module has a lower realistic floor
+# (FFmpeg process I/O and AppHandle emit paths are hard to unit-cover).
 FAIL_UNDER="${RUST_COVERAGE_FAIL_UNDER:-70}"
 python3 - "$OUT_DIR/lcov.info" "$FAIL_UNDER" <<'PY'
 import sys
 from collections import defaultdict
 
 lcov_path, fail_under_s = sys.argv[1], sys.argv[2]
-fail_under = float(fail_under_s)
+default_fail_under = float(fail_under_s)
 
 # Suffix match so absolute/relative SF paths both work.
+# Optional per-module floor overrides default (process/AppHandle-heavy modules).
 targets = {
-    "native_player.rs": "native_player",
-    "epub/converter/chunking.rs": "chunking",
-    "book_service/filters.rs": "filters",
-    "utils/text.rs": "text",
+    "native_player.rs": ("native_player", None),
+    "epub/converter/chunking.rs": ("chunking", None),
+    "epub/converter/smil.rs": ("smil", None),
+    "epub/converter/vtt.rs": ("vtt", None),
+    "book_service/filters.rs": ("filters", None),
+    "utils/text.rs": ("text", None),
+    "utils/ffmpeg_audio.rs": ("ffmpeg_audio", 55.0),
+    "background/jobs.rs": ("jobs", 45.0),
 }
 
 found = {k: False for k in targets}
@@ -73,7 +80,7 @@ with open(lcov_path, encoding="utf-8") as f:
         if line.startswith("SF:"):
             path = line[3:].replace("\\", "/")
             current = None
-            for suffix, key in targets.items():
+            for suffix, (key, _) in targets.items():
                 if path.endswith(suffix):
                     current = key
                     found[suffix] = True
@@ -97,14 +104,16 @@ if missing:
     sys.exit(1)
 
 failed = False
-print(f"Dense-module coverage gate (fail-under {fail_under:.0f}%):")
-for suffix, key in targets.items():
+print(f"Dense-module coverage gate (default fail-under {default_fail_under:.0f}%):")
+for suffix, (key, override) in targets.items():
     total = lines_found[key]
     hit = lines_hit[key]
     pct = (100.0 * hit / total) if total else 0.0
-    status = "ok" if pct >= fail_under else "FAIL"
-    print(f"  [{status}] {suffix}: {pct:.1f}% ({hit}/{total})")
-    if pct < fail_under:
+    floor = override if override is not None else default_fail_under
+    status = "ok" if pct >= floor else "FAIL"
+    floor_note = f", floor {floor:.0f}%" if override is not None else ""
+    print(f"  [{status}] {suffix}: {pct:.1f}% ({hit}/{total}{floor_note})")
+    if pct < floor:
         failed = True
 
 if failed:

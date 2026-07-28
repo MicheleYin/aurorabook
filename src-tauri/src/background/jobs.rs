@@ -377,3 +377,119 @@ fn progress_percent(completed: u64, total: u64) -> u8 {
         .round()
         .clamp(0.0, 100.0) as u8
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn progress_percent_handles_edges() {
+        assert_eq!(progress_percent(0, 0), 0);
+        assert_eq!(progress_percent(0, 10), 0);
+        assert_eq!(progress_percent(5, 10), 50);
+        assert_eq!(progress_percent(10, 10), 100);
+        assert_eq!(progress_percent(99, 10), 100); // clamps completed
+        assert_eq!(progress_percent(1, 3), 33);
+    }
+
+    #[test]
+    fn continued_conversion_start_serializes_camel_case() {
+        let payload = ContinuedConversionStart {
+            job_id: "j1".into(),
+            task_id: "t1".into(),
+            book_id: "b1".into(),
+            continued_processing: true,
+        };
+        let json = serde_json::to_value(&payload).expect("serialize");
+        assert_eq!(json["jobId"], "j1");
+        assert_eq!(json["taskId"], "t1");
+        assert_eq!(json["bookId"], "b1");
+        assert_eq!(json["continuedProcessing"], true);
+    }
+
+    #[test]
+    fn conversion_job_coordinator_tracks_cancel_tokens() {
+        let coordinator = BackgroundCoordinator::new();
+        let token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let started = coordinator
+            .register_job("book-1", token.clone(), "Converting")
+            .expect("register job");
+        assert_eq!(started.book_id, "book-1");
+        assert!(started.task_id.starts_with(CONVERT_TASK_PREFIX));
+        assert!(coordinator.cancel_token_for_book("book-1").is_some());
+        assert_eq!(
+            coordinator.task_id_for_book("book-1").as_deref(),
+            Some(started.task_id.as_str())
+        );
+        assert_eq!(
+            coordinator.job_id_for_task(&started.task_id),
+            Some((started.job_id.clone(), "book-1".into()))
+        );
+
+        let rebound = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        coordinator.rebind_cancel_token("book-1", rebound.clone());
+        let stored = coordinator.cancel_token_for_book("book-1").unwrap();
+        assert!(stored.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn register_job_uses_default_title_and_replaces_prior_job() {
+        let coordinator = BackgroundCoordinator::new();
+        let first_token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let first = coordinator
+            .register_job("book-2", first_token.clone(), "   ")
+            .expect("register first");
+        assert_eq!(first.book_id, "book-2");
+
+        let second_token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let second = coordinator
+            .register_job("book-2", second_token.clone(), "Again")
+            .expect("register replacement");
+        assert_ne!(first.task_id, second.task_id);
+        assert_eq!(
+            coordinator.task_id_for_book("book-2").as_deref(),
+            Some(second.task_id.as_str())
+        );
+        assert!(coordinator.job_id_for_task(&first.task_id).is_none());
+        assert_eq!(
+            coordinator.job_id_for_task(&second.task_id),
+            Some((second.job_id.clone(), "book-2".into()))
+        );
+    }
+
+    #[test]
+    fn request_cancel_sets_token_and_unknown_is_noop() {
+        let coordinator = BackgroundCoordinator::new();
+        let token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let started = coordinator
+            .register_job("book-3", token.clone(), "Cancel me")
+            .expect("register");
+
+        coordinator
+            .request_cancel_task_id(&started.task_id)
+            .expect("cancel");
+        assert!(token.load(std::sync::atomic::Ordering::Relaxed));
+
+        coordinator
+            .request_cancel_task_id("missing-task")
+            .expect("unknown cancel is ok");
+        assert!(coordinator.cancel_token_for_book("missing").is_none());
+        coordinator.rebind_cancel_token("missing", token);
+    }
+
+    #[test]
+    fn job_progress_serializes_camel_case() {
+        let payload = JobProgress {
+            job_id: "j".into(),
+            task_id: "t".into(),
+            book_id: "b".into(),
+            completed: 3,
+            total: 10,
+            percent: 30,
+        };
+        let json = serde_json::to_value(&payload).expect("serialize");
+        assert_eq!(json["jobId"], "j");
+        assert_eq!(json["completed"], 3);
+        assert_eq!(json["percent"], 30);
+    }
+}

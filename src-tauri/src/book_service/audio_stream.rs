@@ -765,4 +765,45 @@ mod tests {
         assert!(guarded.contains("Aurorabook reader guard"));
         assert!(guarded.contains("overflow-wrap:break-word"));
     }
+
+    #[test]
+    fn detects_fonts_media_and_magic_mime_types() {
+        assert_eq!(detect_resource_mime_type("f.woff2", b""), "font/woff2");
+        assert_eq!(detect_resource_mime_type("f.ttf", b""), "font/ttf");
+        assert_eq!(detect_resource_mime_type("a.mp3", b""), "audio/mpeg");
+        assert_eq!(detect_resource_mime_type("a.m4b", b""), "audio/mp4");
+        assert_eq!(detect_resource_mime_type("v.webm", b""), "video/webm");
+        assert_eq!(detect_resource_mime_type("s.vtt", b""), "text/vtt");
+        assert_eq!(
+            detect_resource_mime_type("x.bin", &[0xFF, 0xD8, 0xFF, 0xE0]),
+            "image/jpeg"
+        );
+        assert_eq!(
+            detect_resource_mime_type("x.bin", &[0x47, 0x49, 0x46, 0x38]),
+            "image/gif"
+        );
+    }
+
+    #[test]
+    fn detects_more_audio_mime_extensions() {
+        assert_eq!(detect_audio_mime_type("a.wav", "x"), "audio/wav");
+        assert_eq!(detect_audio_mime_type("a.webm", "x"), "audio/webm");
+        assert_eq!(detect_audio_mime_type("a.flac", "x"), "audio/flac");
+        assert_eq!(detect_audio_mime_type("a.mp3", "x"), "audio/mpeg");
+    }
+
+    #[test]
+    fn rewrite_css_rewrites_relative_urls_and_imports() {
+        let css = r#"
+@import url("fonts/book.woff2");
+@import 'theme.css';
+.bg { background: url(../images/cover.jpg); }
+"#;
+        let rewritten =
+            rewrite_css_urls_for_endpoint(css, 9000, "book-id", "OPS/styles/main.css");
+        assert!(rewritten.contains("http://localhost:9000/epub-resource?"));
+        assert!(rewritten.contains("book_id=book%2Did"));
+        assert!(rewritten.contains("Aurorabook reader guard"));
+        assert!(!rewritten.contains("url(../images/cover.jpg)"));
+    }
 }

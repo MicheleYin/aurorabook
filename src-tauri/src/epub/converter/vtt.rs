@@ -221,4 +221,73 @@ mod tests {
         assert!(vtt.contains("Test Chapter"));
         assert!(vtt.contains("00:00:00.000"));
     }
+
+    #[test]
+    fn generate_chapter_vtt_breaks_on_sentence_punctuation_and_gaps() {
+        let alignments = vec![
+            WordAlignment {
+                word: "Hello".into(),
+                start_sec: 0.0,
+                end_sec: 0.4,
+            },
+            WordAlignment {
+                word: ".".into(),
+                start_sec: 0.4,
+                end_sec: 0.5,
+            },
+            WordAlignment {
+                word: "Next".into(),
+                start_sec: 1.2,
+                end_sec: 1.6,
+            },
+            WordAlignment {
+                word: "line".into(),
+                start_sec: 1.6,
+                end_sec: 2.0,
+            },
+        ];
+        let vtt = generate_chapter_vtt(&alignments, "Punct");
+        assert!(vtt.contains("Hello"));
+        assert!(vtt.contains("Next line") || vtt.contains("Next"));
+        assert!(vtt.matches("-->").count() >= 2);
+    }
+
+    #[test]
+    fn generate_book_vtt_offsets_chapter_cues() {
+        let chapters = vec![
+            (
+                "Ch1".to_string(),
+                vec![WordAlignment {
+                    word: "One".into(),
+                    start_sec: 0.0,
+                    end_sec: 1.0,
+                }],
+                0.0,
+            ),
+            (
+                "Ch2".to_string(),
+                vec![WordAlignment {
+                    word: "Two".into(),
+                    start_sec: 0.0,
+                    end_sec: 1.0,
+                }],
+                10.0,
+            ),
+        ];
+        let vtt = generate_book_vtt(&chapters);
+        assert!(vtt.contains("NOTE Complete audiobook with all chapters"));
+        assert!(vtt.contains("NOTE Chapter: Ch1"));
+        assert!(vtt.contains("NOTE Chapter: Ch2"));
+        assert!(vtt.contains("00:00:10.000"));
+        assert!(vtt.contains("One"));
+        assert!(vtt.contains("Two"));
+    }
+
+    #[test]
+    fn generate_book_vtt_skips_empty_chapters() {
+        let chapters = vec![("Empty".to_string(), Vec::new(), 0.0)];
+        let vtt = generate_book_vtt(&chapters);
+        assert!(vtt.contains("NOTE Chapter: Empty"));
+        assert!(!vtt.contains("-->"));
+    }
 }

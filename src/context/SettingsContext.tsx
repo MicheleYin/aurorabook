@@ -12,9 +12,10 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { normalizeVoiceId } from "../constants/kokoro";
 import { normalizeAppLanguage, normalizeTtsLanguage } from "../constants/languages";
-import type { AppSettings, TtsSynthesisQuality } from "../types/settings";
+import type { AppSettings } from "../types/settings";
 import type { UITheme } from "../types/ui";
 import { logger } from "../lib/logger";
+import { normalizeTtsSynthesisQuality } from "../lib/settings-utils";
 
 export interface SettingsContextType {
   settings: AppSettings | null;
@@ -40,13 +41,6 @@ export function useSettingsContext() {
 
 interface SettingsProviderProps {
   readonly children: ReactNode;
-}
-
-function normalizeTtsSynthesisQuality(value: unknown): TtsSynthesisQuality {
-  if (value === "fastest" || value === "balanced" || value === "quality") {
-    return value;
-  }
-  return "balanced";
 }
 
 export function SettingsProvider({ children }: SettingsProviderProps) {

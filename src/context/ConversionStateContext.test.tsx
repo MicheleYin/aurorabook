@@ -203,4 +203,220 @@ describe("ConversionStateProvider", () => {
     });
     expect(toast.info).toHaveBeenCalledWith("Cancellation requested...");
   });
+
+  it("notifies chapter-completed callbacks", async () => {
+    const onChapter = vi.fn();
+    const { result } = renderHook(() => useConversionState(), { wrapper });
+
+    act(() => {
+      result.current.registerCallbacks({ onChapterCompleted: onChapter });
+    });
+
+    await waitFor(() => {
+      expect(listen.mock.calls.some((c) => c[0] === "chapter-completed")).toBe(
+        true
+      );
+    });
+
+    act(() => {
+      emitTauriEvent("chapter-completed", {
+        bookId: "book-1",
+        sourcePath: "/tmp/a.epub",
+        chapterIndex: 1,
+        totalChapters: 3,
+        chapterTitle: "Intro",
+        audioGenerated: true,
+      });
+    });
+
+    expect(onChapter).toHaveBeenCalledWith("book-1");
+    expect(toast.success).toHaveBeenCalled();
+  });
+
+  it("starts continued processing on iOS when supported", async () => {
+    osType.mockReturnValue("ios");
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_app_settings") {
+        return { ttsVoiceId: "F1", ttsLanguage: "en" };
+      }
+      if (cmd === "background_capabilities") {
+        return { supportsContinuedProcessing: true, isIos: true };
+      }
+      if (cmd === "start_continued_conversion") {
+        return {
+          jobId: "j1",
+          taskId: "t1",
+          bookId: "book-1",
+          continuedProcessing: true,
+        };
+      }
+      if (cmd === "convert_epub_to_audiobook_command") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useConversionState(), { wrapper });
+
+    await act(async () => {
+      await result.current.convertBook("book-1");
+    });
+
+    expect(invoke).toHaveBeenCalledWith(
+      "start_continued_conversion",
+      expect.objectContaining({ bookId: "book-1" })
+    );
+    expect(toast.message).toHaveBeenCalled();
+  });
+
+  it("ignores duplicate convert requests for the same book", async () => {
+    let resolveConvert: (value: null) => void = () => undefined;
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_app_settings") {
+        return { ttsVoiceId: "F1", ttsLanguage: "en" };
+      }
+      if (cmd === "convert_epub_to_audiobook_command") {
+        return new Promise<null>((resolve) => {
+          resolveConvert = resolve;
+        });
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useConversionState(), { wrapper });
+
+    let first: Promise<void> = Promise.resolve();
+    await act(async () => {
+      first = result.current.convertBook("book-1");
+    });
+    await waitFor(() => expect(result.current.isConverting).toBe(true));
+
+    await act(async () => {
+      await result.current.convertBook("book-1");
+    });
+
+    // Still only one convert command in flight.
+    expect(
+      invoke.mock.calls.filter(
+        (c) => c[0] === "convert_epub_to_audiobook_command"
+      )
+    ).toHaveLength(1);
+
+    await act(async () => {
+      resolveConvert(null);
+      await first;
+    });
+  });
+
+  it("falls through when iOS continued processing is unsupported", async () => {
+    osType.mockReturnValue("ios");
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_app_settings") {
+        return { ttsVoiceId: "F1", ttsLanguage: "en" };
+      }
+      if (cmd === "background_capabilities") {
+        return { supportsContinuedProcessing: false, isIos: true };
+      }
+      if (cmd === "convert_epub_to_audiobook_command") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useConversionState(), { wrapper });
+
+    await act(async () => {
+      await result.current.convertBook("book-1");
+    });
+
+    expect(invoke).not.toHaveBeenCalledWith(
+      "start_continued_conversion",
+      expect.anything()
+    );
+    expect(invoke).toHaveBeenCalledWith(
+      "convert_epub_to_audiobook_command",
+      expect.objectContaining({ bookId: "book-1" })
+    );
+  });
+
+  it("continues in-process when iOS background setup throws", async () => {
+    osType.mockReturnValue("ios");
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_app_settings") {
+        return { ttsVoiceId: "F1", ttsLanguage: "en" };
+      }
+      if (cmd === "background_capabilities") {
+        throw new Error("bg unavailable");
+      }
+      if (cmd === "convert_epub_to_audiobook_command") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useConversionState(), { wrapper });
+
+    await act(async () => {
+      await result.current.convertBook("book-1");
+    });
+
+    expect(invoke).toHaveBeenCalledWith(
+      "convert_epub_to_audiobook_command",
+      expect.objectContaining({ bookId: "book-1" })
+    );
+  });
+
+  it("surfaces convert failures and clears converting state", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_app_settings") {
+        return { ttsVoiceId: "F1", ttsLanguage: "en" };
+      }
+      if (cmd === "convert_epub_to_audiobook_command") {
+        throw new Error("TTS engine crashed");
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useConversionState(), { wrapper });
+
+    await act(async () => {
+      await result.current.convertBook("book-1");
+    });
+
+    expect(toast.error).toHaveBeenCalledWith("TTS engine crashed", {
+      id: "conversion-book-1",
+    });
+    expect(result.current.isConverting).toBe(false);
+    expect(result.current.convertingBookId).toBeNull();
+  });
+
+  it("surfaces cancel failures", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "cancel_conversion_command") {
+        throw new Error("cancel refused");
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useConversionState(), { wrapper });
+
+    await act(async () => {
+      await result.current.cancelConversion("book-1");
+    });
+
+    expect(toast.error).toHaveBeenCalledWith("cancel refused");
+  });
+
+  it("no-ops cancel when bookId is null", async () => {
+    const { result } = renderHook(() => useConversionState(), { wrapper });
+
+    await act(async () => {
+      await result.current.cancelConversion(null);
+    });
+
+    expect(invoke).not.toHaveBeenCalledWith(
+      "cancel_conversion_command",
+      expect.anything()
+    );
+  });
 });
