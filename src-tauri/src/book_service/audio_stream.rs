@@ -1357,6 +1357,61 @@ async fn handle_audio_stream(
         .unwrap())
 }
 
+async fn handle_epub_resource(
+    Query(query): Query<EpubResourceQuery>,
+    State(app): State<Arc<AppHandle>>,
+) -> Result<Response<axum::body::Body>, StatusCode> {
+    let db = get_db_connection(&*app)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let Some(epub_file_path) = EpubRepository::file_path_for_book_id(db.as_ref(), &query.book_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+
+    let href = query.href.clone();
+    let chapter_href = query.chapter_href.clone();
+    let path_for_task = epub_file_path.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        crate::book_service::epub_file_storage::read_resource_from_epub_file(
+            std::path::Path::new(&path_for_task),
+            &href,
+            chapter_href.as_deref(),
+        )
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let (mut resource_bytes, resolved_path) = result.map_err(|_| StatusCode::NOT_FOUND)?;
+    let mime_type = detect_resource_mime_type(&resolved_path, &resource_bytes);
+
+    if mime_type == "text/css" {
+        if let Ok(css_text) = String::from_utf8(resource_bytes.clone()) {
+            let port = get_server_port().load(std::sync::atomic::Ordering::Relaxed);
+            let rewritten_css = rewrite_css_urls_for_endpoint(
+                &css_text,
+                port,
+                &query.book_id,
+                &resolved_path,
+            );
+            resource_bytes = rewritten_css.into_bytes();
+        }
+    }
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", mime_type)
+        .header("Content-Length", resource_bytes.len().to_string())
+        .header("Cache-Control", "public, max-age=86400")
+        .header("Access-Control-Allow-Origin", "*")
+        .body(axum::body::Body::from(resource_bytes))
+        .unwrap())
+}
+
+
 /// Check if the server is running by attempting to connect to the port
 pub async fn check_server_running() -> bool {
     let port = get_server_port().load(std::sync::atomic::Ordering::Relaxed);

@@ -34,6 +34,9 @@ describe("ConversionStateProvider", () => {
       if (cmd === "get_app_settings") {
         return { ttsVoiceId: "F1", ttsLanguage: "en" };
       }
+      if (cmd === "get_current_converting_chapter") {
+        return null;
+      }
       if (cmd === "convert_epub_to_audiobook_command") {
         return {
           id: "book-1",
@@ -418,5 +421,312 @@ describe("ConversionStateProvider", () => {
       "cancel_conversion_command",
       expect.anything()
     );
+  });
+
+  describe("live converting chapter tracking", () => {
+    async function startPendingConversion(
+      result: { current: ReturnType<typeof useConversionState> },
+      convertResolver: { resolve: (value: null) => void }
+    ) {
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { ttsVoiceId: "F1", ttsLanguage: "en" };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          return 0;
+        }
+        if (cmd === "convert_epub_to_audiobook_command") {
+          return new Promise<null>((resolve) => {
+            convertResolver.resolve = resolve;
+          });
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      let convertPromise: Promise<void> = Promise.resolve();
+      await act(async () => {
+        convertPromise = result.current.convertBook("book-1");
+      });
+      await waitFor(() => {
+        expect(result.current.isConverting).toBe(true);
+        expect(
+          invoke.mock.calls.some((c) => c[0] === "convert_epub_to_audiobook_command")
+        ).toBe(true);
+      });
+      return convertPromise;
+    }
+
+    it("refreshes and stores the current converting chapter from the backend", async () => {
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_current_converting_chapter") {
+          return 2;
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useConversionState(), { wrapper });
+
+      expect(result.current.getCurrentConvertingChapter("book-1")).toBeNull();
+
+      let chapter: number | null = null;
+      await act(async () => {
+        chapter = await result.current.refreshCurrentConvertingChapter("book-1");
+      });
+
+      expect(chapter).toBe(2);
+      expect(invoke).toHaveBeenCalledWith("get_current_converting_chapter", {
+        bookId: "book-1",
+      });
+      expect(result.current.getCurrentConvertingChapter("book-1")).toBe(2);
+      expect(result.current.currentConvertingChapterByBook["book-1"]).toBe(2);
+      expect(result.current.getCurrentConvertingChapter("other-book")).toBeNull();
+    });
+
+    it("returns null when refreshing an empty book id", async () => {
+      const { result } = renderHook(() => useConversionState(), { wrapper });
+
+      let chapter: number | null = -1;
+      await act(async () => {
+        chapter = await result.current.refreshCurrentConvertingChapter("");
+      });
+
+      expect(chapter).toBeNull();
+      expect(invoke).not.toHaveBeenCalledWith(
+        "get_current_converting_chapter",
+        expect.anything()
+      );
+    });
+
+    it("keeps prior chapter state when the backend refresh fails", async () => {
+      const { result } = renderHook(() => useConversionState(), { wrapper });
+
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_current_converting_chapter") {
+          return 1;
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      await act(async () => {
+        await result.current.refreshCurrentConvertingChapter("book-1");
+      });
+      expect(result.current.getCurrentConvertingChapter("book-1")).toBe(1);
+
+      invoke.mockImplementation(async () => {
+        throw new Error("checkpoint unavailable");
+      });
+
+      let chapter: number | null = -1;
+      await act(async () => {
+        chapter = await result.current.refreshCurrentConvertingChapter("book-1");
+      });
+
+      expect(chapter).toBeNull();
+      expect(result.current.getCurrentConvertingChapter("book-1")).toBe(1);
+    });
+
+    it("seeds live chapter state when conversion starts", async () => {
+      const convertResolver = { resolve: (_value: null) => undefined };
+      const { result } = renderHook(() => useConversionState(), { wrapper });
+
+      const convertPromise = await startPendingConversion(result, convertResolver);
+
+      await waitFor(() => {
+        expect(result.current.getCurrentConvertingChapter("book-1")).toBe(0);
+      });
+      expect(invoke).toHaveBeenCalledWith("get_current_converting_chapter", {
+        bookId: "book-1",
+      });
+
+      await act(async () => {
+        convertResolver.resolve(null);
+        await convertPromise;
+      });
+    });
+
+    it("updates the live chapter from conversion-progress events", async () => {
+      const convertResolver = { resolve: (_value: null) => undefined };
+      const { result } = renderHook(() => useConversionState(), { wrapper });
+      const convertPromise = await startPendingConversion(result, convertResolver);
+
+      await waitFor(() => {
+        expect(listen.mock.calls.some((c) => c[0] === "conversion-progress")).toBe(
+          true
+        );
+      });
+
+      act(() => {
+        emitTauriEvent("conversion-progress", {
+          currentChapter: 2,
+          totalChapters: 5,
+          wordsProcessed: 400,
+          totalWords: 1000,
+          wordsInCurrentChapter: 100,
+          currentStep: "tts",
+          message: "Speaking chapter 2",
+        });
+      });
+
+      await waitFor(() => {
+        // currentChapter is 1-indexed in progress payloads; live index is 0-based.
+        expect(result.current.getCurrentConvertingChapter("book-1")).toBe(1);
+      });
+
+      await act(async () => {
+        convertResolver.resolve(null);
+        await convertPromise;
+      });
+    });
+
+    it("ignores regressive live chapter jumps from noisy progress", async () => {
+      const convertResolver = { resolve: (_value: null) => undefined };
+      const { result } = renderHook(() => useConversionState(), { wrapper });
+      const convertPromise = await startPendingConversion(result, convertResolver);
+
+      act(() => {
+        emitTauriEvent("conversion-progress", {
+          currentChapter: 3,
+          totalChapters: 5,
+          wordsProcessed: 600,
+          totalWords: 1000,
+          wordsInCurrentChapter: 100,
+          currentStep: "tts",
+          message: "Speaking",
+        });
+      });
+      await waitFor(() => {
+        expect(result.current.getCurrentConvertingChapter("book-1")).toBe(2);
+      });
+
+      act(() => {
+        emitTauriEvent("conversion-progress", {
+          currentChapter: 1,
+          totalChapters: 5,
+          wordsProcessed: 650,
+          totalWords: 1000,
+          wordsInCurrentChapter: 50,
+          currentStep: "tts",
+          message: "Noisy regress",
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.conversionProgress?.message).toBe("Noisy regress");
+      });
+      expect(result.current.getCurrentConvertingChapter("book-1")).toBe(2);
+
+      await act(async () => {
+        convertResolver.resolve(null);
+        await convertPromise;
+      });
+    });
+
+    it("optimistically advances on chapter-completed and reconciles with backend", async () => {
+      const convertResolver = { resolve: (_value: null) => undefined };
+      const { result } = renderHook(() => useConversionState(), { wrapper });
+      const convertPromise = await startPendingConversion(result, convertResolver);
+
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_current_converting_chapter") {
+          return 1;
+        }
+        if (cmd === "convert_epub_to_audiobook_command") {
+          return new Promise<null>(() => undefined);
+        }
+        if (cmd === "get_app_settings") {
+          return { ttsVoiceId: "F1", ttsLanguage: "en" };
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      await waitFor(() => {
+        expect(listen.mock.calls.some((c) => c[0] === "chapter-completed")).toBe(
+          true
+        );
+      });
+
+      act(() => {
+        emitTauriEvent("chapter-completed", {
+          bookId: "book-1",
+          sourcePath: "/tmp/a.epub",
+          chapterIndex: 1,
+          totalChapters: 4,
+          chapterTitle: "Intro",
+          audioGenerated: true,
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.getCurrentConvertingChapter("book-1")).toBe(1);
+      });
+      expect(invoke).toHaveBeenCalledWith("get_current_converting_chapter", {
+        bookId: "book-1",
+      });
+
+      await act(async () => {
+        convertResolver.resolve(null);
+        await convertPromise;
+      });
+    });
+
+    it("clears live chapter state when conversion completes", async () => {
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { ttsVoiceId: "F1", ttsLanguage: "en" };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          return 0;
+        }
+        if (cmd === "convert_epub_to_audiobook_command") {
+          return {
+            id: "book-1",
+            title: "Converted",
+            author: "A",
+            chapters: [],
+            sourcePath: "/tmp/a.epub",
+            audioTracks: [],
+            conversionStatus: "done",
+            completedChapters: [],
+          };
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useConversionState(), { wrapper });
+
+      await act(async () => {
+        await result.current.convertBook("book-1");
+      });
+
+      expect(result.current.isConverting).toBe(false);
+      expect(result.current.getCurrentConvertingChapter("book-1")).toBeNull();
+    });
+
+    it("clears live chapter state when conversion is cancelled", async () => {
+      const convertResolver = { resolve: (_value: null) => undefined };
+      const { result } = renderHook(() => useConversionState(), { wrapper });
+      const convertPromise = await startPendingConversion(result, convertResolver);
+
+      await waitFor(() => {
+        expect(result.current.getCurrentConvertingChapter("book-1")).toBe(0);
+      });
+
+      act(() => {
+        emitTauriEvent("conversion-cancelled", {
+          bookId: "book-1",
+          sourcePath: "/tmp/a.epub",
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.getCurrentConvertingChapter("book-1")).toBeNull();
+        expect(result.current.isConverting).toBe(false);
+      });
+
+      await act(async () => {
+        convertResolver.resolve(null);
+        await convertPromise;
+      });
+    });
   });
 });

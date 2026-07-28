@@ -1,8 +1,9 @@
 /**
  * Conversion State Context
  *
- * Manages the state of book conversions (progress, status, etc.)
- * This state persists across tab changes and component unmounts.
+ * Manages book conversion (TTS / EPUB→audiobook) progress and actions. Registers Tauri
+ * `listen` handlers on this provider (same lifecycle model as `AudioExportStateContext`)
+ * so progress updates are not mediated by a separate event hub or child components.
  */
 
 import {
@@ -16,6 +17,8 @@ import {
   useState,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { type } from "@tauri-apps/plugin-os";
 import { Estimation } from "arrival-time";
 import humanizeDuration from "humanize-duration";
 import { toast } from "sonner";
@@ -24,8 +27,9 @@ import { Book } from "@/types/book";
 
 import type { AppSettings } from "../types/settings";
 import { logger } from "../lib/logger";
+import { useTranslation } from "../lib/i18n";
+import { humanizeDurationLocale } from "../constants/languages";
 import { dismissLoadingToast } from "../lib/toast-utils";
-import { useConversionEvents } from "./ConversionEventContext";
 
 export interface ConversionProgress {
   currentChapter: number;
@@ -35,6 +39,39 @@ export interface ConversionProgress {
   wordsInCurrentChapter: number;
   currentStep: string;
   message: string;
+}
+
+interface ContinuedConversionStart {
+  jobId: string;
+  taskId: string;
+  bookId: string;
+  continuedProcessing: boolean;
+}
+
+interface BackgroundCapabilities {
+  supportsContinuedProcessing: boolean;
+  isIos: boolean;
+}
+
+interface BackgroundJobLifecycle {
+  jobId: string;
+  taskId: string;
+  bookId: string;
+  success?: boolean | null;
+}
+
+interface ChapterCompletedEvent {
+  bookId: string;
+  sourcePath: string;
+  chapterIndex: number;
+  totalChapters: number;
+  chapterTitle: string;
+  audioGenerated: boolean;
+}
+
+interface ConversionCancelledEvent {
+  bookId: string;
+  sourcePath: string;
 }
 
 export interface ConversionStateCallbacks {
@@ -55,7 +92,7 @@ interface ConversionStateContextValue {
   getCurrentConvertingChapter: (bookId: string) => number | null;
   refreshCurrentConvertingChapter: (bookId: string) => Promise<number | null>;
   eta: string | null; // Estimated time remaining (e.g., "5m 30s")
-  convertBook: (bookId: string) => Promise<void>;
+  convertBook: (bookId: string, language?: string, voiceId?: string) => Promise<void>;
   cancelConversion: (bookId: string | null) => Promise<void>;
   registerCallbacks: (callbacks: ConversionStateCallbacks) => () => void;
 }
@@ -70,6 +107,7 @@ interface ConversionStateProviderProps {
 export function ConversionStateProvider({
   children,
 }: Readonly<ConversionStateProviderProps>) {
+  const { lang } = useTranslation();
   const [isConverting, setIsConverting] = useState(false);
   const [convertingBookId, setConvertingBookId] = useState<string | null>(null);
   const [progressToastId, setProgressToastId] = useState<string | null>(null);
@@ -83,6 +121,7 @@ export function ConversionStateProvider({
   const progressToastIdRef = useRef<string | null>(null);
   const convertingBookIdRef = useRef<string | null>(null);
   const chapterToastIdRef = useRef<string | null>(null);
+  const completedBookIdRef = useRef<string | null>(null);
   const [estimation, setEstimation] = useState<Estimation | null>(null);
   const estimationRef = useRef<Estimation | null>(null);
 
@@ -98,12 +137,6 @@ export function ConversionStateProvider({
     progressToastIdRef.current = progressToastId;
     convertingBookIdRef.current = convertingBookId;
   }, [progressToastId, convertingBookId]);
-
-  const {
-    subscribeToProgress,
-    subscribeToChapterCompleted,
-    subscribeToCancelled,
-  } = useConversionEvents();
 
   const getCurrentConvertingChapter = useCallback(
     (bookId: string) => {
@@ -151,219 +184,271 @@ export function ConversionStateProvider({
     }
   }, []);
 
-  // Subscribe to conversion events - handlers can be reset by re-subscribing
-  useEffect(() => {
-    // Subscribe to progress events
-    const unsubscribeProgress = subscribeToProgress((progress) => {
-      const percent =
-        progress.totalWords > 0
-          ? Math.round((progress.wordsProcessed / progress.totalWords) * 100)
-          : 0;
+  const handleConversionComplete = useCallback(
+    (book: Book | null, bookId?: string | null) => {
+      const completedBookId = bookId ?? book?.id ?? convertingBookIdRef.current;
 
-      const measurement = estimationRef.current?.update(
-        progress.wordsProcessed,
-        progress.totalWords
-      );
-
-      setEta(humanizeDuration(measurement?.estimate ?? 0, { round: true }));
-
-      // Update progress state for UI components
-      setConversionProgress(progress);
-
-      const activeBookId = convertingBookIdRef.current;
-      if (activeBookId) {
-        const chapterIndex =
-          progress.totalChapters > 0
-            ? Math.max(
-                0,
-                Math.min(progress.totalChapters - 1, progress.currentChapter - 1)
-              )
-            : null;
-
-        if (chapterIndex !== null) {
-          setCurrentConvertingChapterByBook((prev) => {
-            const previousChapter = prev[activeBookId] ?? null;
-
-            if (previousChapter === chapterIndex) {
-              return prev;
-            }
-
-            // Ignore backward jumps from noisy/relative progress payloads.
-            // Canonical chapter reconciliation still happens via backend refresh.
-            if (
-              previousChapter !== null &&
-              chapterIndex < previousChapter &&
-              progress.currentStep !== "skipping"
-            ) {
-              logger.info("[conversion-state] ignored regressive live chapter", {
-                bookId: activeBookId,
-                previousChapter,
-                nextChapter: chapterIndex,
-                source: "conversion-progress-event",
-                currentStep: progress.currentStep,
-              });
-              return prev;
-            }
-
-            logger.info("[conversion-state] updated live chapter", {
-              bookId: activeBookId,
-              previousChapter,
-              nextChapter: chapterIndex,
-              source: "conversion-progress-event",
-              currentStep: progress.currentStep,
-            });
-
-            return {
-              ...prev,
-              [activeBookId]: chapterIndex,
-            };
-          });
-        }
+      if (!completedBookId) {
+        logger.error("Received conversion completion without a book ID");
+        return;
       }
+
+      if (completedBookIdRef.current === completedBookId) {
+        logger.log("Ignoring duplicate conversion completion", completedBookId);
+        return;
+      }
+
+      completedBookIdRef.current = completedBookId;
 
       const toastId =
-        progressToastIdRef.current ??
-        `conversion-${convertingBookIdRef.current}`;
-      if (progressToastIdRef.current === null && convertingBookIdRef.current) {
-        setProgressToastId(toastId);
-        progressToastIdRef.current = toastId;
-      }
+        progressToastIdRef.current ?? `conversion-${completedBookId}`;
 
-      // Check if conversion is complete
-      if (progress.currentChapter >= progress.totalChapters && percent >= 100) {
-        toast.success(`Conversion complete!`, { id: toastId });
-        dismissLoadingToast(toastId);
-        const completedBookId = convertingBookIdRef.current;
-        setIsConverting(false);
-        setConvertingBookId(null);
-        setProgressToastId(null);
-        setConversionProgress(null);
-        setEta(null);
-        progressToastIdRef.current = null;
-        convertingBookIdRef.current = null;
-        chapterToastIdRef.current = null;
-        if (completedBookId) {
-          setCurrentConvertingChapterByBook((prev) => ({
-            ...prev,
-            [completedBookId]: null,
-          }));
-        }
-
-        // Call registered callbacks for conversion complete
-        // Note: We don't have the Book object here, so we pass null with the bookId
-        // Components should refresh the book themselves using the bookId
-        callbacksRef.current.forEach((callbacks) => {
-          try {
-            callbacks.onConversionComplete?.(null, completedBookId);
-          } catch (error) {
-            logger.error("Error in onConversionComplete callback:", error);
-          }
-        });
-      }
-      // Removed progress toast - progress is now shown in cards
-    });
-
-    // Subscribe to chapter completed events
-    const unsubscribeChapterCompleted = subscribeToChapterCompleted((event) => {
-      const { bookId, chapterTitle, chapterIndex, totalChapters } = event;
-      logger.log("Chapter completed:", event);
-
-      // Optimistically advance to the next chapter for responsive UI updates.
-      // `chapterIndex` is 1-indexed completed chapter, so next active is 0-indexed `chapterIndex`.
-      if (bookId && convertingBookIdRef.current === bookId) {
-        const optimisticNextChapter =
-          chapterIndex < totalChapters ? chapterIndex : null;
-
-        setCurrentConvertingChapterByBook((prev) => {
-          logger.info("[conversion-state] updated live chapter", {
-            bookId,
-            previousChapter: prev[bookId] ?? null,
-            nextChapter: optimisticNextChapter,
-            source: "chapter-completed-event-optimistic",
-          });
-
-          return {
-            ...prev,
-            [bookId]: optimisticNextChapter,
-          };
-        });
-
-        // Reconcile with backend truth in case resume/checkpoint state differs.
-        void refreshCurrentConvertingChapter(bookId);
-      }
-
-      // Use a consistent toast ID to prevent duplicates - replace previous chapter toast
-      const chapterToastId = `chapter-completed-${bookId}`;
-      chapterToastIdRef.current = chapterToastId;
-
-      toast.success(
-        `Chapter ${chapterIndex}/${totalChapters} completed: ${chapterTitle}`,
-        {
-          id: chapterToastId,
-          duration: 3000,
-        }
-      );
-
-      // Call registered callbacks for chapter completed
-      callbacksRef.current.forEach((callbacks) => {
-        try {
-          callbacks.onChapterCompleted?.(bookId);
-        } catch (error) {
-          logger.error("Error in onChapterCompleted callback:", error);
-        }
-      });
-    });
-
-    // Subscribe to cancelled events
-    const unsubscribeCancelled = subscribeToCancelled((event) => {
-      const { bookId } = event;
-      const toastId = progressToastIdRef.current;
-      if (toastId) {
-        toast.error("Conversion cancelled", { id: toastId });
-        dismissLoadingToast(toastId);
-      } else {
-        toast.error("Conversion cancelled");
-      }
+      toast.success("Conversion complete!", { id: toastId });
+      dismissLoadingToast(toastId);
       setIsConverting(false);
       setConvertingBookId(null);
       setProgressToastId(null);
       setConversionProgress(null);
       setEta(null);
+      setEstimation(null);
       progressToastIdRef.current = null;
       convertingBookIdRef.current = null;
       chapterToastIdRef.current = null;
-      if (bookId) {
-        setCurrentConvertingChapterByBook((prev) => ({
-          ...prev,
-          [bookId]: null,
-        }));
-      }
+      estimationRef.current = null;
+      setCurrentConvertingChapterByBook((prev) => ({
+        ...prev,
+        [completedBookId]: null,
+      }));
 
-      // Call registered callbacks for conversion cancelled
       callbacksRef.current.forEach((callbacks) => {
         try {
-          callbacks.onConversionCancelled?.(bookId);
+          callbacks.onConversionComplete?.(book, completedBookId);
         } catch (error) {
-          logger.error("Error in onConversionCancelled callback:", error);
+          logger.error("Error in onConversionComplete callback:", error);
         }
       });
-    });
+    },
+    []
+  );
 
-    // Cleanup subscriptions on unmount
-    return () => {
-      unsubscribeProgress();
-      unsubscribeChapterCompleted();
-      unsubscribeCancelled();
+  // Tauri listeners live on the provider (same pattern as AudioExportStateContext) so progress
+  // is not tied to a pub/sub layer or child lifecycle.
+  useEffect(() => {
+    let disposed = false;
+    const unlisteners: Array<() => void> = [];
+
+    const setup = async () => {
+      try {
+        const unProgress = await listen<ConversionProgress>(
+          "conversion-progress",
+          (event) => {
+            if (disposed) return;
+            const progress = event.payload;
+            const percent =
+              progress.totalWords > 0
+                ? Math.round(
+                    (progress.wordsProcessed / progress.totalWords) * 100
+                  )
+                : 0;
+
+            const measurement = estimationRef.current?.update(
+              progress.wordsProcessed,
+              progress.totalWords
+            );
+
+            setEta(
+              humanizeDuration(measurement?.estimate ?? 0, {
+                round: true,
+                language: humanizeDurationLocale(lang),
+              })
+            );
+
+            setConversionProgress(progress);
+
+            const activeBookId = convertingBookIdRef.current;
+            if (activeBookId) {
+              const chapterIndex =
+                progress.totalChapters > 0
+                  ? Math.max(
+                      0,
+                      Math.min(
+                        progress.totalChapters - 1,
+                        progress.currentChapter - 1
+                      )
+                    )
+                  : null;
+
+              if (chapterIndex !== null) {
+                setCurrentConvertingChapterByBook((prev) => {
+                  const previousChapter = prev[activeBookId] ?? null;
+
+                  if (previousChapter === chapterIndex) {
+                    return prev;
+                  }
+
+                  // Ignore backward jumps from noisy/relative progress payloads.
+                  if (
+                    previousChapter !== null &&
+                    chapterIndex < previousChapter &&
+                    progress.currentStep !== "skipping"
+                  ) {
+                    return prev;
+                  }
+
+                  return {
+                    ...prev,
+                    [activeBookId]: chapterIndex,
+                  };
+                });
+              }
+            }
+
+            const toastId =
+              progressToastIdRef.current ??
+              `conversion-${convertingBookIdRef.current}`;
+            if (
+              progressToastIdRef.current === null &&
+              convertingBookIdRef.current
+            ) {
+              setProgressToastId(toastId);
+              progressToastIdRef.current = toastId;
+            }
+
+            if (
+              progress.currentChapter >= progress.totalChapters &&
+              percent >= 100
+            ) {
+              handleConversionComplete(null, convertingBookIdRef.current);
+            }
+          }
+        );
+        unlisteners.push(unProgress);
+
+        const unChapter = await listen<ChapterCompletedEvent>(
+          "chapter-completed",
+          (event) => {
+            if (disposed) return;
+            const { bookId, chapterTitle, chapterIndex, totalChapters } =
+              event.payload;
+            logger.log("Chapter completed:", event.payload);
+
+            if (bookId && convertingBookIdRef.current === bookId) {
+              const optimisticNextChapter =
+                chapterIndex < totalChapters ? chapterIndex : null;
+
+              setCurrentConvertingChapterByBook((prev) => ({
+                ...prev,
+                [bookId]: optimisticNextChapter,
+              }));
+
+              void refreshCurrentConvertingChapter(bookId);
+            }
+
+            const chapterToastId = `chapter-completed-${bookId}`;
+            chapterToastIdRef.current = chapterToastId;
+
+            toast.success(
+              `Chapter ${chapterIndex}/${totalChapters} completed: ${chapterTitle}`,
+              {
+                id: chapterToastId,
+                duration: 3000,
+              }
+            );
+
+            callbacksRef.current.forEach((callbacks) => {
+              try {
+                callbacks.onChapterCompleted?.(bookId);
+              } catch (error) {
+                logger.error("Error in onChapterCompleted callback:", error);
+              }
+            });
+          }
+        );
+        unlisteners.push(unChapter);
+
+        const unCancelled = await listen<ConversionCancelledEvent>(
+          "conversion-cancelled",
+          (event) => {
+            if (disposed) return;
+            const { bookId } = event.payload;
+            const toastId = progressToastIdRef.current;
+            if (toastId) {
+              toast.error("Conversion cancelled", { id: toastId });
+              dismissLoadingToast(toastId);
+            } else {
+              toast.error("Conversion cancelled");
+            }
+            setIsConverting(false);
+            setConvertingBookId(null);
+            setProgressToastId(null);
+            setConversionProgress(null);
+            setEta(null);
+            progressToastIdRef.current = null;
+            convertingBookIdRef.current = null;
+            chapterToastIdRef.current = null;
+            completedBookIdRef.current = null;
+            setEstimation(null);
+            estimationRef.current = null;
+            if (bookId) {
+              setCurrentConvertingChapterByBook((prev) => ({
+                ...prev,
+                [bookId]: null,
+              }));
+            }
+
+            callbacksRef.current.forEach((callbacks) => {
+              try {
+                callbacks.onConversionCancelled?.(bookId);
+              } catch (error) {
+                logger.error("Error in onConversionCancelled callback:", error);
+              }
+            });
+          }
+        );
+        unlisteners.push(unCancelled);
+
+        const unBgExpired = await listen<BackgroundJobLifecycle>(
+          "background-task-expired",
+          (event) => {
+            if (disposed) return;
+            logger.warn("Background conversion task expired:", event.payload);
+            toast.info(
+              "Background conversion was stopped by the system. Re-open the app to continue.",
+              { duration: 5000 }
+            );
+          }
+        );
+        unlisteners.push(unBgExpired);
+
+        const unBgCompleted = await listen<BackgroundJobLifecycle>(
+          "background-task-completed",
+          (event) => {
+            if (disposed) return;
+            logger.log("Background conversion task completed:", event.payload);
+          }
+        );
+        unlisteners.push(unBgCompleted);
+      } catch (error) {
+        logger.error("Failed to register conversion Tauri event listeners:", error);
+      }
     };
-  }, [
-    refreshCurrentConvertingChapter,
-    subscribeToProgress,
-    subscribeToChapterCompleted,
-    subscribeToCancelled,
-  ]);
+
+    void setup();
+
+    return () => {
+      disposed = true;
+      for (const u of unlisteners) {
+        try {
+          u();
+        } catch (e) {
+          logger.error("Error while unlistening conversion event:", e);
+        }
+      }
+    };
+  }, [handleConversionComplete, lang, refreshCurrentConvertingChapter]);
 
   const convertBook = useCallback(
-    async (bookId: string) => {
+    async (bookId: string, language?: string, voiceId?: string) => {
       // Prevent duplicate conversions
       if (isConverting && convertingBookId === bookId) {
         logger.log("Conversion already in progress for this book");
@@ -377,6 +462,7 @@ export function ConversionStateProvider({
         const toastId = `conversion-${bookId}`;
         setProgressToastId(toastId);
         progressToastIdRef.current = toastId;
+        completedBookIdRef.current = null;
         setEstimation(new Estimation());
         setEta(null);
 
@@ -395,30 +481,69 @@ export function ConversionStateProvider({
           }
         });
 
-        // Get the current voice from settings right before conversion
-        // This ensures we always use the latest voice setting
+        // Get the current voice and language from settings if not provided
         const settings = await invoke<AppSettings>("get_app_settings");
-        const voiceId = settings.ttsVoiceId || "af_heart";
+        const finalVoiceId = voiceId ?? settings.ttsVoiceId ?? "F1";
+        const finalLanguage = language ?? settings.ttsLanguage ?? "en";
+
+        // iOS 26+: submit BGContinuedProcessingTaskRequest on user gesture before TTS load.
+        let continuedTaskId: string | null = null;
+        try {
+          const platform = await type();
+          if (platform === "ios") {
+            const caps = await invoke<BackgroundCapabilities>(
+              "background_capabilities"
+            );
+            if (caps.supportsContinuedProcessing) {
+              const started = await invoke<ContinuedConversionStart>(
+                "start_continued_conversion",
+                {
+                  bookId,
+                  title: "Converting audiobook",
+                  subtitle: "AuroraBook",
+                }
+              );
+              continuedTaskId = started.taskId;
+              if (started.continuedProcessing) {
+                logger.log(
+                  "Submitted continued conversion task:",
+                  started.taskId
+                );
+                toast.message(
+                  "Leave the app to see conversion progress on Lock Screen or Dynamic Island (iPhone often hides it while AuroraBook is open).",
+                  { duration: 5000 }
+                );
+              }
+            } else {
+              logger.warn(
+                "Continued processing not supported (need iOS 26+). Caps:",
+                caps
+              );
+            }
+          }
+        } catch (bgErr) {
+          // Fall through to in-process conversion; older iOS / simulators may not support this.
+          logger.warn(
+            "Continued background conversion unavailable; converting in-process:",
+            bgErr
+          );
+        }
 
         const book = await invoke<Book | null>(
           "convert_epub_to_audiobook_command",
           {
             bookId,
-            voiceId,
+            voiceId: finalVoiceId,
+            language: finalLanguage,
           }
         );
 
         // If conversion completes immediately (book is returned), call the complete callback
         if (book) {
-          callbacksRef.current.forEach((callbacks) => {
-            try {
-              callbacks.onConversionComplete?.(book, bookId);
-            } catch (error) {
-              logger.error("Error in onConversionComplete callback:", error);
-            }
-          });
+          handleConversionComplete(book, bookId);
         }
 
+        void continuedTaskId;
         // Don't dismiss the toast here - let the progress events handle it
         // The conversion might complete immediately or continue in background
       } catch (err) {
@@ -443,10 +568,13 @@ export function ConversionStateProvider({
         progressToastIdRef.current = null;
         convertingBookIdRef.current = null;
         chapterToastIdRef.current = null;
+        completedBookIdRef.current = null;
         setEstimation(null);
+        estimationRef.current = null;
       }
     },
     [
+      handleConversionComplete,
       progressToastId,
       isConverting,
       convertingBookId,

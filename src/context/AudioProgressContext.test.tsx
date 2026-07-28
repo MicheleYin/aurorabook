@@ -15,6 +15,18 @@ import {
   osType,
 } from "../test/tauri-mocks";
 
+const getCurrentConvertingChapter = vi.fn((_bookId: string): number | null => null);
+const refreshCurrentConvertingChapter = vi.fn(
+  async (_bookId: string): Promise<number | null> => null
+);
+
+vi.mock("./ConversionStateContext", () => ({
+  useConversionState: () => ({
+    getCurrentConvertingChapter,
+    refreshCurrentConvertingChapter,
+  }),
+}));
+
 function createTrack(overrides: Partial<AudioTrack> = {}): AudioTrack {
   return {
     id: "track-1",
@@ -96,6 +108,11 @@ function wrapper({ children }: { children: ReactNode }) {
 
 describe("AudioProgressProvider", () => {
   beforeEach(() => {
+    getCurrentConvertingChapter.mockReset();
+    refreshCurrentConvertingChapter.mockReset();
+    getCurrentConvertingChapter.mockReturnValue(null);
+    refreshCurrentConvertingChapter.mockResolvedValue(null);
+
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "get_app_settings") {
         return { audioPlaybackSpeed: 1.25 };
@@ -497,6 +514,167 @@ describe("AudioProgressProvider", () => {
         album: "Test Book",
         artwork: [],
       });
+    });
+  });
+
+  describe("live chapter playback", () => {
+    it("marks a track as live when it matches the converting chapter", async () => {
+      getCurrentConvertingChapter.mockReturnValue(0);
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const audio = createAudioElement();
+      result.current.audioRef.current = audio;
+
+      const book = createBook();
+
+      await act(async () => {
+        await result.current.loadAudioTrack(book.id, book.audioTracks[0], book);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "track-1",
+        isLiveStream: true,
+        liveChapterIndex: 0,
+        mimeType: "audio/mpeg",
+      });
+      expect(invoke).not.toHaveBeenCalledWith(
+        "get_audio_stream_url",
+        expect.anything()
+      );
+      expect(audio.src).toBe("");
+    });
+
+    it("treats explicit live-* track ids as live streams", async () => {
+      getCurrentConvertingChapter.mockReturnValue(null);
+      refreshCurrentConvertingChapter.mockResolvedValue(null);
+
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const book = createBook({
+        chapters: [
+          {
+            id: "ch-1",
+            bookId: "book-1",
+            title: "Chapter 1",
+            href: "ch1.xhtml",
+            chapterOrder: 0,
+          },
+          {
+            id: "ch-2",
+            bookId: "book-1",
+            title: "Chapter 2",
+            href: "ch2.xhtml",
+            chapterOrder: 1,
+          },
+        ],
+      });
+      const liveTrack = createTrack({
+        id: "live-book-1-1",
+        chapterHref: "ch2.xhtml",
+        href: "ch2.xhtml",
+        filePath: "ch2.xhtml",
+        title: "Chapter 2",
+        order: 1,
+      });
+
+      await act(async () => {
+        await result.current.loadAudioTrack(book.id, liveTrack, book);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "live-book-1-1",
+        isLiveStream: true,
+        liveChapterIndex: 1,
+      });
+      expect(invoke).not.toHaveBeenCalledWith(
+        "get_audio_stream_url",
+        expect.anything()
+      );
+    });
+
+    it("falls back to live playback when stream URL fails for the converting chapter", async () => {
+      getCurrentConvertingChapter.mockReturnValue(null);
+      refreshCurrentConvertingChapter
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(0);
+
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { audioPlaybackSpeed: 1 };
+        }
+        if (cmd === "get_audio_stream_url") {
+          throw new Error("track not ready");
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const book = createBook();
+
+      await act(async () => {
+        await result.current.loadAudioTrack(book.id, book.audioTracks[0], book);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        isLiveStream: true,
+        liveChapterIndex: 0,
+      });
+      expect(refreshCurrentConvertingChapter).toHaveBeenCalledTimes(2);
+    });
+
+    it("loads a synthetic live track when restoring the last opened converting chapter", async () => {
+      getCurrentConvertingChapter.mockReturnValue(null);
+      refreshCurrentConvertingChapter.mockResolvedValue(0);
+
+      const book = createBook({
+        chapters: [
+          {
+            id: "ch-1",
+            bookId: "book-1",
+            title: "Live Chapter",
+            href: "ch1.xhtml",
+            chapterOrder: 0,
+          },
+        ],
+        audioTracks: [],
+      });
+
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { audioPlaybackSpeed: 1 };
+        }
+        if (cmd === "read_one_book") {
+          return book;
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+
+      await act(async () => {
+        await result.current.loadLastOpenedAudioTrack(book, false);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "live-book-1-0",
+        isLiveStream: true,
+        liveChapterIndex: 0,
+        title: "Live Chapter",
+      });
+    });
+
+    it("queues live playback seek/autoplay requests", async () => {
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+
+      const versionBefore = result.current.livePlaybackRequestVersion;
+
+      act(() => {
+        result.current.queueLivePlaybackRequest(12.5, true);
+      });
+
+      expect(result.current.livePlaybackRequestRef.current).toEqual({
+        resumeTime: 12.5,
+        autoPlay: true,
+      });
+      expect(result.current.livePlaybackRequestVersion).toBe(versionBefore + 1);
     });
   });
 });

@@ -3,13 +3,13 @@ use crate::tts::supertonic::core::{
 };
 use crate::tts::supertonic::ort_koko::OrtKoko;
 use anyhow::Context;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WordAlignment {
     pub word: String,
     pub start_sec: f32,

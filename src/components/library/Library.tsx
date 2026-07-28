@@ -241,7 +241,6 @@ export function Library() {
   const {
     convertBook: convertBookFromContext,
     cancelConversion,
-    isConverting,
     convertingBookId,
     conversionProgress,
     eta,
@@ -267,9 +266,9 @@ export function Library() {
 
   // Wrap convertBook (no changes needed, callbacks handle everything)
   const convertBook = useCallback(
-    async (bookId: string) => {
+    async (bookId: string, language?: string, voiceId?: string) => {
       try {
-        await convertBookFromContext(bookId);
+        await convertBookFromContext(bookId, language, voiceId);
       } catch (err) {
         // Error is already handled in context
         logger.error("Conversion failed:", err);
@@ -354,9 +353,9 @@ export function Library() {
     setIsDialogOpen(true);
   };
 
-  const handleConvert = async () => {
+  const handleConvert = async (language?: string, voiceId?: string) => {
     if (!selectedBookId) return;
-    convertBook(selectedBookId);
+    convertBook(selectedBookId, language, voiceId);
     setIsDialogOpen(false);
   };
 
@@ -676,13 +675,7 @@ export function Library() {
           onCancel={handleCancelConversion}
           onDelete={handleDelete}
           onOpenBook={handleOpenBook}
-          isConverting={isConverting}
-          isConvertingThisBook={selectedBookId === convertingBookId}
           isDeleting={isDeleting}
-          conversionProgress={
-            selectedBookId === convertingBookId ? conversionProgress : null
-          }
-          eta={selectedBookId === convertingBookId ? eta : null}
         />
       )}
     </div>

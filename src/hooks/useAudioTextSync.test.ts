@@ -5,11 +5,24 @@ import { useRef } from "react";
 import { useAudioTextSync } from "./useAudioTextSync";
 import type { Book, Chapter } from "../types/book";
 import { HIGHLIGHT_ACTIVE_CLASS, HIGHLIGHT_CLASS } from "../lib/audio-sync-utils";
+import { invoke } from "../test/tauri-mocks";
 
 const loadChapterContent = vi.fn(async () => undefined);
 
 const audioRef = { current: null as HTMLAudioElement | null };
-const currentAudioTrack = {
+let currentAudioTrack: {
+  id: string;
+  bookId: string;
+  chapterHref: string;
+  filePath: string;
+  href: string;
+  title: string;
+  order: number;
+  duration: number;
+  mimeType: string;
+  isLiveStream?: boolean;
+  liveChapterIndex?: number;
+} = {
   id: "track-1",
   bookId: "book-1",
   chapterHref: "ch1.xhtml",
@@ -158,6 +171,17 @@ describe("useAudioTextSync", () => {
     vi.useFakeTimers();
     isSyncEnabled = true;
     loadChapterContent.mockClear();
+    currentAudioTrack = {
+      id: "track-1",
+      bookId: "book-1",
+      chapterHref: "ch1.xhtml",
+      filePath: "audio/01.mp3",
+      href: "audio/01.mp3",
+      title: "Intro",
+      order: 0,
+      duration: 120,
+      mimeType: "audio/mpeg",
+    };
     currentChapter = {
       id: "ch-1",
       bookId: "book-1",
@@ -357,5 +381,67 @@ describe("useAudioTextSync", () => {
 
     expect(span1.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
     expect(span1.classList.contains(HIGHLIGHT_ACTIVE_CLASS)).toBe(true);
+  });
+
+  it("polls live sync markers and highlights the returned element", async () => {
+    currentAudioTrack = {
+      ...currentAudioTrack,
+      id: "live-book-1-0",
+      href: "ch1.xhtml",
+      filePath: "ch1.xhtml",
+      isLiveStream: true,
+      liveChapterIndex: 0,
+    };
+
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_live_sync_marker") {
+        return {
+          textElementId: "w2",
+          chapterHref: "ch1.xhtml",
+          sentenceIndex: 1,
+        };
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { scrollContainer, span2 } = mountReaderDom();
+    const book = createBook();
+    book.audioSyncMap = { segments: [] };
+
+    const { result: refs } = renderHook(() => {
+      const scrollContainerRef = useRef<HTMLDivElement | null>(scrollContainer);
+      return { scrollContainerRef };
+    });
+
+    renderHook(() =>
+      useAudioTextSync(book, refs.current.scrollContainerRef, undefined, true)
+    );
+
+    await act(async () => {
+      if (audioRef.current) audioRef.current.currentTime = 1.5;
+      vi.advanceTimersByTime(250);
+      await Promise.resolve();
+      await Promise.resolve();
+      vi.advanceTimersByTime(250);
+    });
+
+    expect(invoke).toHaveBeenCalledWith(
+      "get_live_sync_marker",
+      expect.objectContaining({
+        bookId: "book-1",
+        chapterIndex: 0,
+        currentTimeSeconds: 1.5,
+      })
+    );
+
+    await act(async () => {
+      if (audioRef.current) audioRef.current.currentTime = 1.7;
+      vi.advanceTimersByTime(250);
+      await Promise.resolve();
+      await Promise.resolve();
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(span2.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
   });
 });

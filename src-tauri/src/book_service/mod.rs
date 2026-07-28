@@ -16,6 +16,7 @@ use crate::utils::errors::{AppError, AppResult};
 use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::path_validation::validate_file_size;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::Manager;
 
 /// Normalize an EPUB href by removing leading slash.
 /// The base path should already be correctly derived from the OPF file.
