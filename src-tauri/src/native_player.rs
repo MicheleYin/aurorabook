@@ -10,7 +10,7 @@
 //!
 //! # Bridge design
 //!
-//! Swift (`NativePlayer.swift`) exports `@_cdecl` C-compatible functions.
+//! Swift (`swift/NativePlayer.swift`) exports `@_cdecl` C-compatible functions.
 //! Rust declares them as `extern "C"` and calls them directly after linking.
 //! Swift calls the Rust symbol `on_native_player_event` via `@_silgen_name`.
 
