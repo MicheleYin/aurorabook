@@ -204,6 +204,15 @@
     line-height: inherit !important;
   }
 
+  /* Stabilize text metrics so audio highlight fills don't flip subpixel AA
+     and change wrap width mid-playback. */
+  .reader-prose,
+  .prose,
+  [data-reader-chapter-content="true"] {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
   /* Keep EPUB images proportional when container dimensions change */
   [data-reader-chapter-content="true"] img {
     max-width: 100% !important;
@@ -281,16 +290,14 @@
     cursor: default !important;
   }
 
-  /* Audio highlight animations - animate background color alpha, text opacity stays 1 */
+  /* Audio highlight animations - paint only (background), never layout metrics */
   @keyframes audio-highlight-fade-in {
     0% {
       background-color: transparent;
-      box-shadow: none;
     }
     100% {
       /* Light mode */
       background-color: rgba(254, 240, 138, 0.6); /* yellow-200/60 */
-      box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
     }
   }
 
@@ -298,11 +305,9 @@
     0% {
       /* Light mode */
       background-color: rgba(254, 240, 138, 0.6); /* yellow-200/60 */
-      box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
     }
     100% {
       background-color: transparent;
-      box-shadow: none;
     }
   }
 
@@ -320,12 +325,10 @@
   @keyframes audio-highlight-fade-in-dark {
     0% {
       background-color: transparent;
-      box-shadow: none;
     }
     100% {
       /* Dark mode */
       background-color: rgba(133, 77, 14, 0.4); /* yellow-700/40 */
-      box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
     }
   }
 
@@ -333,64 +336,36 @@
     0% {
       /* Dark mode */
       background-color: rgba(133, 77, 14, 0.4); /* yellow-700/40 */
-      box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
     }
     100% {
       background-color: transparent;
-      box-shadow: none;
     }
   }
 
-  @keyframes audio-highlight-glow {
-    0%,
-    100% {
-      box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
-    }
-    50% {
-      box-shadow: 0 0 8px 2px rgba(234, 179, 8, 0.5);
-    }
-  }
-
-  @keyframes audio-highlight-pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.85;
-    }
-  }
-
-  @keyframes audio-highlight-ripple {
-    0% {
-      transform: scale(0.8);
-      opacity: 0.8;
-    }
-    50% {
-      transform: scale(1.05);
-      opacity: 0.6;
-    }
-    100% {
-      transform: scale(1);
-      opacity: 1;
-    }
-  }
-
-  /* Base audio highlight styling - text opacity never changes */
+  /* Base audio highlight styling — paint-only so wrap/width stay stable.
+     Do not set display/font-weight/padding/border/box-shadow/opacity: those
+     change inline metrics (and EPUB inline-block spans) and reflow text. */
   .audio-highlight {
-    display: inline;
-    /* Text always remains fully opaque */
-    opacity: 1;
-    /* No padding to prevent layout shifts */
-    padding: 0;
-    margin: 0;
-    /* Make background repeat on each line for multiline support */
+    /* Keep glyph rasterization mode stable when a fill appears (avoids
+       subpixel-AA width shifts that change wrapping). */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* No box-model changes */
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+    outline: none !important;
+    box-shadow: none !important;
+    /* Multiline highlight without expanding the line box */
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
-    border-radius: 2px;
-    /* Background starts transparent - will be animated */
+    border-radius: 0.125em;
     background-color: transparent;
-    box-shadow: none;
+    background-clip: padding-box;
+    /* Never override EPUB display (inline vs inline-block) */
+    /* color/opacity unchanged so text ink metrics stay put */
+    color: inherit;
+    opacity: 1;
   }
 
   /* Fade-in effect when highlight first appears - only affects background */
@@ -399,10 +374,14 @@
       var(--anim-easing-ease-out) forwards;
   }
 
-  /* Active state - background fully visible */
+  /* Active state - background fully visible, still no shadows/layout props */
   .audio-highlight.audio-highlight-active {
-    @apply bg-yellow-200/60 dark:bg-yellow-700/40;
-    box-shadow: 0 0 4px 1px rgba(234, 179, 8, 0.3);
+    background-color: rgba(254, 240, 138, 0.6);
+    box-shadow: none !important;
+  }
+
+  .dark .audio-highlight.audio-highlight-active {
+    background-color: rgba(133, 77, 14, 0.4);
   }
 
   /* Fade out animation when removing highlight - only affects background */

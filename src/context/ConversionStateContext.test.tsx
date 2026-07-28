@@ -665,11 +665,55 @@ describe("ConversionStateProvider", () => {
       expect(result.current.getCurrentConvertingChapter("book-1")).toBeNull();
     });
 
-    it("clears live chapter state when conversion is cancelled", async () => {
+    it("keeps live chapter discoverable after cancel when checkpoint remains", async () => {
+      const { result } = renderHook(() => useConversionState(), { wrapper });
+
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { ttsVoiceId: "F1", ttsLanguage: "en" };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          // After cancel, backend still returns playable paused checkpoint.
+          return 0;
+        }
+        if (cmd === "convert_epub_to_audiobook_command") {
+          return null;
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      await act(async () => {
+        await result.current.convertBook("book-1");
+      });
+      await waitFor(() => {
+        expect(result.current.getCurrentConvertingChapter("book-1")).toBe(0);
+      });
+
+      act(() => {
+        emitTauriEvent("conversion-cancelled", {
+          bookId: "book-1",
+          sourcePath: "/tmp/a.epub",
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.isConverting).toBe(false);
+        expect(result.current.getCurrentConvertingChapter("book-1")).toBe(0);
+      });
+    });
+
+    it("clears live chapter state when conversion is cancelled without checkpoint", async () => {
       const { result } = renderHook(() => useConversionState(), { wrapper });
       await startOpenConversion(result, 0);
 
       expect(result.current.getCurrentConvertingChapter("book-1")).toBe(0);
+
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_current_converting_chapter") {
+          return null;
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
 
       act(() => {
         emitTauriEvent("conversion-cancelled", {
@@ -684,7 +728,6 @@ describe("ConversionStateProvider", () => {
       });
     });
   });
-
   it("estimates ETA from remaining session work when resuming", async () => {
     let resolveConvert: (value: unknown) => void = () => undefined;
     invoke.mockImplementation(async (cmd: string) => {

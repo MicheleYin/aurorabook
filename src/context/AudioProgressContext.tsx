@@ -665,6 +665,40 @@ export function AudioProgressProvider({
             order: currentConvertingChapter,
           };
         }
+
+        // Paused mid-chapter with no active pointer yet: synthesize from the first
+        // chapter that does not already have a completed audio track.
+        if (
+          !audioTrackToLoad &&
+          loadedBook.conversionStatus === "started" &&
+          loadedBook.chapters.length > 0
+        ) {
+          const completedHrefs = new Set(
+            (loadedBook.completedChapters ?? []).map((href) => href)
+          );
+          const trackHrefs = new Set(
+            (loadedBook.audioTracks ?? []).map(
+              (track) => track.href || track.filePath
+            )
+          );
+          const incompleteIndex = loadedBook.chapters.findIndex((chapter) => {
+            if (completedHrefs.has(chapter.href)) return false;
+            if (trackHrefs.has(chapter.href)) return false;
+            return true;
+          });
+          if (incompleteIndex >= 0) {
+            const chapter = loadedBook.chapters[incompleteIndex];
+            audioTrackToLoad = {
+              id: `live-${loadedBook.id}-${incompleteIndex}`,
+              bookId: loadedBook.id,
+              chapterHref: chapter.href,
+              filePath: chapter.href,
+              href: chapter.href,
+              title: chapter.title || `Chapter ${incompleteIndex + 1}`,
+              order: incompleteIndex,
+            };
+          }
+        }
       }
 
       // Second priority: Try saved track references (for completed chapters)

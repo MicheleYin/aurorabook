@@ -5,6 +5,7 @@ import { useAppContext } from "@/context/AppContext";
 
 import type { Book, Chapter } from "../../types/book";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
+import { useConversionState } from "../../context/ConversionStateContext";
 import { Button } from "../ui/button";
 import { TOCDrawer } from "./TOCDrawer";
 
@@ -30,11 +31,16 @@ export function ReaderHeader({
   const { loadLastOpenedAudioTrack, currentAudioTrack, isLoadingAudio } =
     useAudioProgressContext();
   const { currentBook } = useAppContext();
+  const { getCurrentConvertingChapter } = useConversionState();
   const hasAudio = useMemo(() => {
-    return !!(
+    const hasCompletedTracks = !!(
       currentBook?.audioTracks.length && currentBook.audioTracks.length > 0
     );
-  }, [currentBook]);
+    const hasIncompleteLiveChapter =
+      currentBook?.conversionStatus === "started" ||
+      getCurrentConvertingChapter(book.id) !== null;
+    return hasCompletedTracks || hasIncompleteLiveChapter;
+  }, [book.id, currentBook, getCurrentConvertingChapter]);
   const onAudioShowClick = useCallback(() => {
     loadLastOpenedAudioTrack(book, false);
   }, [loadLastOpenedAudioTrack, book]);

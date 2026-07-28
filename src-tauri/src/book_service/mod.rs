@@ -67,7 +67,12 @@ pub async fn read_one_book(
 /// Get the index of the chapter currently being converted for a book.
 /// This queries the live_conversion_checkpoint table to find the most recent checkpoint,
 /// which indicates the chapter actively being converted.
-/// Returns Some(chapter_index) if there's an active conversion checkpoint, None otherwise.
+/// Returns the chapter currently being converted, or a paused incomplete chapter
+/// that still has checkpoint audio available for listening.
+///
+/// Priority:
+/// 1. In-memory live stream pointer (active conversion)
+/// 2. Playable DB checkpoint (active or paused mid-chapter)
 #[tauri::command]
 pub async fn get_current_converting_chapter(
     book_id: String,
@@ -86,7 +91,6 @@ pub async fn get_current_converting_chapter(
         return Ok(Some(chapter_index));
     }
 
-    // Do not report historical checkpoints unless conversion is currently active.
     let is_active_conversion = app
         .try_state::<CancellationTokens>()
         .and_then(|tokens_state| {
@@ -98,14 +102,6 @@ pub async fn get_current_converting_chapter(
         })
         .unwrap_or(false);
 
-    if !is_active_conversion {
-        log::info!(
-            "[get_current_converting_chapter] book_id={}, resolved=None, source=inactive",
-            book_id
-        );
-        return Ok(None);
-    }
-
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
 
@@ -114,12 +110,14 @@ pub async fn get_current_converting_chapter(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
 
-    // Query the checkpoint table for the most recent checkpoint (latest timestamp)
-    // which indicates the current chapter being converted
-    let result = sqlx::query_as::<_, (i64, Option<String>)>(
+    // Prefer checkpoints that already have audio so paused mid-chapter chapters
+    // remain discoverable for playback after cancel.
+    let result = sqlx::query_as::<_, (i64, Option<String>, i64, f64)>(
         r#"
-        SELECT chapter_index, checkpoint_timestamp FROM live_conversion_checkpoint
+        SELECT chapter_index, checkpoint_timestamp, sentences_processed, audio_duration_seconds
+        FROM live_conversion_checkpoint
         WHERE book_id = ?
+          AND (sentences_processed > 0 OR audio_duration_seconds > 0)
         ORDER BY CAST(checkpoint_timestamp AS INTEGER) DESC
         LIMIT 1
         "#
@@ -129,7 +127,13 @@ pub async fn get_current_converting_chapter(
     .await
     .map_err(|e| AppError::Store(format!("Failed to query checkpoint: {}", e)))?;
 
-    let resolved = result.and_then(|(chapter_index, checkpoint_timestamp)| {
+    let resolved = result.and_then(|(chapter_index, checkpoint_timestamp, _, _)| {
+        // After pause/cancel there is no active token, but checkpoint audio is still
+        // listenable — return it without the short active-conversion staleness window.
+        if !is_active_conversion {
+            return Some(chapter_index as usize);
+        }
+
         let checkpoint_raw = checkpoint_timestamp
             .as_deref()
             .unwrap_or("0")
@@ -155,9 +159,14 @@ pub async fn get_current_converting_chapter(
     });
 
     log::info!(
-        "[get_current_converting_chapter] book_id={}, resolved={:?}, source=checkpoint",
+        "[get_current_converting_chapter] book_id={}, resolved={:?}, source={}",
         book_id,
-        resolved
+        resolved,
+        if is_active_conversion {
+            "checkpoint-active"
+        } else {
+            "checkpoint-paused"
+        }
     );
     Ok(resolved)
 }

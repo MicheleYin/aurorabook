@@ -676,6 +676,117 @@ describe("AudioProgressProvider", () => {
       });
     });
 
+    it("loads incomplete chapter audio after pause when conversion is started", async () => {
+      const book = createBook({
+        conversionStatus: "started",
+        completedChapters: [],
+        chapters: [
+          {
+            id: "ch-1",
+            bookId: "book-1",
+            title: "Incomplete Chapter",
+            href: "ch1.xhtml",
+            chapterOrder: 0,
+          },
+          {
+            id: "ch-2",
+            bookId: "book-1",
+            title: "Next Chapter",
+            href: "ch2.xhtml",
+            chapterOrder: 1,
+          },
+        ],
+        audioTracks: [],
+      });
+
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { audioPlaybackSpeed: 1 };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          // Simulates paused checkpoint discovery from backend.
+          return 0;
+        }
+        if (cmd === "read_one_book") {
+          return book;
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+
+      await act(async () => {
+        await result.current.loadLastOpenedAudioTrack(book, false);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "live-book-1-0",
+        isLiveStream: true,
+        liveChapterIndex: 0,
+        title: "Incomplete Chapter",
+      });
+    });
+
+    it("falls back to first incomplete chapter when converting chapter is unknown", async () => {
+      const book = createBook({
+        conversionStatus: "started",
+        completedChapters: ["ch1.xhtml"],
+        chapters: [
+          {
+            id: "ch-1",
+            bookId: "book-1",
+            title: "Done",
+            href: "ch1.xhtml",
+            chapterOrder: 0,
+          },
+          {
+            id: "ch-2",
+            bookId: "book-1",
+            title: "In Progress",
+            href: "ch2.xhtml",
+            chapterOrder: 1,
+          },
+        ],
+        audioTracks: [
+          {
+            id: "track-1",
+            bookId: "book-1",
+            chapterHref: "ch1.xhtml",
+            title: "Done",
+            href: "ch1.xhtml",
+            filePath: "ch1.xhtml",
+            order: 0,
+          },
+        ],
+      });
+
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { audioPlaybackSpeed: 1 };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          return null;
+        }
+        if (cmd === "read_one_book") {
+          return book;
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+
+      await act(async () => {
+        await result.current.loadLastOpenedAudioTrack(book, false);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "live-book-1-1",
+        isLiveStream: true,
+        liveChapterIndex: 1,
+        title: "In Progress",
+      });
+    });
+
     it("queues live playback seek/autoplay requests", async () => {
       const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
 

@@ -439,10 +439,18 @@ export function ConversionStateProvider({
             estimationRef.current = null;
             etaSessionSeededRef.current = false;
             if (bookId) {
-              setCurrentConvertingChapterByBook((prev) => ({
-                ...prev,
-                [bookId]: null,
-              }));
+              // Keep incomplete checkpoint chapters discoverable for listening
+              // after pause/cancel (backend returns playable paused checkpoints).
+              void refreshCurrentConvertingChapter(bookId).then((chapter) => {
+                if (chapter !== null) {
+                  return;
+                }
+                // No playable checkpoint — clear any stale in-memory pointer.
+                setCurrentConvertingChapterByBook((prev) => ({
+                  ...prev,
+                  [bookId]: null,
+                }));
+              });
             }
 
             callbacksRef.current.forEach((callbacks) => {
