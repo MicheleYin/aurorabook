@@ -8,7 +8,7 @@ import {
   normalizeAppLanguage,
 } from "../constants/languages";
 
-/** App UI locale — same 31-language set as Supertonic TTS. */
+/** App UI locale — same 30-language set as Supertonic TTS. */
 export type Language = AppLanguageCode;
 
 type Translations = Record<string, string>;

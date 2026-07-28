@@ -1,5 +1,5 @@
 /**
- * App UI locales and Supertonic 3 TTS codes share the same 31-language set.
+ * App UI locales and Supertonic 3 TTS codes share the same 30-language set.
  * Must stay in sync with `AVAILABLE_LANGS` in `src-tauri/src/tts/supertonic/core.rs`
  * and translation files under `src/locales/`.
  */
@@ -7,7 +7,6 @@ export const AVAILABLE_LANGS = [
   "en",
   "ko",
   "ja",
-  "ar",
   "bg",
   "cs",
   "da",
@@ -81,7 +80,6 @@ export function voiceMatchesTtsLanguage(
  */
 export function humanizeDurationLocale(lang: string): string {
   const supported = new Set([
-    "ar",
     "bg",
     "cs",
     "da",
@@ -119,7 +117,6 @@ export const UI_LANG_ENDONYMS: Record<AppLanguageCode, string> = {
   en: "English",
   ko: "한국어",
   ja: "日本語",
-  ar: "العربية",
   bg: "Български",
   cs: "Čeština",
   da: "Dansk",

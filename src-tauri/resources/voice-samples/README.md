@@ -4,7 +4,7 @@ Preview clips for **Settings → Default voice** (play button) are loaded from:
 
 `voice-samples/{language}/{voiceId}.mp3`
 
-where `language` is a Supertonic 3 TTS code (31 languages; see `AVAILABLE_LANGS`), and `voiceId` is `F1`–`F5` or `M1`–`M5`. If a language-specific clip is missing, the UI falls back to `en`.
+where `language` is a Supertonic 3 TTS code (30 languages; see `AVAILABLE_LANGS`), and `voiceId` is `F1`–`F5` or `M1`–`M5`. If a language-specific clip is missing, the UI falls back to `en`.
 
 The UI shows human-readable names (Sora, Luna, …) via translations; file names stay as engine ids.
 

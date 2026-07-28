@@ -11,7 +11,7 @@ use unicode_normalization::UnicodeNormalization;
 
 // Supertonic 3 — keep in sync with frontend `AVAILABLE_LANGS` (TTS codes).
 pub const AVAILABLE_LANGS: &[&str] = &[
-    "en", "ko", "ja", "ar", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr",
+    "en", "ko", "ja", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr",
     "hi", "hr", "hu", "id", "it", "lt", "lv", "nl", "pl", "pt", "ro", "ru", "sk",
     "sl", "sv", "tr", "uk", "vi",
 ];
