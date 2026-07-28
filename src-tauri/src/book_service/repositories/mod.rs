@@ -5,6 +5,7 @@ pub mod audio_repository;
 pub mod epub_repository;
 pub mod settings_repository;
 pub mod reader_preferences_repository;
+pub mod conversion_checkpoint_repository;
 
 pub use book_repository::BookRepository;
 pub use chapter_repository::ChapterRepository;
@@ -13,4 +14,5 @@ pub use audio_repository::AudioRepository;
 pub use epub_repository::EpubRepository;
 pub use settings_repository::SettingsRepository;
 pub use reader_preferences_repository::ReaderPreferencesRepository;
+pub use conversion_checkpoint_repository::ConversionCheckpointRepository;
 

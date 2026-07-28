@@ -40,6 +40,7 @@ pub struct ConversionChapter {
     pub id: String,
     pub title: String,
     pub href: String,
+    pub order: usize,
     pub content_html: String,
     pub word_count: usize,
 }

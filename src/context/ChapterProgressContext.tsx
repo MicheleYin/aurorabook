@@ -6,6 +6,7 @@ import {
   SetStateAction,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -58,10 +59,27 @@ export function ChapterProgressProvider({
 
   const [currentChapter, setCurrentChapter] =
     useState<ChapterWithContent | null>(null);
+  const currentChapterRef = useRef<ChapterWithContent | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const latestLoadRequestRef = useRef(0);
+
+  useEffect(() => {
+    currentChapterRef.current = currentChapter;
+  }, [currentChapter]);
 
   const loadChapterContent = useCallback(
     async (bookId: string, chapter: Chapter) => {
+      const requestId = latestLoadRequestRef.current + 1;
+      latestLoadRequestRef.current = requestId;
+
+      logger.info("[chapter-load] start", {
+        requestId,
+        bookId,
+        chapterId: chapter.id,
+        chapterHref: chapter.href,
+        chapterOrder: chapter.chapterOrder,
+      });
+
       setIsLoadingChapter(true);
       try {
         const chapterWithContent = await invoke<ChapterWithContent>(
@@ -72,10 +90,49 @@ export function ChapterProgressProvider({
           }
         );
 
+        if (requestId !== latestLoadRequestRef.current) {
+          logger.info("[chapter-load] ignored stale response", {
+            requestId,
+            latestRequestId: latestLoadRequestRef.current,
+            bookId,
+            chapterId: chapter.id,
+          });
+          return;
+        }
+
         if (chapterWithContent) {
+          const nextContentHtml = chapterWithContent.contentHtml;
+          const hasContent =
+            typeof nextContentHtml === "string" && nextContentHtml.trim().length > 0;
+          const previousChapter = currentChapterRef.current;
+
+          // Keep previously loaded content for this chapter if a newer fetch returns empty.
+          if (
+            !hasContent &&
+            previousChapter?.id === chapter.id &&
+            typeof previousChapter.contentHtml === "string" &&
+            previousChapter.contentHtml.trim().length > 0
+          ) {
+            logger.warn("[chapter-load] preserving previous non-empty content", {
+              requestId,
+              bookId,
+              chapterId: chapter.id,
+            });
+            setCurrentChapter(previousChapter);
+            return;
+          }
+
+          logger.info("[chapter-load] apply response", {
+            requestId,
+            bookId,
+            chapterId: chapter.id,
+            hasContent,
+            contentLength: typeof nextContentHtml === "string" ? nextContentHtml.length : 0,
+          });
+
           setCurrentChapter({
             ...chapter,
-            contentHtml: chapterWithContent.contentHtml,
+            contentHtml: nextContentHtml,
           });
         } else {
           toast.error("Failed to load chapter content");
@@ -84,7 +141,9 @@ export function ChapterProgressProvider({
         logger.error("Failed to load chapter content:", err);
         toast.error("Failed to load chapter content");
       } finally {
-        setIsLoadingChapter(false);
+        if (requestId === latestLoadRequestRef.current) {
+          setIsLoadingChapter(false);
+        }
       }
     },
     []
@@ -116,11 +175,12 @@ export function ChapterProgressProvider({
 
   const restoreProgress = useCallback(
     (bookToRestore: Book | null) => {
+      const activeChapter = currentChapterRef.current;
       if (
         !bookToRestore?.progress ||
         !containerRef.current ||
-        !currentChapter ||
-        currentChapter.id !== bookToRestore.progress.currentChapterId
+        !activeChapter ||
+        activeChapter.id !== bookToRestore.progress.currentChapterId
       )
         return null;
 
@@ -149,7 +209,7 @@ export function ChapterProgressProvider({
         }
       }
     },
-    [currentChapter]
+    []
   );
 
   const loadLastOpenedChapter = useCallback(

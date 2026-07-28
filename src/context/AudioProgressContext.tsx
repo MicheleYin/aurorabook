@@ -12,8 +12,6 @@ import {
 } from "react";
 import { getName } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { type } from "@tauri-apps/plugin-os";
 import { toast } from "sonner";
 
 import { AppSettings } from "@/types/settings";
@@ -24,13 +22,8 @@ import type {
   Book,
   BookAudioState,
 } from "../types/book";
-import {
-  applyNativePlayerEvent,
-  canRestoreSavedTime,
-  mimeTypeFromTrackHref,
-  trackDisplayTitle,
-} from "../lib/audio-progress-utils";
 import { logger } from "../lib/logger";
+import { useConversionState } from "./ConversionStateContext";
 
 export interface AudioProgressContextType {
   currentAudioTrack: AudioTrackWithData | null;
@@ -55,6 +48,12 @@ export interface AudioProgressContextType {
   ) => void;
   playbackRate: number;
   setPlaybackRate: (rate: number) => void;
+  livePlaybackRequestRef: React.RefObject<{
+    resumeTime: number;
+    autoPlay: boolean;
+  }>;
+  queueLivePlaybackRequest: (resumeTime: number, autoPlay: boolean) => void;
+  livePlaybackRequestVersion: number;
 }
 
 export const AudioProgressContext = createContext<
@@ -75,33 +74,23 @@ interface AudioProgressProviderProps {
   readonly children: ReactNode;
 }
 
-function tryResumePlayback(
-  el: HTMLAudioElement,
-  savedTime: number,
-  wasPlaying: boolean
-) {
-  el.currentTime = savedTime;
-  if (wasPlaying) {
-    el.play().catch((err: unknown) =>
-      logger.warn("Could not auto-resume after server restart:", err)
-    );
-  }
-}
-
 export function AudioProgressProvider({
   children,
 }: AudioProgressProviderProps) {
+  const { getCurrentConvertingChapter, refreshCurrentConvertingChapter } =
+    useConversionState();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
-  // Last known position from the native AVPlayer (updated by native-player-event).
-  // Used to seek WebView audio back to the right spot when the app returns to foreground.
-  const nativeTimeRef = useRef<number>(0);
-  // Whether we're running on iOS (set async on mount, so starts false).
-  const isIosRef = useRef<boolean>(false);
+  const livePlaybackRequestRef = useRef({
+    resumeTime: 0,
+    autoPlay: false,
+  });
   const [currentAudioTrack, setCurrentAudioTrack] =
     useState<AudioTrackWithData | null>(null);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [livePlaybackRequestVersion, setLivePlaybackRequestVersion] =
+    useState(0);
   const calculateAudioProgress = useCallback(() => {
     if (!currentAudioTrack) return null;
     return {
@@ -151,82 +140,16 @@ export function AudioProgressProvider({
     },
     [audioRef, saveSettings]
   );
-
-  // When the streaming server restarts (iOS app resume), reconnect the audio element.
-  // The server binds to a new random port on each restart, making the old URL stale.
-  useEffect(() => {
-    const currentTrackRef = { current: currentAudioTrack };
-    currentTrackRef.current = currentAudioTrack;
-
-    const unlisten = listen<number>("audio-server-restarted", async () => {
-      const track = currentTrackRef.current;
-      if (!track || !audioRef.current) return;
-
-      const el = audioRef.current;
-      const savedTime = el.currentTime;
-      const wasPlaying = !el.paused;
-
-      try {
-        const newUrl = await invoke<string>("get_audio_stream_url", {
-          bookId: track.bookId,
-          trackId: track.id,
-        });
-
-        el.src = newUrl;
-        el.load();
-
-        const onReady = () => {
-          tryResumePlayback(el, savedTime, wasPlaying);
-          el.removeEventListener("loadedmetadata", onReady);
-        };
-        el.addEventListener("loadedmetadata", onReady);
-      } catch (err) {
-        logger.error("Failed to reconnect audio after server restart:", err);
-      }
-    });
-
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [currentAudioTrack, audioRef]);
-
-  // Detect iOS once on mount.
-  useEffect(() => {
-    try {
-      isIosRef.current = type() === "ios";
-    } catch {
-      isIosRef.current = false;
-    }
-  }, []);
-
-  // Listen for native-player-event (AVPlayer callbacks from Swift).
-  // Handles: time tracking, lock-screen seek syncing, and ended notifications.
-  useEffect(() => {
-    const unlisten = listen<{ type: string; time?: number }>(
-      "native-player-event",
-      (event) => {
-        const result = applyNativePlayerEvent(
-          event.payload,
-          audioRef.current?.currentTime ?? null
-        );
-        if (result.nativeTime !== null) {
-          nativeTimeRef.current = result.nativeTime;
-        }
-        if (result.seekWebViewTo !== null && audioRef.current) {
-          audioRef.current.currentTime = result.seekWebViewTo;
-        }
-        if (result.synthesiseEnded) {
-          // Synthesise an 'ended' event on the <audio> element so FloatingAudioPlayer
-          // can advance to the next track using its existing handler.
-          audioRef.current?.dispatchEvent(new Event("ended"));
-        }
-      }
-    );
-
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [audioRef]);
+  const queueLivePlaybackRequest = useCallback(
+    (resumeTime: number, autoPlay: boolean) => {
+      livePlaybackRequestRef.current = {
+        resumeTime: Math.max(0, resumeTime),
+        autoPlay,
+      };
+      setLivePlaybackRequestVersion((prev) => prev + 1);
+    },
+    []
+  );
 
   // Load playback speed from backend on mount
   useEffect(() => {
@@ -249,30 +172,104 @@ export function AudioProgressProvider({
   }, [audioRef]);
   const restoreAudioProgress = useCallback(
     (book: Book, track: AudioTrack, autoPlayAudio: boolean) => {
-      // Restore audio progress if this is the last played track
+      const savedState = book.audioState;
+      const savedTrackHref = savedState?.currentTrackHref;
+      const savedTrackIndex = savedState?.currentTrackIndex;
+      const trackHref = track.href || track.filePath;
+
+      // Restore audio progress if this matches the last track by id, href, or chapter index.
+      const isSameTrack = Boolean(
+        savedState &&
+          (
+            savedState.currentTrackId === track.id ||
+            (savedTrackHref && trackHref && savedTrackHref === trackHref) ||
+            (savedTrackIndex !== undefined && savedTrackIndex === track.order)
+          )
+      );
+
+      logger.info("[audio-restore] evaluating saved progress", {
+        bookId: book.id,
+        requestedTrackId: track.id,
+        requestedTrackOrder: track.order,
+        savedTrackId: savedState?.currentTrackId,
+        savedTrackHref,
+        savedTrackIndex,
+        savedTime: savedState?.currentTimeSeconds,
+        isSameTrack,
+      });
+
       if (
-        book.audioState?.currentTrackId === track.id &&
-        book.audioState.currentTimeSeconds !== undefined &&
+        isSameTrack &&
+        savedState?.currentTimeSeconds !== undefined &&
         audioRef.current
       ) {
-        const savedTime = book.audioState.currentTimeSeconds;
-        // Restore time after metadata is loaded
-        const handleLoadedMetadata = () => {
-          if (
-            audioRef.current &&
-            canRestoreSavedTime(savedTime, audioRef.current.duration)
-          ) {
-            audioRef.current.currentTime = savedTime;
+        const savedTime = savedState.currentTimeSeconds;
+        const applySavedTime = () => {
+          if (!audioRef.current) return;
+
+          const audio = audioRef.current;
+          const hasFiniteDuration = Number.isFinite(audio.duration) && audio.duration > 0;
+          const maxSeek = hasFiniteDuration ? audio.duration : savedTime;
+
+          let minSeek = 0;
+          if (audio.seekable.length > 0) {
+            const seekableStart = audio.seekable.start(0);
+            if (Number.isFinite(seekableStart) && seekableStart >= 0) {
+              minSeek = seekableStart;
+            }
           }
-          audioRef.current?.removeEventListener(
-            "loadedmetadata",
-            handleLoadedMetadata
-          );
+
+          const targetTime = Math.max(minSeek, Math.min(savedTime, maxSeek));
+
+          logger.info("[audio-restore] applying saved timestamp", {
+            bookId: book.id,
+            trackId: track.id,
+            savedTime,
+            minSeek,
+            maxSeek,
+            targetTime,
+            readyState: audio.readyState,
+          });
+
+          try {
+            audio.currentTime = targetTime;
+          } catch (err) {
+            logger.warn("Failed restoring saved audio timestamp:", err);
+          }
         };
-        audioRef.current.addEventListener(
-          "loadedmetadata",
-          handleLoadedMetadata
-        );
+
+        // `loadAudioTrack` may already have loaded metadata before this runs.
+        if (audioRef.current.readyState >= 1) {
+          applySavedTime();
+        } else {
+          const handleAudioReady = () => {
+            applySavedTime();
+            audioRef.current?.removeEventListener(
+              "loadedmetadata",
+              handleAudioReady
+            );
+            audioRef.current?.removeEventListener(
+              "loadeddata",
+              handleAudioReady
+            );
+            audioRef.current?.removeEventListener(
+              "canplay",
+              handleAudioReady
+            );
+          };
+          audioRef.current.addEventListener(
+            "loadedmetadata",
+            handleAudioReady
+          );
+          audioRef.current.addEventListener(
+            "loadeddata",
+            handleAudioReady
+          );
+          audioRef.current.addEventListener(
+            "canplay",
+            handleAudioReady
+          );
+        }
       }
       if (autoPlayAudio) {
         audioRef.current?.play();
@@ -281,15 +278,140 @@ export function AudioProgressProvider({
     [audioRef]
   );
 
+  const resolveTrackChapterIndex = useCallback((book: Book, track: AudioTrack) => {
+    // Handle live track IDs (format: live-bookId-chapterIndex)
+    if (track.id?.startsWith('live-')) {
+      const parts = track.id.split('-');
+      if (parts.length >= 3) {
+        const chapterIndex = parseInt(parts[parts.length - 1], 10);
+        if (!isNaN(chapterIndex) && chapterIndex >= 0 && chapterIndex < book.chapters.length) {
+          return chapterIndex;
+        }
+      }
+    }
+
+    const trackHref = track.href || track.filePath;
+    if (trackHref && book.audioSyncMap?.segments?.length) {
+      const matchingSegment = book.audioSyncMap.segments.find(
+        (segment) => segment.audioTrackHref === trackHref
+      );
+      if (matchingSegment) {
+        const chapterIndex = book.chapters.findIndex(
+          (chapter) => chapter.href === matchingSegment.chapterHref
+        );
+        if (chapterIndex >= 0) {
+          return chapterIndex;
+        }
+      }
+    }
+
+    if (track.order >= 0 && track.order < book.chapters.length) {
+      return track.order;
+    }
+
+    return null;
+  }, []);
+
   const loadAudioTrack = useCallback(
     async (bookId: string, track: AudioTrack, book: Book) => {
       setIsLoadingAudio(true);
       try {
-        // Get streaming URL from backend
-        const streamUrl = await invoke<string>("get_audio_stream_url", {
-          bookId,
-          trackId: track.id,
-        });
+        const chapterIndex = resolveTrackChapterIndex(book, track);
+
+        // Use conversion state first, then refresh from backend if missing.
+        let currentConvertingChapter = getCurrentConvertingChapter(bookId);
+        if (currentConvertingChapter === null) {
+          currentConvertingChapter =
+            await refreshCurrentConvertingChapter(bookId);
+        }
+
+        const isExplicitLiveTrack = Boolean(track.id?.startsWith("live-"));
+        const shouldUseLive =
+          chapterIndex !== null &&
+          (isExplicitLiveTrack || currentConvertingChapter === chapterIndex);
+
+        // Helper: set OS media controls metadata (same logic for live and non-live).
+        const setMediaSessionMetadata = () => {
+          if (!("mediaSession" in navigator) || !book) return;
+          const trackTitle = track.title || `Track ${track.order + 1}`;
+          let chapterTitle: string | undefined;
+          const trackHref = track.href || track.filePath;
+          if (trackHref && book.audioSyncMap?.segments) {
+            const matchingSegment = book.audioSyncMap.segments.find(
+              (segment) => segment.audioTrackHref === trackHref
+            );
+            if (matchingSegment) {
+              const chapter = book.chapters.find(
+                (ch) => ch.href === matchingSegment.chapterHref
+              );
+              if (chapter) chapterTitle = chapter.title;
+            }
+          }
+          const fullTrackTitle = chapterTitle
+            ? `${trackTitle} - ${chapterTitle}`
+            : trackTitle;
+          const artwork: MediaImage[] = [];
+          if (book.coverUrl) {
+            artwork.push({ src: book.coverUrl, sizes: "512x512", type: "image/jpeg" });
+          }
+          getName()
+            .then((appName) => {
+              navigator.mediaSession.metadata = new MediaMetadata({
+                title: fullTrackTitle,
+                artist: book.author,
+                album: `${book.title} - ${appName}`,
+                artwork,
+              });
+            })
+            .catch((err) => {
+              logger.error("Failed to get app name:", err);
+              navigator.mediaSession.metadata = new MediaMetadata({
+                title: fullTrackTitle,
+                artist: book.author,
+                album: book.title,
+                artwork,
+              });
+            });
+        };
+
+        if (shouldUseLive && chapterIndex !== null) {
+          // Live track: the MSE effect in FloatingAudioPlayer owns all audio element
+          // setup (src, load, seek, play). Just update track state here so the effect
+          // is triggered. Pending live playback requests carry the desired seek
+          // position and auto-play intent to the player effect.
+          setCurrentAudioTrack({
+            ...track,
+            mimeType: "audio/mpeg",
+            isLiveStream: true,
+            liveChapterIndex: chapterIndex,
+          });
+          setMediaSessionMetadata();
+          return;
+        }
+
+        // Non-live: load a completed audio track via HTTP stream URL.
+        let streamUrl: string;
+        try {
+          streamUrl = await invoke<string>("get_audio_stream_url", {
+            bookId,
+            trackId: track.id,
+          });
+        } catch (streamErr) {
+          // Fallback: chapter may have become live while loading.
+          const retryCurrentChapter =
+            await refreshCurrentConvertingChapter(bookId);
+          if (chapterIndex !== null && retryCurrentChapter === chapterIndex) {
+            setCurrentAudioTrack({
+              ...track,
+              mimeType: "audio/mpeg",
+              isLiveStream: true,
+              liveChapterIndex: chapterIndex,
+            });
+            setMediaSessionMetadata();
+            return;
+          }
+          throw streamErr;
+        }
 
         if (streamUrl) {
           // Clean up previous blob URL (if any)
@@ -300,125 +422,73 @@ export function AudioProgressProvider({
 
           // Set up audio element with streaming URL
           if (audioRef.current) {
+            const waitForAudioReady = () =>
+              new Promise<void>((resolve) => {
+                const audio = audioRef.current;
+                if (!audio) {
+                  resolve();
+                  return;
+                }
+
+                let settled = false;
+                const settle = () => {
+                  if (settled) return;
+                  settled = true;
+                  audio.removeEventListener("loadedmetadata", settle);
+                  audio.removeEventListener("loadeddata", settle);
+                  audio.removeEventListener("canplay", settle);
+                  audio.removeEventListener("canplaythrough", settle);
+                  audio.removeEventListener("error", settle);
+                  resolve();
+                };
+
+                // Keep loader from hanging forever on problematic streams.
+                const timeoutId = setTimeout(settle, 8000);
+                const settleWithTimeoutClear = () => {
+                  clearTimeout(timeoutId);
+                  settle();
+                };
+
+                audio.addEventListener("loadedmetadata", settleWithTimeoutClear, { once: true });
+                audio.addEventListener("loadeddata", settleWithTimeoutClear, { once: true });
+                audio.addEventListener("canplay", settleWithTimeoutClear, { once: true });
+                audio.addEventListener("canplaythrough", settleWithTimeoutClear, { once: true });
+                audio.addEventListener("error", settleWithTimeoutClear, { once: true });
+              });
+
             audioRef.current.src = streamUrl;
             audioRef.current.load();
 
-            // Reset playback state when track changes (will be restored if needed)
-            audioRef.current.currentTime = 0;
-            audioRef.current.playbackRate = playbackRate;
+            // Pause first so the previous track is saved at its actual timestamp,
+            // then reset time for the newly loaded source.
             if (!audioRef.current.paused) {
               audioRef.current.pause();
             }
+            audioRef.current.currentTime = 0;
+            audioRef.current.playbackRate = playbackRate;
 
-            // Mirror WebView audio events into the native AVPlayer so the lock
-            // screen always reflects what the in-app player is doing.
-            if (isIosRef.current) {
-              const el = audioRef.current;
-              const onPlay = () =>
-                void invoke("ios_player_play").catch(() => undefined);
-              const onPause = () =>
-                void invoke("ios_player_pause").catch(() => undefined);
-              const onSeeked = () =>
-                void invoke("ios_player_seek", {
-                  seconds: el.currentTime,
-                }).catch(() => undefined);
-              const onRate = () =>
-                void invoke("ios_player_set_rate", {
-                  rate: el.playbackRate,
-                }).catch(() => undefined);
-              // Remove listeners from any previous track on the same element.
-              el.removeEventListener("play", onPlay);
-              el.removeEventListener("pause", onPause);
-              el.removeEventListener("seeked", onSeeked);
-              el.removeEventListener("ratechange", onRate);
-              el.addEventListener("play", onPlay);
-              el.addEventListener("pause", onPause);
-              el.addEventListener("seeked", onSeeked);
-              el.addEventListener("ratechange", onRate);
-            }
+            await waitForAudioReady();
           }
 
           // Get MIME type from track href for metadata
-          const mimeType = mimeTypeFromTrackHref(track.href);
+          const mimeType = track.href?.endsWith(".mp3")
+            ? "audio/mpeg"
+            : track.href?.endsWith(".m4a")
+              ? "audio/mp4"
+              : track.href?.endsWith(".ogg")
+                ? "audio/ogg"
+                : track.href?.endsWith(".wav")
+                  ? "audio/wav"
+                  : "audio/mpeg";
 
           setCurrentAudioTrack({
             ...track,
             mimeType,
+            isLiveStream: false,
+            liveChapterIndex: undefined,
           });
 
-          // On iOS: hand the track to the native AVPlayer so lock-screen controls
-          // and background audio work even when the HTTP server is down.
-          if (isIosRef.current) {
-            void invoke("ios_player_load", {
-              bookId,
-              trackId: track.id,
-              title: trackDisplayTitle(track.title, track.order),
-              artist: book.author ?? "",
-              duration: track.duration ?? 0,
-            }).catch((err: unknown) =>
-              logger.warn("ios_player_load failed (non-fatal):", err)
-            );
-          }
-
-          // Set MediaSession metadata for OS media controls
-          if ("mediaSession" in navigator && book) {
-            const trackTitle = trackDisplayTitle(track.title, track.order);
-
-            // Find chapter name for this track using audio sync map (same as TOC)
-            let chapterTitle: string | undefined;
-            const trackHref = track.href || track.filePath;
-            if (trackHref && book.audioSyncMap?.segments) {
-              // Find the first segment that matches this track
-              const matchingSegment = book.audioSyncMap.segments.find(
-                (segment) => segment.audioTrackHref === trackHref
-              );
-
-              if (matchingSegment) {
-                const chapter = book.chapters.find(
-                  (ch) => ch.href === matchingSegment.chapterHref
-                );
-                if (chapter) {
-                  chapterTitle = chapter.title;
-                }
-              }
-            }
-
-            // Append chapter name to track title if available
-            const fullTrackTitle = chapterTitle
-              ? `${trackTitle} - ${chapterTitle}`
-              : trackTitle;
-
-            const artwork: MediaImage[] = [];
-
-            if (book.coverUrl) {
-              artwork.push({
-                src: book.coverUrl,
-                sizes: "512x512",
-                type: "image/jpeg",
-              });
-            }
-
-            // Get app name asynchronously
-            getName()
-              .then((appName) => {
-                navigator.mediaSession.metadata = new MediaMetadata({
-                  title: fullTrackTitle,
-                  artist: book.author,
-                  album: `${book.title} - ${appName}`,
-                  artwork,
-                });
-              })
-              .catch((err) => {
-                logger.error("Failed to get app name:", err);
-                // Fallback without app name
-                navigator.mediaSession.metadata = new MediaMetadata({
-                  title: fullTrackTitle,
-                  artist: book.author,
-                  album: book.title,
-                  artwork,
-                });
-              });
-          }
+          setMediaSessionMetadata();
         }
       } catch (err) {
         logger.error("Failed to load audio track:", err);
@@ -427,7 +497,13 @@ export function AudioProgressProvider({
         setIsLoadingAudio(false);
       }
     },
-    [audioRef, playbackRate]
+    [
+      audioRef,
+      getCurrentConvertingChapter,
+      playbackRate,
+      refreshCurrentConvertingChapter,
+      resolveTrackChapterIndex,
+    ]
   );
 
   const loadLastOpenedAudioTrack = useCallback(
@@ -438,12 +514,83 @@ export function AudioProgressProvider({
       const loadedBook = await invoke<Book | null>("read_one_book", {
         bookId: book.id,
       });
-      if (loadedBook?.audioState?.currentTrackId) {
-        audioTrackToLoad =
-          loadedBook.audioTracks.find(
-            (track) => track.id === loadedBook.audioState!.currentTrackId
-          ) || null;
+      
+      // First priority: use centralized converting chapter state for live chapters.
+      if (loadedBook) {
+        let currentConvertingChapter = getCurrentConvertingChapter(loadedBook.id);
+        if (currentConvertingChapter === null) {
+          currentConvertingChapter =
+            await refreshCurrentConvertingChapter(loadedBook.id);
+        }
+
+        if (
+          currentConvertingChapter !== null &&
+          currentConvertingChapter >= 0 &&
+          currentConvertingChapter < loadedBook.chapters.length
+        ) {
+          const chapter = loadedBook.chapters[currentConvertingChapter];
+          audioTrackToLoad = {
+            id: `live-${loadedBook.id}-${currentConvertingChapter}`,
+            bookId: loadedBook.id,
+            chapterHref: chapter.href,
+            filePath: chapter.href,
+            href: chapter.href,
+            title: chapter.title || `Chapter ${currentConvertingChapter + 1}`,
+            order: currentConvertingChapter,
+          };
+        }
       }
+
+      // Second priority: Try saved track references (for completed chapters)
+      if (!audioTrackToLoad && loadedBook?.audioState?.currentTrackId) {
+        const savedTrackId = loadedBook.audioState.currentTrackId;
+        // Handle live track IDs directly (no need to search)
+        if (savedTrackId.startsWith('live-')) {
+          const parts = savedTrackId.split('-');
+          if (parts.length >= 3) {
+            const chapterIndex = parseInt(parts[parts.length - 1], 10);
+            if (!isNaN(chapterIndex) && chapterIndex >= 0 && chapterIndex < loadedBook.chapters.length) {
+              const chapter = loadedBook.chapters[chapterIndex];
+              audioTrackToLoad = {
+                id: savedTrackId,
+                bookId: loadedBook.id,
+                chapterHref: chapter.href,
+                filePath: chapter.href,
+                href: chapter.href,
+                title: chapter.title || `Chapter ${chapterIndex + 1}`,
+                order: chapterIndex,
+              };
+            }
+          }
+        }
+        else {
+          // Regular track - find in audioTracks
+          audioTrackToLoad =
+            loadedBook.audioTracks.find(
+              (track) => track.id === savedTrackId
+            ) || null;
+        }
+      }
+
+      if (!audioTrackToLoad && loadedBook?.audioState?.currentTrackHref) {
+        const savedHref = loadedBook.audioState.currentTrackHref;
+        audioTrackToLoad =
+          loadedBook.audioTracks.find((track) => {
+            const trackHref = track.href || track.filePath;
+            return trackHref === savedHref;
+          }) || null;
+      }
+
+      if (
+        !audioTrackToLoad &&
+        loadedBook?.audioState?.currentTrackIndex !== undefined
+      ) {
+        const savedTrackIndex = loadedBook.audioState.currentTrackIndex;
+        audioTrackToLoad =
+          loadedBook.audioTracks.find((track) => track.order === savedTrackIndex) ||
+          null;
+      }
+
       if (
         !audioTrackToLoad &&
         loadedBook?.audioTracks?.length &&
@@ -451,38 +598,43 @@ export function AudioProgressProvider({
       ) {
         audioTrackToLoad = loadedBook.audioTracks[0];
       }
+
       if (audioTrackToLoad) {
+        logger.info("[audio-load-last] resolved track to load", {
+          requestedBookId: book.id,
+          loadedBookId: loadedBook?.id,
+          trackId: audioTrackToLoad.id,
+          trackOrder: audioTrackToLoad.order,
+          trackHref: audioTrackToLoad.href || audioTrackToLoad.filePath,
+          savedState: loadedBook?.audioState,
+        });
+        const isLiveTrack = Boolean(audioTrackToLoad.id?.startsWith('live-'));
+        if (isLiveTrack) {
+          // Queue the desired resume time and auto-play intent for the live stream
+          // effect before switching the current track.
+          queueLivePlaybackRequest(
+            (loadedBook || book).audioState?.currentTimeSeconds ?? 0,
+            autoPlayAudio
+          );
+        }
         await loadAudioTrack(book.id, audioTrackToLoad, loadedBook || book);
-        // Restore progress after track is loaded
-        restoreAudioProgress(
-          loadedBook || book,
-          audioTrackToLoad,
-          autoPlayAudio
-        );
+        if (!isLiveTrack) {
+          restoreAudioProgress(loadedBook || book, audioTrackToLoad, autoPlayAudio);
+        }
         logger.log("loaded last opened audio track", audioTrackToLoad, book);
       } else {
-        // Clear previous playback state when switching to a book with no audio.
-        if (audioRef.current) {
-          audioRef.current.pause();
-          audioRef.current.currentTime = 0;
-          audioRef.current.src = "";
-        }
-
-        if (blobUrlRef.current) {
-          URL.revokeObjectURL(blobUrlRef.current);
-          blobUrlRef.current = null;
-        }
-
-        setCurrentAudioTrack(null);
-
-        if ("mediaSession" in navigator) {
-          navigator.mediaSession.metadata = null;
-        }
+        toast.error("No audio tracks available in this book");
       }
       setIsLoadingAudio(false);
     },
 
-    [audioRef, loadAudioTrack, restoreAudioProgress]
+    [
+      getCurrentConvertingChapter,
+      loadAudioTrack,
+      queueLivePlaybackRequest,
+      refreshCurrentConvertingChapter,
+      restoreAudioProgress,
+    ]
   );
 
   const closeAudioPlayer = useCallback(
@@ -491,10 +643,9 @@ export function AudioProgressProvider({
       if (
         audioRef.current &&
         currentAudioTrack &&
-        book.audioState?.currentTrackId &&
         !Number.isNaN(audioRef.current.currentTime)
       ) {
-        saveAudioProgress(book);
+        await saveAudioProgress(book);
       }
 
       // Stop playback
@@ -547,6 +698,9 @@ export function AudioProgressProvider({
       calculateAudioProgress,
       playbackRate,
       setPlaybackRate: handleSetPlaybackRate,
+      livePlaybackRequestRef,
+      queueLivePlaybackRequest,
+      livePlaybackRequestVersion,
     }),
     [
       currentAudioTrack,
@@ -559,6 +713,8 @@ export function AudioProgressProvider({
       calculateAudioProgress,
       playbackRate,
       handleSetPlaybackRate,
+      queueLivePlaybackRequest,
+      livePlaybackRequestVersion,
     ]
   );
 

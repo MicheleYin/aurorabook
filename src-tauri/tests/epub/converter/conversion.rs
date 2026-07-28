@@ -104,6 +104,7 @@ async fn test_convert_epub_to_audiobook_standalone_small() {
         id: first_chapter.href.clone(),
         title: first_chapter.title.clone(),
         href: first_chapter.href.clone(),
+        order: 0,
         content_html: chapter_html,
         word_count,
     };
@@ -229,6 +230,7 @@ fn test_conversion_options_serialization() {
         id: "chapter1".to_string(),
         title: "Chapter 1".to_string(),
         href: "Text/chapter1.xhtml".to_string(),
+        order: 0,
         content_html: "<p>Test content</p>".to_string(),
         word_count: 2,
     };

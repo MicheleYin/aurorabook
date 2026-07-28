@@ -87,4 +87,6 @@ export interface ChapterWithContent extends Chapter {
 export interface AudioTrackWithData extends AudioTrack {
   data?: number[]; // Optional - not needed when using streaming
   mimeType: string;
+  isLiveStream?: boolean;
+  liveChapterIndex?: number;
 }

@@ -1,22 +1,27 @@
 import { useCallback, useEffect, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 import type { Book } from "../types/book";
 import { useAudioProgressContext } from "../context/AudioProgressContext";
 import { useAudioSyncContext } from "../context/AudioSyncContext";
 import { useChapterProgressContext } from "../context/ChapterProgressContext";
-import {
-  filterSegmentsForTrack,
-  findSegmentAtTime,
-  getProseContainer,
-  HIGHLIGHT_ACTIVE_CLASS,
-  HIGHLIGHT_CLASS,
-  HIGHLIGHT_ENTER_CLASS,
-  HIGHLIGHT_EXIT_CLASS,
-  isElementFullyVisible,
-  clampScrollTopForElement,
-  shouldRunSyncPass,
-} from "../lib/audio-sync-utils";
 import { logger } from "../lib/logger";
+
+const HIGHLIGHT_CLASS = "audio-highlight";
+const HIGHLIGHT_ENTER_CLASS = "audio-highlight-enter";
+const HIGHLIGHT_ACTIVE_CLASS = "audio-highlight-active";
+const HIGHLIGHT_EXIT_CLASS = "audio-highlight-exit";
+
+interface LiveSyncMarker {
+  textElementId?: string;
+  smilId?: string;
+  chapterId?: string;
+  chapterHref?: string;
+  sentenceIndex?: number;
+  clipBegin?: number;
+  clipEnd?: number;
+  sentenceText?: string;
+}
 
 /**
  * Hook for audio-text synchronization
@@ -41,15 +46,31 @@ export function useAudioTextSync(
   const highlightQueueRef = useRef<Set<string>>(new Set());
   const activeHighlightsRef = useRef<Map<string, HTMLElement>>(new Map());
   const previousHeaderVisibleRef = useRef<boolean | undefined>(isHeaderVisible);
-  const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isSyncEnabledRef = useRef(isSyncEnabled);
   const previousSyncEnabledRef = useRef(isSyncEnabled);
   const scrollPositionRef = useRef<number | null>(null);
+  const liveSyncMarkerRef = useRef<LiveSyncMarker | null>(null);
+  const liveSyncPollInFlightRef = useRef(false);
+  const liveSyncLastPollRef = useRef(0);
+  const lastLiveSentenceIndexRef = useRef<number | null>(null);
+  const lastLiveElementOrderRef = useRef<number | null>(null);
 
   // Keep ref in sync with context value
   useEffect(() => {
     isSyncEnabledRef.current = isSyncEnabled;
   }, [isSyncEnabled]);
+
+  // Reset live marker cache when book or track changes
+  useEffect(() => {
+    liveSyncMarkerRef.current = null;
+    liveSyncPollInFlightRef.current = false;
+    liveSyncLastPollRef.current = 0;
+    lastLiveSentenceIndexRef.current = null;
+    lastLiveElementOrderRef.current = null;
+    lastSyncTimeRef.current = 0;
+    previousSpanIdRef.current = null;
+  }, [book?.id, currentAudioTrack?.id]);
 
   // Preserve scroll position when sync is toggled
   useEffect(() => {
@@ -76,23 +97,10 @@ export function useAudioTextSync(
     }
   }, [isSyncEnabled, scrollContainerRef]);
 
-  // Helper: Remove all highlights (searches both shadow DOM and regular DOM)
+  // Helper: Remove all highlights
   const removeAllHighlights = useCallback(() => {
-    // Search inside shadow roots first
-    document.querySelectorAll("[data-reader-chapter-shadow-host]").forEach((host) => {
-      host.shadowRoot
-        ?.querySelectorAll(`.${HIGHLIGHT_CLASS}`)
-        .forEach((el) => {
-          el.classList.remove(
-            HIGHLIGHT_CLASS,
-            HIGHLIGHT_ENTER_CLASS,
-            HIGHLIGHT_ACTIVE_CLASS,
-            HIGHLIGHT_EXIT_CLASS
-          );
-        });
-    });
-    // Fallback: search regular DOM
-    document.querySelectorAll(`.${HIGHLIGHT_CLASS}`).forEach((el) => {
+    const allHighlights = document.querySelectorAll(`.${HIGHLIGHT_CLASS}`);
+    allHighlights.forEach((el) => {
       el.classList.remove(
         HIGHLIGHT_CLASS,
         HIGHLIGHT_ENTER_CLASS,
@@ -104,6 +112,130 @@ export function useAudioTextSync(
     highlightQueueRef.current.clear();
     activeHighlightsRef.current.clear();
   }, []);
+
+  const normalizeHref = useCallback((href?: string) => {
+    if (!href) return "";
+    return href
+      .split(/[?#]/)[0]
+      .replace(/^\/+/, "")
+      .trim();
+  }, []);
+
+  const hrefMatches = useCallback(
+    (a?: string, b?: string) => {
+      const left = normalizeHref(a);
+      const right = normalizeHref(b);
+
+      if (!left || !right) return false;
+      if (left === right) return true;
+
+      return left.endsWith(right) || right.endsWith(left);
+    },
+    [normalizeHref]
+  );
+
+  const normalizeSentence = useCallback((text?: string) => {
+    if (!text) return "";
+    return text
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  }, []);
+
+  const findBestElementBySentence = useCallback(
+    (
+      container: HTMLElement,
+      sentenceText?: string,
+      sentenceIndex?: number
+    ): { element: HTMLElement; order: number } | null => {
+      const normalizedTarget = normalizeSentence(sentenceText);
+      if (!normalizedTarget || normalizedTarget.length < 12) {
+        return null;
+      }
+
+      const targetWords = normalizedTarget
+        .split(" ")
+        .filter((w) => w.length >= 4)
+        .slice(0, 14);
+
+      if (targetWords.length === 0) {
+        return null;
+      }
+
+      const orderedElements = Array.from(
+        container.querySelectorAll("a[id], p, li, blockquote")
+      ) as HTMLElement[];
+
+      const scoredCandidates: Array<{ element: HTMLElement; score: number; order: number }> = [];
+
+      orderedElements.forEach((element, order) => {
+        const normalizedText = normalizeSentence(element.textContent || "");
+        if (!normalizedText) return;
+
+        let score = 0;
+        for (const word of targetWords) {
+          if (normalizedText.includes(word)) {
+            score += 1;
+          }
+        }
+
+        if (score >= 3) {
+          scoredCandidates.push({ element, score, order });
+        }
+      });
+
+      if (scoredCandidates.length === 0) {
+        return null;
+      }
+
+      const maxScore = Math.max(...scoredCandidates.map((candidate) => candidate.score));
+      const topCandidates = scoredCandidates
+        .filter((candidate) => candidate.score === maxScore)
+        .sort((a, b) => a.order - b.order);
+
+      // If we have sentence progression data, choose candidate closest to expected order.
+      if (typeof sentenceIndex === "number" && Number.isFinite(sentenceIndex)) {
+        const lastSentenceIndex = lastLiveSentenceIndexRef.current;
+        const lastOrder = lastLiveElementOrderRef.current;
+
+        if (
+          typeof lastSentenceIndex === "number" &&
+          typeof lastOrder === "number"
+        ) {
+          const delta = sentenceIndex - lastSentenceIndex;
+          const expectedOrder = delta >= 0 ? lastOrder + delta : lastOrder + delta;
+
+          const bestProgressive = topCandidates.reduce((best, candidate) => {
+            const distance = Math.abs(candidate.order - expectedOrder);
+            if (!best || distance < best.distance) {
+              return { candidate, distance };
+            }
+
+            if (distance === best.distance && candidate.order >= expectedOrder) {
+              return { candidate, distance };
+            }
+
+            return best;
+          }, null as { candidate: { element: HTMLElement; score: number; order: number }; distance: number } | null);
+
+          if (bestProgressive) {
+            return {
+              element: bestProgressive.candidate.element,
+              order: bestProgressive.candidate.order,
+            };
+          }
+        }
+      }
+
+      return {
+        element: topCandidates[0].element,
+        order: topCandidates[0].order,
+      };
+    },
+    [normalizeSentence]
+  );
 
   // Main sync effect - only runs when sync is enabled AND requirements are met
   useEffect(() => {
@@ -139,27 +271,46 @@ export function useAudioTextSync(
 
     const audio = audioRef.current;
     const audioSyncMap = book.audioSyncMap;
+    const isLiveTrack = Boolean(currentAudioTrack.isLiveStream);
 
-    // Check for sync map
-    if (!audioSyncMap?.segments || audioSyncMap.segments.length === 0) {
+    // Non-live tracks require static sync map segments.
+    if (!isLiveTrack && (!audioSyncMap?.segments || audioSyncMap.segments.length === 0)) {
       logger.warn("[AudioSync] No audio sync map available");
       return;
     }
 
     // Get track href
     const trackHref = currentAudioTrack.href || currentAudioTrack.filePath;
-    if (!trackHref) {
+    if (!isLiveTrack && !trackHref) {
       logger.warn("[AudioSync] No track href found");
       return;
     }
 
-    // Find segments for current track
-    const trackSegments = filterSegmentsForTrack(
-      audioSyncMap.segments,
-      trackHref
+    // Find segments for current track; live streams may not have a track href in sync map.
+    let trackSegments = (audioSyncMap?.segments || []).filter(
+      (segment) => segment.audioTrackHref === trackHref
     );
 
-    if (trackSegments.length === 0) {
+    if (
+      trackSegments.length === 0 &&
+      isLiveTrack
+    ) {
+      const liveChapterHref =
+        currentAudioTrack.chapterHref ||
+        (typeof currentAudioTrack.liveChapterIndex === "number" &&
+        currentAudioTrack.liveChapterIndex >= 0 &&
+        currentAudioTrack.liveChapterIndex < book.chapters.length
+          ? book.chapters[currentAudioTrack.liveChapterIndex].href
+          : undefined);
+
+      if (liveChapterHref) {
+        trackSegments = (audioSyncMap?.segments || []).filter(
+          (segment) => segment.chapterHref === liveChapterHref
+        );
+      }
+    }
+
+    if (!isLiveTrack && trackSegments.length === 0) {
       logger.warn("[AudioSync] No segments found for current track");
       return;
     }
@@ -196,15 +347,28 @@ export function useAudioTextSync(
     ) => {
       const containerRect = container.getBoundingClientRect();
       const elementRect = element.getBoundingClientRect();
-      const offsets = calculateOffsets();
+      const { topOffset, bottomOffset } = calculateOffsets();
 
-      if (!isElementFullyVisible(elementRect, containerRect, offsets)) {
-        const clampedScrollTop = clampScrollTopForElement(
-          element.offsetTop,
-          container.offsetTop,
-          containerRect.height,
-          container.scrollHeight,
-          offsets
+      // Check if element is fully visible within the available viewport
+      // (accounting for header at top and audio player at bottom)
+      const isVisible =
+        elementRect.top >= containerRect.top + topOffset &&
+        elementRect.bottom <= containerRect.bottom - bottomOffset &&
+        elementRect.left >= containerRect.left &&
+        elementRect.right <= containerRect.right;
+
+      if (!isVisible) {
+        const elementOffsetTop = element.offsetTop - container.offsetTop;
+        const oneRem = 8;
+        // Position element 1rem below header, ensuring it's above audio player
+        const targetScrollTop = elementOffsetTop - topOffset - oneRem;
+
+        // Ensure we don't scroll past the bottom (accounting for audio player)
+        const maxScrollTop =
+          container.scrollHeight - containerRect.height + bottomOffset;
+        const clampedScrollTop = Math.min(
+          Math.max(0, targetScrollTop),
+          maxScrollTop
         );
 
         container.scrollTo({
@@ -280,25 +444,81 @@ export function useAudioTextSync(
 
       const currentTime = audio.currentTime;
 
+      if (isLiveTrack && book) {
+        const now = Date.now();
+        const chapterIndex =
+          typeof currentAudioTrack.liveChapterIndex === "number"
+            ? currentAudioTrack.liveChapterIndex
+            : currentAudioTrack.order;
+
+        if (
+          chapterIndex >= 0 &&
+          !liveSyncPollInFlightRef.current &&
+          now - liveSyncLastPollRef.current >= 250
+        ) {
+          liveSyncPollInFlightRef.current = true;
+          liveSyncLastPollRef.current = now;
+
+          invoke<LiveSyncMarker>("get_live_sync_marker", {
+            bookId: book.id,
+            chapterIndex,
+            currentTimeSeconds: currentTime,
+          })
+            .then((marker) => {
+              liveSyncMarkerRef.current = marker;
+            })
+            .catch((err) => {
+              logger.warn("[AudioSync] Failed to poll live sync marker:", err);
+            })
+            .finally(() => {
+              liveSyncPollInFlightRef.current = false;
+            });
+        }
+      }
+
       // Skip if time hasn't changed
-      if (!shouldRunSyncPass(currentTime, lastSyncTimeRef.current)) {
+      if (Math.abs(currentTime - lastSyncTimeRef.current) < 0.1) {
         return;
       }
       lastSyncTimeRef.current = currentTime;
 
-      // Find matching segment
-      const matchingSegment = findSegmentAtTime(trackSegments, currentTime);
+      let textElementId: string | undefined;
+      let chapterHref: string | undefined;
 
-      if (!matchingSegment) {
+      if (isLiveTrack) {
+        textElementId =
+          liveSyncMarkerRef.current?.textElementId ||
+          liveSyncMarkerRef.current?.smilId;
+        chapterHref = liveSyncMarkerRef.current?.chapterHref;
+
+        if (!chapterHref) {
+          chapterHref = currentAudioTrack.chapterHref;
+        }
+      }
+
+      if (!textElementId && trackSegments.length > 0) {
+        // Fallback to static segment-based matching when live marker is unavailable.
+        const matchingSegment = trackSegments.find(
+          (segment) =>
+            currentTime >= segment.clipBegin && currentTime <= segment.clipEnd
+        );
+
+        if (!matchingSegment) {
+          return;
+        }
+
+        textElementId = matchingSegment.textElementId;
+        chapterHref = matchingSegment.chapterHref;
+      }
+
+      if (!textElementId) {
         return;
       }
 
-      const { textElementId, chapterHref } = matchingSegment;
-
       // Handle chapter switching
-      if (currentChapter?.href !== chapterHref) {
+      if (chapterHref && !hrefMatches(currentChapter?.href, chapterHref)) {
         const targetChapter = book.chapters.find(
-          (ch) => ch.href === chapterHref
+          (ch) => hrefMatches(ch.href, chapterHref)
         );
         if (targetChapter) {
           loadChapterContent(book.id, targetChapter).catch((err) => {
@@ -310,7 +530,9 @@ export function useAudioTextSync(
 
       // Find element in DOM
       if (!scrollContainerRef.current) return;
-      const contentContainer = getProseContainer(scrollContainerRef.current);
+      const contentContainer = scrollContainerRef.current.querySelector(
+        ".prose"
+      ) as HTMLElement;
       if (!contentContainer) return;
 
       const element = contentContainer.querySelector(
@@ -319,6 +541,78 @@ export function useAudioTextSync(
 
       if (element) {
         highlightElement(textElementId, element);
+        return;
+      }
+
+      // Live chapters may not contain generated span IDs; fallback to sentence text matching.
+      if (isLiveTrack) {
+        const textMatchedElement = findBestElementBySentence(
+          contentContainer,
+          liveSyncMarkerRef.current?.sentenceText,
+          liveSyncMarkerRef.current?.sentenceIndex
+        );
+
+        if (textMatchedElement) {
+          const markerSentenceIndex = liveSyncMarkerRef.current?.sentenceIndex;
+          if (typeof markerSentenceIndex === "number") {
+            lastLiveSentenceIndexRef.current = markerSentenceIndex;
+            lastLiveElementOrderRef.current = textMatchedElement.order;
+          }
+
+          const fallbackId =
+            textMatchedElement.element.id ||
+            `live-sentence-${liveSyncMarkerRef.current?.sentenceIndex ?? textElementId}`;
+          highlightElement(fallbackId, textMatchedElement.element);
+          return;
+        }
+
+        // Last fallback: nearest synthetic fNNNNNN span if available.
+        const markerMatch = /^f(\d+)$/.exec(textElementId);
+        if (!markerMatch) {
+          return;
+        }
+
+        const targetIndex = Number.parseInt(markerMatch[1], 10);
+        if (!Number.isFinite(targetIndex)) {
+          return;
+        }
+
+        let bestElementId: string | null = null;
+        let bestDiff = Number.POSITIVE_INFINITY;
+        let bestIsAhead = true;
+
+        const candidates = contentContainer.querySelectorAll("span[id^='f']");
+        candidates.forEach((candidate) => {
+          const el = candidate as HTMLElement;
+          const id = el.id;
+          const match = /^f(\d+)$/.exec(id);
+          if (!match) return;
+
+          const idx = Number.parseInt(match[1], 10);
+          if (!Number.isFinite(idx)) return;
+
+          const diff = Math.abs(idx - targetIndex);
+          const isAhead = idx > targetIndex;
+
+          // Prefer nearest previous span over a future span when distances are equal.
+          if (
+            diff < bestDiff ||
+            (diff === bestDiff && bestIsAhead && !isAhead)
+          ) {
+            bestDiff = diff;
+            bestIsAhead = isAhead;
+            bestElementId = el.id;
+          }
+        });
+
+        if (bestElementId) {
+          const fallbackElement = contentContainer.querySelector(
+            `#${bestElementId}`
+          ) as HTMLElement;
+          if (fallbackElement) {
+            highlightElement(bestElementId, fallbackElement);
+          }
+        }
       }
     }, 200);
 
@@ -340,6 +634,8 @@ export function useAudioTextSync(
     headerRef,
     isHeaderVisible,
     removeAllHighlights,
+    hrefMatches,
+    findBestElementBySentence,
   ]);
 
   // Preserve highlight when header visibility changes
@@ -356,7 +652,9 @@ export function useAudioTextSync(
     const timeoutId = setTimeout(() => {
       if (!scrollContainerRef?.current) return;
 
-      const contentContainer = getProseContainer(scrollContainerRef.current);
+      const contentContainer = scrollContainerRef.current.querySelector(
+        ".prose"
+      ) as HTMLElement;
       if (!contentContainer) return;
 
       const activeSpanId = previousSpanIdRef.current;

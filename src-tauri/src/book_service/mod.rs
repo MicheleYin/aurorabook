@@ -10,9 +10,12 @@ pub use models::*;
 use filters::*;
 use database::get_db_connection;
 use repositories::*;
+use crate::book_service::audio_stream::get_live_stream_manager;
+use crate::epub::cancellation::CancellationTokens;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::path_validation::validate_file_size;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Normalize an EPUB href by removing leading slash.
 /// The base path should already be correctly derived from the OPF file.
@@ -42,8 +45,120 @@ pub async fn read_one_book(
 ) -> AppResult<Option<Book>> {
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
-    BookRepository::find_by_id(db.as_ref(), &book_id).await
-        .map_err(|e| AppError::Store(e))
+    let book = BookRepository::find_by_id(db.as_ref(), &book_id).await
+        .map_err(|e| AppError::Store(e))?;
+
+    if let Some(ref book_ref) = book {
+        log::info!(
+            "[read_one_book] book_id={}, tracks={}, chapters={}, completed_chapters={}",
+            book_id,
+            book_ref.audio_tracks.len(),
+            book_ref.chapters.len(),
+            book_ref.completed_chapters.len()
+        );
+    } else {
+        log::info!("[read_one_book] book_id={} not found", book_id);
+    }
+
+    Ok(book)
+}
+
+/// Get the index of the chapter currently being converted for a book.
+/// This queries the live_conversion_checkpoint table to find the most recent checkpoint,
+/// which indicates the chapter actively being converted.
+/// Returns Some(chapter_index) if there's an active conversion checkpoint, None otherwise.
+#[tauri::command]
+pub async fn get_current_converting_chapter(
+    book_id: String,
+    app: tauri::AppHandle,
+) -> AppResult<Option<usize>> {
+    const MAX_CHAPTER_STALENESS_MS: u64 = 120_000;
+
+    // Explicit in-memory source of truth while conversion is active.
+    let live_manager = get_live_stream_manager();
+    if let Some(chapter_index) = live_manager.current_chapter(&book_id, Some(MAX_CHAPTER_STALENESS_MS)) {
+        log::info!(
+            "[get_current_converting_chapter] book_id={}, resolved={:?}, source=memory",
+            book_id,
+            Some(chapter_index)
+        );
+        return Ok(Some(chapter_index));
+    }
+
+    // Do not report historical checkpoints unless conversion is currently active.
+    let is_active_conversion = app
+        .try_state::<CancellationTokens>()
+        .and_then(|tokens_state| {
+            let tokens_map = tokens_state.inner().get();
+            tokens_map
+                .lock()
+                .ok()
+                .map(|guard| guard.contains_key(&book_id))
+        })
+        .unwrap_or(false);
+
+    if !is_active_conversion {
+        log::info!(
+            "[get_current_converting_chapter] book_id={}, resolved=None, source=inactive",
+            book_id
+        );
+        return Ok(None);
+    }
+
+    let db = get_db_connection(&app).await
+        .map_err(|e| AppError::Store(e))?;
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    // Query the checkpoint table for the most recent checkpoint (latest timestamp)
+    // which indicates the current chapter being converted
+    let result = sqlx::query_as::<_, (i64, Option<String>)>(
+        r#"
+        SELECT chapter_index, checkpoint_timestamp FROM live_conversion_checkpoint
+        WHERE book_id = ?
+        ORDER BY CAST(checkpoint_timestamp AS INTEGER) DESC
+        LIMIT 1
+        "#
+    )
+    .bind(&book_id)
+    .fetch_optional(db.as_ref())
+    .await
+    .map_err(|e| AppError::Store(format!("Failed to query checkpoint: {}", e)))?;
+
+    let resolved = result.and_then(|(chapter_index, checkpoint_timestamp)| {
+        let checkpoint_raw = checkpoint_timestamp
+            .as_deref()
+            .unwrap_or("0")
+            .parse::<i64>()
+            .unwrap_or(0);
+
+        // Support legacy second-based timestamps and new millisecond timestamps.
+        let checkpoint_ms = if checkpoint_raw > 0 && checkpoint_raw < 1_000_000_000_000 {
+            checkpoint_raw.saturating_mul(1000)
+        } else {
+            checkpoint_raw
+        };
+
+        if checkpoint_ms <= 0 {
+            return None;
+        }
+
+        if now_ms.saturating_sub(checkpoint_ms) > MAX_CHAPTER_STALENESS_MS as i64 {
+            return None;
+        }
+
+        Some(chapter_index as usize)
+    });
+
+    log::info!(
+        "[get_current_converting_chapter] book_id={}, resolved={:?}, source=checkpoint",
+        book_id,
+        resolved
+    );
+    Ok(resolved)
 }
 
 /// Read a single chapter by book ID and chapter ID
@@ -1027,6 +1142,29 @@ pub async fn delete_book(
 ) -> AppResult<()> {
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
+
+    // Remove any live-conversion checkpoint state tied to this book so deleted books
+    // never leave resumable checkpoint metadata or sentence audio artifacts behind.
+    ConversionCheckpointRepository::delete_all_checkpoints(db.as_ref(), &book_id)
+        .await
+        .map_err(AppError::Store)?;
+    ConversionCheckpointRepository::delete_book_sentences(db.as_ref(), &book_id)
+        .await
+        .map_err(AppError::Store)?;
+
+    if let Ok(app_data_dir) = app.path().app_data_dir() {
+        let checkpoint_dir =
+            ConversionCheckpointRepository::get_checkpoint_dir(&app_data_dir, &book_id);
+        if checkpoint_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&checkpoint_dir) {
+                log::warn!(
+                    "Book checkpoints removed from database but failed to delete checkpoint directory for {}: {}",
+                    book_id,
+                    e
+                );
+            }
+        }
+    }
     
     // Delete the book from storage (CASCADE will delete related records)
     // All related data (chapters, images, audio tracks) will be automatically deleted
