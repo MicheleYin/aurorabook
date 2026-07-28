@@ -424,36 +424,31 @@ describe("ConversionStateProvider", () => {
   });
 
   describe("live converting chapter tracking", () => {
-    async function startPendingConversion(
+    async function startOpenConversion(
       result: { current: ReturnType<typeof useConversionState> },
-      convertResolver: { resolve: (value: null) => void }
+      liveChapter: number | null = 0
     ) {
       invoke.mockImplementation(async (cmd: string) => {
         if (cmd === "get_app_settings") {
           return { ttsVoiceId: "F1", ttsLanguage: "en" };
         }
         if (cmd === "get_current_converting_chapter") {
-          return 0;
+          return liveChapter;
         }
         if (cmd === "convert_epub_to_audiobook_command") {
-          return new Promise<null>((resolve) => {
-            convertResolver.resolve = resolve;
-          });
+          // Leave conversion "in progress" so live-chapter event handlers stay active.
+          return null;
         }
         throw new Error(`Unexpected invoke: ${cmd}`);
       });
 
-      let convertPromise: Promise<void> = Promise.resolve();
       await act(async () => {
-        convertPromise = result.current.convertBook("book-1");
+        await result.current.convertBook("book-1");
       });
       await waitFor(() => {
         expect(result.current.isConverting).toBe(true);
-        expect(
-          invoke.mock.calls.some((c) => c[0] === "convert_epub_to_audiobook_command")
-        ).toBe(true);
+        expect(result.current.convertingBookId).toBe("book-1");
       });
-      return convertPromise;
     }
 
     it("refreshes and stores the current converting chapter from the backend", async () => {
@@ -526,28 +521,19 @@ describe("ConversionStateProvider", () => {
     });
 
     it("seeds live chapter state when conversion starts", async () => {
-      const convertResolver = { resolve: (_value: null) => undefined };
       const { result } = renderHook(() => useConversionState(), { wrapper });
 
-      const convertPromise = await startPendingConversion(result, convertResolver);
+      await startOpenConversion(result, 0);
 
-      await waitFor(() => {
-        expect(result.current.getCurrentConvertingChapter("book-1")).toBe(0);
-      });
+      expect(result.current.getCurrentConvertingChapter("book-1")).toBe(0);
       expect(invoke).toHaveBeenCalledWith("get_current_converting_chapter", {
         bookId: "book-1",
-      });
-
-      await act(async () => {
-        convertResolver.resolve(null);
-        await convertPromise;
       });
     });
 
     it("updates the live chapter from conversion-progress events", async () => {
-      const convertResolver = { resolve: (_value: null) => undefined };
       const { result } = renderHook(() => useConversionState(), { wrapper });
-      const convertPromise = await startPendingConversion(result, convertResolver);
+      await startOpenConversion(result, 0);
 
       await waitFor(() => {
         expect(listen.mock.calls.some((c) => c[0] === "conversion-progress")).toBe(
@@ -571,17 +557,11 @@ describe("ConversionStateProvider", () => {
         // currentChapter is 1-indexed in progress payloads; live index is 0-based.
         expect(result.current.getCurrentConvertingChapter("book-1")).toBe(1);
       });
-
-      await act(async () => {
-        convertResolver.resolve(null);
-        await convertPromise;
-      });
     });
 
     it("ignores regressive live chapter jumps from noisy progress", async () => {
-      const convertResolver = { resolve: (_value: null) => undefined };
       const { result } = renderHook(() => useConversionState(), { wrapper });
-      const convertPromise = await startPendingConversion(result, convertResolver);
+      await startOpenConversion(result, 0);
 
       act(() => {
         emitTauriEvent("conversion-progress", {
@@ -614,27 +594,15 @@ describe("ConversionStateProvider", () => {
         expect(result.current.conversionProgress?.message).toBe("Noisy regress");
       });
       expect(result.current.getCurrentConvertingChapter("book-1")).toBe(2);
-
-      await act(async () => {
-        convertResolver.resolve(null);
-        await convertPromise;
-      });
     });
 
     it("optimistically advances on chapter-completed and reconciles with backend", async () => {
-      const convertResolver = { resolve: (_value: null) => undefined };
       const { result } = renderHook(() => useConversionState(), { wrapper });
-      const convertPromise = await startPendingConversion(result, convertResolver);
+      await startOpenConversion(result, 0);
 
       invoke.mockImplementation(async (cmd: string) => {
         if (cmd === "get_current_converting_chapter") {
           return 1;
-        }
-        if (cmd === "convert_epub_to_audiobook_command") {
-          return new Promise<null>(() => undefined);
-        }
-        if (cmd === "get_app_settings") {
-          return { ttsVoiceId: "F1", ttsLanguage: "en" };
         }
         throw new Error(`Unexpected invoke: ${cmd}`);
       });
@@ -661,11 +629,6 @@ describe("ConversionStateProvider", () => {
       });
       expect(invoke).toHaveBeenCalledWith("get_current_converting_chapter", {
         bookId: "book-1",
-      });
-
-      await act(async () => {
-        convertResolver.resolve(null);
-        await convertPromise;
       });
     });
 
@@ -703,13 +666,10 @@ describe("ConversionStateProvider", () => {
     });
 
     it("clears live chapter state when conversion is cancelled", async () => {
-      const convertResolver = { resolve: (_value: null) => undefined };
       const { result } = renderHook(() => useConversionState(), { wrapper });
-      const convertPromise = await startPendingConversion(result, convertResolver);
+      await startOpenConversion(result, 0);
 
-      await waitFor(() => {
-        expect(result.current.getCurrentConvertingChapter("book-1")).toBe(0);
-      });
+      expect(result.current.getCurrentConvertingChapter("book-1")).toBe(0);
 
       act(() => {
         emitTauriEvent("conversion-cancelled", {
@@ -721,11 +681,6 @@ describe("ConversionStateProvider", () => {
       await waitFor(() => {
         expect(result.current.getCurrentConvertingChapter("book-1")).toBeNull();
         expect(result.current.isConverting).toBe(false);
-      });
-
-      await act(async () => {
-        convertResolver.resolve(null);
-        await convertPromise;
       });
     });
   });

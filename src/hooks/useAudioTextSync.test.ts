@@ -405,6 +405,10 @@ describe("useAudioTextSync", () => {
     });
 
     const { scrollContainer, span2 } = mountReaderDom();
+    Object.defineProperty(scrollContainer, "scrollTo", {
+      configurable: true,
+      value: vi.fn(),
+    });
     const book = createBook();
     book.audioSyncMap = { segments: [] };
 
