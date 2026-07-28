@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef } from "react";
 import { BookOpen, Volume2 } from "lucide-react";
+import { useEffect, useMemo, useRef } from "react";
 
-import type { Book, Chapter } from "../../types/book";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { useConversionState } from "../../context/ConversionStateContext";
 import { cn, formatTime } from "../../lib/utils";
+import type { Book, Chapter } from "../../types/book";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -177,7 +177,7 @@ export function TOCDrawer({
   }, [isOpen, currentChapter.id]);
 
   const showPendingStatus = currentConvertingChapter !== null;
-  const pendingStatusText = isConvertingThisBook ? "Live" : "In progress...";
+  const pendingStatusText = isConvertingThisBook ? "Live" : "Paused";
   const pendingStatusClass = isConvertingThisBook
     ? "bg-amber-500 text-amber-950 hover:bg-amber-500"
     : "bg-sky-600 text-sky-50 hover:bg-sky-600";

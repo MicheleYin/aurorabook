@@ -1,10 +1,3 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   FastForward,
@@ -17,16 +10,23 @@ import {
   SkipForward,
   X,
 } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { useAppContext } from "@/context/AppContext";
 import { useAudioProgressContext } from "@/context/AudioProgressContext";
-import { useChapterProgressContext } from "@/context/ChapterProgressContext";
 import { useAudioSyncContext } from "@/context/AudioSyncContext";
+import { useChapterProgressContext } from "@/context/ChapterProgressContext";
 import { useConversionState } from "@/context/ConversionStateContext";
 
-import type { AudioTrack, Book } from "../../types/book";
 import { logger } from "../../lib/logger";
 import { cn, formatTime } from "../../lib/utils";
+import type { AudioTrack, Book } from "../../types/book";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -43,6 +43,7 @@ export function FloatingAudioPlayer() {
   const {
     audioRef,
     currentAudioTrack,
+    setCurrentAudioTrack,
     isLoadingAudio,
     loadAudioTrack,
     closeAudioPlayer,
@@ -180,21 +181,23 @@ export function FloatingAudioPlayer() {
       const hasExactTrack = tracks.some(
         (track) => track.id === currentAudioTrack.id
       );
-      const isCurrentTrackLive = Boolean(
-        currentAudioTrack.isLiveStream ||
-          currentAudioTrack.id?.startsWith(`live-${currentBook.id}-`)
-      );
 
       const currentHref = currentAudioTrack.href || currentAudioTrack.filePath;
       const hasEquivalentChapterTrack = tracks.some((track) => {
+        if (track.id?.startsWith(`live-${currentBook.id}-`)) {
+          return false;
+        }
         const trackHref = track.href || track.filePath;
         const sameHref = Boolean(currentHref && trackHref && currentHref === trackHref);
         const sameOrder = track.order === currentAudioTrack.order;
-        return sameHref || sameOrder;
+        const sameChapterHref =
+          Boolean(currentAudioTrack.chapterHref) &&
+          track.chapterHref === currentAudioTrack.chapterHref;
+        return sameHref || sameOrder || sameChapterHref;
       });
 
-      // Always keep the currently playing live track visible in the selector.
-      if (!hasExactTrack && (!hasEquivalentChapterTrack || isCurrentTrackLive)) {
+      // Keep an in-progress live track visible only until a completed equivalent exists.
+      if (!hasExactTrack && !hasEquivalentChapterTrack) {
         tracks.push({
           id: currentAudioTrack.id,
           bookId: currentAudioTrack.bookId,
@@ -255,7 +258,7 @@ export function FloatingAudioPlayer() {
     }
 
     return {
-      text: isConvertingThisBook ? "Live" : "In progress...",
+      text: isConvertingThisBook ? "Live" : "Paused",
       className: isConvertingThisBook
         ? "bg-amber-500 text-amber-950 hover:bg-amber-500"
         : "bg-sky-600 text-sky-50 hover:bg-sky-600",
@@ -1114,10 +1117,46 @@ export function FloatingAudioPlayer() {
     [currentAudioTrack]
   );
 
-  const showCurrentTrackStatusBadge = useMemo(
-    () => Boolean(statusBadge && currentAudioTrack?.isLiveStream),
-    [currentAudioTrack?.isLiveStream, statusBadge]
-  );
+  const showCurrentTrackStatusBadge = useMemo(() => {
+    if (!statusBadge || !currentAudioTrack || !currentBook) {
+      return false;
+    }
+
+    const isLiveTrack = Boolean(
+      currentAudioTrack.isLiveStream ||
+        currentAudioTrack.id?.startsWith(`live-${currentBook.id}-`)
+    );
+    if (!isLiveTrack) {
+      return false;
+    }
+
+    // Hide Live once this chapter is completed / has a finished audio track.
+    const chapterHref = currentAudioTrack.chapterHref;
+    if (
+      chapterHref &&
+      (currentBook.completedChapters ?? []).includes(chapterHref)
+    ) {
+      return false;
+    }
+
+    const hasCompletedEquivalent = currentBook.audioTracks.some((track) => {
+      if (track.id?.startsWith("live-")) return false;
+      const trackHref = track.href || track.filePath;
+      return (
+        track.id === currentAudioTrack.id ||
+        (Boolean(chapterHref) && track.chapterHref === chapterHref) ||
+        track.order === currentAudioTrack.order ||
+        Boolean(
+          chapterHref &&
+            trackHref &&
+            (trackHref === currentAudioTrack.href ||
+              trackHref === currentAudioTrack.filePath)
+        )
+      );
+    });
+
+    return !hasCompletedEquivalent;
+  }, [currentAudioTrack, currentBook, statusBadge]);
 
   useEffect(() => {
     if (!currentBook || !currentAudioTrack || !currentAudioTrack.isLiveStream) {
@@ -1176,7 +1215,24 @@ export function FloatingAudioPlayer() {
       );
     }
 
-    if (!completedTrack || completedTrack.id === currentAudioTrack.id) {
+    if (!completedTrack) {
+      return;
+    }
+
+    // Stuck live flags on an already-completed library track: clear them.
+    if (
+      completedTrack.id === currentAudioTrack.id &&
+      currentAudioTrack.isLiveStream
+    ) {
+      setCurrentAudioTrack({
+        ...currentAudioTrack,
+        isLiveStream: false,
+        liveChapterIndex: undefined,
+      });
+      return;
+    }
+
+    if (completedTrack.id === currentAudioTrack.id) {
       return;
     }
 
@@ -1184,8 +1240,12 @@ export function FloatingAudioPlayer() {
       isSwitchingFromLiveRef.current = true;
       try {
         const audio = audioRef.current;
-        const resumeTime = audio?.currentTime ?? 0;
-        const shouldResumePlayback = playbackIntentRef.current;
+        const resumeTime = Math.max(0, audio?.currentTime ?? 0);
+        const shouldResumePlayback =
+          playbackIntentRef.current || Boolean(audio && !audio.paused);
+
+        // loadAudioTrack pauses the element; keep intent so we resume after.
+        playbackIntentRef.current = shouldResumePlayback;
 
         if (completedChapter) {
           try {
@@ -1195,41 +1255,58 @@ export function FloatingAudioPlayer() {
           }
         }
 
-        await loadAudioTrack(currentBook.id, completedTrack, currentBook);
+        const trackHref = completedTrack.href || completedTrack.filePath;
+        const bookWithResumeState: Book = {
+          ...currentBook,
+          audioState: {
+            currentTrackId: completedTrack.id,
+            currentTrackHref: trackHref,
+            currentTrackIndex: completedTrack.order,
+            currentTimeSeconds: resumeTime,
+            updatedAt: new Date().toISOString(),
+          },
+        };
 
-        if (audioRef.current) {
-          const seekAndResume = async () => {
-            if (!audioRef.current) return;
+        await loadAudioTrack(
+          currentBook.id,
+          completedTrack,
+          bookWithResumeState
+        );
 
-            const maxSeek =
-              Number.isFinite(audioRef.current.duration) && audioRef.current.duration > 0
-                ? audioRef.current.duration
-                : resumeTime;
-            const targetTime = Math.max(0, Math.min(resumeTime, maxSeek));
-            audioRef.current.currentTime = targetTime;
-            setCurrentTime(targetTime);
+        restoreAudioProgress(
+          bookWithResumeState,
+          completedTrack,
+          shouldResumePlayback
+        );
 
-            if (shouldResumePlayback) {
-              try {
-                await audioRef.current.play();
-              } catch (err) {
-                logger.warn("Failed to resume after live-to-normal switch:", err);
+        // Extra play attempt after metadata settles (restore may race load).
+        if (shouldResumePlayback && audioRef.current) {
+          const audioEl = audioRef.current;
+          const resumePlay = async () => {
+            try {
+              if (audioEl.paused) {
+                await audioEl.play();
               }
+            } catch (err) {
+              logger.warn("Failed to resume after live-to-normal switch:", err);
             }
           };
 
-          if (audioRef.current.readyState >= 1) {
-            await seekAndResume();
+          if (audioEl.readyState >= 2) {
+            await resumePlay();
           } else {
-            const handleLoadedMetadata = async () => {
-              audioRef.current?.removeEventListener(
-                "loadedmetadata",
-                handleLoadedMetadata
-              );
-              await seekAndResume();
-            };
-
-            audioRef.current.addEventListener("loadedmetadata", handleLoadedMetadata);
+            await new Promise<void>((resolve) => {
+              const onReady = () => {
+                audioEl.removeEventListener("canplay", onReady);
+                void resumePlay().finally(resolve);
+              };
+              audioEl.addEventListener("canplay", onReady, { once: true });
+              // Don't hang if canplay never fires.
+              setTimeout(() => {
+                audioEl.removeEventListener("canplay", onReady);
+                void resumePlay().finally(resolve);
+              }, 2000);
+            });
           }
         }
       } catch (err) {
@@ -1239,7 +1316,7 @@ export function FloatingAudioPlayer() {
       }
     };
 
-    switchFromLive();
+    void switchFromLive();
   }, [
     audioRef,
     currentAudioTrack,
@@ -1247,6 +1324,8 @@ export function FloatingAudioPlayer() {
     isLoadingAudio,
     loadChapterContent,
     loadAudioTrack,
+    restoreAudioProgress,
+    setCurrentAudioTrack,
   ]);
 
   if ((!currentBook || !currentAudioTrack) && !isLoadingAudio) {

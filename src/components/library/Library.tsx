@@ -38,7 +38,7 @@ export function Library() {
 
     loadBooks,
   } = useAppContext();
-  const { saveAudioProgress, calculateAudioProgress, currentAudioTrack } =
+  const { saveAudioProgress, calculateAudioProgress, currentAudioTrack, closeAudioPlayer } =
     useAudioProgressContext();
 
   const booksRef = useRef(books);
@@ -373,8 +373,22 @@ export function Library() {
       showLoadingToast("Deleting book...", "delete-book");
 
       // Get book title before deleting for toast message
-      const book = booksRef.current.find((book) => book.id === selectedBookId);
+      const book =
+        booksRef.current.find((entry) => entry.id === selectedBookId) ??
+        (currentBook?.id === selectedBookId ? currentBook : null);
       const bookTitle = book?.title || "";
+
+      // Stop and close the player if this book is currently loaded/playing.
+      if (
+        book &&
+        (currentAudioTrack?.bookId === selectedBookId ||
+          currentBook?.id === selectedBookId)
+      ) {
+        await closeAudioPlayer(book, { skipSave: true });
+      }
+      if (currentBook?.id === selectedBookId) {
+        setCurrentBook(null);
+      }
 
       await invoke("delete_book", {
         bookId: selectedBookId,
@@ -384,7 +398,7 @@ export function Library() {
 
       // Remove the book from the list using functional update
       setBooks((prevBooks) =>
-        prevBooks.filter((book) => book.id !== selectedBookId)
+        prevBooks.filter((entry) => entry.id !== selectedBookId)
       );
       setSelectedBookId(null);
       setIsDialogOpen(false);

@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
 import { List } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
-import type { AudioTrack, Book } from "../../types/book";
-import { useIsMobile } from "../../hooks/useIsMobile";
 import { useConversionState } from "../../context/ConversionStateContext";
-import { cn, formatTime } from "../../lib/utils";
+import { useIsMobile } from "../../hooks/useIsMobile";
 import { logger } from "../../lib/logger";
+import { cn, formatTime } from "../../lib/utils";
+import type { AudioTrack, Book } from "../../types/book";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent } from "../ui/dialog";
@@ -291,7 +291,7 @@ export function AudioTracksDrawer({
                 effectiveConvertingChapter === null &&
                 chapterIndex !== null &&
                 chapterIndex === currentTrackChapterIndex);
-            const statusText = isConvertingThisBook ? "Live" : "In progress...";
+            const statusText = isConvertingThisBook ? "Live" : "Paused";
             const statusBadgeClass = isConvertingThisBook
               ? "bg-amber-500 text-amber-950 hover:bg-amber-500"
               : "bg-sky-600 text-sky-50 hover:bg-sky-600";

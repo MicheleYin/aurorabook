@@ -45,7 +45,10 @@ export interface AudioProgressContextType {
     book: Book
   ) => Promise<void>;
   loadLastOpenedAudioTrack: (book: Book, autoPlayAudio: boolean) => void;
-  closeAudioPlayer: (book: Book) => Promise<void>;
+  closeAudioPlayer: (
+    book: Book,
+    options?: { skipSave?: boolean }
+  ) => Promise<void>;
   calculateAudioProgress: () => BookAudioState | null;
   saveAudioProgress: (book: Book) => Promise<void>;
   restoreAudioProgress: (
@@ -422,8 +425,15 @@ export function AudioProgressProvider({
         }
 
         const isExplicitLiveTrack = Boolean(track.id?.startsWith("live-"));
+        // A real completed audio track must never be treated as live, even if the
+        // converting-chapter pointer still briefly points at this chapter index
+        // (checkpoint deletion / next-chapter mark can lag chapter-completed).
+        const isCompletedLibraryTrack =
+          !isExplicitLiveTrack &&
+          book.audioTracks.some((audioTrack) => audioTrack.id === track.id);
         const shouldUseLive =
           chapterIndex !== null &&
+          !isCompletedLibraryTrack &&
           (isExplicitLiveTrack || currentConvertingChapter === chapterIndex);
 
         // Helper: set OS media controls metadata (same logic for live and non-live).
@@ -493,10 +503,14 @@ export function AudioProgressProvider({
             trackId: track.id,
           });
         } catch (streamErr) {
-          // Fallback: chapter may have become live while loading.
+          // Fallback: chapter may have become live while loading (not a completed track).
           const retryCurrentChapter =
             await refreshCurrentConvertingChapter(bookId);
-          if (chapterIndex !== null && retryCurrentChapter === chapterIndex) {
+          if (
+            chapterIndex !== null &&
+            !isCompletedLibraryTrack &&
+            retryCurrentChapter === chapterIndex
+          ) {
             setCurrentAudioTrack({
               ...track,
               mimeType: "audio/mpeg",
@@ -814,14 +828,19 @@ export function AudioProgressProvider({
   );
 
   const closeAudioPlayer = useCallback(
-    async (book: Book) => {
+    async (book: Book, options?: { skipSave?: boolean }) => {
       // Save progress before closing if we have a track and book
       if (
+        !options?.skipSave &&
         audioRef.current &&
         currentAudioTrack &&
         !Number.isNaN(audioRef.current.currentTime)
       ) {
-        await saveAudioProgress(book);
+        try {
+          await saveAudioProgress(book);
+        } catch (err) {
+          logger.warn("Failed to save audio progress while closing player:", err);
+        }
       }
 
       // Stop playback
