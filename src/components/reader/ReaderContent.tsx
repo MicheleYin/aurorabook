@@ -218,25 +218,26 @@ export function ReaderContent({
   }, [settings]);
 
   const fontSizeStyle = useMemo(() => {
-    if (!settings?.fontSize) return { fontSize: "16px" };
-    const fontSizeMap: Record<string, string> = {
-      small: "14px",
-      medium: "16px",
-      large: "18px",
-      xlarge: "20px",
+    const parsed = Number(settings?.fontSize);
+    const fontSize = Number.isFinite(parsed)
+      ? Math.min(28, Math.max(12, parsed))
+      : 16;
+    const lineHeight =
+      fontSize >= 20 ? 1.7 : fontSize >= 18 ? 1.65 : 1.6;
+    return {
+      fontSize: `${fontSize}px`,
+      // Drive .reader-prose !important rules via CSS variables.
+      ["--reader-font-size" as string]: `${fontSize}px`,
+      ["--reader-line-height" as string]: String(lineHeight),
+      lineHeight,
     };
-    return { fontSize: fontSizeMap[settings.fontSize] ?? "16px" };
   }, [settings]);
 
   const paddingStyle = useMemo(() => {
-    if (!settings?.contentPadding)
-      return { paddingLeft: "24px", paddingRight: "24px" };
-    const paddingMap: Record<string, string> = {
-      compact: "16px",
-      comfortable: "24px",
-      spacious: "48px",
-    };
-    const padding = paddingMap[settings.contentPadding] ?? "24px";
+    const parsed = Number(settings?.contentPadding);
+    const padding = Number.isFinite(parsed)
+      ? Math.min(64, Math.max(8, parsed))
+      : 24;
     return { paddingLeft: padding, paddingRight: padding };
   }, [settings]);
 
@@ -264,7 +265,7 @@ export function ReaderContent({
         <div
           ref={contentRef}
           className={cn(
-            "prose prose-slate dark:prose-invert max-w-none",
+            "prose prose-slate dark:prose-invert reader-prose max-w-none",
             fontFamilyClass
           )}
           style={fontSizeStyle}
