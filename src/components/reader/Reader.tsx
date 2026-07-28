@@ -97,14 +97,16 @@ export function Reader() {
       </div>
     );
   }
-  logger.warn(
-    "currentChapter",
-    currentChapter,
-    "currentBook",
-    currentBook.id,
-    "isLoadingChapter",
-    isLoadingChapter
-  );
+  logger.info("[reader] current chapter snapshot", {
+    currentBookId: currentBook.id,
+    currentChapterId: currentChapter.id,
+    currentChapterOrder: currentChapter.chapterOrder,
+    isLoadingChapter,
+    contentLength:
+      typeof currentChapter.contentHtml === "string"
+        ? currentChapter.contentHtml.length
+        : 0,
+  });
 
   return (
     <div className="flex h-full flex-col">

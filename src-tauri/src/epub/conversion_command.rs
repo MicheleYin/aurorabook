@@ -6,6 +6,8 @@
 use crate::book_service::database::get_db_connection;
 use crate::book_service::models::{Book, ConversionStatus};
 use crate::book_service::repositories::{BookRepository, EpubRepository};
+use crate::book_service::repositories::ConversionCheckpointRepository;
+use crate::book_service::audio_stream::get_live_stream_manager;
 use crate::epub::book_update::update_book_audio_tracks;
 use crate::epub::cancellation::{cleanup_cancellation_token, get_cancellation_token};
 use crate::epub::converter::{
@@ -15,6 +17,7 @@ use crate::tts::engine::TtsEnginePool;
 use crate::utils::constants::MAX_EPUB_SIZE;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::path_validation::validate_file_size;
+use crate::utils::text::count_words;
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -134,28 +137,11 @@ pub async fn convert_epub_to_audiobook_command(
         .await;
     }
 
-    // If resuming (has completed chapters), try to load the converted EPUB from database
-    // This ensures we have existing audio tracks in the OPF
-    let epub_data_for_conversion = if !book_data.completed_chapters_set.is_empty() {
-        log::info!("Resuming conversion - attempting to load converted EPUB from database");
-
-        if let Ok(Some(loaded_epub)) =
-            EpubRepository::find_by_source_path(db.as_ref(), &source_path).await
-        {
-            log::info!(
-                "Successfully loaded partial EPUB from database ({} bytes, {} chapters completed)",
-                loaded_epub.len(),
-                book_data.completed_chapters_set.len()
-            );
-            loaded_epub
-        } else {
-            log::warn!("No partial EPUB found in database, using original EPUB - existing audio tracks may be missing");
-            epub_data
-        }
-    } else {
-        log::info!("Starting new conversion - using original EPUB");
-        epub_data
-    };
+    log::info!(
+        "Starting conversion with chapter skip enabled: {} chapters remaining",
+        book_data.conversion_chapters.len()
+    );
+    let epub_data_for_conversion = epub_data;
 
     // Prepare conversion
     let conversion_prep = prepare_conversion(&app, &book_id, &book_data).await?;
@@ -280,6 +266,7 @@ async fn load_chapters_from_database(
             words_in_current_chapter: 0,
             current_step: "initializing".to_string(),
             message: "Loading chapters from database...".to_string(),
+            ..Default::default()
         },
     );
 
@@ -374,6 +361,7 @@ async fn load_chapters_from_database(
             id: chapter.id,
             title: chapter.title,
             href: chapter.href,
+            order: chapter.order,
             content_html,
             word_count,
         });
@@ -407,6 +395,7 @@ fn emit_initial_progress(app: &AppHandle) {
             words_in_current_chapter: 0,
             current_step: "initializing".to_string(),
             message: "Starting conversion...".to_string(),
+            ..Default::default()
         },
     );
 }
@@ -428,12 +417,16 @@ fn validate_and_cache_epub(
 
 /// Book data structure for conversion preparation
 struct BookData {
-    completed_chapters_set: std::collections::HashSet<String>,
     existing_book: Option<Book>,
     total_words_all_chapters: usize,
     words_processed_from_completed: usize,
+    words_processed_from_checkpoint: usize,
+    initial_words_processed: usize,
+    /// Cumulative wall time from previous conversion sessions (for ETA seeding).
+    prior_elapsed_ms: u64,
     conversion_chapters: Vec<ConversionChapter>,
-    total_chapters: usize,
+    total_chapters_with_text: usize,
+    completed_chapters_with_text: usize,
     voice_id: String,
     language: String,
 }
@@ -453,48 +446,91 @@ async fn load_and_prepare_book(
         .await
         .map_err(|e| AppError::Store(format!("Failed to load books: {}", e)))?;
 
-    let (completed_chapters_set, existing_book_clone) =
-        if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
-            // Mark conversion as started and store voice ID
-            book.conversion_status = ConversionStatus::Started;
-            book.voice_id = Some(voice_id.to_string());
-            let completed_set: std::collections::HashSet<String> =
-                book.completed_chapters.iter().cloned().collect();
-            let book_clone = book.clone();
-            (completed_set, Some(book_clone))
-        } else {
-            (std::collections::HashSet::new(), None)
-        };
+    let existing_book_clone = if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
+        book.conversion_status = ConversionStatus::Started;
+        book.voice_id = Some(voice_id.to_string());
+        Some(book.clone())
+    } else {
+        None
+    };
 
     // Calculate total words across ALL chapters
     let total_words_all_chapters: usize =
         all_conversion_chapters.iter().map(|c| c.word_count).sum();
 
-    // Filter out completed chapters and chapters without text content
-    // Chapters without text content (word_count == 0) are skipped during conversion
-    // so we exclude them from the conversion_chapters list
-    let conversion_chapters: Vec<_> = all_conversion_chapters
+    let completed_chapter_hrefs: std::collections::HashSet<String> = existing_book_clone
+        .as_ref()
+        .map(|book| book.completed_chapters.iter().cloned().collect())
+        .unwrap_or_default();
+
+    let total_chapters_with_text = all_conversion_chapters
+        .iter()
+        .filter(|chapter| chapter.word_count > 0)
+        .count();
+
+    let completed_chapters_with_text = all_conversion_chapters
         .iter()
         .filter(|chapter| {
-            // Only include chapters that haven't been completed AND have text content
-            !completed_chapters_set.contains(&chapter.href) && chapter.word_count > 0
+            chapter.word_count > 0 && completed_chapter_hrefs.contains(&chapter.href)
+        })
+        .count();
+
+    let words_processed_from_completed: usize = all_conversion_chapters
+        .iter()
+        .filter(|chapter| {
+            chapter.word_count > 0 && completed_chapter_hrefs.contains(&chapter.href)
+        })
+        .map(|chapter| chapter.word_count)
+        .sum();
+
+    // Skip chapters that are already completed to avoid recomputation.
+    let mut conversion_chapters: Vec<_> = all_conversion_chapters
+        .iter()
+        .filter(|chapter| {
+            chapter.word_count > 0 && !completed_chapter_hrefs.contains(&chapter.href)
         })
         .cloned()
         .collect();
 
-    // Calculate words processed from completed chapters
-    let words_processed_from_completed: usize = if let Some(ref existing_book) = existing_book_clone
-    {
-        existing_book.words_processed.unwrap_or_else(|| {
-            all_conversion_chapters
+    // Account for sentence-level checkpoints when resuming mid-chapter conversion.
+    // We count restored words up front so ETA does not spike from instant catch-up updates.
+    let mut words_processed_from_checkpoint = 0usize;
+    if let Some(book) = existing_book_clone.as_ref() {
+        for chapter in &mut conversion_chapters {
+            let saved_sentences = ConversionCheckpointRepository::load_chapter_sentences(
+                db.as_ref(),
+                &book.id,
+                chapter.order,
+            )
+            .await
+            .unwrap_or_default();
+
+            if saved_sentences.is_empty() {
+                continue;
+            }
+
+            let restored_words_for_chapter: usize = saved_sentences
                 .iter()
-                .filter(|c| completed_chapters_set.contains(&c.href))
-                .map(|c| c.word_count)
-                .sum()
-        })
-    } else {
-        0
-    };
+                .map(|saved| count_words(&saved.sentence_text))
+                .sum();
+
+            let restored_words_capped = restored_words_for_chapter.min(chapter.word_count);
+            words_processed_from_checkpoint += restored_words_capped;
+            chapter.word_count = chapter.word_count.saturating_sub(restored_words_capped);
+        }
+    }
+
+    // Remove chapters that have no remaining words after checkpoint restoration.
+    conversion_chapters.retain(|chapter| chapter.word_count > 0);
+
+    let initial_words_processed = words_processed_from_completed
+        .saturating_add(words_processed_from_checkpoint)
+        .min(total_words_all_chapters);
+
+    let prior_elapsed_ms = existing_book_clone
+        .as_ref()
+        .and_then(|book| book.conversion_elapsed_ms)
+        .unwrap_or(0);
 
     // Update book with total words if not already set, and save voice_id
     if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
@@ -512,15 +548,26 @@ async fn load_and_prepare_book(
             .map_err(|e| AppError::Store(format!("Failed to save book with voice_id: {}", e)))?;
     }
 
-    let total_chapters = completed_chapters_set.len() + conversion_chapters.len();
+    let total_chapters_remaining = conversion_chapters.len();
+
+    log::info!(
+        "Prepared conversion with resume: {} completed chapters with text, {} remaining (baseline {} words, prior elapsed {} ms)",
+        completed_chapters_with_text,
+        total_chapters_remaining,
+        initial_words_processed,
+        prior_elapsed_ms
+    );
 
     Ok(BookData {
-        completed_chapters_set,
         existing_book: existing_book_clone,
         total_words_all_chapters,
         words_processed_from_completed,
+        words_processed_from_checkpoint,
+        initial_words_processed,
+        prior_elapsed_ms,
         conversion_chapters,
-        total_chapters,
+        total_chapters_with_text,
+        completed_chapters_with_text,
         voice_id: voice_id.to_string(),
         language: language.to_string(),
     })
@@ -565,6 +612,9 @@ async fn handle_all_chapters_completed(
 
             book.total_words = Some(total_words_all_chapters);
             book.words_processed = Some(total_words_all_chapters);
+            book.conversion_session_baseline_words = None;
+            book.conversion_session_started_at = None;
+            book.conversion_elapsed_ms = None;
             BookRepository::save(db.as_ref(), &book)
                 .await
                 .map_err(|e| AppError::Store(format!("Failed to save books: {}", e)))?;
@@ -585,10 +635,10 @@ async fn prepare_conversion(
     book_data: &BookData,
 ) -> AppResult<ConversionPrep> {
     log::info!(
-        "Resuming conversion: {} chapters remaining out of {} total ({} already completed)",
-        book_data.conversion_chapters.len(),
-        book_data.total_chapters,
-        book_data.completed_chapters_set.len()
+        "Starting conversion: {} chapters with text total ({} completed, {} remaining)",
+        book_data.total_chapters_with_text,
+        book_data.completed_chapters_with_text,
+        book_data.conversion_chapters.len()
     );
 
     // Calculate total words for remaining chapters
@@ -598,17 +648,44 @@ async fn prepare_conversion(
         .map(|c| c.word_count)
         .sum();
 
-    // Emit progress with restored progress from completed chapters
     emit_progress(app, ConversionProgress {
-        current_chapter: book_data.completed_chapters_set.len(),
-        total_chapters: book_data.total_chapters,
-        words_processed: book_data.words_processed_from_completed,
+        current_chapter: book_data.completed_chapters_with_text,
+        total_chapters: book_data.total_chapters_with_text,
+        words_processed: book_data.initial_words_processed,
         total_words: book_data.total_words_all_chapters,
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
-        message: format!("Resuming: {} chapters remaining ({} words), {} words already processed out of {} total", 
-            book_data.conversion_chapters.len(), total_words_remaining, book_data.words_processed_from_completed, book_data.total_words_all_chapters),
+        message: format!(
+            "Converting {} remaining chapters ({} words left) after skipping {} completed chapters and restoring {} checkpoint words",
+            book_data.conversion_chapters.len(),
+            total_words_remaining,
+            book_data.completed_chapters_with_text,
+            book_data.words_processed_from_checkpoint
+        ),
+        session_baseline_words: book_data.initial_words_processed,
+        prior_elapsed_ms: book_data.prior_elapsed_ms,
     });
+
+    // Persist session baseline so resume ETA can account for already-done work.
+    if let Ok(db) = get_db_connection(app).await {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let started_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis().to_string())
+            .unwrap_or_else(|_| "0".to_string());
+        if let Err(e) = BookRepository::begin_conversion_session(
+            db.as_ref(),
+            book_id,
+            book_data.initial_words_processed,
+            book_data.initial_words_processed,
+            book_data.total_words_all_chapters,
+            &started_at,
+        )
+        .await
+        {
+            log::warn!("Failed to persist conversion session timing: {}", e);
+        }
+    }
 
     // Get cancellation token for this conversion
     let cancel_token = get_cancellation_token(app, book_id)?;
@@ -650,15 +727,18 @@ async fn perform_conversion(
         app.clone(),
         Some(source_path.to_string()),
         Some(Arc::clone(&cancel_token)),
-        Some(book_data.words_processed_from_completed),
+        Some(book_data.initial_words_processed),
         Some(book_data.total_words_all_chapters),
-        Some(book_data.completed_chapters_set.len()),
-        Some(book_data.total_chapters),
+        Some(book_data.completed_chapters_with_text),
+        Some(book_data.total_chapters_with_text),
+        Some(book_data.prior_elapsed_ms),
     )
     .await;
 
     // Clean up cancellation token
     cleanup_cancellation_token(app, book_id);
+    // Clear explicit in-memory chapter tracking once this conversion run exits.
+    get_live_stream_manager().clear_current_chapter(book_id);
 
     if let Err(e) = TtsEnginePool::clear_global() {
         log::warn!("Failed to clear global TTS engine pool after conversion: {}", e);
@@ -777,14 +857,26 @@ async fn save_converted_epub_and_update_book(
     }
 
     // Save final words_processed now that conversion is complete (reusing same connection)
-    if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await
+    if let Ok(Some(book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await
     {
         if book.total_words.is_none() {
-            book.total_words = Some(total_words_all_chapters);
+            if let Err(e) = sqlx::query("UPDATE books SET total_words = ? WHERE id = ?")
+                .bind(total_words_all_chapters as i64)
+                .bind(&book.id)
+                .execute(db.as_ref())
+                .await
+            {
+                log::warn!("Failed to save final total_words: {}", e);
+            }
         }
-        book.words_processed = Some(total_words_all_chapters);
-        if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
-            log::warn!("Failed to save final words_processed: {}", e);
+        if let Err(e) = BookRepository::clear_conversion_session_on_complete(
+            db.as_ref(),
+            &book.id,
+            total_words_all_chapters,
+        )
+        .await
+        {
+            log::warn!("Failed to clear conversion session on complete: {}", e);
         } else {
             log::debug!(
                 "Saved final words_processed: {} / {}",

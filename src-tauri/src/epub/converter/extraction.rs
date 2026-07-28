@@ -192,6 +192,7 @@ pub fn extract_chapters(epub_data: Vec<u8>) -> AppResult<(Vec<ConversionChapter>
             id: format!("{}-{}", Uuid::new_v4().to_string(), chapter_meta.id),
             title,
             href: validated_href,
+            order: _index,
             content_html: content,
             word_count,
         });

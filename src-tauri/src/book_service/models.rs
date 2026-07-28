@@ -143,6 +143,15 @@ pub struct Book {
     /// Number of words that have been converted so far
     #[serde(skip_serializing_if = "Option::is_none")]
     pub words_processed: Option<usize>,
+    /// Words already done when the current conversion session started (for resume ETA).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversion_session_baseline_words: Option<usize>,
+    /// When the current conversion session started (unix epoch millis as string).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversion_session_started_at: Option<String>,
+    /// Cumulative wall-clock ms spent converting across previous sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversion_elapsed_ms: Option<u64>,
     /// Timestamp when the book was last opened (RFC3339 format)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_opened_time: Option<String>,

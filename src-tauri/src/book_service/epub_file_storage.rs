@@ -30,6 +30,28 @@ pub fn library_book_dir(app: &AppHandle, book_id: &str) -> Result<PathBuf, Strin
     Ok(resolve_library_root(app)?.join(book_id))
 }
 
+/// Per-chapter temporary sentence audio directory under `Library/<book_id>/live-audio/`.
+pub fn live_audio_chapter_dir(
+    app: &AppHandle,
+    book_id: &str,
+    chapter_index: usize,
+) -> Result<PathBuf, String> {
+    Ok(library_book_dir(app, book_id)?
+        .join("live-audio")
+        .join(format!("chapter-{}", chapter_index)))
+}
+
+/// Raw f32 sentence audio file path under the live-audio chapter directory.
+pub fn live_audio_sentence_path(
+    app: &AppHandle,
+    book_id: &str,
+    chapter_index: usize,
+    sentence_index: usize,
+) -> Result<PathBuf, String> {
+    Ok(live_audio_chapter_dir(app, book_id, chapter_index)?
+        .join(format!("sentence-{}.bin", sentence_index)))
+}
+
 /// Deletes `Library/<book_id>/` and everything inside (canonical EPUB and any other per-book files).
 pub fn remove_book_library_dir(app: &AppHandle, book_id: &str) -> Result<(), String> {
     let dir = library_book_dir(app, book_id)?;

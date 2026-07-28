@@ -3,7 +3,9 @@ use crate::epub::converter::epub_builder::initialize_conversion_context;
 use crate::epub::converter::epub_builder::{
     build_final_epub, merge_chapter_result, rebuild_and_save_epub,
 };
-use crate::epub::converter::processing::{process_chapter, resolve_chapter_path};
+use crate::epub::converter::processing::{
+    generate_audio_path, process_chapter, resolve_chapter_path,
+};
 use crate::epub::converter::progress::ProgressCallback;
 use crate::epub::converter::types::{ConversionOptions, ConversionProgress};
 use crate::tts::engine::TtsEnginePool;
@@ -24,22 +26,49 @@ async fn save_progress_on_cancellation(
 ) {
     use crate::book_service::database::get_db_connection;
     use crate::book_service::repositories::BookRepository;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     if let Ok(db) = get_db_connection(app).await {
-        if let Ok(Some(mut book)) =
+        if let Ok(Some(book)) =
             BookRepository::find_by_source_path(db.as_ref(), source_path).await
         {
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let additional_elapsed_ms = book
+                .conversion_session_started_at
+                .as_ref()
+                .and_then(|started| started.parse::<u64>().ok())
+                .map(|started| now_ms.saturating_sub(started))
+                .unwrap_or(0);
+
             if book.total_words.is_none() {
-                book.total_words = Some(total_words);
+                if let Err(e) = sqlx::query("UPDATE books SET total_words = ? WHERE id = ?")
+                    .bind(total_words as i64)
+                    .bind(&book.id)
+                    .execute(db.as_ref())
+                    .await
+                {
+                    log::warn!("Failed to save total_words on cancellation: {}", e);
+                }
             }
-            book.words_processed = Some(words_processed);
-            if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
-                log::warn!("Failed to save words_processed on cancellation: {}", e);
+
+            if let Err(e) = BookRepository::end_conversion_session_on_cancel(
+                db.as_ref(),
+                &book.id,
+                words_processed,
+                additional_elapsed_ms,
+            )
+            .await
+            {
+                log::warn!("Failed to save conversion timing on cancellation: {}", e);
             } else {
                 log::debug!(
-                    "Saved words_processed on cancellation: {} / {}",
+                    "Saved words_processed on cancellation: {} / {} (+{} ms elapsed)",
                     words_processed,
-                    total_words
+                    total_words,
+                    additional_elapsed_ms
                 );
             }
         }
@@ -82,6 +111,7 @@ pub(crate) async fn convert_epub_core_with_durations(
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
         message: "Initializing EPUB conversion with single TTS engine...".to_string(),
+        ..Default::default()
     });
 
     validate_chapter_count(options.chapters.len(), MAX_CHAPTERS)?;
@@ -92,6 +122,54 @@ pub(crate) async fn convert_epub_core_with_durations(
     let (mut context, original_opf_content) = initialize_conversion_context(&epub_data, None)?;
     let base_path = context.base_path.clone();
     let chapter_hrefs: Vec<String> = options.chapters.iter().map(|c| c.href.clone()).collect();
+
+    // Rehydrate previously generated chapter outputs from partial EPUB contents.
+    // This is critical when resuming conversion: rebuilds must preserve audio/SMIL
+    // entries generated in prior runs, not just chapters processed in this run.
+    for (chapter_index, chapter_href) in chapter_hrefs.iter().enumerate() {
+        if let Ok((audio_href_zip, audio_href_manifest)) =
+            generate_audio_path(chapter_href, chapter_index, &base_path)
+        {
+            if context.original_files.contains_key(&audio_href_zip)
+                && !context
+                    .audio_files
+                    .iter()
+                    .any(|(idx, href)| *idx == chapter_index && *href == audio_href_manifest)
+            {
+                context.audio_files.push((chapter_index, audio_href_manifest));
+            }
+        }
+
+        let chapter_zip_path = resolve_chapter_path(chapter_href, &base_path);
+        let smil_zip_path = chapter_zip_path
+            .replace(".xhtml", ".smil")
+            .replace(".html", ".smil");
+
+        if context.original_files.contains_key(&smil_zip_path) {
+            let chapter_href_for_smil = if !base_path.is_empty() && chapter_href.starts_with(&base_path) {
+                chapter_href[base_path.len()..].to_string()
+            } else if chapter_href.starts_with('/') {
+                chapter_href[1..].to_string()
+            } else {
+                chapter_href.clone()
+            };
+
+            let smil_href_manifest = chapter_href_for_smil
+                .replace(".xhtml", ".smil")
+                .replace(".html", ".smil");
+
+            if !context
+                .smil_files
+                .iter()
+                .any(|(idx, href)| *idx == chapter_index && *href == smil_href_manifest)
+            {
+                context.smil_files.push((chapter_index, smil_href_manifest));
+            }
+        }
+    }
+
+    context.audio_files.sort_by_key(|(idx, _)| *idx);
+    context.smil_files.sort_by_key(|(idx, _)| *idx);
 
     // Update chapter HTML files in context with the HTML from database (which may have been updated)
     // This ensures we use the latest HTML from the database instead of old HTML from the EPUB
@@ -108,8 +186,25 @@ pub(crate) async fn convert_epub_core_with_durations(
         );
     }
 
+    // Get DB pool and book_id for sentence-level persistence
+    let (db_pool, resolved_book_id) = if let (Some(app_ref), Some(sp)) = (app.as_ref(), source_path.as_ref()) {
+        use crate::book_service::database::get_db_connection;
+        use crate::book_service::repositories::BookRepository;
+        if let Ok(pool) = get_db_connection(app_ref).await {
+            let bid = BookRepository::find_by_source_path(pool.as_ref(), sp).await
+                .ok().flatten().map(|b| b.id);
+            (Some(pool), bid)
+        } else {
+            (None, None)
+        }
+    } else {
+        (None, None)
+    };
+
     // Process chapters sequentially (not in parallel)
     for (chapter_index, chapter) in options.chapters.iter().enumerate() {
+        let chapter_storage_index = chapter.order;
+
         // Check for cancellation before processing each chapter
         if let Some(ref token) = cancel_token {
             if token.load(Ordering::Relaxed) {
@@ -159,7 +254,53 @@ pub(crate) async fn convert_epub_core_with_durations(
                     initial_chapter_index + chapter_index + 1,
                     chapter.title
                 ),
+                ..Default::default()
             });
+
+            // Mark chapter as completed even though we're skipping it
+            // This ensures the completion check will pass when all chapters are processed
+            if let (Some(app_ref), Some(source_path_ref)) = (app.as_ref(), source_path.as_ref()) {
+                use crate::book_service::database::get_db_connection;
+                use crate::book_service::models::ConversionStatus;
+                use crate::book_service::repositories::BookRepository;
+                
+                if let Ok(db) = get_db_connection(app_ref).await {
+                    if let Ok(Some(mut book)) =
+                        BookRepository::find_by_source_path(db.as_ref(), source_path_ref).await
+                    {
+                        // Get the chapter href for this chapter
+                        if chapter_index < chapter_hrefs.len() {
+                            let chapter_href = &chapter_hrefs[chapter_index];
+                            if !book.completed_chapters.contains(chapter_href) {
+                                book.completed_chapters.push(chapter_href.clone());
+                                log::debug!("Marked skipped chapter {} as completed", chapter_href);
+
+                                // Check if all chapters with text content are completed
+                                // Only count chapters that have text content (word_count > 0)
+                                let chapters_with_text: usize = book
+                                    .chapters
+                                    .iter()
+                                    .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
+                                    .count();
+
+                                // Only set status to Done if we've completed ALL chapters with text
+                                if book.completed_chapters.len() == chapters_with_text
+                                    && chapters_with_text > 0
+                                {
+                                    book.conversion_status = ConversionStatus::Done;
+                                    log::info!("All chapters with text content completed ({} of {} total chapters), marking conversion as done", 
+                                        book.completed_chapters.len(), book.chapters.len());
+                                }
+
+                                // Save the updated book
+                                if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
+                                    log::warn!("Failed to save skipped chapter: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             continue;
         }
@@ -190,6 +331,7 @@ pub(crate) async fn convert_epub_core_with_durations(
                 chapter.title,
                 chapter.word_count
             ),
+            ..Default::default()
         });
 
         // Get the ONNX engine from the pool
@@ -202,6 +344,7 @@ pub(crate) async fn convert_epub_core_with_durations(
         let result = process_chapter(
             chapter,
             chapter_index,
+            chapter_storage_index,
             &base_path,
             engine,
             worker_id,
@@ -215,6 +358,8 @@ pub(crate) async fn convert_epub_core_with_durations(
             cancel_token.as_ref().map(Arc::clone),
             app.as_ref(),
             source_path.as_deref(),
+            db_pool.clone(),
+            resolved_book_id.as_deref(),
         )
         .await?;
 
@@ -242,6 +387,7 @@ pub(crate) async fn convert_epub_core_with_durations(
                 chapter_words_processed,
                 updated_total
             ),
+            ..Default::default()
         });
 
         // Merge chapter result into context
@@ -315,8 +461,31 @@ pub(crate) async fn convert_epub_core_with_durations(
             }
         }
 
-        // Note: We don't save words_processed to DB after each chapter anymore
-        // It's tracked in atomics and will be saved only on cancellation or completion
+        // Persist words_processed after each chapter so resume state stays accurate.
+        if let (Some(app_ref), Some(source_path_ref)) = (app.as_ref(), source_path.as_ref()) {
+            use crate::book_service::database::get_db_connection;
+            use crate::book_service::repositories::BookRepository;
+            let words_processed = words_processed_atomic.load(Ordering::Relaxed);
+            if let Ok(db) = get_db_connection(app_ref).await {
+                if let Ok(Some(book)) =
+                    BookRepository::find_by_source_path(db.as_ref(), source_path_ref).await
+                {
+                    if let Err(e) = BookRepository::update_words_processed(
+                        db.as_ref(),
+                        &book.id,
+                        words_processed,
+                    )
+                    .await
+                    {
+                        log::warn!(
+                            "Failed to persist words_processed after chapter {}: {}",
+                            chapter_index + 1,
+                            e
+                        );
+                    }
+                }
+            }
+        }
     }
 
     log::debug!(
@@ -339,6 +508,7 @@ pub(crate) async fn convert_epub_core_with_durations(
         words_in_current_chapter: 0,
         current_step: "complete".to_string(),
         message: "Completing conversion...".to_string(),
+        ..Default::default()
     });
 
     Ok(output)

@@ -44,6 +44,9 @@ async fn test_add_book() {
         voice_id: None,
         total_words: None,
         words_processed: None,
+        conversion_session_baseline_words: None,
+        conversion_session_started_at: None,
+        conversion_elapsed_ms: None,
         last_opened_time: None,
     };
     
@@ -131,6 +134,9 @@ async fn test_book_serialization() {
         voice_id: None,
         total_words: None,
         words_processed: None,
+        conversion_session_baseline_words: None,
+        conversion_session_started_at: None,
+        conversion_elapsed_ms: None,
         last_opened_time: None,
     };
     

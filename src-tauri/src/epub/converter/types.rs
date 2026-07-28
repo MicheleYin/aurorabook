@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 /// * `words_in_current_chapter` - Number of words in the current chapter
 /// * `current_step` - Current processing step (e.g., "generating-audio", "merging-audio")
 /// * `message` - Human-readable progress message
+/// * `session_baseline_words` - Words already done before this conversion session
+///   (completed chapters + checkpoint). ETA should use session-relative progress.
+/// * `prior_elapsed_ms` - Wall time spent converting in previous sessions (for ETA seeding)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversionProgress {
@@ -23,6 +26,28 @@ pub struct ConversionProgress {
     pub words_in_current_chapter: usize,
     pub current_step: String,
     pub message: String,
+    /// Words already completed before this run started (resume baseline for ETA).
+    #[serde(default)]
+    pub session_baseline_words: usize,
+    /// Cumulative conversion wall time from prior sessions (ms).
+    #[serde(default)]
+    pub prior_elapsed_ms: u64,
+}
+
+impl Default for ConversionProgress {
+    fn default() -> Self {
+        Self {
+            current_chapter: 0,
+            total_chapters: 0,
+            words_processed: 0,
+            total_words: 0,
+            words_in_current_chapter: 0,
+            current_step: String::new(),
+            message: String::new(),
+            session_baseline_words: 0,
+            prior_elapsed_ms: 0,
+        }
+    }
 }
 
 /// Chapter data for EPUB to audiobook conversion.
@@ -40,6 +65,7 @@ pub struct ConversionChapter {
     pub id: String,
     pub title: String,
     pub href: String,
+    pub order: usize,
     pub content_html: String,
     pub word_count: usize,
 }

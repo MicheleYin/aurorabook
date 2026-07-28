@@ -45,6 +45,7 @@ fn test_progress_callback_type() {
         words_in_current_chapter: 50,
         current_step: "testing".to_string(),
         message: "Test progress".to_string(),
+        ..Default::default()
     };
     
     callback(progress);
@@ -70,6 +71,7 @@ fn test_progress_callback_multiple_calls() {
             words_in_current_chapter: 100,
             current_step: format!("step_{}", i),
             message: format!("Message {}", i),
+            ..Default::default()
         };
         callback(progress);
     }
@@ -91,6 +93,7 @@ fn test_conversion_progress_serialization() {
         words_in_current_chapter: 250,
         current_step: "generating-audio".to_string(),
         message: "Processing chapter 5".to_string(),
+        ..Default::default()
     };
     
     // Test JSON serialization (used for Tauri events)
@@ -107,6 +110,9 @@ fn test_conversion_progress_serialization() {
     assert!(json_str.contains("currentStep"));
     assert!(json_str.contains("message"));
     
+    assert!(json_str.contains("sessionBaselineWords"));
+    assert!(json_str.contains("priorElapsedMs"));
+    
     // Test deserialization
     let deserialized: Result<ConversionProgress, _> = serde_json::from_str(&json_str);
     assert!(deserialized.is_ok());
@@ -114,5 +120,45 @@ fn test_conversion_progress_serialization() {
     assert_eq!(deserialized.current_chapter, 5);
     assert_eq!(deserialized.total_chapters, 20);
     assert_eq!(deserialized.words_processed, 5000);
+    assert_eq!(deserialized.session_baseline_words, 0);
+    assert_eq!(deserialized.prior_elapsed_ms, 0);
+}
+
+#[test]
+fn test_conversion_progress_resume_baseline_serialization() {
+    let progress = ConversionProgress {
+        current_chapter: 8,
+        total_chapters: 10,
+        words_processed: 8000,
+        total_words: 10000,
+        words_in_current_chapter: 50,
+        current_step: "generating-audio".to_string(),
+        message: "Resuming".to_string(),
+        session_baseline_words: 7500,
+        prior_elapsed_ms: 120_000,
+    };
+
+    let json_str = serde_json::to_string(&progress).expect("serialize");
+    assert!(json_str.contains("\"sessionBaselineWords\":7500"));
+    assert!(json_str.contains("\"priorElapsedMs\":120000"));
+
+    let deserialized: ConversionProgress =
+        serde_json::from_str(&json_str).expect("deserialize");
+    assert_eq!(deserialized.session_baseline_words, 7500);
+    assert_eq!(deserialized.prior_elapsed_ms, 120_000);
+
+    // Older clients omit the new fields — default to zero.
+    let legacy = r#"{
+        "currentChapter":1,
+        "totalChapters":2,
+        "wordsProcessed":10,
+        "totalWords":20,
+        "wordsInCurrentChapter":10,
+        "currentStep":"tts",
+        "message":"ok"
+    }"#;
+    let from_legacy: ConversionProgress = serde_json::from_str(legacy).expect("legacy");
+    assert_eq!(from_legacy.session_baseline_words, 0);
+    assert_eq!(from_legacy.prior_elapsed_ms, 0);
 }
 

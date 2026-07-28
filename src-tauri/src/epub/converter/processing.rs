@@ -8,6 +8,8 @@ use crate::utils::errors::{AppError, AppResult};
 use crate::utils::path_validation::{validate_epub_path, validate_file_size};
 use crate::utils::text::count_words;
 use anyhow::Result as AnyhowResult;
+use tauri::Manager;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::task::JoinSet;
@@ -550,6 +552,7 @@ async fn process_single_chunk(
 pub(crate) async fn process_chapter(
     chapter: &ConversionChapter,
     chapter_index: usize,
+    chapter_storage_index: usize,
     base_path: &str,
     engine: &Arc<kokoros::tts::koko::TTSKokoParallel>,
     _worker_id: usize, // Not used directly - each sentence gets its own worker_id via round-robin
@@ -563,6 +566,8 @@ pub(crate) async fn process_chapter(
     cancel_token: Option<Arc<AtomicBool>>,
     app: Option<&tauri::AppHandle>,
     source_path: Option<&str>,
+    db_pool: Option<Arc<sqlx::SqlitePool>>,
+    book_id: Option<&str>,
 ) -> AnyhowResult<ChapterProcessResult> {
     use crate::epub::converter::types::ConversionProgress;
 
@@ -602,6 +607,7 @@ pub(crate) async fn process_chapter(
             "Generating audio for chapter {} ({} words)",
             chapter.title, chapter.word_count
         ),
+        ..Default::default()
     });
 
     validate_file_size(chapter.content_html.len(), MAX_CHAPTER_SIZE, "Chapter HTML")?;
@@ -615,6 +621,10 @@ pub(crate) async fn process_chapter(
     let sentences: Vec<String> = sentences_with_spans
         .iter()
         .map(|s| s.text.clone())
+        .collect();
+    let sentence_word_counts: Vec<usize> = sentences
+        .iter()
+        .map(|s| count_words(s))
         .collect();
 
     let mut files = std::collections::HashMap::new();
@@ -650,10 +660,132 @@ pub(crate) async fn process_chapter(
     let sentences_processed = Arc::new(AtomicUsize::new(0));
     let total_sentences = sentences.len();
 
+    // If a checkpoint exists for this live chapter, restore sentence audio/alignments and
+    // skip regenerating those sentences when conversion resumes.
+    let mut restored_sentence_indices: HashSet<usize> = HashSet::new();
+    let mut restored_words_in_chapter = 0usize;
+    let mut restored_sentence_meta: Vec<(
+        usize,
+        f32,
+        Vec<kokoros::tts::koko::WordAlignment>,
+        String,
+    )> = Vec::new();
+    let mut sentence_mp3_chunks: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
+
+    if let Some(bid) = book_id {
+        let manager = crate::book_service::audio_stream::get_live_stream_manager();
+        manager.start_stream(
+            bid,
+            chapter_storage_index,
+            Some(chapter.id.clone()),
+            Some(chapter.href.clone()),
+        );
+
+        if let (Some(db_ref), Some(app_ref)) = (db_pool.as_ref(), app) {
+            use crate::book_service::repositories::ConversionCheckpointRepository;
+
+            match ConversionCheckpointRepository::load_chapter_sentences(
+                db_ref.as_ref(),
+                bid,
+                chapter_storage_index,
+            )
+            .await
+            {
+                Ok(saved_sentences) if !saved_sentences.is_empty() => {
+                    let mut saved_sentences = saved_sentences;
+                    saved_sentences.sort_by_key(|saved| saved.sentence_index);
+
+                    for saved in saved_sentences {
+                        let audio_bytes = match std::fs::read(&saved.audio_file_path) {
+                            Ok(bytes) => bytes,
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to read checkpoint audio file '{}' for sentence {}: {}",
+                                    saved.audio_file_path,
+                                    saved.sentence_index,
+                                    e
+                                );
+                                continue;
+                            }
+                        };
+
+                        // Restore sentence chunk to live stream playback buffer.
+                        manager.push_sentence(
+                            bid,
+                            chapter_storage_index,
+                            saved.sentence_index,
+                            audio_bytes.clone(),
+                            saved.duration_seconds,
+                            saved.sentence_text.clone(),
+                            saved.word_alignments.clone(),
+                        );
+
+                        // Restore for final chapter merge without re-running TTS or re-encoding.
+                        sentence_mp3_chunks.insert(saved.sentence_index, audio_bytes);
+                        if restored_sentence_indices.insert(saved.sentence_index) {
+                            let restored_sentence_words = sentence_word_counts
+                                .get(saved.sentence_index)
+                                .copied()
+                                .unwrap_or_else(|| count_words(&saved.sentence_text));
+                            restored_words_in_chapter = restored_words_in_chapter
+                                .saturating_add(restored_sentence_words);
+                        }
+                        restored_sentence_meta.push((
+                            saved.sentence_index,
+                            saved.duration_seconds as f32,
+                            saved.word_alignments,
+                            saved.sentence_text,
+                        ));
+                    }
+
+                    let restored_count = restored_sentence_indices.len();
+                    if restored_count > 0 {
+                        sentences_processed.store(0, Ordering::Relaxed);
+                        log::info!(
+                            "Resuming chapter {} with {} restored sentences and {} restored words ({} remaining sentences)",
+                            chapter_index + 1,
+                            restored_count,
+                            restored_words_in_chapter,
+                            total_sentences.saturating_sub(restored_count)
+                        );
+
+                        progress_callback(ConversionProgress {
+                            current_chapter: chapter_index + 1,
+                            total_chapters,
+                            words_processed: current_words_processed,
+                            total_words,
+                            words_in_current_chapter: chapter.word_count,
+                            current_step: "generating-audio".to_string(),
+                            message: format!(
+                                "Resumed chapter {}: restored {} sentences ({} words)",
+                                chapter.title,
+                                restored_count,
+                                restored_words_in_chapter
+                            ),
+                            ..Default::default()
+                        });
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    log::warn!(
+                        "Failed to load checkpoint sentences for chapter {}: {}",
+                        chapter_index + 1,
+                        e
+                    );
+                }
+            }
+        }
+    }
+
     // Process all sentences in parallel with round-robin distribution.
     // JoinSet lets us observe completions as they happen instead of waiting in spawn order.
     let mut handles = JoinSet::new();
     for (idx, sentence) in sentences.iter().enumerate() {
+        if restored_sentence_indices.contains(&idx) {
+            continue;
+        }
+
         // Check for cancellation before spawning each sentence task
         check_cancellation!(cancel_token);
 
@@ -689,7 +821,12 @@ pub(crate) async fn process_chapter(
             )
             .await
             .map_err(|e| {
-                log::error!("Error processing sentence {}: {}", idx, e);
+                let err_msg = e.to_string();
+                if err_msg.contains("Conversion cancelled by user") {
+                    log::info!("Sentence {} cancelled", idx);
+                } else {
+                    log::error!("Error processing sentence {}: {}", idx, err_msg);
+                }
                 e
             })?;
 
@@ -713,6 +850,10 @@ pub(crate) async fn process_chapter(
         Vec<kokoros::tts::koko::WordAlignment>,
         String,
     )> = Vec::new();
+    let mut sentence_meta: Vec<(usize, f32, Vec<kokoros::tts::koko::WordAlignment>, String)> =
+        restored_sentence_meta;
+    let total_sentences_to_process = total_sentences.saturating_sub(restored_sentence_indices.len());
+    let mut newly_processed_words_in_chapter = 0usize;
 
     // Process sentence results in completion order so pooled workers emit progress promptly.
     while !handles.is_empty() {
@@ -738,6 +879,40 @@ pub(crate) async fn process_chapter(
                     }
                 } => {
                     log::info!("Conversion cancelled while waiting for sentence result in chapter {}", chapter_index + 1);
+
+                    // Best-effort checkpoint flush so resume can continue from partial progress.
+                    if let (Some(bid), Some(db_ref), Some(app_ref)) = (book_id, db_pool.as_ref(), app) {
+                        match app_ref.path().app_data_dir() {
+                            Ok(app_data_dir) => {
+                                let manager = crate::book_service::audio_stream::get_live_stream_manager();
+                                if let Err(e) = manager
+                                    .save_checkpoint(
+                                        db_ref.as_ref(),
+                                        &app_data_dir,
+                                        bid,
+                                        chapter_storage_index,
+                                        Some(chapter.id.clone()),
+                                        Some(chapter.href.clone()),
+                                        total_sentences,
+                                    )
+                                    .await
+                                {
+                                    log::warn!(
+                                        "Failed to save cancellation checkpoint for chapter {}: {}",
+                                        chapter_index + 1,
+                                        e
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to resolve app data directory while saving cancellation checkpoint: {}",
+                                    e
+                                );
+                            }
+                        }
+                    }
+
                     return Err(anyhow::anyhow!("Conversion cancelled by user"));
                 }
             }
@@ -776,13 +951,24 @@ pub(crate) async fn process_chapter(
         // Increment sentences processed counter
         let sentences_done = sentences_processed.fetch_add(1, Ordering::Relaxed) + 1;
 
-        // Calculate progress proportionally based on sentences processed
-        let chapter_words_progress = if total_sentences > 0 {
-            ((chapter.word_count as f64 * sentences_done as f64) / total_sentences as f64).round()
-                as usize
+        // Calculate progress based on newly processed words only.
+        let sentence_words = sentence_word_counts
+            .get(idx)
+            .copied()
+            .unwrap_or_else(|| count_words(&text));
+        newly_processed_words_in_chapter = newly_processed_words_in_chapter
+            .saturating_add(sentence_words)
+            .min(chapter.word_count);
+
+        let chapter_words_progress = if total_sentences_to_process > 0 {
+            ((chapter.word_count as f64 * sentences_done as f64)
+                / total_sentences_to_process as f64)
+                .round() as usize
         } else {
             chapter.word_count
-        };
+        }
+        .max(newly_processed_words_in_chapter)
+        .min(chapter.word_count);
 
         // Get current total words processed from previous chapters
         let current_total = words_processed_atomic
@@ -803,28 +989,129 @@ pub(crate) async fn process_chapter(
                 chapter_index + 1,
                 chapter.title,
                 sentences_done,
-                total_sentences
+                total_sentences_to_process.max(1)
             ),
+            ..Default::default()
         });
 
+        // Push completed sentence to the in-memory live stream manager.
+        if !audio.is_empty() {
+            if let Some(bid) = book_id {
+                if let Ok(mp3_chunk) = convert_audio_to_mp3(&audio) {
+                    let manager = crate::book_service::audio_stream::get_live_stream_manager();
+                    sentence_mp3_chunks.insert(idx, mp3_chunk.clone());
+                    manager.push_sentence(
+                        bid,
+                        chapter_storage_index,
+                        idx,
+                        mp3_chunk,
+                        audio.len() as f64 / SAMPLE_RATE as f64,
+                        text.clone(),
+                        alignments.clone(),
+                    );
+                }
+            }
+        }
+
+        sentence_meta.push((
+            idx,
+            audio.len() as f32 / SAMPLE_RATE as f32,
+            alignments.clone(),
+            text.clone(),
+        ));
+
         sentence_results.push((idx, audio, alignments, text));
+
+        // Persist periodic snapshots so sentence-level resume works after mid-chapter cancel.
+        if sentences_done % 5 == 0 {
+            if let (Some(bid), Some(db_ref), Some(app_ref)) = (book_id, db_pool.as_ref(), app) {
+                match app_ref.path().app_data_dir() {
+                    Ok(app_data_dir) => {
+                        let manager = crate::book_service::audio_stream::get_live_stream_manager();
+                        if let Err(e) = manager
+                            .save_checkpoint(
+                                db_ref.as_ref(),
+                                &app_data_dir,
+                                bid,
+                                chapter_storage_index,
+                                Some(chapter.id.clone()),
+                                Some(chapter.href.clone()),
+                                total_sentences,
+                            )
+                            .await
+                        {
+                            log::warn!(
+                                "Failed to save periodic checkpoint for chapter {}: {}",
+                                chapter_index + 1,
+                                e
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to resolve app data directory while saving periodic checkpoint: {}",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Save checkpoint periodically during live conversion for recovery if process is cancelled
+    if let Some(bid) = book_id {
+        if let Some(db_ref) = db_pool.as_ref() {
+            if let Some(app_ref) = app {
+                let app_data_dir = match app_ref.path().app_data_dir() {
+                    Ok(dir) => dir,
+                    Err(e) => {
+                        log::warn!("Failed to get app data directory for checkpoint: {}", e);
+                        std::path::PathBuf::new()
+                    }
+                };
+
+                let manager = crate::book_service::audio_stream::get_live_stream_manager();
+                if let Err(e) = manager.save_checkpoint(
+                    db_ref.as_ref(),
+                    &app_data_dir,
+                    bid,
+                    chapter_storage_index,
+                    Some(chapter.id.clone()),
+                    Some(chapter.href.clone()),
+                    sentences.len(),
+                ).await {
+                    log::warn!("Failed to save conversion checkpoint for chapter {}: {}", chapter_index + 1, e);
+                } else {
+                    log::debug!("Saved conversion checkpoint for chapter {}: {} sentences processed", 
+                        chapter_index + 1, sentence_results.len());
+                }
+            } else {
+                log::debug!("No app handle available, skipping checkpoint save");
+            }
+        }
+    }
+
+    // End the live stream for this chapter now that all sentences are done
+    if let Some(bid) = book_id {
+        let manager = crate::book_service::audio_stream::get_live_stream_manager();
+        manager.end_stream(bid, chapter_storage_index);
     }
 
     // Check for cancellation before merging audio segments
     check_cancellation!(cancel_token);
 
     // Sort by sentence index to maintain document order
-    sentence_results.sort_by_key(|(idx, _, _, _)| *idx);
+    sentence_meta.sort_by_key(|(idx, _, _, _)| *idx);
 
-    // Merge audio segments in order and build word alignments
-    let mut merged_audio: Vec<f32> = Vec::new();
+    // Merge alignment segments in order
+    let merged_audio: Vec<f32> = Vec::new();
     let mut all_word_alignments: Vec<kokoros::tts::koko::WordAlignment> = Vec::new();
 
     // Track cumulative audio duration for alignment offset
     let mut cumulative_duration = 0.0;
 
-    for (_sentence_idx, audio_samples, word_alignments, _text) in sentence_results {
-        if audio_samples.is_empty() {
+    for (_sentence_idx, sentence_duration_sec, word_alignments, _text) in sentence_meta {
+        if sentence_duration_sec <= 0.0 && word_alignments.is_empty() {
             continue;
         }
 
@@ -840,16 +1127,11 @@ pub(crate) async fn process_chapter(
 
         all_word_alignments.append(&mut offset_alignments);
 
-        // Merge audio samples
-        merged_audio.extend_from_slice(&audio_samples);
-
         // Update cumulative duration for next sentence
         cumulative_duration = word_alignments
             .last()
             .map(|wa| wa.end_sec + cumulative_duration)
-            .unwrap_or_else(|| {
-                cumulative_duration + (audio_samples.len() as f32 / SAMPLE_RATE as f32)
-            });
+            .unwrap_or_else(|| cumulative_duration + sentence_duration_sec);
 
         // Check for cancellation after merging each sentence's audio
         check_cancellation!(cancel_token);
@@ -994,10 +1276,12 @@ pub(crate) async fn process_chapter(
             "Converting audio to MP3 for chapter {}...",
             chapter_index + 1
         ),
+        ..Default::default()
     });
 
-    // Handle empty audio gracefully - skip MP3 conversion if no audio was generated
-    let mp3_bytes = if merged_audio.is_empty() {
+    // Build chapter MP3 from per-sentence MP3 chunks (restored + newly generated)
+    // to avoid expensive re-encoding and to support resume without recomputing sentences.
+    let mp3_bytes = if sentence_mp3_chunks.is_empty() {
         log::warn!(
             "No audio generated for chapter {} '{}' - creating empty MP3 file",
             chapter_index + 1,
@@ -1005,14 +1289,11 @@ pub(crate) async fn process_chapter(
         );
         Vec::new() // Return empty MP3 bytes
     } else {
-        convert_audio_to_mp3(&merged_audio).map_err(|e| {
-            log::error!(
-                "MP3 conversion failed for chapter {}: {}",
-                chapter_index + 1,
-                e
-            );
-            e
-        })?
+        let mut concatenated = Vec::new();
+        for chunk in sentence_mp3_chunks.values() {
+            concatenated.extend_from_slice(chunk);
+        }
+        concatenated
     };
 
     // Generate audio file paths
@@ -1041,6 +1322,7 @@ pub(crate) async fn process_chapter(
         words_in_current_chapter: chapter_words,
         current_step: "creating-smil".to_string(),
         message: format!("Creating SMIL file for chapter {}...", chapter_index + 1),
+        ..Default::default()
     });
 
     // Generate SMIL file
@@ -1119,6 +1401,33 @@ pub(crate) async fn process_chapter(
     // Use chapter.word_count from ingestion to avoid double-counting nested elements
     // This matches the word count calculated during ingestion
     let actual_words_processed = chapter.word_count;
+
+    // Clean up conversion checkpoint after successful completion
+    if let Some(bid) = book_id {
+        if let Some(db_ref) = db_pool.as_ref() {
+            use crate::book_service::repositories::ConversionCheckpointRepository;
+            
+            // Delete checkpoint now that chapter is successfully converted
+            if let Err(e) = ConversionCheckpointRepository::delete_checkpoint(
+                db_ref.as_ref(),
+                bid,
+                chapter_index,
+            ).await {
+                log::warn!("Failed to clean up conversion checkpoint for chapter {}: {}", chapter_index + 1, e);
+            } else {
+                log::debug!("Cleaned up conversion checkpoint for chapter {}", chapter_index + 1);
+            }
+            
+            // Also delete stored sentence alignments to free database space
+            if let Err(e) = ConversionCheckpointRepository::delete_chapter_sentences(
+                db_ref.as_ref(),
+                bid,
+                chapter_index,
+            ).await {
+                log::warn!("Failed to delete sentence alignments for chapter {}: {}", chapter_index + 1, e);
+            }
+        }
+    }
 
     Ok(ChapterProcessResult {
         chapter_index,

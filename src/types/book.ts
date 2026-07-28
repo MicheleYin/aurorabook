@@ -77,6 +77,12 @@ export interface Book {
   voiceId?: string;
   totalWords?: number;
   wordsProcessed?: number;
+  /** Words already done when the current conversion session started. */
+  conversionSessionBaselineWords?: number;
+  /** Unix epoch millis (string) when the current conversion session started. */
+  conversionSessionStartedAt?: string;
+  /** Cumulative wall-clock ms spent converting across previous sessions. */
+  conversionElapsedMs?: number;
   lastOpenedTime?: string;
 }
 
@@ -87,4 +93,6 @@ export interface ChapterWithContent extends Chapter {
 export interface AudioTrackWithData extends AudioTrack {
   data?: number[]; // Optional - not needed when using streaming
   mimeType: string;
+  isLiveStream?: boolean;
+  liveChapterIndex?: number;
 }

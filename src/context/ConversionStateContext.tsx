@@ -39,6 +39,10 @@ export interface ConversionProgress {
   wordsInCurrentChapter: number;
   currentStep: string;
   message: string;
+  /** Words already done before this session (completed chapters + checkpoint). */
+  sessionBaselineWords?: number;
+  /** Cumulative conversion wall time from prior sessions (ms). */
+  priorElapsedMs?: number;
 }
 
 interface ContinuedConversionStart {
@@ -88,6 +92,9 @@ interface ConversionStateContextValue {
   isConverting: boolean;
   convertingBookId: string | null;
   conversionProgress: ConversionProgress | null;
+  currentConvertingChapterByBook: Record<string, number | null>;
+  getCurrentConvertingChapter: (bookId: string) => number | null;
+  refreshCurrentConvertingChapter: (bookId: string) => Promise<number | null>;
   eta: string | null; // Estimated time remaining (e.g., "5m 30s")
   convertBook: (bookId: string, language?: string, voiceId?: string) => Promise<void>;
   cancelConversion: (bookId: string | null) => Promise<void>;
@@ -110,6 +117,8 @@ export function ConversionStateProvider({
   const [progressToastId, setProgressToastId] = useState<string | null>(null);
   const [conversionProgress, setConversionProgress] =
     useState<ConversionProgress | null>(null);
+  const [currentConvertingChapterByBook, setCurrentConvertingChapterByBook] =
+    useState<Record<string, number | null>>({});
   const [eta, setEta] = useState<string | null>(null);
 
   // Use refs to track current state without causing re-renders
@@ -119,6 +128,8 @@ export function ConversionStateProvider({
   const completedBookIdRef = useRef<string | null>(null);
   const [estimation, setEstimation] = useState<Estimation | null>(null);
   const estimationRef = useRef<Estimation | null>(null);
+  /** Ensures ETA estimator is seeded once per run with session-relative totals. */
+  const etaSessionSeededRef = useRef(false);
 
   // Store registered callbacks
   const callbacksRef = useRef<Set<ConversionStateCallbacks>>(new Set());
@@ -132,6 +143,52 @@ export function ConversionStateProvider({
     progressToastIdRef.current = progressToastId;
     convertingBookIdRef.current = convertingBookId;
   }, [progressToastId, convertingBookId]);
+
+  const getCurrentConvertingChapter = useCallback(
+    (bookId: string) => {
+      if (!bookId) return null;
+      return currentConvertingChapterByBook[bookId] ?? null;
+    },
+    [currentConvertingChapterByBook]
+  );
+
+  const refreshCurrentConvertingChapter = useCallback(async (bookId: string) => {
+    if (!bookId) return null;
+
+    try {
+      const chapter = await invoke<number | null>("get_current_converting_chapter", {
+        bookId,
+      });
+
+      logger.info("[conversion-state] fetched live chapter", {
+        bookId,
+        chapter,
+      });
+
+      setCurrentConvertingChapterByBook((prev) => {
+        if ((prev[bookId] ?? null) === chapter) {
+          return prev;
+        }
+
+        logger.info("[conversion-state] updated live chapter", {
+          bookId,
+          previousChapter: prev[bookId] ?? null,
+          nextChapter: chapter,
+          source: "refreshCurrentConvertingChapter",
+        });
+
+        return {
+          ...prev,
+          [bookId]: chapter,
+        };
+      });
+
+      return chapter;
+    } catch (err) {
+      logger.warn("Failed to refresh current converting chapter:", err);
+      return null;
+    }
+  }, []);
 
   const handleConversionComplete = useCallback(
     (book: Book | null, bookId?: string | null) => {
@@ -164,6 +221,11 @@ export function ConversionStateProvider({
       convertingBookIdRef.current = null;
       chapterToastIdRef.current = null;
       estimationRef.current = null;
+      etaSessionSeededRef.current = false;
+      setCurrentConvertingChapterByBook((prev) => ({
+        ...prev,
+        [completedBookId]: null,
+      }));
 
       callbacksRef.current.forEach((callbacks) => {
         try {
@@ -196,19 +258,98 @@ export function ConversionStateProvider({
                   )
                 : 0;
 
-            const measurement = estimationRef.current?.update(
-              progress.wordsProcessed,
-              progress.totalWords
+            const baseline = progress.sessionBaselineWords ?? 0;
+            const sessionTotal = Math.max(0, progress.totalWords - baseline);
+            const sessionProgress = Math.max(
+              0,
+              progress.wordsProcessed - baseline
             );
+            const priorElapsedMs = progress.priorElapsedMs ?? 0;
 
-            setEta(
-              humanizeDuration(measurement?.estimate ?? 0, {
-                round: true,
-                language: humanizeDurationLocale(lang),
-              })
-            );
+            // Seed estimator on remaining work only so resume doesn't treat
+            // already-done words as instant progress in this session.
+            if (!etaSessionSeededRef.current) {
+              etaSessionSeededRef.current = true;
+              const seededTotal = Math.max(1, sessionTotal);
+              let startTime: number | undefined;
+              if (priorElapsedMs > 0 && baseline > 0) {
+                const avgMsPerWord = priorElapsedMs / baseline;
+                // Backdate clock so prior rate informs the first estimates.
+                startTime =
+                  Date.now() -
+                  Math.round(Math.max(sessionProgress, 1) * avgMsPerWord);
+              }
+              const seeded = new Estimation({
+                progress: sessionProgress,
+                total: seededTotal,
+                startTime,
+              });
+              estimationRef.current = seeded;
+              setEstimation(seeded);
+            }
+
+            const measurement =
+              sessionProgress > 0 && estimationRef.current
+                ? estimationRef.current.update(
+                    sessionProgress,
+                    Math.max(1, sessionTotal)
+                  )
+                : null;
+            const estimateMs =
+              measurement != null
+                ? measurement.estimate
+                : priorElapsedMs > 0 && baseline > 0
+                  ? sessionTotal * (priorElapsedMs / baseline)
+                  : null;
+
+            if (estimateMs !== null) {
+              setEta(
+                humanizeDuration(estimateMs, {
+                  round: true,
+                  language: humanizeDurationLocale(lang),
+                })
+              );
+            }
 
             setConversionProgress(progress);
+
+            const activeBookId = convertingBookIdRef.current;
+            if (activeBookId) {
+              const chapterIndex =
+                progress.totalChapters > 0
+                  ? Math.max(
+                      0,
+                      Math.min(
+                        progress.totalChapters - 1,
+                        progress.currentChapter - 1
+                      )
+                    )
+                  : null;
+
+              if (chapterIndex !== null) {
+                setCurrentConvertingChapterByBook((prev) => {
+                  const previousChapter = prev[activeBookId] ?? null;
+
+                  if (previousChapter === chapterIndex) {
+                    return prev;
+                  }
+
+                  // Ignore backward jumps from noisy/relative progress payloads.
+                  if (
+                    previousChapter !== null &&
+                    chapterIndex < previousChapter &&
+                    progress.currentStep !== "skipping"
+                  ) {
+                    return prev;
+                  }
+
+                  return {
+                    ...prev,
+                    [activeBookId]: chapterIndex,
+                  };
+                });
+              }
+            }
 
             const toastId =
               progressToastIdRef.current ??
@@ -238,6 +379,18 @@ export function ConversionStateProvider({
             const { bookId, chapterTitle, chapterIndex, totalChapters } =
               event.payload;
             logger.log("Chapter completed:", event.payload);
+
+            if (bookId && convertingBookIdRef.current === bookId) {
+              const optimisticNextChapter =
+                chapterIndex < totalChapters ? chapterIndex : null;
+
+              setCurrentConvertingChapterByBook((prev) => ({
+                ...prev,
+                [bookId]: optimisticNextChapter,
+              }));
+
+              void refreshCurrentConvertingChapter(bookId);
+            }
 
             const chapterToastId = `chapter-completed-${bookId}`;
             chapterToastIdRef.current = chapterToastId;
@@ -284,6 +437,21 @@ export function ConversionStateProvider({
             completedBookIdRef.current = null;
             setEstimation(null);
             estimationRef.current = null;
+            etaSessionSeededRef.current = false;
+            if (bookId) {
+              // Keep incomplete checkpoint chapters discoverable for listening
+              // after pause/cancel (backend returns playable paused checkpoints).
+              void refreshCurrentConvertingChapter(bookId).then((chapter) => {
+                if (chapter !== null) {
+                  return;
+                }
+                // No playable checkpoint — clear any stale in-memory pointer.
+                setCurrentConvertingChapterByBook((prev) => ({
+                  ...prev,
+                  [bookId]: null,
+                }));
+              });
+            }
 
             callbacksRef.current.forEach((callbacks) => {
               try {
@@ -334,7 +502,7 @@ export function ConversionStateProvider({
         }
       }
     };
-  }, [handleConversionComplete, lang]);
+  }, [handleConversionComplete, lang, refreshCurrentConvertingChapter]);
 
   const convertBook = useCallback(
     async (bookId: string, language?: string, voiceId?: string) => {
@@ -352,8 +520,16 @@ export function ConversionStateProvider({
         setProgressToastId(toastId);
         progressToastIdRef.current = toastId;
         completedBookIdRef.current = null;
-        setEstimation(new Estimation());
+        etaSessionSeededRef.current = false;
+        estimationRef.current = null;
+        setEstimation(null);
         setEta(null);
+
+        setCurrentConvertingChapterByBook((prev) => ({
+          ...prev,
+          [bookId]: prev[bookId] ?? null,
+        }));
+        void refreshCurrentConvertingChapter(bookId);
 
         // Call registered callbacks for conversion started
         callbacksRef.current.forEach((callbacks) => {
@@ -454,9 +630,16 @@ export function ConversionStateProvider({
         completedBookIdRef.current = null;
         setEstimation(null);
         estimationRef.current = null;
+        etaSessionSeededRef.current = false;
       }
     },
-    [handleConversionComplete, progressToastId, isConverting, convertingBookId]
+    [
+      handleConversionComplete,
+      progressToastId,
+      isConverting,
+      convertingBookId,
+      refreshCurrentConvertingChapter,
+    ]
   );
 
   const cancelConversion = useCallback(async (bookId: string | null) => {
@@ -498,6 +681,9 @@ export function ConversionStateProvider({
       isConverting,
       convertingBookId,
       conversionProgress,
+      currentConvertingChapterByBook,
+      getCurrentConvertingChapter,
+      refreshCurrentConvertingChapter,
       eta,
       convertBook,
       cancelConversion,
@@ -507,6 +693,9 @@ export function ConversionStateProvider({
       isConverting,
       convertingBookId,
       conversionProgress,
+      currentConvertingChapterByBook,
+      getCurrentConvertingChapter,
+      refreshCurrentConvertingChapter,
       eta,
       convertBook,
       cancelConversion,

@@ -91,12 +91,20 @@ pub async fn convert_epub_to_audiobook(
     total_words_all: Option<usize>,
     initial_chapter_index: Option<usize>,
     total_chapters_all: Option<usize>,
+    prior_elapsed_ms: Option<u64>,
 ) -> AppResult<Vec<u8>> {
     use crate::utils::path_resolver::ResourcePathResolver;
 
-    // Create progress callback that emits to Tauri
+    // Use provided values if resuming, otherwise use defaults
+    let words_processed_start = initial_words_processed.unwrap_or(0);
+    let session_baseline = words_processed_start;
+    let prior_elapsed = prior_elapsed_ms.unwrap_or(0);
+
+    // Create progress callback that injects resume baseline into every event (for ETA).
     let app_progress = app.clone();
-    let progress_callback: ProgressCallback = Box::new(move |progress| {
+    let progress_callback: ProgressCallback = Box::new(move |mut progress| {
+        progress.session_baseline_words = session_baseline;
+        progress.prior_elapsed_ms = prior_elapsed;
         emit_progress(&app_progress, progress);
     });
 
@@ -104,8 +112,6 @@ pub async fn convert_epub_to_audiobook(
     let total_words_remaining: usize = options.chapters.iter().map(|c| c.word_count).sum();
     let num_chapters = options.chapters.len();
 
-    // Use provided values if resuming, otherwise use defaults
-    let words_processed_start = initial_words_processed.unwrap_or(0);
     let total_words_display = total_words_all.unwrap_or(total_words_remaining);
     let current_chapter_start = initial_chapter_index.unwrap_or(0);
     let total_chapters_display = total_chapters_all.unwrap_or(num_chapters);
@@ -120,17 +126,19 @@ pub async fn convert_epub_to_audiobook(
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
         message: if words_processed_start > 0 {
-            format!("Resuming conversion: {} chapters remaining ({} words), {} words already processed out of {} total", 
-                num_chapters, total_words_remaining, words_processed_start, total_words_display)
+            format!(
+                "Resuming conversion: {} chapters remaining ({} words), {} words already processed out of {} total",
+                num_chapters, total_words_remaining, words_processed_start, total_words_display
+            )
         } else {
             format!(
                 "Starting conversion of {} chapters ({} words)...",
                 num_chapters, total_words_remaining
             )
         },
-    });
-
-    // Find model files
+        session_baseline_words: session_baseline,
+        prior_elapsed_ms: prior_elapsed,
+    });    // Find model files
     let (onnx_path, voices_path) = ResourcePathResolver::find_model_and_voices(Some(&app))?;
 
     let onnx_path_str = onnx_path
@@ -174,6 +182,7 @@ pub async fn convert_epub_to_audiobook(
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
         message: "TTS engine created - ready to process chapters".to_string(),
+        ..Default::default()
     });
 
     let voice_id = options.voice_id.clone();
@@ -258,6 +267,7 @@ pub async fn convert_epub_to_audiobook_standalone(
             "Starting conversion of {} chapters ({} words)...",
             num_chapters, total_words
         ),
+        ..Default::default()
     });
 
     // Find model files (without AppHandle)
@@ -304,6 +314,7 @@ pub async fn convert_epub_to_audiobook_standalone(
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
         message: "TTS engine pool ready - ready to process chapters".to_string(),
+        ..Default::default()
     });
 
     let voice_id = options.voice_id.clone();

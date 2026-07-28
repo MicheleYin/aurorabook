@@ -6,6 +6,7 @@ import {
   AudioProgressProvider,
   useAudioProgressContext,
 } from "./AudioProgressContext";
+import { ConversionStateProvider } from "./ConversionStateContext";
 import type { AudioTrack, Book } from "../types/book";
 import {
   emitTauriEvent,
@@ -14,6 +15,15 @@ import {
   listen,
   osType,
 } from "../test/tauri-mocks";
+
+vi.mock("../lib/i18n", () => ({
+  useTranslation: () => ({
+    t: (key: string) => key,
+    lang: "en",
+    changeLanguage: vi.fn(),
+    loading: false,
+  }),
+}));
 
 function createTrack(overrides: Partial<AudioTrack> = {}): AudioTrack {
   return {
@@ -76,7 +86,12 @@ function createAudioElement(): HTMLAudioElement {
     },
     load: {
       configurable: true,
-      value: vi.fn(),
+      value: vi.fn(function (this: HTMLAudioElement) {
+        queueMicrotask(() => {
+          this.dispatchEvent(new Event("loadedmetadata"));
+          this.dispatchEvent(new Event("canplay"));
+        });
+      }),
     },
     paused: {
       configurable: true,
@@ -91,7 +106,11 @@ function createAudioElement(): HTMLAudioElement {
 }
 
 function wrapper({ children }: { children: ReactNode }) {
-  return <AudioProgressProvider>{children}</AudioProgressProvider>;
+  return (
+    <ConversionStateProvider>
+      <AudioProgressProvider>{children}</AudioProgressProvider>
+    </ConversionStateProvider>
+  );
 }
 
 describe("AudioProgressProvider", () => {
@@ -99,6 +118,9 @@ describe("AudioProgressProvider", () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "get_app_settings") {
         return { audioPlaybackSpeed: 1.25 };
+      }
+      if (cmd === "get_current_converting_chapter") {
+        return null;
       }
       if (cmd === "get_audio_stream_url") {
         return "https://stream.local/track.mp3";
@@ -497,6 +519,339 @@ describe("AudioProgressProvider", () => {
         album: "Test Book",
         artwork: [],
       });
+    });
+  });
+
+  describe("live chapter playback", () => {
+    it("does not mark a completed library track as live when converting chapter matches", async () => {
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { audioPlaybackSpeed: 1.25 };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          // Stale/racing pointer still on this chapter index.
+          return 0;
+        }
+        if (cmd === "get_audio_stream_url") {
+          return "https://stream.local/track.mp3";
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const audio = createAudioElement();
+      result.current.audioRef.current = audio;
+
+      const book = createBook();
+
+      await act(async () => {
+        await result.current.loadAudioTrack(book.id, book.audioTracks[0], book);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "track-1",
+        isLiveStream: false,
+      });
+      expect(invoke).toHaveBeenCalledWith("get_audio_stream_url", {
+        bookId: "book-1",
+        trackId: "track-1",
+      });
+      expect(audio.src).toContain("https://stream.local/track.mp3");
+    });
+
+    it("marks a missing-chapter track as live when converting chapter matches", async () => {
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { audioPlaybackSpeed: 1.25 };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          return 0;
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const audio = createAudioElement();
+      result.current.audioRef.current = audio;
+
+      const book = createBook({ audioTracks: [] });
+      const inProgressTrack = createTrack({
+        id: "pending-ch-0",
+        chapterHref: "ch1.xhtml",
+        href: "ch1.xhtml",
+        filePath: "ch1.xhtml",
+        title: "Chapter 1",
+        order: 0,
+      });
+
+      await act(async () => {
+        await result.current.loadAudioTrack(book.id, inProgressTrack, book);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "pending-ch-0",
+        isLiveStream: true,
+        liveChapterIndex: 0,
+        mimeType: "audio/mpeg",
+      });
+      expect(invoke).not.toHaveBeenCalledWith(
+        "get_audio_stream_url",
+        expect.anything()
+      );
+      expect(audio.src).toBe("");
+    });
+
+    it("treats explicit live-* track ids as live streams", async () => {
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const book = createBook({
+        chapters: [
+          {
+            id: "ch-1",
+            bookId: "book-1",
+            title: "Chapter 1",
+            href: "ch1.xhtml",
+            chapterOrder: 0,
+          },
+          {
+            id: "ch-2",
+            bookId: "book-1",
+            title: "Chapter 2",
+            href: "ch2.xhtml",
+            chapterOrder: 1,
+          },
+        ],
+      });
+      const liveTrack = createTrack({
+        id: "live-book-1-1",
+        chapterHref: "ch2.xhtml",
+        href: "ch2.xhtml",
+        filePath: "ch2.xhtml",
+        title: "Chapter 2",
+        order: 1,
+      });
+
+      await act(async () => {
+        await result.current.loadAudioTrack(book.id, liveTrack, book);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "live-book-1-1",
+        isLiveStream: true,
+        liveChapterIndex: 1,
+      });
+      expect(invoke).not.toHaveBeenCalledWith(
+        "get_audio_stream_url",
+        expect.anything()
+      );
+    });
+
+    it("falls back to live playback when stream URL fails for an in-progress chapter", async () => {
+      let convertingChapterCalls = 0;
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { audioPlaybackSpeed: 1 };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          convertingChapterCalls += 1;
+          // First refresh during load returns null; retry after stream failure is live.
+          return convertingChapterCalls === 1 ? null : 0;
+        }
+        if (cmd === "get_audio_stream_url") {
+          throw new Error("track not ready");
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      // Track is not yet in book.audioTracks — still converting.
+      const book = createBook({ audioTracks: [] });
+      const pendingTrack = createTrack({
+        id: "pending-ch-0",
+        chapterHref: "ch1.xhtml",
+        href: "ch1.xhtml",
+        filePath: "ch1.xhtml",
+        title: "Chapter 1",
+        order: 0,
+      });
+
+      await act(async () => {
+        await result.current.loadAudioTrack(book.id, pendingTrack, book);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "pending-ch-0",
+        isLiveStream: true,
+        liveChapterIndex: 0,
+      });
+      expect(convertingChapterCalls).toBeGreaterThanOrEqual(2);
+    });
+
+    it("loads a synthetic live track when restoring the last opened converting chapter", async () => {
+      const book = createBook({
+        chapters: [
+          {
+            id: "ch-1",
+            bookId: "book-1",
+            title: "Live Chapter",
+            href: "ch1.xhtml",
+            chapterOrder: 0,
+          },
+        ],
+        audioTracks: [],
+      });
+
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { audioPlaybackSpeed: 1 };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          return 0;
+        }
+        if (cmd === "read_one_book") {
+          return book;
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+
+      await act(async () => {
+        await result.current.loadLastOpenedAudioTrack(book, false);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "live-book-1-0",
+        isLiveStream: true,
+        liveChapterIndex: 0,
+        title: "Live Chapter",
+      });
+    });
+
+    it("loads incomplete chapter audio after pause when conversion is started", async () => {
+      const book = createBook({
+        conversionStatus: "started",
+        completedChapters: [],
+        chapters: [
+          {
+            id: "ch-1",
+            bookId: "book-1",
+            title: "Incomplete Chapter",
+            href: "ch1.xhtml",
+            chapterOrder: 0,
+          },
+          {
+            id: "ch-2",
+            bookId: "book-1",
+            title: "Next Chapter",
+            href: "ch2.xhtml",
+            chapterOrder: 1,
+          },
+        ],
+        audioTracks: [],
+      });
+
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { audioPlaybackSpeed: 1 };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          // Simulates paused checkpoint discovery from backend.
+          return 0;
+        }
+        if (cmd === "read_one_book") {
+          return book;
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+
+      await act(async () => {
+        await result.current.loadLastOpenedAudioTrack(book, false);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "live-book-1-0",
+        isLiveStream: true,
+        liveChapterIndex: 0,
+        title: "Incomplete Chapter",
+      });
+    });
+
+    it("falls back to first incomplete chapter when converting chapter is unknown", async () => {
+      const book = createBook({
+        conversionStatus: "started",
+        completedChapters: ["ch1.xhtml"],
+        chapters: [
+          {
+            id: "ch-1",
+            bookId: "book-1",
+            title: "Done",
+            href: "ch1.xhtml",
+            chapterOrder: 0,
+          },
+          {
+            id: "ch-2",
+            bookId: "book-1",
+            title: "In Progress",
+            href: "ch2.xhtml",
+            chapterOrder: 1,
+          },
+        ],
+        audioTracks: [
+          {
+            id: "track-1",
+            bookId: "book-1",
+            chapterHref: "ch1.xhtml",
+            title: "Done",
+            href: "ch1.xhtml",
+            filePath: "ch1.xhtml",
+            order: 0,
+          },
+        ],
+      });
+
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { audioPlaybackSpeed: 1 };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          return null;
+        }
+        if (cmd === "read_one_book") {
+          return book;
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+
+      await act(async () => {
+        await result.current.loadLastOpenedAudioTrack(book, false);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "live-book-1-1",
+        isLiveStream: true,
+        liveChapterIndex: 1,
+        title: "In Progress",
+      });
+    });
+
+    it("queues live playback seek/autoplay requests", async () => {
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+
+      const versionBefore = result.current.livePlaybackRequestVersion;
+
+      act(() => {
+        result.current.queueLivePlaybackRequest(12.5, true);
+      });
+
+      expect(result.current.livePlaybackRequestRef.current).toEqual({
+        resumeTime: 12.5,
+        autoPlay: true,
+      });
+      expect(result.current.livePlaybackRequestVersion).toBe(versionBefore + 1);
     });
   });
 });

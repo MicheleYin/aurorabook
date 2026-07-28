@@ -219,6 +219,7 @@ pub(crate) async fn rebuild_and_save_epub(
         words_in_current_chapter,
         current_step: "saving-epub".to_string(),
         message: format!("Saving EPUB after chapter {}...", chapter_index + 1),
+        ..Default::default()
     });
 
     // Update OPF with current progress

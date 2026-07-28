@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
 import { List } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
-import type { AudioTrack, Book } from "../../types/book";
+import { useConversionState } from "../../context/ConversionStateContext";
 import { useIsMobile } from "../../hooks/useIsMobile";
-import { useTranslation } from "../../lib/i18n";
+import { logger } from "../../lib/logger";
 import { cn, formatTime } from "../../lib/utils";
+import type { AudioTrack, Book } from "../../types/book";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent } from "../ui/dialog";
@@ -32,9 +33,114 @@ export function AudioTracksDrawer({
   onOpenChange,
   onTrackSelect,
 }: Readonly<AudioTracksDrawerProps>) {
-  const { t } = useTranslation();
   const isMobile = useIsMobile();
   const currentTrackRef = useRef<HTMLButtonElement | null>(null);
+  const {
+    isConverting,
+    convertingBookId,
+    getCurrentConvertingChapter,
+    refreshCurrentConvertingChapter,
+  } = useConversionState();
+  const completedChapters = book.completedChapters ?? [];
+  const isConvertingThisBook = isConverting && convertingBookId === book.id;
+  const hasPartialConversion =
+    book.conversionStatus === "started" ||
+    (completedChapters.length > 0 &&
+      completedChapters.length < book.chapters.length);
+
+  const currentConvertingChapter = getCurrentConvertingChapter(book.id);
+
+  const currentTrackChapterIndex = useMemo(() => {
+    if (!currentTrackId) return null;
+    const livePrefix = `live-${book.id}-`;
+    if (!currentTrackId.startsWith(livePrefix)) return null;
+
+    const parsed = Number.parseInt(currentTrackId.slice(livePrefix.length), 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [book.id, currentTrackId]);
+
+  useEffect(() => {
+    if (!isConvertingThisBook && !hasPartialConversion) {
+      return;
+    }
+
+    void refreshCurrentConvertingChapter(book.id);
+  }, [
+    book.id,
+    hasPartialConversion,
+    isConvertingThisBook,
+    refreshCurrentConvertingChapter,
+  ]);
+
+  const getTrackChapterIndex = useCallback(
+    (track: AudioTrack): number | null => {
+      const trackHref = track.href || track.filePath;
+      if (trackHref && book.audioSyncMap?.segments?.length) {
+        const matchingSegment = book.audioSyncMap.segments.find(
+          (segment) => segment.audioTrackHref === trackHref
+        );
+        if (matchingSegment) {
+          const chapterIndex = book.chapters.findIndex(
+            (chapter) => chapter.href === matchingSegment.chapterHref
+          );
+          if (chapterIndex >= 0) {
+            return chapterIndex;
+          }
+        }
+      }
+
+      if (track.order >= 0 && track.order < book.chapters.length) {
+        return track.order;
+      }
+
+      return null;
+    },
+    [book.audioSyncMap?.segments, book.chapters]
+  );
+
+  const effectiveConvertingChapter = useMemo(() => {
+    const trackChapterIndices = new Set<number>();
+    for (const track of book.audioTracks) {
+      const chapterIndex = getTrackChapterIndex(track);
+      if (chapterIndex !== null) {
+        trackChapterIndices.add(chapterIndex);
+      }
+    }
+
+    const firstMissingChapter = book.chapters.findIndex(
+      (_, idx) => !trackChapterIndices.has(idx)
+    );
+
+    if (currentConvertingChapter !== null) {
+      if (
+        currentConvertingChapter >= 0 &&
+        trackChapterIndices.has(currentConvertingChapter) &&
+        firstMissingChapter >= 0
+      ) {
+        return firstMissingChapter;
+      }
+
+      return currentConvertingChapter;
+    }
+
+    if (currentTrackChapterIndex !== null) {
+      return currentTrackChapterIndex;
+    }
+
+    if (!isConvertingThisBook && !hasPartialConversion) {
+      return null;
+    }
+
+    return firstMissingChapter >= 0 ? firstMissingChapter : null;
+  }, [
+    book.audioTracks,
+    book.chapters,
+    currentConvertingChapter,
+    currentTrackChapterIndex,
+    getTrackChapterIndex,
+    hasPartialConversion,
+    isConvertingThisBook,
+  ]);
 
   // Create a map of track href to chapter title
   const trackChapters = useMemo(() => {
@@ -92,22 +198,103 @@ export function AudioTracksDrawer({
     [onTrackSelect, onOpenChange]
   );
 
+  const selectableTracks = useMemo(() => {
+    const tracks = [...book.audioTracks];
+    const existingChapterIndices = new Set<number>();
+
+    for (const track of tracks) {
+      const chapterIndex = getTrackChapterIndex(track);
+      if (chapterIndex !== null) {
+        existingChapterIndices.add(chapterIndex);
+      }
+    }
+
+    // Add synthetic live track for the active/converting chapter when no completed track exists yet.
+    if ((isConvertingThisBook || hasPartialConversion) && effectiveConvertingChapter !== null) {
+      if (!existingChapterIndices.has(effectiveConvertingChapter)) {
+        const chapter = book.chapters[effectiveConvertingChapter];
+        if (chapter) {
+          tracks.push({
+            id: `live-${book.id}-${effectiveConvertingChapter}`,
+            bookId: book.id,
+            chapterHref: chapter.href,
+            filePath: chapter.href,
+            href: chapter.href,
+            title: chapter.title || `Chapter ${effectiveConvertingChapter + 1}`,
+            order: effectiveConvertingChapter,
+          });
+        }
+      }
+    }
+
+    return tracks.sort((a, b) => a.order - b.order);
+  }, [
+    book.audioTracks,
+    book.chapters,
+    book.id,
+    completedChapters,
+    hasPartialConversion,
+    isConvertingThisBook,
+    effectiveConvertingChapter,
+    getTrackChapterIndex,
+  ]);
+
+  useEffect(() => {
+    const currentInList = currentTrackId
+      ? selectableTracks.some((track) => track.id === currentTrackId)
+      : false;
+
+    logger.info("[tracks-drawer] selectable tracks recalculated", {
+      bookId: book.id,
+      isConvertingThisBook,
+      hasPartialConversion,
+      currentConvertingChapter,
+      effectiveConvertingChapter,
+      currentTrackId,
+      currentInList,
+      selectedTrackIds: selectableTracks.map((track) => track.id),
+    });
+  }, [
+    book.id,
+    currentConvertingChapter,
+    currentTrackId,
+    effectiveConvertingChapter,
+    hasPartialConversion,
+    isConvertingThisBook,
+    selectableTracks,
+  ]);
+
   const content = (
     <>
       <div className="pb-4">
         <DrawerHeader>
-          <DrawerTitle>{t("audio.tracks")}</DrawerTitle>
+          <DrawerTitle>Audio Tracks</DrawerTitle>
         </DrawerHeader>
       </div>
       <ScrollArea className="flex-1 overflow-y-auto">
         <div className="p-4 space-y-1">
-          {book.audioTracks.map((track) => {
-            const isCurrentTrack = track.id === currentTrackId;
-            const trackName = track.title || t("audio.track_count", { count: track.order + 1 });
+          {selectableTracks.map((track) => {
+            const chapterIndex = getTrackChapterIndex(track);
+            const isCurrentTrack =
+              track.id === currentTrackId ||
+              (currentTrackChapterIndex !== null &&
+                chapterIndex === currentTrackChapterIndex);
+            const trackName = track.title || `Track ${track.order + 1}`;
             const trackHref = track.href || track.filePath;
             const chapterTitle = trackHref
               ? trackChapters.get(trackHref)
               : null;
+            // Only show badge on the chapter that's actually being converted (from backend)
+            const showStatusBadge =
+              chapterIndex === effectiveConvertingChapter ||
+              (isConvertingThisBook &&
+                effectiveConvertingChapter === null &&
+                chapterIndex !== null &&
+                chapterIndex === currentTrackChapterIndex);
+            const statusText = isConvertingThisBook ? "Live" : "Paused";
+            const statusBadgeClass = isConvertingThisBook
+              ? "bg-amber-500 text-amber-950 hover:bg-amber-500"
+              : "bg-sky-600 text-sky-50 hover:bg-sky-600";
             const duration =
               "duration" in track &&
               typeof track.duration === "number" &&
@@ -129,6 +316,17 @@ export function AudioTracksDrawer({
               >
                 <div className="flex items-center gap-2">
                   <div className="font-medium flex-1">{trackName}</div>
+                  {showStatusBadge && (
+                    <Badge
+                      variant="secondary"
+                      className={cn(
+                        "h-5 px-1.5 text-[10px] shrink-0",
+                        statusBadgeClass
+                      )}
+                    >
+                      {statusText}
+                    </Badge>
+                  )}
                   {duration && (
                     <span className="text-xs text-muted-foreground shrink-0">
                       {duration}
@@ -139,7 +337,7 @@ export function AudioTracksDrawer({
                       variant="secondary"
                       className="h-5 px-1.5 text-[10px] shrink-0"
                     >
-                      {t("audio.playing")}
+                      Playing
                     </Badge>
                   )}
                 </div>
@@ -183,7 +381,6 @@ export function AudioTracksButton({
   onClick,
   disabled,
 }: Readonly<AudioTracksButtonProps>) {
-  const { t } = useTranslation();
   return (
     <Button
       variant="ghost"
@@ -191,7 +388,7 @@ export function AudioTracksButton({
       className="h-10 w-10 shrink-0"
       onClick={onClick}
       disabled={disabled}
-      title={t("audio.tracks")}
+      title="Audio tracks"
     >
       <List className="h-5 w-5 shrink-0" />
     </Button>

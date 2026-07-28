@@ -154,6 +154,157 @@ async fn migrate_epub_data_schema(pool: &SqlitePool) -> Result<(), String> {
     Ok(())
 }
 
+/// Migrate live sentence checkpoint storage from legacy audio_bytes schema to
+/// file-path based schema used by live conversion resume.
+async fn migrate_live_sentence_alignment_schema(pool: &SqlitePool) -> Result<(), String> {
+    use sqlx::Row;
+
+    let table_exists = sqlx::query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='live_sentence_alignment'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("Failed to check live_sentence_alignment table: {}", e))?;
+
+    let Some(_) = table_exists else {
+        return Ok(());
+    };
+
+    let columns = sqlx::query("PRAGMA table_info(live_sentence_alignment)")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("Failed to inspect live_sentence_alignment columns: {}", e))?;
+
+    let has_audio_file_path = columns.iter().any(|r| {
+        r.try_get::<String, _>("name")
+            .map(|n| n == "audio_file_path")
+            .unwrap_or(false)
+    });
+    let has_audio_bytes_not_null = columns.iter().any(|r| {
+        let name = r.try_get::<String, _>("name").unwrap_or_default();
+        let notnull = r.try_get::<i64, _>("notnull").unwrap_or(0);
+        name == "audio_bytes" && notnull == 1
+    });
+
+    // Legacy schemas with audio_bytes NOT NULL break current inserts that only
+    // provide audio_file_path metadata.
+    if !has_audio_bytes_not_null {
+        if !has_audio_file_path {
+            sqlx::query(
+                "ALTER TABLE live_sentence_alignment ADD COLUMN audio_file_path TEXT NOT NULL DEFAULT ''",
+            )
+            .execute(pool)
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to add audio_file_path to live_sentence_alignment: {}",
+                    e
+                )
+            })?;
+            log::info!("Migrated live_sentence_alignment: added audio_file_path column");
+        }
+        return Ok(());
+    }
+
+    log::info!(
+        "Migrating live_sentence_alignment table (remove audio_bytes NOT NULL legacy constraint)"
+    );
+
+    let has_duration_seconds = columns.iter().any(|r| {
+        r.try_get::<String, _>("name")
+            .map(|n| n == "duration_seconds")
+            .unwrap_or(false)
+    });
+    let has_sentence_text = columns.iter().any(|r| {
+        r.try_get::<String, _>("name")
+            .map(|n| n == "sentence_text")
+            .unwrap_or(false)
+    });
+    let has_word_alignments = columns.iter().any(|r| {
+        r.try_get::<String, _>("name")
+            .map(|n| n == "word_alignments")
+            .unwrap_or(false)
+    });
+    let has_created_at = columns.iter().any(|r| {
+        r.try_get::<String, _>("name")
+            .map(|n| n == "created_at")
+            .unwrap_or(false)
+    });
+
+    sqlx::query(
+        r#"
+        CREATE TABLE live_sentence_alignment__m (
+            book_id TEXT NOT NULL,
+            chapter_index INTEGER NOT NULL,
+            sentence_index INTEGER NOT NULL,
+            audio_file_path TEXT NOT NULL,
+            duration_seconds REAL NOT NULL,
+            sentence_text TEXT NOT NULL,
+            word_alignments TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (book_id, chapter_index, sentence_index),
+            FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create live_sentence_alignment__m: {}", e))?;
+
+    let audio_file_path_expr = if has_audio_file_path {
+        "audio_file_path"
+    } else {
+        "''"
+    };
+    let duration_expr = if has_duration_seconds {
+        "duration_seconds"
+    } else {
+        "0.0"
+    };
+    let sentence_text_expr = if has_sentence_text {
+        "sentence_text"
+    } else {
+        "''"
+    };
+    let word_alignments_expr = if has_word_alignments {
+        "word_alignments"
+    } else {
+        "'[]'"
+    };
+    let created_at_expr = if has_created_at {
+        "created_at"
+    } else {
+        "strftime('%s','now')"
+    };
+
+    let copy_sql = format!(
+        "INSERT INTO live_sentence_alignment__m (book_id, chapter_index, sentence_index, audio_file_path, duration_seconds, sentence_text, word_alignments, created_at) \
+         SELECT book_id, chapter_index, sentence_index, {}, {}, {}, {}, {} FROM live_sentence_alignment",
+        audio_file_path_expr,
+        duration_expr,
+        sentence_text_expr,
+        word_alignments_expr,
+        created_at_expr
+    );
+
+    sqlx::query(&copy_sql)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to copy live_sentence_alignment data: {}", e))?;
+
+    sqlx::query("DROP TABLE live_sentence_alignment")
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to drop old live_sentence_alignment table: {}", e))?;
+
+    sqlx::query("ALTER TABLE live_sentence_alignment__m RENAME TO live_sentence_alignment")
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to rename migrated live_sentence_alignment table: {}", e))?;
+
+    Ok(())
+}
+
 /// Initialize database schema - creates tables if they don't exist
 async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
     // Create books table
@@ -192,6 +343,9 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
             voice_id TEXT,
             total_words INTEGER,
             words_processed INTEGER,
+            conversion_session_baseline_words INTEGER,
+            conversion_session_started_at TEXT,
+            conversion_elapsed_ms INTEGER,
             last_opened_time TEXT
         )
         "#,
@@ -199,11 +353,58 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to create books table: {}", e))?;
+
+    use sqlx::Row;
+
+    // Migration: conversion session timing columns for resume-aware ETA
+    {
+        let books_sql_row =
+            sqlx::query("SELECT sql FROM sqlite_master WHERE type='table' AND name='books'")
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| format!("Failed to check books schema: {}", e))?;
+        let books_sql = books_sql_row
+            .and_then(|row| row.try_get::<Option<String>, _>("sql").ok().flatten())
+            .unwrap_or_default();
+
+        if !books_sql.contains("conversion_session_baseline_words") {
+            log::info!("Migrating books table (adding conversion_session_baseline_words)");
+            sqlx::query(
+                "ALTER TABLE books ADD COLUMN conversion_session_baseline_words INTEGER",
+            )
+            .execute(pool)
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to add conversion_session_baseline_words to books: {}",
+                    e
+                )
+            })?;
+        }
+        if !books_sql.contains("conversion_session_started_at") {
+            log::info!("Migrating books table (adding conversion_session_started_at)");
+            sqlx::query("ALTER TABLE books ADD COLUMN conversion_session_started_at TEXT")
+                .execute(pool)
+                .await
+                .map_err(|e| {
+                    format!(
+                        "Failed to add conversion_session_started_at to books: {}",
+                        e
+                    )
+                })?;
+        }
+        if !books_sql.contains("conversion_elapsed_ms") {
+            log::info!("Migrating books table (adding conversion_elapsed_ms)");
+            sqlx::query("ALTER TABLE books ADD COLUMN conversion_elapsed_ms INTEGER")
+                .execute(pool)
+                .await
+                .map_err(|e| format!("Failed to add conversion_elapsed_ms to books: {}", e))?;
+        }
+    }
     
     // Migration: Remove unique constraint on source_path if it exists
     // SQLite implements UNIQUE constraints as unique indexes
     // We need to find and drop any unique indexes on books.source_path
-    use sqlx::Row;
     
     // First, get the CREATE TABLE statement to check if source_path has UNIQUE in the definition
     let table_sql_result = sqlx::query(
@@ -443,6 +644,53 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
     .await
     .map_err(|e| format!("Failed to create reader_preferences table: {}", e))?;
     
+    // Create live_conversion_checkpoint table for persistence during conversion
+    // Tracks state of live conversions so they can be resumed if cancelled
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS live_conversion_checkpoint (
+            book_id TEXT NOT NULL,
+            chapter_index INTEGER NOT NULL,
+            chapter_id TEXT,
+            chapter_href TEXT,
+            sentences_processed INTEGER NOT NULL DEFAULT 0,
+            total_sentences INTEGER NOT NULL,
+            audio_duration_seconds REAL NOT NULL DEFAULT 0.0,
+            checkpoint_timestamp TEXT NOT NULL,
+            PRIMARY KEY (book_id, chapter_index),
+            FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create live_conversion_checkpoint table: {}", e))?;
+    
+    // Create live_sentence_alignment table to store word alignments during live conversion
+    // Audio files are stored on filesystem to avoid SQLite BLOB performance issues
+    // This enables resuming both conversion and playback with exact word timing
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS live_sentence_alignment (
+            book_id TEXT NOT NULL,
+            chapter_index INTEGER NOT NULL,
+            sentence_index INTEGER NOT NULL,
+            audio_file_path TEXT NOT NULL,
+            duration_seconds REAL NOT NULL,
+            sentence_text TEXT NOT NULL,
+            word_alignments TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (book_id, chapter_index, sentence_index),
+            FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create live_sentence_alignment table: {}", e))?;
+
+    migrate_live_sentence_alignment_schema(pool).await?;
+    
     // Create indexes for common query patterns
     // Indexes improve query performance and reduce memory usage by enabling efficient lookups
     let indexes = vec![
@@ -463,6 +711,12 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_books_conversion_status ON books(conversion_status)",
         // EPUB data indexes
         "CREATE INDEX IF NOT EXISTS idx_epub_data_book_id ON epub_data(book_id)",
+        // Live conversion checkpoint indexes
+        "CREATE INDEX IF NOT EXISTS idx_live_checkpoint_book_id ON live_conversion_checkpoint(book_id)",
+        "CREATE INDEX IF NOT EXISTS idx_live_checkpoint_timestamp ON live_conversion_checkpoint(checkpoint_timestamp)",
+        // Live sentence alignment indexes
+        "CREATE INDEX IF NOT EXISTS idx_live_alignment_book_chapter ON live_sentence_alignment(book_id, chapter_index)",
+        "CREATE INDEX IF NOT EXISTS idx_live_alignment_book_chapter_sentence ON live_sentence_alignment(book_id, chapter_index, sentence_index)",
     ];
     
     for index_sql in indexes {

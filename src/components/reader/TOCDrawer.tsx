@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef } from "react";
 import { BookOpen, Volume2 } from "lucide-react";
+import { useEffect, useMemo, useRef } from "react";
 
-import type { Book, Chapter } from "../../types/book";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
-import { useTranslation } from "../../lib/i18n";
+import { useConversionState } from "../../context/ConversionStateContext";
 import { cn, formatTime } from "../../lib/utils";
+import type { Book, Chapter } from "../../types/book";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -31,9 +31,35 @@ export function TOCDrawer({
   onOpenChange,
   onChapterSelect,
 }: Readonly<TOCDrawerProps>) {
-  const { t } = useTranslation();
   const currentChapterRef = useRef<HTMLButtonElement | null>(null);
   const { currentAudioTrack } = useAudioProgressContext();
+  const {
+    isConverting,
+    convertingBookId,
+    getCurrentConvertingChapter,
+    refreshCurrentConvertingChapter,
+  } = useConversionState();
+  const completedChapters = book.completedChapters ?? [];
+  const isConvertingThisBook = isConverting && convertingBookId === book.id;
+  const hasPartialConversion =
+    book.conversionStatus === "started" ||
+    (completedChapters.length > 0 &&
+      completedChapters.length < book.chapters.length);
+
+  const currentConvertingChapter = getCurrentConvertingChapter(book.id);
+
+  useEffect(() => {
+    if (!isConvertingThisBook && !hasPartialConversion) {
+      return;
+    }
+
+    void refreshCurrentConvertingChapter(book.id);
+  }, [
+    book.id,
+    hasPartialConversion,
+    isConvertingThisBook,
+    refreshCurrentConvertingChapter,
+  ]);
 
   // Create a map of chapter href to audio track titles and durations
   const chapterAudioTracks = useMemo(() => {
@@ -105,7 +131,7 @@ export function TOCDrawer({
         }
       });
       if (totalDuration > 0) {
-        map.set(chapterHref, Math.round(totalDuration));
+        map.set(chapterHref, totalDuration);
       }
     });
 
@@ -150,6 +176,12 @@ export function TOCDrawer({
     return () => clearTimeout(timeoutId);
   }, [isOpen, currentChapter.id]);
 
+  const showPendingStatus = currentConvertingChapter !== null;
+  const pendingStatusText = isConvertingThisBook ? "Live" : "Paused";
+  const pendingStatusClass = isConvertingThisBook
+    ? "bg-amber-500 text-amber-950 hover:bg-amber-500"
+    : "bg-sky-600 text-sky-50 hover:bg-sky-600";
+
   return (
     <Drawer open={isOpen} onOpenChange={onOpenChange} direction="left">
       <DrawerTrigger asChild>
@@ -159,11 +191,11 @@ export function TOCDrawer({
       </DrawerTrigger>
       <DrawerContent className="w-80 max-w-[85vw] !max-h-screen top-0 bottom-0 left-0 right-auto rounded-r-none rounded-t-none rounded-l-none safe-area-top">
         <DrawerHeader className="pb-4">
-          <DrawerTitle>{t("reader.toc")}</DrawerTitle>
+          <DrawerTitle>Table of Contents</DrawerTitle>
         </DrawerHeader>
         <ScrollArea className="flex-1">
           <div className="p-4 space-y-1">
-            {book.chapters.map((chapter) => (
+            {book.chapters.map((chapter, chapterIndex) => (
               <button
                 key={chapter.id}
                 ref={
@@ -179,20 +211,31 @@ export function TOCDrawer({
               >
                 <div className="flex items-center gap-2">
                   <div className="font-medium flex-1">{chapter.title}</div>
+                  {showPendingStatus && chapterIndex === currentConvertingChapter && (
+                    <Badge
+                      variant="secondary"
+                      className={cn(
+                        "h-5 px-1.5 text-[10px] shrink-0",
+                        pendingStatusClass
+                      )}
+                    >
+                      {pendingStatusText}
+                    </Badge>
+                  )}
                   {playingChapterHref === chapter.href && (
                     <Badge
                       variant="secondary"
                       className="h-5 px-1.5 text-[10px] shrink-0"
                     >
                       <Volume2 className="h-3 w-3 mr-1" />
-                      {t("audio.playing")}
+                      Playing
                     </Badge>
                   )}
                 </div>
                 <div className="flex flex-col gap-0.5 mt-0.5">
                   {chapter.estimatedPageCount && (
                     <div className="text-xs opacity-70">
-                      {chapter.estimatedPageCount} {t("book.pages").toLowerCase()}
+                      {chapter.estimatedPageCount} pages
                     </div>
                   )}
                   {chapterAudioTracks.has(chapter.href) && (
