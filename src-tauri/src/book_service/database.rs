@@ -343,6 +343,9 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
             voice_id TEXT,
             total_words INTEGER,
             words_processed INTEGER,
+            conversion_session_baseline_words INTEGER,
+            conversion_session_started_at TEXT,
+            conversion_elapsed_ms INTEGER,
             last_opened_time TEXT
         )
         "#,
@@ -350,11 +353,58 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to create books table: {}", e))?;
+
+    use sqlx::Row;
+
+    // Migration: conversion session timing columns for resume-aware ETA
+    {
+        let books_sql_row =
+            sqlx::query("SELECT sql FROM sqlite_master WHERE type='table' AND name='books'")
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| format!("Failed to check books schema: {}", e))?;
+        let books_sql = books_sql_row
+            .and_then(|row| row.try_get::<Option<String>, _>("sql").ok().flatten())
+            .unwrap_or_default();
+
+        if !books_sql.contains("conversion_session_baseline_words") {
+            log::info!("Migrating books table (adding conversion_session_baseline_words)");
+            sqlx::query(
+                "ALTER TABLE books ADD COLUMN conversion_session_baseline_words INTEGER",
+            )
+            .execute(pool)
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to add conversion_session_baseline_words to books: {}",
+                    e
+                )
+            })?;
+        }
+        if !books_sql.contains("conversion_session_started_at") {
+            log::info!("Migrating books table (adding conversion_session_started_at)");
+            sqlx::query("ALTER TABLE books ADD COLUMN conversion_session_started_at TEXT")
+                .execute(pool)
+                .await
+                .map_err(|e| {
+                    format!(
+                        "Failed to add conversion_session_started_at to books: {}",
+                        e
+                    )
+                })?;
+        }
+        if !books_sql.contains("conversion_elapsed_ms") {
+            log::info!("Migrating books table (adding conversion_elapsed_ms)");
+            sqlx::query("ALTER TABLE books ADD COLUMN conversion_elapsed_ms INTEGER")
+                .execute(pool)
+                .await
+                .map_err(|e| format!("Failed to add conversion_elapsed_ms to books: {}", e))?;
+        }
+    }
     
     // Migration: Remove unique constraint on source_path if it exists
     // SQLite implements UNIQUE constraints as unique indexes
     // We need to find and drop any unique indexes on books.source_path
-    use sqlx::Row;
     
     // First, get the CREATE TABLE statement to check if source_path has UNIQUE in the definition
     let table_sql_result = sqlx::query(

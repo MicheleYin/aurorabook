@@ -266,6 +266,7 @@ async fn load_chapters_from_database(
             words_in_current_chapter: 0,
             current_step: "initializing".to_string(),
             message: "Loading chapters from database...".to_string(),
+            ..Default::default()
         },
     );
 
@@ -394,6 +395,7 @@ fn emit_initial_progress(app: &AppHandle) {
             words_in_current_chapter: 0,
             current_step: "initializing".to_string(),
             message: "Starting conversion...".to_string(),
+            ..Default::default()
         },
     );
 }
@@ -420,6 +422,8 @@ struct BookData {
     words_processed_from_completed: usize,
     words_processed_from_checkpoint: usize,
     initial_words_processed: usize,
+    /// Cumulative wall time from previous conversion sessions (for ETA seeding).
+    prior_elapsed_ms: u64,
     conversion_chapters: Vec<ConversionChapter>,
     total_chapters_with_text: usize,
     completed_chapters_with_text: usize,
@@ -523,6 +527,11 @@ async fn load_and_prepare_book(
         .saturating_add(words_processed_from_checkpoint)
         .min(total_words_all_chapters);
 
+    let prior_elapsed_ms = existing_book_clone
+        .as_ref()
+        .and_then(|book| book.conversion_elapsed_ms)
+        .unwrap_or(0);
+
     // Update book with total words if not already set, and save voice_id
     if let Some(book) = books.iter_mut().find(|b| b.source_path == source_path) {
         if book.total_words.is_none() {
@@ -542,9 +551,11 @@ async fn load_and_prepare_book(
     let total_chapters_remaining = conversion_chapters.len();
 
     log::info!(
-        "Prepared conversion with resume: {} completed chapters with text, {} remaining",
+        "Prepared conversion with resume: {} completed chapters with text, {} remaining (baseline {} words, prior elapsed {} ms)",
         completed_chapters_with_text,
-        total_chapters_remaining
+        total_chapters_remaining,
+        initial_words_processed,
+        prior_elapsed_ms
     );
 
     Ok(BookData {
@@ -553,6 +564,7 @@ async fn load_and_prepare_book(
         words_processed_from_completed,
         words_processed_from_checkpoint,
         initial_words_processed,
+        prior_elapsed_ms,
         conversion_chapters,
         total_chapters_with_text,
         completed_chapters_with_text,
@@ -600,6 +612,9 @@ async fn handle_all_chapters_completed(
 
             book.total_words = Some(total_words_all_chapters);
             book.words_processed = Some(total_words_all_chapters);
+            book.conversion_session_baseline_words = None;
+            book.conversion_session_started_at = None;
+            book.conversion_elapsed_ms = None;
             BookRepository::save(db.as_ref(), &book)
                 .await
                 .map_err(|e| AppError::Store(format!("Failed to save books: {}", e)))?;
@@ -644,10 +659,33 @@ async fn prepare_conversion(
             "Converting {} remaining chapters ({} words left) after skipping {} completed chapters and restoring {} checkpoint words",
             book_data.conversion_chapters.len(),
             total_words_remaining,
-            book_data.completed_chapters_with_text
-            ,book_data.words_processed_from_checkpoint
+            book_data.completed_chapters_with_text,
+            book_data.words_processed_from_checkpoint
         ),
+        session_baseline_words: book_data.initial_words_processed,
+        prior_elapsed_ms: book_data.prior_elapsed_ms,
     });
+
+    // Persist session baseline so resume ETA can account for already-done work.
+    if let Ok(db) = get_db_connection(app).await {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let started_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis().to_string())
+            .unwrap_or_else(|_| "0".to_string());
+        if let Err(e) = BookRepository::begin_conversion_session(
+            db.as_ref(),
+            book_id,
+            book_data.initial_words_processed,
+            book_data.initial_words_processed,
+            book_data.total_words_all_chapters,
+            &started_at,
+        )
+        .await
+        {
+            log::warn!("Failed to persist conversion session timing: {}", e);
+        }
+    }
 
     // Get cancellation token for this conversion
     let cancel_token = get_cancellation_token(app, book_id)?;
@@ -693,6 +731,7 @@ async fn perform_conversion(
         Some(book_data.total_words_all_chapters),
         Some(book_data.completed_chapters_with_text),
         Some(book_data.total_chapters_with_text),
+        Some(book_data.prior_elapsed_ms),
     )
     .await;
 
@@ -818,14 +857,26 @@ async fn save_converted_epub_and_update_book(
     }
 
     // Save final words_processed now that conversion is complete (reusing same connection)
-    if let Ok(Some(mut book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await
+    if let Ok(Some(book)) = BookRepository::find_by_source_path(db.as_ref(), source_path).await
     {
         if book.total_words.is_none() {
-            book.total_words = Some(total_words_all_chapters);
+            if let Err(e) = sqlx::query("UPDATE books SET total_words = ? WHERE id = ?")
+                .bind(total_words_all_chapters as i64)
+                .bind(&book.id)
+                .execute(db.as_ref())
+                .await
+            {
+                log::warn!("Failed to save final total_words: {}", e);
+            }
         }
-        book.words_processed = Some(total_words_all_chapters);
-        if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
-            log::warn!("Failed to save final words_processed: {}", e);
+        if let Err(e) = BookRepository::clear_conversion_session_on_complete(
+            db.as_ref(),
+            &book.id,
+            total_words_all_chapters,
+        )
+        .await
+        {
+            log::warn!("Failed to clear conversion session on complete: {}", e);
         } else {
             log::debug!(
                 "Saved final words_processed: {} / {}",

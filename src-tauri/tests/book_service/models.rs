@@ -37,6 +37,9 @@ fn test_book_creation() {
         voice_id: None,
         total_words: None,
         words_processed: None,
+        conversion_session_baseline_words: None,
+        conversion_session_started_at: None,
+        conversion_elapsed_ms: None,
         last_opened_time: None,
     };
     
@@ -203,6 +206,9 @@ fn test_book_with_all_fields() {
         voice_id: Some("af_heart".to_string()),
         total_words: Some(1000),
         words_processed: Some(1000),
+        conversion_session_baseline_words: None,
+        conversion_session_started_at: None,
+        conversion_elapsed_ms: None,
         last_opened_time: Some("2024-01-01T00:00:00Z".to_string()),
     };
     

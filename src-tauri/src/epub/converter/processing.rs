@@ -607,6 +607,7 @@ pub(crate) async fn process_chapter(
             "Generating audio for chapter {} ({} words)",
             chapter.title, chapter.word_count
         ),
+        ..Default::default()
     });
 
     validate_file_size(chapter.content_html.len(), MAX_CHAPTER_SIZE, "Chapter HTML")?;
@@ -761,6 +762,7 @@ pub(crate) async fn process_chapter(
                                 restored_count,
                                 restored_words_in_chapter
                             ),
+                            ..Default::default()
                         });
                     }
                 }
@@ -989,6 +991,7 @@ pub(crate) async fn process_chapter(
                 sentences_done,
                 total_sentences_to_process.max(1)
             ),
+            ..Default::default()
         });
 
         // Push completed sentence to the in-memory live stream manager.
@@ -1273,6 +1276,7 @@ pub(crate) async fn process_chapter(
             "Converting audio to MP3 for chapter {}...",
             chapter_index + 1
         ),
+        ..Default::default()
     });
 
     // Build chapter MP3 from per-sentence MP3 chunks (restored + newly generated)
@@ -1318,6 +1322,7 @@ pub(crate) async fn process_chapter(
         words_in_current_chapter: chapter_words,
         current_step: "creating-smil".to_string(),
         message: format!("Creating SMIL file for chapter {}...", chapter_index + 1),
+        ..Default::default()
     });
 
     // Generate SMIL file

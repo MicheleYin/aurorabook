@@ -88,6 +88,20 @@ impl BookRepository {
             voice_id: row.get("voice_id"),
             total_words: row.get::<Option<i64>, _>("total_words").map(|v| v as usize),
             words_processed: row.get::<Option<i64>, _>("words_processed").map(|v| v as usize),
+            conversion_session_baseline_words: row
+                .try_get::<Option<i64>, _>("conversion_session_baseline_words")
+                .ok()
+                .flatten()
+                .map(|v| v as usize),
+            conversion_session_started_at: row
+                .try_get::<Option<String>, _>("conversion_session_started_at")
+                .ok()
+                .flatten(),
+            conversion_elapsed_ms: row
+                .try_get::<Option<i64>, _>("conversion_elapsed_ms")
+                .ok()
+                .flatten()
+                .map(|v| v as u64),
             last_opened_time: row.get("last_opened_time"),
         })
     }
@@ -272,8 +286,10 @@ impl BookRepository {
                 audio_state_current_track_id, audio_state_current_track_href,
                 audio_state_current_track_index, audio_state_current_time_seconds,
                 audio_state_updated_at, audio_sync_map, page_count, conversion_status,
-                completed_chapters, voice_id, total_words, words_processed, last_opened_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                completed_chapters, voice_id, total_words, words_processed,
+                conversion_session_baseline_words, conversion_session_started_at,
+                conversion_elapsed_ms, last_opened_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 author = excluded.author,
@@ -306,6 +322,9 @@ impl BookRepository {
                 voice_id = excluded.voice_id,
                 total_words = excluded.total_words,
                 words_processed = excluded.words_processed,
+                conversion_session_baseline_words = excluded.conversion_session_baseline_words,
+                conversion_session_started_at = excluded.conversion_session_started_at,
+                conversion_elapsed_ms = excluded.conversion_elapsed_ms,
                 last_opened_time = excluded.last_opened_time
             "#
         )
@@ -341,6 +360,9 @@ impl BookRepository {
         .bind(&model.voice_id)
         .bind(model.total_words.map(|v| v as i64))
         .bind(model.words_processed.map(|v| v as i64))
+        .bind(model.conversion_session_baseline_words.map(|v| v as i64))
+        .bind(&model.conversion_session_started_at)
+        .bind(model.conversion_elapsed_ms.map(|v| v as i64))
         .bind(&model.last_opened_time)
         .execute(&mut *txn)
         .await
@@ -442,6 +464,100 @@ impl BookRepository {
         .await
         .map_err(|e| format!("Failed to update book audio state: {}", e))?;
         
+        Ok(())
+    }
+
+    /// Lightweight update of words processed during conversion.
+    pub async fn update_words_processed(
+        pool: &SqlitePool,
+        book_id: &str,
+        words_processed: usize,
+    ) -> Result<(), String> {
+        sqlx::query("UPDATE books SET words_processed = ? WHERE id = ?")
+            .bind(words_processed as i64)
+            .bind(book_id)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("Failed to update words_processed: {}", e))?;
+        Ok(())
+    }
+
+    /// Persist conversion session timing used for resume-aware ETA.
+    pub async fn begin_conversion_session(
+        pool: &SqlitePool,
+        book_id: &str,
+        baseline_words: usize,
+        words_processed: usize,
+        total_words: usize,
+        session_started_at_ms: &str,
+    ) -> Result<(), String> {
+        sqlx::query(
+            r#"
+            UPDATE books SET
+                conversion_session_baseline_words = ?,
+                conversion_session_started_at = ?,
+                words_processed = ?,
+                total_words = COALESCE(total_words, ?)
+            WHERE id = ?
+            "#,
+        )
+        .bind(baseline_words as i64)
+        .bind(session_started_at_ms)
+        .bind(words_processed as i64)
+        .bind(total_words as i64)
+        .bind(book_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to begin conversion session: {}", e))?;
+        Ok(())
+    }
+
+    /// On cancel: store words processed and accumulate session elapsed time.
+    pub async fn end_conversion_session_on_cancel(
+        pool: &SqlitePool,
+        book_id: &str,
+        words_processed: usize,
+        additional_elapsed_ms: u64,
+    ) -> Result<(), String> {
+        sqlx::query(
+            r#"
+            UPDATE books SET
+                words_processed = ?,
+                conversion_elapsed_ms = COALESCE(conversion_elapsed_ms, 0) + ?,
+                conversion_session_started_at = NULL
+            WHERE id = ?
+            "#,
+        )
+        .bind(words_processed as i64)
+        .bind(additional_elapsed_ms as i64)
+        .bind(book_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to end conversion session on cancel: {}", e))?;
+        Ok(())
+    }
+
+    /// On complete: clear session timing fields and mark full progress.
+    pub async fn clear_conversion_session_on_complete(
+        pool: &SqlitePool,
+        book_id: &str,
+        words_processed: usize,
+    ) -> Result<(), String> {
+        sqlx::query(
+            r#"
+            UPDATE books SET
+                words_processed = ?,
+                conversion_session_baseline_words = NULL,
+                conversion_session_started_at = NULL,
+                conversion_elapsed_ms = NULL
+            WHERE id = ?
+            "#,
+        )
+        .bind(words_processed as i64)
+        .bind(book_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to clear conversion session: {}", e))?;
         Ok(())
     }
     

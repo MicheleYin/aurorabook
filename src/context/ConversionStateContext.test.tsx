@@ -684,4 +684,81 @@ describe("ConversionStateProvider", () => {
       });
     });
   });
+
+  it("estimates ETA from remaining session work when resuming", async () => {
+    let resolveConvert: (value: unknown) => void = () => undefined;
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_app_settings") {
+        return { ttsVoiceId: "F1", ttsLanguage: "en" };
+      }
+      if (cmd === "get_current_converting_chapter") {
+        return 3;
+      }
+      if (cmd === "convert_epub_to_audiobook_command") {
+        return await new Promise((resolve) => {
+          resolveConvert = resolve;
+        });
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useConversionState(), { wrapper });
+
+    let convertPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      convertPromise = result.current.convertBook("book-1");
+    });
+
+    await waitFor(() => {
+      expect(result.current.isConverting).toBe(true);
+    });
+
+    // Resume mid-book: 800/1000 words already done before this session.
+    // Without baseline, ETA would collapse toward ~0s because session time is tiny.
+    act(() => {
+      emitTauriEvent("conversion-progress", {
+        currentChapter: 4,
+        totalChapters: 5,
+        wordsProcessed: 800,
+        totalWords: 1000,
+        wordsInCurrentChapter: 0,
+        currentStep: "initializing",
+        message: "Resuming",
+        sessionBaselineWords: 800,
+        priorElapsedMs: 800_000, // ~1s/word historically
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.eta).toEqual(expect.any(String));
+      // 200 remaining words * 1000ms ≈ 3–4 minutes, not "0 seconds".
+      expect(result.current.eta).not.toMatch(/^0\s/);
+      expect(result.current.eta?.toLowerCase()).toMatch(/minute|min/);
+    });
+
+    act(() => {
+      emitTauriEvent("conversion-progress", {
+        currentChapter: 4,
+        totalChapters: 5,
+        wordsProcessed: 850,
+        totalWords: 1000,
+        wordsInCurrentChapter: 50,
+        currentStep: "tts",
+        message: "Speaking",
+        sessionBaselineWords: 800,
+        priorElapsedMs: 800_000,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.conversionProgress?.wordsProcessed).toBe(850);
+      expect(result.current.eta).toEqual(expect.any(String));
+      expect(result.current.eta).not.toMatch(/^0\s/);
+    });
+
+    await act(async () => {
+      resolveConvert(null);
+      await convertPromise;
+    });
+  });
 });

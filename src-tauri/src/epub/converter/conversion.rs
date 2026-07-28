@@ -26,22 +26,49 @@ async fn save_progress_on_cancellation(
 ) {
     use crate::book_service::database::get_db_connection;
     use crate::book_service::repositories::BookRepository;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     if let Ok(db) = get_db_connection(app).await {
-        if let Ok(Some(mut book)) =
+        if let Ok(Some(book)) =
             BookRepository::find_by_source_path(db.as_ref(), source_path).await
         {
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let additional_elapsed_ms = book
+                .conversion_session_started_at
+                .as_ref()
+                .and_then(|started| started.parse::<u64>().ok())
+                .map(|started| now_ms.saturating_sub(started))
+                .unwrap_or(0);
+
             if book.total_words.is_none() {
-                book.total_words = Some(total_words);
+                if let Err(e) = sqlx::query("UPDATE books SET total_words = ? WHERE id = ?")
+                    .bind(total_words as i64)
+                    .bind(&book.id)
+                    .execute(db.as_ref())
+                    .await
+                {
+                    log::warn!("Failed to save total_words on cancellation: {}", e);
+                }
             }
-            book.words_processed = Some(words_processed);
-            if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
-                log::warn!("Failed to save words_processed on cancellation: {}", e);
+
+            if let Err(e) = BookRepository::end_conversion_session_on_cancel(
+                db.as_ref(),
+                &book.id,
+                words_processed,
+                additional_elapsed_ms,
+            )
+            .await
+            {
+                log::warn!("Failed to save conversion timing on cancellation: {}", e);
             } else {
                 log::debug!(
-                    "Saved words_processed on cancellation: {} / {}",
+                    "Saved words_processed on cancellation: {} / {} (+{} ms elapsed)",
                     words_processed,
-                    total_words
+                    total_words,
+                    additional_elapsed_ms
                 );
             }
         }
@@ -84,6 +111,7 @@ pub(crate) async fn convert_epub_core_with_durations(
         words_in_current_chapter: 0,
         current_step: "initializing".to_string(),
         message: "Initializing EPUB conversion with single TTS engine...".to_string(),
+        ..Default::default()
     });
 
     validate_chapter_count(options.chapters.len(), MAX_CHAPTERS)?;
@@ -226,6 +254,7 @@ pub(crate) async fn convert_epub_core_with_durations(
                     initial_chapter_index + chapter_index + 1,
                     chapter.title
                 ),
+                ..Default::default()
             });
 
             // Mark chapter as completed even though we're skipping it
@@ -302,6 +331,7 @@ pub(crate) async fn convert_epub_core_with_durations(
                 chapter.title,
                 chapter.word_count
             ),
+            ..Default::default()
         });
 
         // Get the ONNX engine from the pool
@@ -357,6 +387,7 @@ pub(crate) async fn convert_epub_core_with_durations(
                 chapter_words_processed,
                 updated_total
             ),
+            ..Default::default()
         });
 
         // Merge chapter result into context
@@ -430,8 +461,31 @@ pub(crate) async fn convert_epub_core_with_durations(
             }
         }
 
-        // Note: We don't save words_processed to DB after each chapter anymore
-        // It's tracked in atomics and will be saved only on cancellation or completion
+        // Persist words_processed after each chapter so resume state stays accurate.
+        if let (Some(app_ref), Some(source_path_ref)) = (app.as_ref(), source_path.as_ref()) {
+            use crate::book_service::database::get_db_connection;
+            use crate::book_service::repositories::BookRepository;
+            let words_processed = words_processed_atomic.load(Ordering::Relaxed);
+            if let Ok(db) = get_db_connection(app_ref).await {
+                if let Ok(Some(book)) =
+                    BookRepository::find_by_source_path(db.as_ref(), source_path_ref).await
+                {
+                    if let Err(e) = BookRepository::update_words_processed(
+                        db.as_ref(),
+                        &book.id,
+                        words_processed,
+                    )
+                    .await
+                    {
+                        log::warn!(
+                            "Failed to persist words_processed after chapter {}: {}",
+                            chapter_index + 1,
+                            e
+                        );
+                    }
+                }
+            }
+        }
     }
 
     log::debug!(
@@ -454,6 +508,7 @@ pub(crate) async fn convert_epub_core_with_durations(
         words_in_current_chapter: 0,
         current_step: "complete".to_string(),
         message: "Completing conversion...".to_string(),
+        ..Default::default()
     });
 
     Ok(output)
