@@ -114,7 +114,7 @@ async fn cache_track_file(
         .await
         .map_err(|e| AppError::Store(format!("Failed to create player cache dir: {e}")))?;
 
-    let db = get_db_connection(app).await?;
+    let db = get_db_connection(app).await.map_err(AppError::Store)?;
     let Some((bytes, href)) =
         AudioRepository::resolve_track_audio_bytes(db.as_ref(), book_id, track_id)
             .await
