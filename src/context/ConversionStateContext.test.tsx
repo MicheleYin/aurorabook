@@ -42,7 +42,7 @@ describe("ConversionStateProvider", () => {
           chapters: [],
           sourcePath: "/tmp/a.epub",
           audioTracks: [],
-          conversionStatus: "completed",
+          conversionStatus: "done",
           completedChapters: [],
         };
       }

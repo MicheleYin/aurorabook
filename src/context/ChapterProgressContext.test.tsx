@@ -1,4 +1,4 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
@@ -30,7 +30,7 @@ function createBook(overrides: Partial<Book> = {}): Book {
     chapters: [chapter, createChapter({ id: "ch-2", href: "ch2.xhtml", chapterOrder: 1 })],
     sourcePath: "/tmp/a.epub",
     audioTracks: [],
-    conversionStatus: "completed",
+    conversionStatus: "done",
     completedChapters: [],
     ...overrides,
   };

@@ -1,10 +1,11 @@
 import { vi } from "vitest";
 
 type EventHandler = (event: { event: string; payload: unknown }) => void;
+type InvokeFn = (cmd: string, args?: unknown) => Promise<unknown>;
 
 const listeners = new Map<string, Set<EventHandler>>();
 
-export const invoke = vi.fn(async () => {
+export const invoke = vi.fn<InvokeFn>(async () => {
   throw new Error("Tauri invoke is not available in unit tests");
 });
 

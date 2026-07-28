@@ -1,7 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
-import { toast } from "sonner";
 
 import {
   SettingsProvider,
@@ -16,7 +15,7 @@ function wrapper({ children }: { children: ReactNode }) {
 describe("SettingsProvider", () => {
   beforeEach(() => {
     document.documentElement.className = "";
-    invoke.mockImplementation(async (cmd: string, args?: { settings?: unknown }) => {
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === "get_app_settings") {
         return {
           theme: "dark",
@@ -29,7 +28,7 @@ describe("SettingsProvider", () => {
         };
       }
       if (cmd === "update_app_settings") {
-        return args?.settings;
+        return (args as { settings?: unknown } | undefined)?.settings;
       }
       throw new Error(`Unexpected invoke: ${cmd}`);
     });

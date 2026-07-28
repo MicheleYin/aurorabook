@@ -59,7 +59,7 @@ function createBook(): Book {
     chapters: [currentChapter],
     sourcePath: "/tmp/book.epub",
     audioTracks: [currentAudioTrack],
-    conversionStatus: "completed",
+    conversionStatus: "done",
     completedChapters: [],
     audioSyncMap: {
       segments: [
@@ -183,7 +183,7 @@ describe("useAudioTextSync", () => {
     });
 
     renderHook(() =>
-      useAudioTextSync(book, refs.current.scrollContainerRef, null, true)
+      useAudioTextSync(book, refs.current.scrollContainerRef, undefined, true)
     );
 
     act(() => {
@@ -212,7 +212,7 @@ describe("useAudioTextSync", () => {
     });
 
     renderHook(() =>
-      useAudioTextSync(book, refs.current.scrollContainerRef, null, true)
+      useAudioTextSync(book, refs.current.scrollContainerRef, undefined, true)
     );
 
     act(() => {
@@ -247,7 +247,7 @@ describe("useAudioTextSync", () => {
     });
 
     renderHook(() =>
-      useAudioTextSync(book, refs.current.scrollContainerRef, null, true)
+      useAudioTextSync(book, refs.current.scrollContainerRef, undefined, true)
     );
 
     act(() => {
@@ -272,7 +272,7 @@ describe("useAudioTextSync", () => {
     });
 
     renderHook(() =>
-      useAudioTextSync(book, refs.current.scrollContainerRef, null, true)
+      useAudioTextSync(book, refs.current.scrollContainerRef, undefined, true)
     );
 
     act(() => {
@@ -306,7 +306,7 @@ describe("useAudioTextSync", () => {
         return useAudioTextSync(
           book,
           refs.current.scrollContainerRef,
-          null,
+          undefined,
           true
         );
       },
@@ -334,7 +334,7 @@ describe("useAudioTextSync", () => {
         useAudioTextSync(
           book,
           refs.current.scrollContainerRef,
-          null,
+          undefined,
           headerVisible
         ),
       { initialProps: { headerVisible: true } }

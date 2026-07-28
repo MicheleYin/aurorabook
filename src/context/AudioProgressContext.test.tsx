@@ -46,7 +46,7 @@ function createBook(overrides: Partial<Book> = {}): Book {
     ],
     sourcePath: "/tmp/book.epub",
     audioTracks: [track],
-    conversionStatus: "completed",
+    conversionStatus: "done",
     completedChapters: [],
     audioSyncMap: {
       segments: [

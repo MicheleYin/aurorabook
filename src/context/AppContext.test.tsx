@@ -23,7 +23,7 @@ function createBook(overrides: Partial<Book> = {}): Book {
     ],
     sourcePath: "/tmp/a.epub",
     audioTracks: [],
-    conversionStatus: "completed",
+    conversionStatus: "done",
     completedChapters: [],
     ...overrides,
   };
