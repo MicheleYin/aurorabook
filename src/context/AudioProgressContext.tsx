@@ -12,6 +12,8 @@ import {
 } from "react";
 import { getName } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { type } from "@tauri-apps/plugin-os";
 import { toast } from "sonner";
 
 import { AppSettings } from "@/types/settings";
@@ -22,6 +24,11 @@ import type {
   Book,
   BookAudioState,
 } from "../types/book";
+import {
+  applyNativePlayerEvent,
+  mimeTypeFromTrackHref,
+  trackDisplayTitle,
+} from "../lib/audio-progress-utils";
 import { logger } from "../lib/logger";
 import { useConversionState } from "./ConversionStateContext";
 
@@ -74,6 +81,19 @@ interface AudioProgressProviderProps {
   readonly children: ReactNode;
 }
 
+function tryResumePlayback(
+  el: HTMLAudioElement,
+  savedTime: number,
+  wasPlaying: boolean
+) {
+  el.currentTime = savedTime;
+  if (wasPlaying) {
+    el.play().catch((err: unknown) =>
+      logger.warn("Could not auto-resume after server restart:", err)
+    );
+  }
+}
+
 export function AudioProgressProvider({
   children,
 }: AudioProgressProviderProps) {
@@ -81,6 +101,10 @@ export function AudioProgressProvider({
     useConversionState();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
+  // Last known position from the native AVPlayer (updated by native-player-event).
+  const nativeTimeRef = useRef<number>(0);
+  // Whether we're running on iOS (set async on mount, so starts false).
+  const isIosRef = useRef<boolean>(false);
   const livePlaybackRequestRef = useRef({
     resumeTime: 0,
     autoPlay: false,
@@ -150,6 +174,78 @@ export function AudioProgressProvider({
     },
     []
   );
+
+  // When the streaming server restarts (iOS app resume), reconnect the audio element.
+  useEffect(() => {
+    const currentTrackRef = { current: currentAudioTrack };
+    currentTrackRef.current = currentAudioTrack;
+
+    const unlisten = listen<number>("audio-server-restarted", async () => {
+      const track = currentTrackRef.current;
+      if (!track || !audioRef.current || track.isLiveStream) return;
+
+      const el = audioRef.current;
+      const savedTime = el.currentTime;
+      const wasPlaying = !el.paused;
+
+      try {
+        const newUrl = await invoke<string>("get_audio_stream_url", {
+          bookId: track.bookId,
+          trackId: track.id,
+        });
+
+        el.src = newUrl;
+        el.load();
+
+        const onReady = () => {
+          tryResumePlayback(el, savedTime, wasPlaying);
+          el.removeEventListener("loadedmetadata", onReady);
+        };
+        el.addEventListener("loadedmetadata", onReady);
+      } catch (err) {
+        logger.error("Failed to reconnect audio after server restart:", err);
+      }
+    });
+
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [currentAudioTrack, audioRef]);
+
+  // Detect iOS once on mount.
+  useEffect(() => {
+    try {
+      isIosRef.current = type() === "ios";
+    } catch {
+      isIosRef.current = false;
+    }
+  }, []);
+
+  // Listen for native-player-event (AVPlayer callbacks from Swift).
+  useEffect(() => {
+    const unlisten = listen<{ type: string; time?: number }>(
+      "native-player-event",
+      (event) => {
+        const result = applyNativePlayerEvent(
+          event.payload,
+          audioRef.current?.currentTime ?? null
+        );
+        if (result.nativeTime !== null) {
+          nativeTimeRef.current = result.nativeTime;
+        }
+        if (result.seekWebViewTo !== null && audioRef.current) {
+          audioRef.current.currentTime = result.seekWebViewTo;
+        }
+        if (result.synthesiseEnded) {
+          audioRef.current?.dispatchEvent(new Event("ended"));
+        }
+      }
+    );
+
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [audioRef]);
 
   // Load playback speed from backend on mount
   useEffect(() => {
@@ -468,18 +564,36 @@ export function AudioProgressProvider({
             audioRef.current.playbackRate = playbackRate;
 
             await waitForAudioReady();
+
+            // Mirror WebView audio events into the native AVPlayer so the lock
+            // screen always reflects what the in-app player is doing.
+            if (isIosRef.current) {
+              const el = audioRef.current;
+              const onPlay = () =>
+                void invoke("ios_player_play").catch(() => undefined);
+              const onPause = () =>
+                void invoke("ios_player_pause").catch(() => undefined);
+              const onSeeked = () =>
+                void invoke("ios_player_seek", {
+                  seconds: el.currentTime,
+                }).catch(() => undefined);
+              const onRate = () =>
+                void invoke("ios_player_set_rate", {
+                  rate: el.playbackRate,
+                }).catch(() => undefined);
+              el.removeEventListener("play", onPlay);
+              el.removeEventListener("pause", onPause);
+              el.removeEventListener("seeked", onSeeked);
+              el.removeEventListener("ratechange", onRate);
+              el.addEventListener("play", onPlay);
+              el.addEventListener("pause", onPause);
+              el.addEventListener("seeked", onSeeked);
+              el.addEventListener("ratechange", onRate);
+            }
           }
 
           // Get MIME type from track href for metadata
-          const mimeType = track.href?.endsWith(".mp3")
-            ? "audio/mpeg"
-            : track.href?.endsWith(".m4a")
-              ? "audio/mp4"
-              : track.href?.endsWith(".ogg")
-                ? "audio/ogg"
-                : track.href?.endsWith(".wav")
-                  ? "audio/wav"
-                  : "audio/mpeg";
+          const mimeType = mimeTypeFromTrackHref(track.href);
 
           setCurrentAudioTrack({
             ...track,
@@ -487,6 +601,18 @@ export function AudioProgressProvider({
             isLiveStream: false,
             liveChapterIndex: undefined,
           });
+
+          if (isIosRef.current) {
+            void invoke("ios_player_load", {
+              bookId,
+              trackId: track.id,
+              title: trackDisplayTitle(track.title, track.order),
+              artist: book.author ?? "",
+              duration: track.duration ?? 0,
+            }).catch((err: unknown) =>
+              logger.warn("ios_player_load failed (non-fatal):", err)
+            );
+          }
 
           setMediaSessionMetadata();
         }
@@ -623,7 +749,23 @@ export function AudioProgressProvider({
         }
         logger.log("loaded last opened audio track", audioTrackToLoad, book);
       } else {
-        toast.error("No audio tracks available in this book");
+        // Clear previous playback state when switching to a book with no audio.
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current.currentTime = 0;
+          audioRef.current.src = "";
+        }
+
+        if (blobUrlRef.current) {
+          URL.revokeObjectURL(blobUrlRef.current);
+          blobUrlRef.current = null;
+        }
+
+        setCurrentAudioTrack(null);
+
+        if ("mediaSession" in navigator) {
+          navigator.mediaSession.metadata = null;
+        }
       }
       setIsLoadingAudio(false);
     },

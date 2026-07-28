@@ -6,6 +6,7 @@ import {
   AudioProgressProvider,
   useAudioProgressContext,
 } from "./AudioProgressContext";
+import { ConversionStateProvider } from "./ConversionStateContext";
 import type { AudioTrack, Book } from "../types/book";
 import {
   emitTauriEvent,
@@ -15,15 +16,12 @@ import {
   osType,
 } from "../test/tauri-mocks";
 
-const getCurrentConvertingChapter = vi.fn((_bookId: string): number | null => null);
-const refreshCurrentConvertingChapter = vi.fn(
-  async (_bookId: string): Promise<number | null> => null
-);
-
-vi.mock("./ConversionStateContext", () => ({
-  useConversionState: () => ({
-    getCurrentConvertingChapter,
-    refreshCurrentConvertingChapter,
+vi.mock("../lib/i18n", () => ({
+  useTranslation: () => ({
+    t: (key: string) => key,
+    lang: "en",
+    changeLanguage: vi.fn(),
+    loading: false,
   }),
 }));
 
@@ -88,7 +86,12 @@ function createAudioElement(): HTMLAudioElement {
     },
     load: {
       configurable: true,
-      value: vi.fn(),
+      value: vi.fn(function (this: HTMLAudioElement) {
+        queueMicrotask(() => {
+          this.dispatchEvent(new Event("loadedmetadata"));
+          this.dispatchEvent(new Event("canplay"));
+        });
+      }),
     },
     paused: {
       configurable: true,
@@ -103,19 +106,21 @@ function createAudioElement(): HTMLAudioElement {
 }
 
 function wrapper({ children }: { children: ReactNode }) {
-  return <AudioProgressProvider>{children}</AudioProgressProvider>;
+  return (
+    <ConversionStateProvider>
+      <AudioProgressProvider>{children}</AudioProgressProvider>
+    </ConversionStateProvider>
+  );
 }
 
 describe("AudioProgressProvider", () => {
   beforeEach(() => {
-    getCurrentConvertingChapter.mockReset();
-    refreshCurrentConvertingChapter.mockReset();
-    getCurrentConvertingChapter.mockReturnValue(null);
-    refreshCurrentConvertingChapter.mockResolvedValue(null);
-
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "get_app_settings") {
         return { audioPlaybackSpeed: 1.25 };
+      }
+      if (cmd === "get_current_converting_chapter") {
+        return null;
       }
       if (cmd === "get_audio_stream_url") {
         return "https://stream.local/track.mp3";
@@ -519,7 +524,19 @@ describe("AudioProgressProvider", () => {
 
   describe("live chapter playback", () => {
     it("marks a track as live when it matches the converting chapter", async () => {
-      getCurrentConvertingChapter.mockReturnValue(0);
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { audioPlaybackSpeed: 1.25 };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          return 0;
+        }
+        if (cmd === "get_audio_stream_url") {
+          return "https://stream.local/track.mp3";
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
       const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
       const audio = createAudioElement();
       result.current.audioRef.current = audio;
@@ -544,9 +561,6 @@ describe("AudioProgressProvider", () => {
     });
 
     it("treats explicit live-* track ids as live streams", async () => {
-      getCurrentConvertingChapter.mockReturnValue(null);
-      refreshCurrentConvertingChapter.mockResolvedValue(null);
-
       const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
       const book = createBook({
         chapters: [
@@ -591,14 +605,15 @@ describe("AudioProgressProvider", () => {
     });
 
     it("falls back to live playback when stream URL fails for the converting chapter", async () => {
-      getCurrentConvertingChapter.mockReturnValue(null);
-      refreshCurrentConvertingChapter
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(0);
-
+      let convertingChapterCalls = 0;
       invoke.mockImplementation(async (cmd: string) => {
         if (cmd === "get_app_settings") {
           return { audioPlaybackSpeed: 1 };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          convertingChapterCalls += 1;
+          // First refresh during load returns null; retry after stream failure is live.
+          return convertingChapterCalls === 1 ? null : 0;
         }
         if (cmd === "get_audio_stream_url") {
           throw new Error("track not ready");
@@ -617,13 +632,10 @@ describe("AudioProgressProvider", () => {
         isLiveStream: true,
         liveChapterIndex: 0,
       });
-      expect(refreshCurrentConvertingChapter).toHaveBeenCalledTimes(2);
+      expect(convertingChapterCalls).toBeGreaterThanOrEqual(2);
     });
 
     it("loads a synthetic live track when restoring the last opened converting chapter", async () => {
-      getCurrentConvertingChapter.mockReturnValue(null);
-      refreshCurrentConvertingChapter.mockResolvedValue(0);
-
       const book = createBook({
         chapters: [
           {
@@ -640,6 +652,9 @@ describe("AudioProgressProvider", () => {
       invoke.mockImplementation(async (cmd: string) => {
         if (cmd === "get_app_settings") {
           return { audioPlaybackSpeed: 1 };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          return 0;
         }
         if (cmd === "read_one_book") {
           return book;
