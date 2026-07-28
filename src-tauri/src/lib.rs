@@ -13,6 +13,7 @@ pub mod tts;  // Made public for testing
 pub mod epub;  // Made public for testing
 pub mod utils;  // Made public for testing
 pub mod background;
+pub mod native_player;
 mod window;
 mod logging;
 
@@ -160,6 +161,9 @@ pub fn run() {
 
             // iOS 26+ continued processing (BGContinuedProcessingTaskRequest)
             background::init_background_runtime(app.handle());
+
+            // Native AVPlayer bridge — enables lock-screen controls on iOS
+            native_player::init(app.handle());
             
             // Start audio streaming HTTP server tied to app lifecycle
             // Use the runtime handle to spawn the task
@@ -237,6 +241,13 @@ pub fn run() {
             book_service::audio_stream::get_audio_stream_url,
             book_service::audio_stream::get_epub_resource_url,
             utils::path_resolver::get_path_diagnostics,
+            native_player::ios_player_load,
+            native_player::ios_player_play,
+            native_player::ios_player_pause,
+            native_player::ios_player_seek,
+            native_player::ios_player_set_rate,
+            native_player::ios_player_current_time,
+            native_player::ios_player_is_playing,
         ])
         .manage(epub::CancellationTokens::new())
         .manage(background::BackgroundCoordinator::new())

@@ -51,4 +51,24 @@ describe("toast-utils", () => {
     updateLoadingToastToError("Failed", "job");
     expect(toast.error).toHaveBeenCalledWith("Failed", { id: "job" });
   });
+
+  it("dismisses by explicit id and clears tracking when matched", () => {
+    showLoadingToast("Working…", "job");
+    dismissLoadingToast("job");
+    expect(toast.dismiss).toHaveBeenCalledWith("job");
+
+    vi.clearAllMocks();
+    dismissLoadingToast();
+    expect(toast.dismiss).not.toHaveBeenCalled();
+  });
+
+  it("updates success/error without clearing tracking for unrelated ids", () => {
+    showLoadingToast("Working…", "job");
+    updateLoadingToastToSuccess("Done", "other");
+    updateLoadingToastToError("Failed", "other2");
+
+    vi.clearAllMocks();
+    dismissLoadingToast();
+    expect(toast.dismiss).toHaveBeenCalledWith("job");
+  });
 });

@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
 
+/**
+ * Phase 5 — UI stays at smoke coverage.
+ * Do not expand Playwright into shadcn/layout pixel assertions; dense logic
+ * is covered by Vitest (lib/context/hooks) and Rust llvm-cov gates.
+ */
 test.describe("AuroraBook", () => {
   test("renders the library screen header and add-book action", async ({
     page,

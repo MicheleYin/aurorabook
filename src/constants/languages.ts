@@ -54,9 +54,8 @@ export function isTtsLanguageCode(raw: string): raw is TtsLanguageCode {
 /** Normalize stored UI locale / detection to a supported code. */
 export function normalizeAppLanguage(raw: string | undefined | null): AppLanguageCode {
   if (!raw) return "en";
-  const base = raw.split(/[-_]/)[0]?.toLowerCase() ?? raw.toLowerCase();
+  const base = raw.split(/[-_]/)[0]!.toLowerCase();
   if (isAppLanguageCode(base)) return base;
-  if (isAppLanguageCode(raw.toLowerCase())) return raw.toLowerCase() as AppLanguageCode;
   return "en";
 }
 

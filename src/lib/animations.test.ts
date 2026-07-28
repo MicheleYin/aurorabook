@@ -58,6 +58,9 @@ describe("animations", () => {
     expect(enterExit(true, "scaleFade")).toBe(
       "animate-in zoom-in-95 animate-in fade-in-0 duration-200"
     );
+    expect(
+      enterExit(true, "unknown" as "fade")
+    ).toBe(fade("in"));
 
     expect(enterExit(false, "fade")).toBe(fade("out"));
     expect(enterExit(false, "slideUp")).toBe("animate-out slide-out-to-top");
@@ -71,6 +74,9 @@ describe("animations", () => {
     expect(enterExit(false, "scaleFade")).toBe(
       "animate-out zoom-out-95 animate-out fade-out-0 duration-200"
     );
+    expect(
+      enterExit(false, "unknown" as "fade")
+    ).toBe(fade("out"));
   });
 
   it("chooses the correct view transition direction", () => {

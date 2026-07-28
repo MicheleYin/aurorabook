@@ -195,53 +195,79 @@ fn rewrite_css_urls_for_endpoint(
 ) -> String {
     use regex::Regex;
 
-    let import_url_re = match Regex::new(r#"(?is)@import\s+url\(\s*(["']?)([^"')]+)\1\s*\)"#) {
+    // Note: the `regex` crate does not support backreferences (`\1`), so quote
+    // variants are matched with alternation instead.
+    let import_url_re = match Regex::new(
+        r#"(?is)@import\s+url\(\s*(?:"([^"]+)"|'([^']+)'|([^"')\s]+))\s*\)"#,
+    ) {
         Ok(v) => v,
-        Err(_) => return css_text.to_string(),
+        Err(_) => return append_reader_css_width_guards(css_text),
     };
-    let import_plain_re = match Regex::new(r#"(?is)@import\s+(["'])([^"']+)\1"#) {
+    let import_plain_re =
+        match Regex::new(r#"(?is)@import\s+(?:"([^"]+)"|'([^']+)')"#) {
+            Ok(v) => v,
+            Err(_) => return append_reader_css_width_guards(css_text),
+        };
+    let url_re = match Regex::new(
+        r#"(?is)url\(\s*(?:"([^"]+)"|'([^']+)'|([^"')\s]+))\s*\)"#,
+    ) {
         Ok(v) => v,
-        Err(_) => return css_text.to_string(),
+        Err(_) => return append_reader_css_width_guards(css_text),
     };
-    let url_re = match Regex::new(r#"(?is)url\(\s*(["']?)([^"')]+)\1\s*\)"#) {
-        Ok(v) => v,
-        Err(_) => return css_text.to_string(),
+
+    let capture_url = |caps: &regex::Captures| -> String {
+        caps.get(1)
+            .or_else(|| caps.get(2))
+            .or_else(|| caps.get(3))
+            .map(|m| m.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string()
     };
 
     let mut out = css_text.to_string();
 
     out = import_url_re
         .replace_all(&out, |caps: &regex::Captures| {
-            let raw = caps.get(2).map(|m| m.as_str()).unwrap_or_default().trim();
-            if raw.is_empty() || is_external_resource_ref(raw) {
+            let raw = capture_url(caps);
+            if raw.is_empty() || is_external_resource_ref(&raw) {
                 caps.get(0).map(|m| m.as_str()).unwrap_or_default().to_string()
             } else {
-                let rewritten = build_epub_resource_absolute_url(port, book_id, raw, Some(css_member_path));
-                format!("@import url(\"{}\")", rewritten)
+                let rewritten =
+                    build_epub_resource_absolute_url(port, book_id, &raw, Some(css_member_path));
+                format!("@import url(\"{rewritten}\")")
             }
         })
         .to_string();
 
     out = import_plain_re
         .replace_all(&out, |caps: &regex::Captures| {
-            let raw = caps.get(2).map(|m| m.as_str()).unwrap_or_default().trim();
-            if raw.is_empty() || is_external_resource_ref(raw) {
+            let raw = caps
+                .get(1)
+                .or_else(|| caps.get(2))
+                .map(|m| m.as_str())
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if raw.is_empty() || is_external_resource_ref(&raw) {
                 caps.get(0).map(|m| m.as_str()).unwrap_or_default().to_string()
             } else {
-                let rewritten = build_epub_resource_absolute_url(port, book_id, raw, Some(css_member_path));
-                format!("@import url(\"{}\")", rewritten)
+                let rewritten =
+                    build_epub_resource_absolute_url(port, book_id, &raw, Some(css_member_path));
+                format!("@import url(\"{rewritten}\")")
             }
         })
         .to_string();
 
     out = url_re
         .replace_all(&out, |caps: &regex::Captures| {
-            let raw = caps.get(2).map(|m| m.as_str()).unwrap_or_default().trim();
-            if raw.is_empty() || is_external_resource_ref(raw) {
+            let raw = capture_url(caps);
+            if raw.is_empty() || is_external_resource_ref(&raw) {
                 caps.get(0).map(|m| m.as_str()).unwrap_or_default().to_string()
             } else {
-                let rewritten = build_epub_resource_absolute_url(port, book_id, raw, Some(css_member_path));
-                format!("url(\"{}\")", rewritten)
+                let rewritten =
+                    build_epub_resource_absolute_url(port, book_id, &raw, Some(css_member_path));
+                format!("url(\"{rewritten}\")")
             }
         })
         .to_string();

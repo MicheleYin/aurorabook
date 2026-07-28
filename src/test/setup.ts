@@ -3,14 +3,24 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn(async () => {
-    throw new Error("Tauri invoke is not available in unit tests");
-  }),
-}));
+import {
+  getName,
+  invoke,
+  listen,
+  locale,
+  osType,
+  resetTauriMocks,
+} from "./tauri-mocks";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+
+vi.mock("@tauri-apps/api/event", () => ({ listen }));
+
+vi.mock("@tauri-apps/api/app", () => ({ getName }));
 
 vi.mock("@tauri-apps/plugin-os", () => ({
-  locale: vi.fn(async () => "en-US"),
+  locale,
+  type: osType,
   platform: vi.fn(async () => "macos"),
   arch: vi.fn(async () => "aarch64"),
   version: vi.fn(async () => "15.0.0"),
@@ -57,8 +67,20 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openPath: vi.fn(async () => {}),
 }));
 
+vi.mock("sonner", () => ({
+  toast: {
+    loading: vi.fn(),
+    dismiss: vi.fn(),
+    success: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    message: vi.fn(),
+  },
+}));
+
 afterEach(() => {
   cleanup();
+  resetTauriMocks();
 });
 
 Object.defineProperty(window, "matchMedia", {

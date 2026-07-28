@@ -27,12 +27,15 @@ describe("normalizeAppLanguage", () => {
     expect(normalizeAppLanguage("fr")).toBe("fr");
     expect(normalizeAppLanguage("de")).toBe("de");
     expect(normalizeAppLanguage("pt-BR")).toBe("pt");
+    expect(normalizeAppLanguage("pt_BR")).toBe("pt");
+    expect(normalizeAppLanguage("EN")).toBe("en");
   });
 
   it("falls back to en for missing or unsupported values", () => {
     expect(normalizeAppLanguage(undefined)).toBe("en");
     expect(normalizeAppLanguage(null)).toBe("en");
     expect(normalizeAppLanguage("zz")).toBe("en");
+    expect(normalizeAppLanguage("")).toBe("en");
   });
 });
 

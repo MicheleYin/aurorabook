@@ -4,27 +4,19 @@ import type { Book } from "../types/book";
 import { useAudioProgressContext } from "../context/AudioProgressContext";
 import { useAudioSyncContext } from "../context/AudioSyncContext";
 import { useChapterProgressContext } from "../context/ChapterProgressContext";
+import {
+  filterSegmentsForTrack,
+  findSegmentAtTime,
+  getProseContainer,
+  HIGHLIGHT_ACTIVE_CLASS,
+  HIGHLIGHT_CLASS,
+  HIGHLIGHT_ENTER_CLASS,
+  HIGHLIGHT_EXIT_CLASS,
+  isElementFullyVisible,
+  clampScrollTopForElement,
+  shouldRunSyncPass,
+} from "../lib/audio-sync-utils";
 import { logger } from "../lib/logger";
-
-const HIGHLIGHT_CLASS = "audio-highlight";
-const HIGHLIGHT_ENTER_CLASS = "audio-highlight-enter";
-const HIGHLIGHT_ACTIVE_CLASS = "audio-highlight-active";
-const HIGHLIGHT_EXIT_CLASS = "audio-highlight-exit";
-
-/** Returns the prose container, piercing the shadow DOM when present. */
-function getProseContainer(
-  scrollContainer: HTMLDivElement
-): HTMLElement | null {
-  const shadowHost = scrollContainer.querySelector<HTMLElement>(
-    "[data-reader-chapter-shadow-host]"
-  );
-  if (shadowHost?.shadowRoot) {
-    return shadowHost.shadowRoot.querySelector<HTMLElement>(
-      "[data-reader-chapter-content]"
-    );
-  }
-  return scrollContainer.querySelector<HTMLElement>(".prose");
-}
 
 /**
  * Hook for audio-text synchronization
@@ -162,8 +154,9 @@ export function useAudioTextSync(
     }
 
     // Find segments for current track
-    const trackSegments = audioSyncMap.segments.filter(
-      (segment) => segment.audioTrackHref === trackHref
+    const trackSegments = filterSegmentsForTrack(
+      audioSyncMap.segments,
+      trackHref
     );
 
     if (trackSegments.length === 0) {
@@ -203,28 +196,15 @@ export function useAudioTextSync(
     ) => {
       const containerRect = container.getBoundingClientRect();
       const elementRect = element.getBoundingClientRect();
-      const { topOffset, bottomOffset } = calculateOffsets();
+      const offsets = calculateOffsets();
 
-      // Check if element is fully visible within the available viewport
-      // (accounting for header at top and audio player at bottom)
-      const isVisible =
-        elementRect.top >= containerRect.top + topOffset &&
-        elementRect.bottom <= containerRect.bottom - bottomOffset &&
-        elementRect.left >= containerRect.left &&
-        elementRect.right <= containerRect.right;
-
-      if (!isVisible) {
-        const elementOffsetTop = element.offsetTop - container.offsetTop;
-        const oneRem = 8;
-        // Position element 1rem below header, ensuring it's above audio player
-        const targetScrollTop = elementOffsetTop - topOffset - oneRem;
-
-        // Ensure we don't scroll past the bottom (accounting for audio player)
-        const maxScrollTop =
-          container.scrollHeight - containerRect.height + bottomOffset;
-        const clampedScrollTop = Math.min(
-          Math.max(0, targetScrollTop),
-          maxScrollTop
+      if (!isElementFullyVisible(elementRect, containerRect, offsets)) {
+        const clampedScrollTop = clampScrollTopForElement(
+          element.offsetTop,
+          container.offsetTop,
+          containerRect.height,
+          container.scrollHeight,
+          offsets
         );
 
         container.scrollTo({
@@ -301,16 +281,13 @@ export function useAudioTextSync(
       const currentTime = audio.currentTime;
 
       // Skip if time hasn't changed
-      if (Math.abs(currentTime - lastSyncTimeRef.current) < 0.1) {
+      if (!shouldRunSyncPass(currentTime, lastSyncTimeRef.current)) {
         return;
       }
       lastSyncTimeRef.current = currentTime;
 
       // Find matching segment
-      const matchingSegment = trackSegments.find(
-        (segment) =>
-          currentTime >= segment.clipBegin && currentTime <= segment.clipEnd
-      );
+      const matchingSegment = findSegmentAtTime(trackSegments, currentTime);
 
       if (!matchingSegment) {
         return;
