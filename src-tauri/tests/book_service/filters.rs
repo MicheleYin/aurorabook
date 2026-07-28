@@ -42,6 +42,7 @@ fn create_test_book(id: &str, title: &str, author: &str, progress: Option<f64>) 
         voice_id: None,
         total_words: None,
         words_processed: None,
+        last_opened_time: None,
     }
 }
 

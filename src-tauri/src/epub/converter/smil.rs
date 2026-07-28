@@ -166,7 +166,7 @@ pub fn generate_smil_file(
 ///
 /// # Returns
 /// Time in seconds as f64
-fn parse_smil_time(time_str: &str) -> f64 {
+pub(crate) fn parse_smil_time(time_str: &str) -> f64 {
     let parts: Vec<&str> = time_str.split(':').collect();
     
     if parts.len() == 3 {
@@ -547,5 +547,118 @@ pub fn build_audio_sync_map(
     Ok(Some(AudioSyncMap {
         segments: all_segments,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Cursor, Write};
+    use zip::write::FileOptions;
+    use zip::ZipWriter;
+
+    #[test]
+    fn parses_smil_time_formats() {
+        assert!((parse_smil_time("01:01:01.500") - 3661.5).abs() < 0.001);
+        assert!((parse_smil_time("01:23.456") - 83.456).abs() < 0.001);
+        assert!((parse_smil_time("12.5") - 12.5).abs() < 0.001);
+        assert_eq!(parse_smil_time("not-a-time"), 0.0);
+    }
+
+    #[test]
+    fn parses_smil_file_into_sync_segments() {
+        let smil = r#"<?xml version="1.0" encoding="UTF-8"?>
+<smil xmlns="http://www.w3.org/ns/SMIL" version="3.0">
+  <body>
+    <seq>
+      <par>
+        <text src="chapter.xhtml#f000001"/>
+        <audio src="Audio/chapter.mp3" clipBegin="00:00:00.000" clipEnd="00:00:02.500"/>
+      </par>
+      <par>
+        <text src="chapter.xhtml#f000002"/>
+        <audio src="Audio/chapter.mp3" clipBegin="00:00:02.500" clipEnd="00:00:05.000"/>
+      </par>
+    </seq>
+  </body>
+</smil>"#;
+
+        let segments = parse_smil_file(smil, "Text/chapter.xhtml").expect("parse smil");
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].text_element_id, "f000001");
+        assert_eq!(segments[0].chapter_href, "Text/chapter.xhtml");
+        assert_eq!(segments[0].audio_track_href, "Audio/chapter.mp3");
+        assert!((segments[0].clip_begin - 0.0).abs() < 0.001);
+        assert!((segments[0].clip_end - 2.5).abs() < 0.001);
+        assert_eq!(segments[1].text_element_id, "f000002");
+    }
+
+    #[test]
+    fn build_audio_sync_map_reads_smil_from_zip() {
+        let smil = r#"<?xml version="1.0" encoding="UTF-8"?>
+<smil xmlns="http://www.w3.org/ns/SMIL" version="3.0">
+  <body>
+    <seq>
+      <par>
+        <text src="Text/ch1.xhtml#w1"/>
+        <audio src="Audio/ch1.mp3" clipBegin="00:00:00.000" clipEnd="00:00:01.000"/>
+      </par>
+    </seq>
+  </body>
+</smil>"#;
+
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut buffer);
+            zip.start_file("Text/ch1.smil", FileOptions::default())
+                .expect("start smil");
+            zip.write_all(smil.as_bytes()).expect("write smil");
+            zip.finish().expect("finish zip");
+        }
+        let bytes = buffer.into_inner();
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes.as_slice())).expect("open zip");
+
+        let chapters = vec![Chapter {
+            id: "c1".into(),
+            title: "One".into(),
+            content_html: None,
+            plain_text: None,
+            order: 0,
+            href: "Text/ch1.xhtml".into(),
+            word_count: None,
+            estimated_page_count: None,
+        }];
+
+        let map = build_audio_sync_map(&mut archive, &chapters)
+            .expect("build map")
+            .expect("some map");
+        assert_eq!(map.segments.len(), 1);
+        assert_eq!(map.segments[0].text_element_id, "w1");
+    }
+
+    #[test]
+    fn build_audio_sync_map_returns_none_without_smil() {
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut buffer);
+            zip.start_file("Text/ch1.xhtml", FileOptions::default())
+                .expect("start xhtml");
+            zip.write_all(b"<html/>").expect("write xhtml");
+            zip.finish().expect("finish zip");
+        }
+        let bytes = buffer.into_inner();
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes.as_slice())).expect("open zip");
+        let chapters = vec![Chapter {
+            id: "c1".into(),
+            title: "One".into(),
+            content_html: None,
+            plain_text: None,
+            order: 0,
+            href: "Text/ch1.xhtml".into(),
+            word_count: None,
+            estimated_page_count: None,
+        }];
+        let map = build_audio_sync_map(&mut archive, &chapters).expect("build map");
+        assert!(map.is_none());
+    }
 }
 

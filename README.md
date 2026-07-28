@@ -78,6 +78,50 @@ bun run dev:trace
 
 ---
 
+## Testing & coverage
+
+### Frontend
+
+```bash
+# Unit / component tests (Vitest)
+bun run test
+bun run test:watch
+bun run test:coverage   # → coverage/lcov.info + HTML under coverage/
+
+# Browser smoke (Vite only — not full Tauri IPC)
+bun run test:playwright
+
+# Unit + Playwright
+bun run test:all
+```
+
+Co-locate tests as `src/**/*.{test,spec}.{ts,tsx}`. Tauri APIs are stubbed in
+[`src/test/setup.ts`](src/test/setup.ts).
+
+### Rust
+
+```bash
+# Fast suite (lib + modular harness) — same as CI
+bun run test:rust
+
+# Coverage via cargo-llvm-cov (install once:
+#   cargo install cargo-llvm-cov --locked
+#   rustup component add llvm-tools-preview)
+bun run test:rust:coverage   # → src-tauri/target/llvm-cov/lcov.info
+
+# Lib unit tests only
+bun run test:rust:lib
+
+# Full suite including slow/model/FFmpeg binaries
+cd src-tauri && cargo test
+```
+
+See [`src-tauri/tests/README.md`](src-tauri/tests/README.md) for the fast vs
+slow/ignored policy. CI uploads FE and Rust LCOV artifacts from
+[`.github/workflows/test.yml`](.github/workflows/test.yml).
+
+---
+
 ## Building
 
 ### macOS
@@ -105,9 +149,11 @@ bun run build:ios
 
 ```
 ├── src/                 # React + TypeScript frontend
+├── src/test/            # Vitest setup + Tauri mocks
 ├── src-tauri/           # Rust backend, Tauri config, icons, resources
-├── scripts/             # Build and utility scripts
-├── Kokoros/             # Local copy of the Kokoros TTS engine
+├── src-tauri/tests/     # Rust integration / modular test suite
+├── tests/               # Playwright browser smoke specs
+├── scripts/             # Build, coverage, and utility scripts
 └── package.json         # Scripts and frontend dependencies
 ```
 

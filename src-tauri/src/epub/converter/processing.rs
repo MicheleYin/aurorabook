@@ -1130,3 +1130,110 @@ pub(crate) async fn process_chapter(
         words_processed: actual_words_processed,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+
+    use crate::tts::koko::WordAlignment;
+    use crate::utils::constants::{MAX_SENTENCE_WORDS, SAMPLE_RATE};
+
+    use super::{
+        calculate_total_words_processed, clean_text_for_tts, generate_audio_path,
+        map_alignments_to_segments, resolve_chapter_path, split_long_sentence,
+    };
+
+    #[test]
+    fn calculates_total_words_from_atomic_counter() {
+        let words = Arc::new(AtomicUsize::new(125));
+
+        assert_eq!(calculate_total_words_processed(Some(&words), 25), (125, 150));
+        assert_eq!(calculate_total_words_processed(None, 25), (0, 25));
+    }
+
+    #[test]
+    fn cleans_text_for_tts_by_normalizing_whitespace() {
+        let cleaned = clean_text_for_tts("\n\t Hello   world\r\n\nthis   works \t");
+
+        assert_eq!(cleaned, "Hello world this works");
+    }
+
+    #[test]
+    fn splits_long_sentence_without_exceeding_word_limit() {
+        let text = (0..120)
+            .map(|index| format!("supercalifragilisticexpialidocious{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let chunks = split_long_sentence(&text);
+
+        assert!(chunks.len() > 1);
+        assert!(chunks.iter().all(|chunk| !chunk.is_empty()));
+        assert!(
+            chunks
+                .iter()
+                .all(|chunk| chunk.split_whitespace().count() <= MAX_SENTENCE_WORDS)
+        );
+        assert_eq!(split_long_sentence("short sentence"), vec!["short sentence"]);
+    }
+
+    #[test]
+    fn generates_audio_paths_and_resolves_chapter_paths() {
+        let (zip_path, manifest_path) =
+            generate_audio_path("OPS/chapter-1.xhtml", 0, "EPUB/").unwrap();
+
+        assert_eq!(zip_path, "EPUB/Audio/chapter-1.mp3");
+        assert_eq!(manifest_path, "Audio/chapter-1.mp3");
+        assert_eq!(resolve_chapter_path("/OPS/ch1.xhtml", "EPUB/"), "OPS/ch1.xhtml");
+        assert_eq!(resolve_chapter_path("EPUB/ch1.xhtml", "EPUB/"), "EPUB/ch1.xhtml");
+        assert_eq!(resolve_chapter_path("ch1.xhtml", "EPUB/"), "EPUB/ch1.xhtml");
+    }
+
+    #[test]
+    fn maps_alignments_using_real_timing_when_available() {
+        let alignments = vec![
+            WordAlignment {
+                word: "one".to_string(),
+                start_sec: 0.0,
+                end_sec: 0.5,
+            },
+            WordAlignment {
+                word: "two".to_string(),
+                start_sec: 0.5,
+                end_sec: 1.0,
+            },
+            WordAlignment {
+                word: "three".to_string(),
+                start_sec: 1.0,
+                end_sec: 1.5,
+            },
+            WordAlignment {
+                word: "four".to_string(),
+                start_sec: 1.5,
+                end_sec: 2.0,
+            },
+        ];
+
+        let segments = map_alignments_to_segments(
+            vec![("f000001".to_string(), 1, 3)],
+            &alignments,
+            &vec![0.0; SAMPLE_RATE as usize * 2],
+            "one two three four",
+        );
+
+        assert_eq!(segments, vec![("f000001".to_string(), 0.5, 1.5)]);
+    }
+
+    #[test]
+    fn estimates_alignment_timing_when_no_word_timings_exist() {
+        let segments = map_alignments_to_segments(
+            vec![("f000002".to_string(), 1, 3)],
+            &[],
+            &vec![0.0; SAMPLE_RATE as usize * 4],
+            "one two three four",
+        );
+
+        assert_eq!(segments, vec![("f000002".to_string(), 1.0, 3.0)]);
+    }
+}

@@ -42,11 +42,18 @@ pub async fn cancel_conversion_command(
             AppError::Store(format!("Failed to lock cancellation tokens: {}", e))
         })?;
         
-        if let Some(cancel_token) = tokens_guard.get(&book_id) {
-            cancel_token.store(true, Ordering::Relaxed);
+        if let Some(token) = tokens_guard.get(&book_id) {
+            token.store(true, Ordering::Relaxed);
             log::info!("Cancellation requested for conversion: book_id={}", book_id);
         } else {
             log::warn!("No active conversion found for book_id: {}", book_id);
+        }
+    }
+
+    // Cancel matching iOS continued-processing task if present.
+    if let Some(coord) = app.try_state::<crate::background::BackgroundCoordinator>() {
+        if let Some(task_id) = coord.task_id_for_book(&book_id) {
+            let _ = crate::background::cancel_continued_task(task_id, app.clone()).await;
         }
     }
 

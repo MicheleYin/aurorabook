@@ -3,7 +3,6 @@
 //! Tests path resolution functions:
 //! - find_model_and_voices
 //! - validate_path
-//! - find_g2p_model
 
 use aurorabook_lib::utils::path_resolver::ResourcePathResolver;
 use aurorabook_lib::utils::errors::AppError;
@@ -25,7 +24,7 @@ fn test_validate_path_basic() {
 
 #[test]
 fn test_validate_path_with_file_prefix() {
-    // Test that file:// prefix is removed
+    // Test that file:/// prefix is removed (absolute path needs three slashes)
     let temp_dir = tempfile::tempdir().unwrap();
     let test_file = temp_dir.path().join("test.txt");
     std::fs::write(&test_file, "test").unwrap();
@@ -35,7 +34,11 @@ fn test_validate_path_with_file_prefix() {
         &file_url,
         Some(temp_dir.path())
     );
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "file:// URL should validate; got {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -72,19 +75,3 @@ fn test_find_model_and_voices() {
     // Should either find files or return ResourceNotFound error
     assert!(result.is_ok() || matches!(result, Err(AppError::ResourceNotFound(_))));
 }
-
-#[test]
-fn test_find_g2p_model() {
-    // Test finding G2P model files
-    let result = ResourcePathResolver::find_g2p_model(None, "en-us");
-    // Should either find file or return ResourceNotFound error
-    assert!(result.is_ok() || matches!(result, Err(AppError::ResourceNotFound(_))));
-}
-
-#[test]
-fn test_find_g2p_model_unsupported_language() {
-    // Test unsupported language code
-    let result = ResourcePathResolver::find_g2p_model(None, "unsupported");
-    assert!(result.is_err());
-}
-

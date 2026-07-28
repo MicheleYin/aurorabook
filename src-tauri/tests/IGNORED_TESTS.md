@@ -69,6 +69,12 @@ Create integration tests that run with a real Tauri application context. These w
 ### Option 3: Dependency Injection
 Refactor functions to accept path resolvers instead of `AppHandle` directly, making them easier to test.
 
+## Continuous Integration
+
+PR CI runs the **fast** suite only (`cargo test --lib` with `cargo-llvm-cov`).
+Ignored AppHandle tests are not executed there. Full `--ignored` runs remain a
+local / optional concern.
+
 ## Testing Strategy
 
 The current approach is:

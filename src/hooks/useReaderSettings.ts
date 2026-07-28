@@ -5,19 +5,20 @@ import { toast } from "sonner";
 import type { ReaderSettings } from "../components/reader/ReaderSettings";
 import { useSettingsContext } from "../context/SettingsContext";
 import { logger } from "../lib/logger";
-
-const defaultSettings: ReaderSettings = {
-  theme: "system",
-  fontFamily: "merriweather",
-  fontSize: "medium",
-  contentPadding: "comfortable",
-};
+import {
+  DEFAULT_READER_SETTINGS,
+  normalizeContentPadding,
+  normalizeFontSize,
+} from "../lib/reader-settings-utils";
 
 export function useReaderSettings() {
-  const { settings: appSettings, saveSettings: saveAppSettings } =
-    useSettingsContext();
+  const {
+    settings: appSettings,
+    saveSettings: saveAppSettings,
+    applyTheme,
+  } = useSettingsContext();
   const [readerSettings, setReaderSettings] =
-    useState<ReaderSettings>(defaultSettings);
+    useState<ReaderSettings>(DEFAULT_READER_SETTINGS);
   const isInitialLoadRef = useRef(true);
   const isSyncingRef = useRef(false);
 
@@ -43,6 +44,8 @@ export function useReaderSettings() {
         const syncedPreferences: ReaderSettings = {
           ...preferences,
           theme: mergeTheme(preferences.theme),
+          fontSize: normalizeFontSize(preferences.fontSize),
+          contentPadding: normalizeContentPadding(preferences.contentPadding),
         };
         setReaderSettings(syncedPreferences);
         isInitialLoadRef.current = false;
@@ -50,7 +53,7 @@ export function useReaderSettings() {
         logger.error("Failed to load reader preferences:", err);
         toast.error("Failed to load reader preferences");
         setReaderSettings({
-          ...defaultSettings,
+          ...DEFAULT_READER_SETTINGS,
           theme: mergeTheme(undefined),
         });
         isInitialLoadRef.current = false;
@@ -93,14 +96,30 @@ export function useReaderSettings() {
     async (settings: ReaderSettings) => {
       try {
         isSyncingRef.current = true;
-        setReaderSettings(settings);
+        const normalizedSettings = {
+          ...settings,
+          fontSize: normalizeFontSize(settings.fontSize),
+          contentPadding: normalizeContentPadding(settings.contentPadding),
+        };
+
+        if (
+          normalizedSettings.theme &&
+          appSettings?.theme !== normalizedSettings.theme
+        ) {
+          applyTheme(normalizedSettings.theme as "light" | "dark" | "system");
+        }
+
+        setReaderSettings(normalizedSettings);
         await invoke("update_reader_preferences", {
-          preferences: settings,
+          preferences: normalizedSettings,
         });
 
         // Sync theme change to app settings if it changed
-        if (settings.theme && appSettings?.theme !== settings.theme) {
-          await saveAppSettings({ theme: settings.theme });
+        if (
+          normalizedSettings.theme &&
+          appSettings?.theme !== normalizedSettings.theme
+        ) {
+          await saveAppSettings({ theme: normalizedSettings.theme });
         }
       } catch (err) {
         logger.error("Failed to save reader preferences:", err);
@@ -109,7 +128,7 @@ export function useReaderSettings() {
         isSyncingRef.current = false;
       }
     },
-    [appSettings?.theme, saveAppSettings]
+    [appSettings?.theme, applyTheme, saveAppSettings]
   );
 
   return { readerSettings, setReaderSettings: saveSettings };

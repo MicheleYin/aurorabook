@@ -12,6 +12,8 @@ pub mod tts_commands;  // Made public for testing
 pub mod tts;  // Made public for testing
 pub mod epub;  // Made public for testing
 pub mod utils;  // Made public for testing
+pub mod background;
+pub mod native_player;
 mod window;
 mod logging;
 
@@ -109,7 +111,7 @@ pub fn run() {
                             logging::log("info", &model_msg, None);
                         } else {
                             let warn_msg = format!(
-                                "⚠ Supertonic ONNX bundle not found under Resources (expected resources/supertonic/onnx from build.rs). Ensure ./supertonic-2 exists and run cargo build."
+                                "⚠ Supertonic ONNX bundle not found under Resources (expected resources/supertonic/onnx from build.rs). Ensure ./supertonic-3 exists and run cargo build."
                             );
                             log::warn!("{}", warn_msg);
                             logging::log("warn", &warn_msg, None);
@@ -156,6 +158,12 @@ pub fn run() {
                 log::error!("Failed to initialize database connection: {}", e);
                 e
             })?;
+
+            // iOS 26+ continued processing (BGContinuedProcessingTaskRequest)
+            background::init_background_runtime(app.handle());
+
+            // Native AVPlayer bridge — enables lock-screen controls on iOS
+            native_player::init(app.handle());
             
             // Start audio streaming HTTP server tied to app lifecycle
             // Use the runtime handle to spawn the task
@@ -199,6 +207,9 @@ pub fn run() {
             tts_commands::convert_pcm_to_mp3,
             epub::conversion_command::convert_epub_to_audiobook_command,
             epub::cancellation::cancel_conversion_command,
+            background::commands::background_capabilities,
+            background::commands::start_continued_conversion,
+            background::commands::cancel_continued_task,
             resources::read_resource_file,
             book_service::read_all_books,
             book_service::read_one_book,
@@ -230,8 +241,16 @@ pub fn run() {
             book_service::audio_stream::get_audio_stream_url,
             book_service::audio_stream::get_epub_resource_url,
             utils::path_resolver::get_path_diagnostics,
+            native_player::ios_player_load,
+            native_player::ios_player_play,
+            native_player::ios_player_pause,
+            native_player::ios_player_seek,
+            native_player::ios_player_set_rate,
+            native_player::ios_player_current_time,
+            native_player::ios_player_is_playing,
         ])
         .manage(epub::CancellationTokens::new())
+        .manage(background::BackgroundCoordinator::new())
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {

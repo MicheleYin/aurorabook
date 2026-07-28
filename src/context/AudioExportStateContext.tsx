@@ -15,9 +15,15 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+import {
+  isTerminalExportStep,
+  linearAudioExportEtaMs,
+  normalizeFormat,
+  type AudioExportFormat,
+} from "../lib/audio-export-utils";
 import { logger } from "../lib/logger";
 
-export type AudioExportFormat = "mp3" | "m4a" | "m4b";
+export type { AudioExportFormat } from "../lib/audio-export-utils";
 
 export interface AudioExportProgressPayload {
   bookId: string;
@@ -34,33 +40,6 @@ export interface AudioExportStatusPayload {
   inProgress: boolean;
   bookId: string | null;
   format: string | null;
-}
-
-function normalizeFormat(f: string | null): AudioExportFormat | null {
-  if (f === "mp3" || f === "m4a" || f === "m4b") {
-    return f;
-  }
-  return null;
-}
-
-/** Linear ETA from tracks completed; `startedAtMs` is wall time when encode/export work began. */
-function linearAudioExportEtaMs(
-  startedAtMs: number,
-  processedTracks: number,
-  totalTracks: number
-): number | null {
-  if (totalTracks <= 0 || processedTracks <= 0) {
-    return null;
-  }
-  if (processedTracks >= totalTracks) {
-    return 0;
-  }
-  const elapsed = Math.max(1, Date.now() - startedAtMs);
-  const rate = processedTracks / elapsed;
-  if (!Number.isFinite(rate) || rate <= 0) {
-    return null;
-  }
-  return (totalTracks - processedTracks) / rate;
 }
 
 interface AudioExportStateContextValue {
@@ -121,13 +100,9 @@ export function AudioExportStateProvider({
   );
   const [exportEtaTick, setExportEtaTick] = useState(0);
 
-  const isTerminalStep = useCallback((step: string) => {
-    return step === "completed" || step === "cancelled";
-  }, []);
-
   const applyProgressPayload = useCallback(
     (progress: AudioExportProgressPayload) => {
-      const terminal = isTerminalStep(progress.currentStep);
+      const terminal = isTerminalExportStep(progress.currentStep);
       setIsAnyExporting(!terminal);
       setActiveExportBookId(terminal ? null : progress.bookId);
       setActiveExportFormat(
@@ -138,7 +113,7 @@ export function AudioExportStateProvider({
         setExportStartedAtMs(null);
       }
     },
-    [isTerminalStep]
+    []
   );
 
   const syncAudioExportStatus = useCallback(async () => {
@@ -209,7 +184,7 @@ export function AudioExportStateProvider({
     if (
       exportStartedAtMs === null ||
       exportProgress === null ||
-      isTerminalStep(exportProgress.currentStep)
+      isTerminalExportStep(exportProgress.currentStep)
     ) {
       return null;
     }
@@ -219,12 +194,7 @@ export function AudioExportStateProvider({
       exportProgress.processedTracks,
       exportProgress.totalTracks
     );
-  }, [
-    exportEtaTick,
-    exportProgress,
-    exportStartedAtMs,
-    isTerminalStep,
-  ]);
+  }, [exportEtaTick, exportProgress, exportStartedAtMs]);
 
   const cancelAudioExport = useCallback(async () => {
     try {

@@ -8,7 +8,7 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Label } from "../ui/label";
-import { AVAILABLE_LANGS } from "../../constants/languages";
+import { AVAILABLE_LANGS, normalizeTtsLanguage } from "../../constants/languages";
 import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
 
 export function TtsLanguageSelect() {
@@ -19,7 +19,7 @@ export function TtsLanguageSelect() {
     const firstVoice = KOKORO_VOICE_GROUPS.flatMap((g) => g.voices)[0];
 
     void saveSettings({
-      ttsLanguage: value,
+      ttsLanguage: normalizeTtsLanguage(value),
       ttsVoiceId: firstVoice?.id ?? settings?.ttsVoiceId,
     });
   };
@@ -28,7 +28,7 @@ export function TtsLanguageSelect() {
     <div className="space-y-2">
       <Label htmlFor="tts-language-select">{t("settings.tts_language")}</Label>
       <Select
-        value={settings?.ttsLanguage || "en"}
+        value={normalizeTtsLanguage(settings?.ttsLanguage)}
         onValueChange={handleLanguageChange}
       >
         <SelectTrigger id="tts-language-select" className="w-full">

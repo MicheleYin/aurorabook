@@ -20,7 +20,12 @@ const EXPORT_DECODE_CHANNELS: u32 = 2;
 static FFMPEG_BIN_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 fn candidate_if_file(path: PathBuf) -> Option<PathBuf> {
-    if path.is_file() {
+    // Ignore empty placeholders created for Tauri bundle path validation in CI/tests.
+    if path.is_file()
+        && std::fs::metadata(&path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
         Some(path)
     } else {
         None
@@ -505,4 +510,57 @@ pub fn apply_mp4_metadata_and_chapters_ffmpeg(
     _embed_chapters: bool,
 ) -> AppResult<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extension_hint_maps_known_containers() {
+        assert_eq!(extension_hint_from_href("a.MP3", "bin"), "mp3");
+        assert_eq!(extension_hint_from_href("a.m4b", "bin"), "m4a");
+        assert_eq!(extension_hint_from_href("a.aac", "bin"), "m4a");
+        assert_eq!(extension_hint_from_href("a.ogg", "bin"), "ogg");
+        assert_eq!(extension_hint_from_href("a.opus", "bin"), "opus");
+        assert_eq!(extension_hint_from_href("a.wav", "bin"), "wav");
+        assert_eq!(extension_hint_from_href("a.flac", "bin"), "flac");
+        assert_eq!(extension_hint_from_href("a.bin", "mp3"), "mp3");
+    }
+
+    #[test]
+    fn escape_ffmetadata_escapes_special_chars() {
+        assert_eq!(escape_ffmetadata_value(r"a=b;c#d\e"), r"a\=b\;c\#d\\e");
+        assert_eq!(
+            escape_ffmetadata_value("line\nbreak\r"),
+            "line\\\nbreak\\\r"
+        );
+        assert_eq!(escape_ffmetadata_value("plain"), "plain");
+    }
+
+    #[test]
+    fn stderr_snippet_truncates_long_output() {
+        assert_eq!(stderr_snippet(b"ok", 10), "ok");
+        assert_eq!(stderr_snippet(b"abcdefghijklmnop", 5), "abcde…");
+    }
+
+    #[test]
+    fn candidate_if_file_rejects_missing_and_empty() {
+        let missing = candidate_if_file(std::path::PathBuf::from("/no/such/ffmpeg-bin"));
+        assert!(missing.is_none());
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let empty = dir.path().join("ffmpeg");
+        std::fs::write(&empty, b"").expect("write empty");
+        assert!(candidate_if_file(empty.clone()).is_none());
+
+        std::fs::write(&empty, b"#!/bin/sh\n").expect("write non-empty");
+        assert_eq!(candidate_if_file(empty.clone()), Some(empty));
+    }
+
+    #[test]
+    fn extension_hint_falls_back_for_unknown() {
+        assert_eq!(extension_hint_from_href("track.bin", "wav"), "wav");
+        assert_eq!(extension_hint_from_href("track.MP4", "bin"), "m4a");
+    }
 }

@@ -248,14 +248,12 @@ impl ResourcePathResolver {
     /// // Returns: "/path/to/café.epub"
     /// ```
     pub fn normalize_file_path(path: &str) -> String {
-        // Remove file:// or file:/// prefix if present
-        // iOS file picker returns file:/// (three slashes) for local files
-        let without_scheme = if path.starts_with("file:///") {
-            // file:///path -> /path (keep the leading slash)
-            path.replacen("file:///", "", 1)
-        } else if path.starts_with("file://") {
-            // file://path -> path (no leading slash, less common on iOS)
-            path.replacen("file://", "", 1)
+        // Remove file:// prefix if present.
+        // iOS file pickers return `file:///abs/path` (three slashes = empty host + absolute path).
+        // Strip only the scheme (`file://`) so the leading `/` of absolute paths is preserved:
+        //   file:///Users/x/book.epub → /Users/x/book.epub
+        let without_scheme = if let Some(rest) = path.strip_prefix("file://") {
+            rest.to_string()
         } else {
             path.to_string()
         };

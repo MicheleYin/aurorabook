@@ -195,53 +195,79 @@ fn rewrite_css_urls_for_endpoint(
 ) -> String {
     use regex::Regex;
 
-    let import_url_re = match Regex::new(r#"(?is)@import\s+url\(\s*(["']?)([^"')]+)\1\s*\)"#) {
+    // Note: the `regex` crate does not support backreferences (`\1`), so quote
+    // variants are matched with alternation instead.
+    let import_url_re = match Regex::new(
+        r#"(?is)@import\s+url\(\s*(?:"([^"]+)"|'([^']+)'|([^"')\s]+))\s*\)"#,
+    ) {
         Ok(v) => v,
-        Err(_) => return css_text.to_string(),
+        Err(_) => return append_reader_css_width_guards(css_text),
     };
-    let import_plain_re = match Regex::new(r#"(?is)@import\s+(["'])([^"']+)\1"#) {
+    let import_plain_re =
+        match Regex::new(r#"(?is)@import\s+(?:"([^"]+)"|'([^']+)')"#) {
+            Ok(v) => v,
+            Err(_) => return append_reader_css_width_guards(css_text),
+        };
+    let url_re = match Regex::new(
+        r#"(?is)url\(\s*(?:"([^"]+)"|'([^']+)'|([^"')\s]+))\s*\)"#,
+    ) {
         Ok(v) => v,
-        Err(_) => return css_text.to_string(),
+        Err(_) => return append_reader_css_width_guards(css_text),
     };
-    let url_re = match Regex::new(r#"(?is)url\(\s*(["']?)([^"')]+)\1\s*\)"#) {
-        Ok(v) => v,
-        Err(_) => return css_text.to_string(),
+
+    let capture_url = |caps: &regex::Captures| -> String {
+        caps.get(1)
+            .or_else(|| caps.get(2))
+            .or_else(|| caps.get(3))
+            .map(|m| m.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string()
     };
 
     let mut out = css_text.to_string();
 
     out = import_url_re
         .replace_all(&out, |caps: &regex::Captures| {
-            let raw = caps.get(2).map(|m| m.as_str()).unwrap_or_default().trim();
-            if raw.is_empty() || is_external_resource_ref(raw) {
+            let raw = capture_url(caps);
+            if raw.is_empty() || is_external_resource_ref(&raw) {
                 caps.get(0).map(|m| m.as_str()).unwrap_or_default().to_string()
             } else {
-                let rewritten = build_epub_resource_absolute_url(port, book_id, raw, Some(css_member_path));
-                format!("@import url(\"{}\")", rewritten)
+                let rewritten =
+                    build_epub_resource_absolute_url(port, book_id, &raw, Some(css_member_path));
+                format!("@import url(\"{rewritten}\")")
             }
         })
         .to_string();
 
     out = import_plain_re
         .replace_all(&out, |caps: &regex::Captures| {
-            let raw = caps.get(2).map(|m| m.as_str()).unwrap_or_default().trim();
-            if raw.is_empty() || is_external_resource_ref(raw) {
+            let raw = caps
+                .get(1)
+                .or_else(|| caps.get(2))
+                .map(|m| m.as_str())
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if raw.is_empty() || is_external_resource_ref(&raw) {
                 caps.get(0).map(|m| m.as_str()).unwrap_or_default().to_string()
             } else {
-                let rewritten = build_epub_resource_absolute_url(port, book_id, raw, Some(css_member_path));
-                format!("@import url(\"{}\")", rewritten)
+                let rewritten =
+                    build_epub_resource_absolute_url(port, book_id, &raw, Some(css_member_path));
+                format!("@import url(\"{rewritten}\")")
             }
         })
         .to_string();
 
     out = url_re
         .replace_all(&out, |caps: &regex::Captures| {
-            let raw = caps.get(2).map(|m| m.as_str()).unwrap_or_default().trim();
-            if raw.is_empty() || is_external_resource_ref(raw) {
+            let raw = capture_url(caps);
+            if raw.is_empty() || is_external_resource_ref(&raw) {
                 caps.get(0).map(|m| m.as_str()).unwrap_or_default().to_string()
             } else {
-                let rewritten = build_epub_resource_absolute_url(port, book_id, raw, Some(css_member_path));
-                format!("url(\"{}\")", rewritten)
+                let rewritten =
+                    build_epub_resource_absolute_url(port, book_id, &raw, Some(css_member_path));
+                format!("url(\"{rewritten}\")")
             }
         })
         .to_string();
@@ -630,7 +656,21 @@ pub async fn restart_audio_server(
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
     log::info!("Restarting audio streaming server...");
-    start_audio_server(app).await
+    start_audio_server(app.clone()).await?;
+
+    // Notify the frontend so it can reconnect the audio element with the new URL.
+    // The port changes on every restart because we bind to :0 (OS-assigned).
+    let port = get_server_port().load(std::sync::atomic::Ordering::Relaxed);
+    if port > 0 {
+        use tauri::Emitter;
+        if let Err(e) = app.emit("audio-server-restarted", port) {
+            log::warn!("Failed to emit audio-server-restarted event: {}", e);
+        } else {
+            log::info!("Emitted audio-server-restarted (port={})", port);
+        }
+    }
+
+    Ok(())
 }
 
 /// Detect audio MIME type from file extension
@@ -657,5 +697,113 @@ fn detect_audio_mime_type(audio_path: &str, audio_href: &str) -> &'static str {
     } else {
         // Default to MP3 if unknown
         "audio/mpeg"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        append_reader_css_width_guards, build_epub_resource_absolute_url,
+        detect_audio_mime_type, detect_resource_mime_type, is_external_resource_ref,
+        rewrite_css_urls_for_endpoint,
+    };
+
+    #[test]
+    fn detects_resource_mime_types_from_extension_and_signature() {
+        assert_eq!(detect_resource_mime_type("styles/main.css", b"body{}"), "text/css");
+        assert_eq!(detect_resource_mime_type("chapter.xhtml", b"<html />"), "text/html");
+        assert_eq!(detect_resource_mime_type("cover.unknown", &[0x89, 0x50, 0x4E, 0x47]), "image/png");
+        assert_eq!(detect_resource_mime_type("cover.bin", &[0x00, 0x01]), "application/octet-stream");
+    }
+
+    #[test]
+    fn detects_audio_mime_types_with_reasonable_default() {
+        assert_eq!(detect_audio_mime_type("track.m4b", "track.bin"), "audio/mp4");
+        assert_eq!(detect_audio_mime_type("track.bin", "track.ogg"), "audio/ogg");
+        assert_eq!(detect_audio_mime_type("track.bin", "track.unknown"), "audio/mpeg");
+    }
+
+    #[test]
+    fn recognizes_external_resource_references() {
+        assert!(is_external_resource_ref("https://example.com/a.css"));
+        assert!(is_external_resource_ref(" data:image/png;base64,abc"));
+        assert!(is_external_resource_ref("#chapter-1"));
+        assert!(!is_external_resource_ref("../images/cover.png"));
+    }
+
+    #[test]
+    fn builds_epub_resource_urls_with_encoded_query_values() {
+        let url = build_epub_resource_absolute_url(
+            4321,
+            "book 1",
+            "Text/chapter 1.xhtml",
+            Some("OPS/chapter 1.xhtml"),
+        );
+
+        assert_eq!(
+            url,
+            "http://localhost:4321/epub-resource?book_id=book%201&href=Text%2Fchapter%201%2Exhtml&chapter_href=OPS%2Fchapter%201%2Exhtml"
+        );
+    }
+
+    #[test]
+    fn preserves_external_css_urls_and_appends_reader_guards() {
+        let css = ".keep-http { background-image: url(\"https://example.com/bg.png\"); } .keep-anchor { mask-image: url(#mask); }";
+
+        let rewritten = rewrite_css_urls_for_endpoint(css, 8080, "book-id", "OPS/styles/main.css");
+
+        assert!(rewritten.contains("https://example.com/bg.png"));
+        assert!(rewritten.contains("url(#mask)"));
+        assert!(rewritten.contains("[data-reader-chapter-content=\"true\"]{max-width:100%!important"));
+    }
+
+    #[test]
+    fn appends_reader_width_guards_to_css() {
+        let guarded = append_reader_css_width_guards("body { color: black; }");
+
+        assert!(guarded.starts_with("body { color: black; }"));
+        assert!(guarded.contains("Aurorabook reader guard"));
+        assert!(guarded.contains("overflow-wrap:break-word"));
+    }
+
+    #[test]
+    fn detects_fonts_media_and_magic_mime_types() {
+        assert_eq!(detect_resource_mime_type("f.woff2", b""), "font/woff2");
+        assert_eq!(detect_resource_mime_type("f.ttf", b""), "font/ttf");
+        assert_eq!(detect_resource_mime_type("a.mp3", b""), "audio/mpeg");
+        assert_eq!(detect_resource_mime_type("a.m4b", b""), "audio/mp4");
+        assert_eq!(detect_resource_mime_type("v.webm", b""), "video/webm");
+        assert_eq!(detect_resource_mime_type("s.vtt", b""), "text/vtt");
+        assert_eq!(
+            detect_resource_mime_type("x.bin", &[0xFF, 0xD8, 0xFF, 0xE0]),
+            "image/jpeg"
+        );
+        assert_eq!(
+            detect_resource_mime_type("x.bin", &[0x47, 0x49, 0x46, 0x38]),
+            "image/gif"
+        );
+    }
+
+    #[test]
+    fn detects_more_audio_mime_extensions() {
+        assert_eq!(detect_audio_mime_type("a.wav", "x"), "audio/wav");
+        assert_eq!(detect_audio_mime_type("a.webm", "x"), "audio/webm");
+        assert_eq!(detect_audio_mime_type("a.flac", "x"), "audio/flac");
+        assert_eq!(detect_audio_mime_type("a.mp3", "x"), "audio/mpeg");
+    }
+
+    #[test]
+    fn rewrite_css_rewrites_relative_urls_and_imports() {
+        let css = r#"
+@import url("fonts/book.woff2");
+@import 'theme.css';
+.bg { background: url(../images/cover.jpg); }
+"#;
+        let rewritten =
+            rewrite_css_urls_for_endpoint(css, 9000, "book-id", "OPS/styles/main.css");
+        assert!(rewritten.contains("http://localhost:9000/epub-resource?"));
+        assert!(rewritten.contains("book_id=book%2Did"));
+        assert!(rewritten.contains("Aurorabook reader guard"));
+        assert!(!rewritten.contains("url(../images/cover.jpg)"));
     }
 }

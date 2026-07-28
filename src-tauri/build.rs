@@ -1,12 +1,126 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-/// Copy Supertonic v2 assets from the repo’s `supertonic-2/` tree (Hugging Face layout) into
+/// Compile `swift/NativePlayer.swift` into a static lib and link it for iOS.
+///
+/// Rust (`native_player.rs`) declares `extern "C"` for the `@_cdecl` exports in that
+/// file. Cargo builds `cdylib` before Xcode compiles Sources/, so those symbols must
+/// be provided here — not only by dropping the file under `gen/apple/`.
+fn compile_native_player_swift_for_ios() {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if !target.contains("apple-ios") {
+        return;
+    }
+
+    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
+        Ok(s) => PathBuf::from(s),
+        Err(_) => return,
+    };
+    let out_dir = match std::env::var("OUT_DIR") {
+        Ok(s) => PathBuf::from(s),
+        Err(_) => return,
+    };
+
+    let swift_src = manifest_dir.join("swift").join("NativePlayer.swift");
+    println!("cargo:rerun-if-changed={}", swift_src.display());
+    if !swift_src.is_file() {
+        panic!(
+            "NativePlayer.swift missing at {} — required for iOS aurora_player_* symbols",
+            swift_src.display()
+        );
+    }
+
+    let is_simulator = target.contains("ios-sim") || target.contains("apple-ios-sim");
+    let arch = if target.contains("x86_64") {
+        "x86_64"
+    } else {
+        "arm64"
+    };
+    let (sdk, swift_target, swift_runtime_dir) = if is_simulator {
+        (
+            "iphonesimulator",
+            format!("{arch}-apple-ios15.0-simulator"),
+            "iphonesimulator",
+        )
+    } else {
+        ("iphoneos", format!("{arch}-apple-ios15.0"), "iphoneos")
+    };
+
+    let sdk_path = String::from_utf8(
+        Command::new("xcrun")
+            .args(["--sdk", sdk, "--show-sdk-path"])
+            .output()
+            .expect("xcrun --show-sdk-path failed")
+            .stdout,
+    )
+    .expect("sdk path utf8")
+    .trim()
+    .to_string();
+
+    let lib_name = "NativePlayer";
+    let obj_file = out_dir.join(format!("{lib_name}.o"));
+    let lib_file = out_dir.join(format!("lib{lib_name}.a"));
+
+    let output = Command::new("swiftc")
+        .arg("-emit-object")
+        .arg("-o")
+        .arg(&obj_file)
+        .arg("-sdk")
+        .arg(&sdk_path)
+        .arg("-parse-as-library")
+        .arg("-module-name")
+        .arg(lib_name)
+        .arg("-target")
+        .arg(&swift_target)
+        .arg(&swift_src)
+        .output()
+        .expect("failed to run swiftc for NativePlayer.swift");
+
+    if !output.status.success() {
+        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+        panic!("swiftc failed compiling NativePlayer.swift");
+    }
+
+    let ar_status = Command::new("ar")
+        .args([
+            "rcs",
+            lib_file.to_str().expect("lib path"),
+            obj_file.to_str().expect("obj path"),
+        ])
+        .status()
+        .expect("failed to run ar");
+    assert!(ar_status.success(), "ar failed for libNativePlayer.a");
+
+    println!("cargo:rustc-link-search=native={}", out_dir.display());
+    println!("cargo:rustc-link-lib=static={lib_name}");
+
+    let toolchain_dir = String::from_utf8(
+        Command::new("xcrun")
+            .args(["--find", "swiftc"])
+            .output()
+            .expect("xcrun --find swiftc failed")
+            .stdout,
+    )
+    .expect("swiftc path utf8");
+    let toolchain_lib = PathBuf::from(toolchain_dir.trim())
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.join(format!("lib/swift/{swift_runtime_dir}")))
+        .expect("swift toolchain lib path");
+    println!("cargo:rustc-link-search=native={}", toolchain_lib.display());
+
+    for framework in ["Foundation", "AVFoundation", "MediaPlayer", "UIKit"] {
+        println!("cargo:rustc-link-lib=framework={framework}");
+    }
+}
+
+/// Copy Supertonic 3 assets from the repo’s `supertonic-3/` tree (Hugging Face layout) into
 /// `src-tauri/resources/supertonic/` so Tauri can bundle them.
 ///
-/// Expects `../../supertonic-2/onnx` and `../../supertonic-2/voice_styles` relative to this crate.
-/// Pull large files with Git LFS from [Supertone/supertonic-2](https://huggingface.co/Supertone/supertonic-2).
+/// Expects `../../supertonic-3/onnx` and `../../supertonic-3/voice_styles` relative to this crate.
+/// Pull large files with Git LFS from [Supertone/supertonic-3](https://huggingface.co/Supertone/supertonic-3).
 fn sync_supertonic_assets_for_bundle() {
     let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
         Ok(s) => PathBuf::from(s),
@@ -14,13 +128,13 @@ fn sync_supertonic_assets_for_bundle() {
     };
     // `src-tauri` crate dir → workspace root is two levels up (…/tts-tauri/src-tauri → aurorabook)
     let workspace_root = manifest_dir.join("..").join("..");
-    let src_pack = workspace_root.join("supertonic-2");
+    let src_pack = workspace_root.join("supertonic-3");
     let src_onnx = src_pack.join("onnx");
     let src_voices = src_pack.join("voice_styles");
 
     if !src_onnx.is_dir() {
         eprintln!(
-            "cargo:warning=Supertonic ONNX folder not found at {} — clone https://huggingface.co/Supertone/supertonic-2 into ./supertonic-2 (Git LFS for .onnx)",
+            "cargo:warning=Supertonic ONNX folder not found at {} — clone https://huggingface.co/Supertone/supertonic-3 into ./supertonic-3 (Git LFS for .onnx)",
             src_onnx.display()
         );
         return;
@@ -67,7 +181,7 @@ fn sync_supertonic_assets_for_bundle() {
 
     if !dest_onnx.join("duration_predictor.onnx").exists() {
         println!(
-            "cargo:warning=Supertonic ONNX weights missing (only JSON copied). In repo root: `cd supertonic-2 && git lfs pull`"
+            "cargo:warning=Supertonic ONNX weights missing (only JSON copied). In repo root: `cd supertonic-3 && git lfs pull`"
         );
     }
 }
@@ -107,6 +221,8 @@ fn main() {
                 .compile("kai_stubs");
         }
     }
+
+    compile_native_player_swift_for_ios();
 
     // Supertonic (kokoros) uses ONNX Runtime; CoreML EP linking is handled below for iOS when ORT libs are present.
 
@@ -425,7 +541,171 @@ fn main() {
 
     sync_supertonic_assets_for_bundle();
     copy_ort_webgpu_dylib_for_macos_bundle();
+    ensure_macos_ffmpeg_resource();
+    strip_ffmpeg_from_ios_assets();
     tauri_build::build()
+}
+
+/// `tauri.macos.conf.json` lists `resources/ffmpeg` as a bundle resource, so the path must
+/// exist before `tauri_build::build()` or the build fails with
+/// `resource path resources/ffmpeg doesn't exist`.
+///
+/// Prefer an existing non-empty binary, then env overrides, then a system `ffmpeg` on PATH.
+fn ensure_macos_ffmpeg_resource() {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if !target.contains("apple-darwin") {
+        return;
+    }
+
+    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
+        Ok(s) => PathBuf::from(s),
+        Err(_) => return,
+    };
+    let dest = manifest_dir.join("resources").join("ffmpeg");
+
+    let dest_ok = dest.is_file()
+        && fs::metadata(&dest)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false);
+    if dest_ok {
+        return;
+    }
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for key in ["AURORABOOK_FFMPEG", "MACOS_APPSTORE_FFMPEG"] {
+        if let Ok(p) = std::env::var(key) {
+            let trimmed = p.trim();
+            if !trimmed.is_empty() {
+                candidates.push(PathBuf::from(trimmed));
+            }
+        }
+    }
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/ffmpeg"),
+        PathBuf::from("/usr/local/bin/ffmpeg"),
+        PathBuf::from("/usr/bin/ffmpeg"),
+    ]);
+    if let Ok(path_env) = std::env::var("PATH") {
+        for dir in path_env.split(':') {
+            if dir.is_empty() {
+                continue;
+            }
+            candidates.push(PathBuf::from(dir).join("ffmpeg"));
+        }
+    }
+
+    for src in candidates {
+        if !src.is_file() {
+            continue;
+        }
+        if let Ok(meta) = fs::metadata(&src) {
+            if meta.len() == 0 {
+                continue;
+            }
+        }
+        if let Some(parent) = dest.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                eprintln!(
+                    "cargo:warning=ffmpeg resource: failed to create {}: {}",
+                    parent.display(),
+                    e
+                );
+                return;
+            }
+        }
+        match fs::copy(&src, &dest) {
+            Ok(_) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(meta) = fs::metadata(&dest) {
+                        let mut perms = meta.permissions();
+                        perms.set_mode(perms.mode() | 0o755);
+                        let _ = fs::set_permissions(&dest, perms);
+                    }
+                }
+                println!(
+                    "cargo:warning=Copied ffmpeg for macOS bundle resource: {} → {}",
+                    src.display(),
+                    dest.display()
+                );
+                println!("cargo:rerun-if-changed={}", src.display());
+                return;
+            }
+            Err(e) => eprintln!(
+                "cargo:warning=ffmpeg resource: failed to copy {} → {}: {}",
+                src.display(),
+                dest.display(),
+                e
+            ),
+        }
+    }
+
+    // Last resort: non-empty placeholder so `tauri_build` path validation passes.
+    // Runtime detection ignores empty/invalid binaries and falls back to PATH.
+    if let Some(parent) = dest.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    match fs::write(&dest, b"#!/bin/sh\necho 'placeholder ffmpeg; install a real binary' >&2\nexit 1\n") {
+        Ok(()) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(meta) = fs::metadata(&dest) {
+                    let mut perms = meta.permissions();
+                    perms.set_mode(perms.mode() | 0o755);
+                    let _ = fs::set_permissions(&dest, perms);
+                }
+            }
+            eprintln!(
+                "cargo:warning=Created placeholder {} — install ffmpeg (e.g. brew install ffmpeg) or set AURORABOOK_FFMPEG for a real binary",
+                dest.display()
+            );
+        }
+        Err(e) => eprintln!(
+            "cargo:warning=ffmpeg resource missing at {} and could not create placeholder: {}",
+            dest.display(),
+            e
+        ),
+    }
+}
+
+/// iOS App Store rejects standalone binaries like `ffmpeg` inside the app bundle.
+/// Stale copies can linger under `gen/apple/assets` after older configs; remove them
+/// before `tauri_build` stages resources for Xcode.
+fn strip_ffmpeg_from_ios_assets() {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if !target.contains("apple-ios") {
+        return;
+    }
+
+    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
+        Ok(s) => PathBuf::from(s),
+        Err(_) => return,
+    };
+
+    let candidates = [manifest_dir
+        .join("gen")
+        .join("apple")
+        .join("assets")
+        .join("resources")
+        .join("ffmpeg")];
+
+    for path in candidates {
+        if path.is_file() {
+            match fs::remove_file(&path) {
+                Ok(()) => println!(
+                    "cargo:warning=Removed ffmpeg from iOS bundle path {}",
+                    path.display()
+                ),
+                Err(e) => eprintln!(
+                    "cargo:warning=Failed to remove iOS-forbidden ffmpeg at {}: {}",
+                    path.display(),
+                    e
+                ),
+            }
+        }
+    }
 }
 
 /// `ort` + `webgpu` links `libwebgpu_dawn.dylib` via `@rpath`; Tauri validates `bundle.resources`

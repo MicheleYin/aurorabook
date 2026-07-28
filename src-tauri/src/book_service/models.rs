@@ -164,7 +164,7 @@ pub struct LibraryFilter {
 pub struct AppSettings {
     pub theme: String, // "light", "dark", "system"
     pub language: String, // "en", "es", "it", "zh"
-    pub tts_language: String, // "en", "es", "it", "zh"
+    pub tts_language: String, // Supertonic 3 ISO code (30 langs; see AVAILABLE_LANGS)
     pub tts_voice_id: String,
     /// Supertonic synthesis quality: `fastest` (5 steps), `balanced` (10), `quality` (20).
     #[serde(default = "default_tts_synthesis_quality")]

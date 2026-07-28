@@ -20,7 +20,7 @@ import { Label } from "../ui/label";
 import { KOKORO_VOICE_GROUPS, DEFAULT_KOKORO_VOICE_ID } from "../../constants/kokoro";
 import {
   AVAILABLE_LANGS,
-  normalizeAppLanguage,
+  normalizeTtsLanguage,
   voiceMatchesTtsLanguage,
 } from "../../constants/languages";
 import { Play, X } from "lucide-react";
@@ -43,7 +43,7 @@ export function PreConversionDialog({
   const { t } = useTranslation();
 
   const normalizedDefaultLang = useMemo(
-    () => normalizeAppLanguage(defaultLanguage),
+    () => normalizeTtsLanguage(defaultLanguage),
     [defaultLanguage]
   );
 
@@ -66,7 +66,7 @@ export function PreConversionDialog({
   }, [selectedLanguage]);
 
   const handleLanguageChange = (code: string) => {
-    setSelectedLanguage(code as (typeof AVAILABLE_LANGS)[number]);
+    setSelectedLanguage(normalizeTtsLanguage(code));
     const voices = KOKORO_VOICE_GROUPS.flatMap((group) => group.voices).filter(
       (voice) => voiceMatchesTtsLanguage(voice.languageTag, code)
     );

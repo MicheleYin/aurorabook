@@ -50,10 +50,63 @@ tests/
 
 ## Running Tests
 
-### Run all tests
+### Fast suite (default CI)
+
+Runs library unit tests (`#[cfg(test)]` under `src/`) plus the modular
+integration harness (`tests/mod.rs`). This is the coverage / PR CI path.
+
+```bash
+# From tts-tauri/
+bun run test:rust
+
+# Or from src-tauri/
+cargo test --lib --test mod
+```
+
+> **Note:** Slow/model/FFmpeg binaries under `tests/*.rs` (outside the `mod`
+> harness) are not part of the fast path.
+
+### Coverage (fast suite)
+
+Requires [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) and
+`llvm-tools-preview`:
+
+```bash
+cargo install cargo-llvm-cov --locked
+rustup component add llvm-tools-preview
+
+# From tts-tauri/
+bun run test:rust:coverage
+# → src-tauri/target/llvm-cov/lcov.info
+
+# HTML report
+cd src-tauri && cargo llvm-cov --html --open --lib --test mod
+```
+
+On macOS, `tauri.macos.conf.json` requires `resources/ffmpeg` (and the ORT
+WebGPU dylib path) to exist for `tauri_build`. The coverage / test scripts stub
+`resources/ffmpeg` when missing; CI does the same.
+
+### Full local suite
+
 ```bash
 cargo test
 ```
+
+Runs every integration binary under `tests/` (including model/FFmpeg-heavy
+files). Prefer this locally when you have resources and FFmpeg on `PATH`.
+Some binaries (and `tests/mod`) may not compile until updated to the current
+API.
+
+### Slow / ignored tests
+
+| Category | Examples | How to run |
+| -------- | -------- | ---------- |
+| AppHandle stubs | See [IGNORED_TESTS.md](./IGNORED_TESTS.md) | `cargo test -- --ignored` |
+| Model / TTS duration | `tts_duration_test`, `model_comparison_test`, `test_watermark_tts`, `smil_xhtml_alignment_test` | `cargo test --test tts_duration_test` (etc.) |
+| Audiobook / FFmpeg | `audio_duration_test`, `audiobook_*` | individual `--test` binaries |
+
+These are **not** part of the default CI / coverage path.
 
 ### Run tests for a specific module
 ```bash
@@ -165,11 +218,17 @@ The `helpers.rs` module provides:
 
 ## Continuous Integration
 
-Tests should pass in CI/CD pipelines. Ensure:
-- All tests are deterministic
-- No hardcoded paths (use temp directories)
+PR CI (`/.github/workflows/test.yml`) runs the **fast** suite with coverage:
+
+```bash
+cargo llvm-cov --lcov --output-path target/llvm-cov/lcov.info --lib --test mod
+```
+
+Ensure:
+- Fast tests are deterministic and do not require App Store signing or iOS simulators
+- No hardcoded machine-specific paths (use temp directories)
 - Tests clean up after themselves
-- Tests don't depend on external services
+- Slow/model jobs stay local or optional nightly (not default PR CI)
 
 ## Notes
 

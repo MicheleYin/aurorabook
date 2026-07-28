@@ -999,6 +999,62 @@ pub async fn export_as_m4b(
 }
 
 #[cfg(test)]
+mod helper_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn estimate_eta_ms_returns_none_without_progress() {
+        let started = Instant::now();
+        assert_eq!(estimate_eta_ms(&started, 0, 10), None);
+        assert_eq!(estimate_eta_ms(&started, 5, 0), None);
+    }
+
+    #[test]
+    fn estimate_eta_ms_estimates_remaining_time() {
+        let started = Instant::now();
+        std::thread::sleep(Duration::from_millis(20));
+        let eta = estimate_eta_ms(&started, 1, 2).expect("eta");
+        assert!(eta > 0);
+    }
+
+    #[test]
+    fn ffmpeg_export_forbidden_message_mentions_ffmpeg() {
+        let msg = ffmpeg_export_forbidden_message();
+        assert!(msg.contains("FFmpeg") || msg.contains("ffmpeg"));
+    }
+
+    #[test]
+    fn export_cancelled_by_signal_false_for_success() {
+        let status = std::process::Command::new("true")
+            .status()
+            .expect("run true");
+        assert!(!export_cancelled_by_signal(&status));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_cancelled_by_signal_true_for_sigterm_and_sigint() {
+        use std::os::unix::process::ExitStatusExt;
+        let sigterm = std::process::ExitStatus::from_raw(15);
+        let sigint = std::process::ExitStatus::from_raw(2);
+        assert!(export_cancelled_by_signal(&sigterm));
+        assert!(export_cancelled_by_signal(&sigint));
+    }
+
+    #[cfg(not(target_os = "ios"))]
+    #[test]
+    fn ffmpeg_stderr_snippet_truncates() {
+        let short = ffmpeg_stderr_snippet(b"ok");
+        assert_eq!(short, "ok");
+        let long = "x".repeat(5000);
+        let snippet = ffmpeg_stderr_snippet(long.as_bytes());
+        assert!(snippet.ends_with('…'));
+        assert_eq!(&snippet[..4000], &long[..4000]);
+    }
+}
+
+#[cfg(test)]
 mod m4b_export_tests {
     use super::*;
     use crate::book_service::models::{

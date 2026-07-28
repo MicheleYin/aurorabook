@@ -84,7 +84,7 @@ pub async fn init_kokoros_engine(
 /// * `app` - Tauri application handle for resource path resolution
 ///
 /// # Returns
-/// PCM audio data as a byte vector (16-bit, little-endian, mono; sample rate matches `SAMPLE_RATE`, typically 44.1 kHz for Supertonic v2).
+/// PCM audio data as a byte vector (16-bit, little-endian, mono; sample rate matches `SAMPLE_RATE`, typically 44.1 kHz for Supertonic 3).
 ///
 /// # Errors
 /// Returns an error if:
@@ -186,7 +186,7 @@ pub async fn generate_tts_cached(
 ///
 /// # Returns
 /// Vector of PCM audio data byte vectors, one for each input text.
-/// Each audio is 16-bit PCM, little-endian, mono; sample rate matches the engine (typically 44.1 kHz for Supertonic v2).
+/// Each audio is 16-bit PCM, little-endian, mono; sample rate matches the engine (typically 44.1 kHz for Supertonic 3).
 ///
 /// # Errors
 /// Returns an error if:

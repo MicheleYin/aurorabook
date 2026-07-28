@@ -18,6 +18,7 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { type } from "@tauri-apps/plugin-os";
 import { Estimation } from "arrival-time";
 import humanizeDuration from "humanize-duration";
 import { toast } from "sonner";
@@ -38,6 +39,25 @@ export interface ConversionProgress {
   wordsInCurrentChapter: number;
   currentStep: string;
   message: string;
+}
+
+interface ContinuedConversionStart {
+  jobId: string;
+  taskId: string;
+  bookId: string;
+  continuedProcessing: boolean;
+}
+
+interface BackgroundCapabilities {
+  supportsContinuedProcessing: boolean;
+  isIos: boolean;
+}
+
+interface BackgroundJobLifecycle {
+  jobId: string;
+  taskId: string;
+  bookId: string;
+  success?: boolean | null;
 }
 
 interface ChapterCompletedEvent {
@@ -275,6 +295,28 @@ export function ConversionStateProvider({
           }
         );
         unlisteners.push(unCancelled);
+
+        const unBgExpired = await listen<BackgroundJobLifecycle>(
+          "background-task-expired",
+          (event) => {
+            if (disposed) return;
+            logger.warn("Background conversion task expired:", event.payload);
+            toast.info(
+              "Background conversion was stopped by the system. Re-open the app to continue.",
+              { duration: 5000 }
+            );
+          }
+        );
+        unlisteners.push(unBgExpired);
+
+        const unBgCompleted = await listen<BackgroundJobLifecycle>(
+          "background-task-completed",
+          (event) => {
+            if (disposed) return;
+            logger.log("Background conversion task completed:", event.payload);
+          }
+        );
+        unlisteners.push(unBgCompleted);
       } catch (error) {
         logger.error("Failed to register conversion Tauri event listeners:", error);
       }
@@ -327,6 +369,49 @@ export function ConversionStateProvider({
         const finalVoiceId = voiceId ?? settings.ttsVoiceId ?? "F1";
         const finalLanguage = language ?? settings.ttsLanguage ?? "en";
 
+        // iOS 26+: submit BGContinuedProcessingTaskRequest on user gesture before TTS load.
+        let continuedTaskId: string | null = null;
+        try {
+          const platform = await type();
+          if (platform === "ios") {
+            const caps = await invoke<BackgroundCapabilities>(
+              "background_capabilities"
+            );
+            if (caps.supportsContinuedProcessing) {
+              const started = await invoke<ContinuedConversionStart>(
+                "start_continued_conversion",
+                {
+                  bookId,
+                  title: "Converting audiobook",
+                  subtitle: "AuroraBook",
+                }
+              );
+              continuedTaskId = started.taskId;
+              if (started.continuedProcessing) {
+                logger.log(
+                  "Submitted continued conversion task:",
+                  started.taskId
+                );
+                toast.message(
+                  "Leave the app to see conversion progress on Lock Screen or Dynamic Island (iPhone often hides it while AuroraBook is open).",
+                  { duration: 5000 }
+                );
+              }
+            } else {
+              logger.warn(
+                "Continued processing not supported (need iOS 26+). Caps:",
+                caps
+              );
+            }
+          }
+        } catch (bgErr) {
+          // Fall through to in-process conversion; older iOS / simulators may not support this.
+          logger.warn(
+            "Continued background conversion unavailable; converting in-process:",
+            bgErr
+          );
+        }
+
         const book = await invoke<Book | null>(
           "convert_epub_to_audiobook_command",
           {
@@ -341,6 +426,7 @@ export function ConversionStateProvider({
           handleConversionComplete(book, bookId);
         }
 
+        void continuedTaskId;
         // Don't dismiss the toast here - let the progress events handle it
         // The conversion might complete immediately or continue in background
       } catch (err) {

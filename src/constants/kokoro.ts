@@ -1,6 +1,6 @@
-import { MULTILINGUAL_VOICE_TAG, normalizeAppLanguage } from "./languages";
+import { MULTILINGUAL_VOICE_TAG, normalizeTtsLanguage } from "./languages";
 
-export const DEFAULT_KOKORO_MODEL_ID = "Supertone/supertonic-2";
+export const DEFAULT_KOKORO_MODEL_ID = "Supertone/supertonic-3";
 export const DEFAULT_KOKORO_VOICE_ID = "F1";
 export const KOKORO_MODEL_CARD_URL = `https://huggingface.co/${DEFAULT_KOKORO_MODEL_ID}`;
 export const KOKORO_VOICE_DATASET_URL = KOKORO_MODEL_CARD_URL;
@@ -83,7 +83,7 @@ export function normalizeVoiceId(raw: string): string {
  */
 export function voiceSamplePathsToTry(voiceId: string, ttsLanguage: string): string[] {
   const normalizedVoiceId = normalizeVoiceId(voiceId);
-  const lang = normalizeAppLanguage(ttsLanguage);
+  const lang = normalizeTtsLanguage(ttsLanguage);
   const primary = `voice-samples/${lang}/${normalizedVoiceId}.mp3`;
   if (lang === "en") {
     return [primary];

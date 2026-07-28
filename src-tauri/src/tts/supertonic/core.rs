@@ -9,8 +9,12 @@ use std::io::BufReader;
 use std::path::Path;
 use unicode_normalization::UnicodeNormalization;
 
-// Keep in sync with frontend language constants.
-pub const AVAILABLE_LANGS: &[&str] = &["en", "ko", "es", "pt", "fr"];
+// Supertonic 3 — keep in sync with frontend `AVAILABLE_LANGS` (TTS codes).
+pub const AVAILABLE_LANGS: &[&str] = &[
+    "en", "ko", "ja", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr",
+    "hi", "hr", "hu", "id", "it", "lt", "lv", "nl", "pl", "pt", "ro", "ru", "sk",
+    "sl", "sv", "tr", "uk", "vi",
+];
 
 pub fn is_valid_lang(lang: &str) -> bool {
     AVAILABLE_LANGS.contains(&lang)
@@ -902,6 +906,11 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
     if use_gpu {
         bail!("GPU mode is not supported yet");
     }
+    #[cfg(target_os = "ios")]
+    log::debug!(
+        "Supertonic TTS: preferring CPU EP on iOS (CoreML optional, soft-fail → CPU)"
+    );
+    #[cfg(not(target_os = "ios"))]
     log::debug!("Supertonic TTS: using WebGPU (ONNX Runtime) for inference");
 
     let cfgs = load_cfgs(onnx_dir)?;
@@ -913,6 +922,17 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
     let build_session = |path: &str| -> Result<Session> {
         let builder =
             Session::builder().map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
+        // iOS: prefer CPU to avoid CoreML compile-time memory spikes that OOM the process.
+        // CoreML is registered without error_on_failure so unsupported nodes fall back to CPU
+        // instead of aborting session creation.
+        #[cfg(target_os = "ios")]
+        let mut builder = builder
+            .with_execution_providers([
+                // ep::CPU::default().build(),
+                ep::CoreML::default().build(),
+            ])
+            .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
+        #[cfg(not(target_os = "ios"))]
         let mut builder = builder
             .with_execution_providers([ep::WebGPU::default().build().error_on_failure()])
             .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;

@@ -37,12 +37,67 @@ export function ReaderContent({
   const contentRef = useRef<HTMLDivElement | null>(null);
   const previousHeaderVisibleRef = useRef<boolean | undefined>(isHeaderVisible);
   const scrollPositionRef = useRef<number>(0);
-  const [isSystemDark, setIsSystemDark] = useState(() =>
-    window.matchMedia("(prefers-color-scheme: dark)").matches
+  const [isSystemDark, setIsSystemDark] = useState(
+    () => window.matchMedia("(prefers-color-scheme: dark)").matches
   );
   const { currentAudioTrack } = useAudioProgressContext();
   const previousAudioTrackRef =
     useRef<typeof currentAudioTrack>(currentAudioTrack);
+
+  const isResolvedDarkTheme =
+    settings?.theme === "dark" ||
+    (settings?.theme === "system" &&
+      (document.documentElement.classList.contains("dark") || isSystemDark));
+
+  const themeClass = isResolvedDarkTheme ? "dark" : "";
+
+  const applyResolvedThemeToShadow = useCallback(
+    (wrapper: HTMLDivElement, content: HTMLDivElement | null) => {
+      const rootStyles = window.getComputedStyle(document.documentElement);
+      const foregroundToken = rootStyles
+        .getPropertyValue("--foreground")
+        .trim();
+      const backgroundToken = rootStyles
+        .getPropertyValue("--background")
+        .trim();
+      const resolvedForeground = foregroundToken
+        ? `hsl(${foregroundToken})`
+        : window.getComputedStyle(document.body).color;
+      const resolvedBackground = backgroundToken
+        ? `hsl(${backgroundToken})`
+        : window.getComputedStyle(document.body).backgroundColor;
+
+      wrapper.className = themeClass;
+      wrapper.style.colorScheme = themeClass === "dark" ? "dark" : "light";
+      wrapper.style.color = resolvedForeground;
+      wrapper.style.backgroundColor = resolvedBackground;
+
+      if (content) {
+        content.style.color = resolvedForeground;
+        content.style.backgroundColor = resolvedBackground;
+        content.style.caretColor = resolvedForeground;
+        content.style.setProperty("--tw-prose-body", resolvedForeground);
+        content.style.setProperty("--tw-prose-headings", resolvedForeground);
+        content.style.setProperty("--tw-prose-lead", resolvedForeground);
+        content.style.setProperty("--tw-prose-links", resolvedForeground);
+        content.style.setProperty("--tw-prose-bold", resolvedForeground);
+        content.style.setProperty("--tw-prose-counters", resolvedForeground);
+        content.style.setProperty("--tw-prose-bullets", resolvedForeground);
+        content.style.setProperty("--tw-prose-hr", resolvedForeground);
+        content.style.setProperty("--tw-prose-quotes", resolvedForeground);
+        content.style.setProperty(
+          "--tw-prose-quote-borders",
+          resolvedForeground
+        );
+        content.style.setProperty("--tw-prose-captions", resolvedForeground);
+        content.style.setProperty("--tw-prose-code", resolvedForeground);
+        content.style.setProperty("--tw-prose-pre-code", resolvedForeground);
+        content.style.setProperty("--tw-prose-th-borders", resolvedForeground);
+        content.style.setProperty("--tw-prose-td-borders", resolvedForeground);
+      }
+    },
+    [themeClass]
+  );
 
   // Keep resolved system theme in sync so shadow DOM dark variants match app theme.
   useEffect(() => {
@@ -51,13 +106,8 @@ export function ReaderContent({
       setIsSystemDark(event.matches);
     };
 
-    if (mediaQuery.addEventListener) {
-      mediaQuery.addEventListener("change", handleChange);
-      return () => mediaQuery.removeEventListener("change", handleChange);
-    }
-
-    mediaQuery.addListener(handleChange);
-    return () => mediaQuery.removeListener(handleChange);
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
   }, []);
 
   // Preserve scroll position when header visibility changes
@@ -159,8 +209,8 @@ export function ReaderContent({
     }
   }, [book, currentChapter, onRestoreProgress, scrollContainerRef, isLoading]);
 
-  const handleClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
       // Only trigger if clicking directly on the content area, not on links or interactive elements
       const target = e.target as HTMLElement;
       if (
@@ -176,38 +226,6 @@ export function ReaderContent({
     [onContentClick]
   );
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLDivElement>) => {
-      // Allow keyboard users to toggle header with Enter or Space
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        onContentClick?.();
-      }
-    },
-    [onContentClick]
-  );
-
-  // Keep a ref so the content effect can always read the latest theme class
-  // without adding it as a dependency (which would cause full shadow rebuilds).
-  const themeClassRef = useRef("");
-
-  // Apply settings styles - map backend string values to CSS
-  const themeClass = useMemo(() => {
-    if (!settings?.theme) return "";
-    if (settings.theme === "dark") return "dark";
-    if (settings.theme === "light") return "";
-    if (settings.theme === "system") {
-      // Match SettingsContext `applyTheme` on <html>, not only matchMedia, so shadow
-      // prose stays in sync with the shell (Tailwind darkMode: class).
-      return document.documentElement.classList.contains("dark") ? "dark" : "";
-    }
-    return "";
-  }, [settings?.theme, isSystemDark]);
-
-  // Always keep the ref in sync so effects that don't depend on themeClass
-  // can still read the current value.
-  themeClassRef.current = themeClass;
-
   const fontFamilyClass = useMemo(() => {
     if (!settings?.fontFamily) return "font-serif";
     if (settings.fontFamily === "merriweather") return "font-serif";
@@ -217,25 +235,18 @@ export function ReaderContent({
   }, [settings]);
 
   const fontSizeStyle = useMemo(() => {
-    if (!settings?.fontSize) return { fontSize: "16px" };
-    const fontSizeMap: Record<string, string> = {
-      small: "14px",
-      medium: "16px",
-      large: "18px",
-      xlarge: "20px",
-    };
-    return { fontSize: fontSizeMap[settings.fontSize] ?? "16px" };
+    const parsed = Number(settings?.fontSize);
+    const fontSize = Number.isFinite(parsed)
+      ? Math.min(28, Math.max(12, parsed))
+      : 16;
+    return { fontSize: `${fontSize}px` };
   }, [settings]);
 
   const paddingStyle = useMemo(() => {
-    if (!settings?.contentPadding)
-      return { paddingLeft: "24px", paddingRight: "24px" };
-    const paddingMap: Record<string, string> = {
-      compact: "16px",
-      comfortable: "24px",
-      spacious: "48px",
-    };
-    const padding = paddingMap[settings.contentPadding] ?? "24px";
+    const parsed = Number(settings?.contentPadding);
+    const padding = Number.isFinite(parsed)
+      ? Math.min(64, Math.max(8, parsed))
+      : 24;
     return { paddingLeft: padding, paddingRight: padding };
   }, [settings]);
 
@@ -250,20 +261,23 @@ export function ReaderContent({
     // prose + audio-highlight styles apply to the isolated content.
     if (!shadow.querySelector("link[rel='stylesheet'], style")) {
       Array.from(
-        document.head.querySelectorAll<HTMLElement>("link[rel='stylesheet'], style")
+        document.head.querySelectorAll<HTMLElement>(
+          "link[rel='stylesheet'], style"
+        )
       ).forEach((node) => shadow.appendChild(node.cloneNode(true)));
     }
 
     // Theme wrapper — gives `dark:` Tailwind variants an ancestor with class "dark"
-    let themeWrapper = shadow.querySelector<HTMLDivElement>("[data-shadow-theme]");
+    let themeWrapper = shadow.querySelector<HTMLDivElement>(
+      "[data-shadow-theme]"
+    );
     if (!themeWrapper) {
       themeWrapper = document.createElement("div");
-      themeWrapper.setAttribute("data-shadow-theme", "true");
+      themeWrapper.dataset.shadowTheme = "true";
       shadow.appendChild(themeWrapper);
     }
     // Always stamp the current theme class so chapter changes inherit the
     // right theme even when themeClass itself hasn't changed.
-    themeWrapper.className = themeClassRef.current;
 
     // Create or reuse the prose content div
     let inner = themeWrapper.querySelector<HTMLDivElement>(
@@ -273,12 +287,13 @@ export function ReaderContent({
       inner = document.createElement("div");
       themeWrapper.appendChild(inner);
     }
-    inner.setAttribute("data-reader-chapter-content", "true");
+    inner.dataset.readerChapterContent = "true";
     inner.className = cn(
       "prose prose-slate dark:prose-invert max-w-none",
       fontFamilyClass
     );
     Object.assign(inner.style, fontSizeStyle);
+    applyResolvedThemeToShadow(themeWrapper, inner);
     inner.innerHTML = currentChapter.contentHtml ?? "";
 
     contentRef.current = inner;
@@ -296,17 +311,26 @@ export function ReaderContent({
     return () => {
       inner!.removeEventListener("click", handleLinkClick, true);
     };
-  }, [currentChapter.contentHtml, fontFamilyClass, fontSizeStyle]);
+  }, [
+    applyResolvedThemeToShadow,
+    currentChapter.contentHtml,
+    fontFamilyClass,
+    fontSizeStyle,
+  ]);
 
   // Sync dark/light theme class into shadow root so `dark:` variants work
   useEffect(() => {
-    const wrapper = shadowHostRef.current?.shadowRoot?.querySelector<HTMLDivElement>(
-      "[data-shadow-theme]"
-    );
+    const wrapper =
+      shadowHostRef.current?.shadowRoot?.querySelector<HTMLDivElement>(
+        "[data-shadow-theme]"
+      );
     if (wrapper) {
-      wrapper.className = themeClass;
+      const inner = wrapper.querySelector<HTMLDivElement>(
+        "[data-reader-chapter-content]"
+      );
+      applyResolvedThemeToShadow(wrapper, inner);
     }
-  }, [themeClass]);
+  }, [applyResolvedThemeToShadow, themeClass]);
 
   if (isLoading) {
     return (
@@ -322,17 +346,15 @@ export function ReaderContent({
   return (
     <div
       ref={scrollContainerRef}
-      className={cn("flex-1 min-w-0 overflow-y-auto overflow-x-hidden cursor-pointer", themeClass)}
-      onClick={handleClick}
-      onKeyDown={handleKeyDown}
-      tabIndex={-1}
+      className={cn(
+        "flex-1 min-w-0 overflow-y-auto overflow-x-hidden cursor-pointer bg-background text-foreground",
+        themeClass
+      )}
+      onPointerUp={handlePointerUp}
       title={t("reader.toggle_header_hint")}
     >
       <div className="mx-auto py-8" style={paddingStyle}>
-        <div
-          ref={shadowHostRef}
-          data-reader-chapter-shadow-host="true"
-        />
+        <div ref={shadowHostRef} data-reader-chapter-shadow-host="true" />
       </div>
     </div>
   );

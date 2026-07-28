@@ -12,6 +12,8 @@ import {
 } from "react";
 import { getName } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { type } from "@tauri-apps/plugin-os";
 import { toast } from "sonner";
 
 import { AppSettings } from "@/types/settings";
@@ -22,6 +24,12 @@ import type {
   Book,
   BookAudioState,
 } from "../types/book";
+import {
+  applyNativePlayerEvent,
+  canRestoreSavedTime,
+  mimeTypeFromTrackHref,
+  trackDisplayTitle,
+} from "../lib/audio-progress-utils";
 import { logger } from "../lib/logger";
 
 export interface AudioProgressContextType {
@@ -67,11 +75,29 @@ interface AudioProgressProviderProps {
   readonly children: ReactNode;
 }
 
+function tryResumePlayback(
+  el: HTMLAudioElement,
+  savedTime: number,
+  wasPlaying: boolean
+) {
+  el.currentTime = savedTime;
+  if (wasPlaying) {
+    el.play().catch((err: unknown) =>
+      logger.warn("Could not auto-resume after server restart:", err)
+    );
+  }
+}
+
 export function AudioProgressProvider({
   children,
 }: AudioProgressProviderProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
+  // Last known position from the native AVPlayer (updated by native-player-event).
+  // Used to seek WebView audio back to the right spot when the app returns to foreground.
+  const nativeTimeRef = useRef<number>(0);
+  // Whether we're running on iOS (set async on mount, so starts false).
+  const isIosRef = useRef<boolean>(false);
   const [currentAudioTrack, setCurrentAudioTrack] =
     useState<AudioTrackWithData | null>(null);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
@@ -126,6 +152,82 @@ export function AudioProgressProvider({
     [audioRef, saveSettings]
   );
 
+  // When the streaming server restarts (iOS app resume), reconnect the audio element.
+  // The server binds to a new random port on each restart, making the old URL stale.
+  useEffect(() => {
+    const currentTrackRef = { current: currentAudioTrack };
+    currentTrackRef.current = currentAudioTrack;
+
+    const unlisten = listen<number>("audio-server-restarted", async () => {
+      const track = currentTrackRef.current;
+      if (!track || !audioRef.current) return;
+
+      const el = audioRef.current;
+      const savedTime = el.currentTime;
+      const wasPlaying = !el.paused;
+
+      try {
+        const newUrl = await invoke<string>("get_audio_stream_url", {
+          bookId: track.bookId,
+          trackId: track.id,
+        });
+
+        el.src = newUrl;
+        el.load();
+
+        const onReady = () => {
+          tryResumePlayback(el, savedTime, wasPlaying);
+          el.removeEventListener("loadedmetadata", onReady);
+        };
+        el.addEventListener("loadedmetadata", onReady);
+      } catch (err) {
+        logger.error("Failed to reconnect audio after server restart:", err);
+      }
+    });
+
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [currentAudioTrack, audioRef]);
+
+  // Detect iOS once on mount.
+  useEffect(() => {
+    try {
+      isIosRef.current = type() === "ios";
+    } catch {
+      isIosRef.current = false;
+    }
+  }, []);
+
+  // Listen for native-player-event (AVPlayer callbacks from Swift).
+  // Handles: time tracking, lock-screen seek syncing, and ended notifications.
+  useEffect(() => {
+    const unlisten = listen<{ type: string; time?: number }>(
+      "native-player-event",
+      (event) => {
+        const result = applyNativePlayerEvent(
+          event.payload,
+          audioRef.current?.currentTime ?? null
+        );
+        if (result.nativeTime !== null) {
+          nativeTimeRef.current = result.nativeTime;
+        }
+        if (result.seekWebViewTo !== null && audioRef.current) {
+          audioRef.current.currentTime = result.seekWebViewTo;
+        }
+        if (result.synthesiseEnded) {
+          // Synthesise an 'ended' event on the <audio> element so FloatingAudioPlayer
+          // can advance to the next track using its existing handler.
+          audioRef.current?.dispatchEvent(new Event("ended"));
+        }
+      }
+    );
+
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [audioRef]);
+
   // Load playback speed from backend on mount
   useEffect(() => {
     const loadSettings = async () => {
@@ -156,7 +258,10 @@ export function AudioProgressProvider({
         const savedTime = book.audioState.currentTimeSeconds;
         // Restore time after metadata is loaded
         const handleLoadedMetadata = () => {
-          if (audioRef.current && savedTime < audioRef.current.duration) {
+          if (
+            audioRef.current &&
+            canRestoreSavedTime(savedTime, audioRef.current.duration)
+          ) {
             audioRef.current.currentTime = savedTime;
           }
           audioRef.current?.removeEventListener(
@@ -204,27 +309,60 @@ export function AudioProgressProvider({
             if (!audioRef.current.paused) {
               audioRef.current.pause();
             }
+
+            // Mirror WebView audio events into the native AVPlayer so the lock
+            // screen always reflects what the in-app player is doing.
+            if (isIosRef.current) {
+              const el = audioRef.current;
+              const onPlay = () =>
+                void invoke("ios_player_play").catch(() => undefined);
+              const onPause = () =>
+                void invoke("ios_player_pause").catch(() => undefined);
+              const onSeeked = () =>
+                void invoke("ios_player_seek", {
+                  seconds: el.currentTime,
+                }).catch(() => undefined);
+              const onRate = () =>
+                void invoke("ios_player_set_rate", {
+                  rate: el.playbackRate,
+                }).catch(() => undefined);
+              // Remove listeners from any previous track on the same element.
+              el.removeEventListener("play", onPlay);
+              el.removeEventListener("pause", onPause);
+              el.removeEventListener("seeked", onSeeked);
+              el.removeEventListener("ratechange", onRate);
+              el.addEventListener("play", onPlay);
+              el.addEventListener("pause", onPause);
+              el.addEventListener("seeked", onSeeked);
+              el.addEventListener("ratechange", onRate);
+            }
           }
 
           // Get MIME type from track href for metadata
-          const mimeType = track.href?.endsWith(".mp3")
-            ? "audio/mpeg"
-            : track.href?.endsWith(".m4a")
-              ? "audio/mp4"
-              : track.href?.endsWith(".ogg")
-                ? "audio/ogg"
-                : track.href?.endsWith(".wav")
-                  ? "audio/wav"
-                  : "audio/mpeg"; // default
+          const mimeType = mimeTypeFromTrackHref(track.href);
 
           setCurrentAudioTrack({
             ...track,
             mimeType,
           });
 
+          // On iOS: hand the track to the native AVPlayer so lock-screen controls
+          // and background audio work even when the HTTP server is down.
+          if (isIosRef.current) {
+            void invoke("ios_player_load", {
+              bookId,
+              trackId: track.id,
+              title: trackDisplayTitle(track.title, track.order),
+              artist: book.author ?? "",
+              duration: track.duration ?? 0,
+            }).catch((err: unknown) =>
+              logger.warn("ios_player_load failed (non-fatal):", err)
+            );
+          }
+
           // Set MediaSession metadata for OS media controls
           if ("mediaSession" in navigator && book) {
-            const trackTitle = track.title || `Track ${track.order + 1}`;
+            const trackTitle = trackDisplayTitle(track.title, track.order);
 
             // Find chapter name for this track using audio sync map (same as TOC)
             let chapterTitle: string | undefined;
