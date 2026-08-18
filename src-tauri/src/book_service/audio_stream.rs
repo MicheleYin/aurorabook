@@ -61,6 +61,18 @@ struct EpubResourceQuery {
     chapter_href: Option<String>,
 }
 
+#[derive(Debug, Default, serde::Deserialize)]
+struct LiveAudioQuery {
+    snapshot: Option<String>,
+}
+
+fn live_query_wants_snapshot(query: &LiveAudioQuery) -> bool {
+    query
+        .snapshot
+        .as_deref()
+        .is_some_and(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
+}
+
 async fn ensure_server_started_and_get_port(
     app: tauri::AppHandle,
 ) -> Result<u16, AppError> {
@@ -900,8 +912,26 @@ impl LiveStreamManager {
     ) -> Result<usize, String> {
         use crate::book_service::repositories::ConversionCheckpointRepository;
 
+        let checkpoint = ConversionCheckpointRepository::load_checkpoint(
+            pool,
+            book_id,
+            chapter_index,
+        )
+        .await
+        .ok()
+        .flatten();
+        let resolved_chapter_id =
+            chapter_id.or_else(|| checkpoint.as_ref().and_then(|c| c.chapter_id.clone()));
+        let resolved_chapter_href =
+            chapter_href.or_else(|| checkpoint.as_ref().and_then(|c| c.chapter_href.clone()));
+
         // Start a new stream session
-        self.start_stream(book_id, chapter_index, chapter_id, chapter_href);
+        self.start_stream(
+            book_id,
+            chapter_index,
+            resolved_chapter_id,
+            resolved_chapter_href,
+        );
 
         // Load all saved sentences from checkpoint
         let sentences = ConversionCheckpointRepository::load_chapter_sentences(
@@ -1374,6 +1404,7 @@ fn serve_live_mp3_snapshot(
 /// Handle live audio streaming HTTP requests
 async fn handle_audio_live_stream(
     Path((book_id, chapter_index_str)): Path<(String, String)>,
+    Query(query): Query<LiveAudioQuery>,
     State(_app): State<Arc<AppHandle>>,
     headers: HeaderMap,
 ) -> Result<Response<axum::body::Body>, StatusCode> {
@@ -1390,23 +1421,17 @@ async fn handle_audio_live_stream(
 
     let live_stream_manager = get_live_stream_manager();
     let range_header = headers.get(header::RANGE).and_then(|h| h.to_str().ok());
+    let force_snapshot = cfg!(target_os = "ios") || live_query_wants_snapshot(&query);
 
-    // Range clients and all iOS requests get a finite snapshot. iOS cannot extend a
-    // chunked progressive MP3; the frontend reloads the URL as more sentences arrive.
-    #[cfg(target_os = "ios")]
-    {
+    // Range clients, snapshot requests, and iOS get a finite MP3 so `<audio>` has a
+    // duration and playbackRate works. The frontend reloads as more sentences arrive.
+    if range_header.is_some() || force_snapshot {
         let snapshot = live_stream_manager.snapshot_mp3(&book_id, chapter_index);
-        serve_live_mp3_snapshot(snapshot, range_header)
+        return serve_live_mp3_snapshot(snapshot, range_header);
     }
 
     #[cfg(not(target_os = "ios"))]
     {
-        if range_header.is_some() {
-            let snapshot = live_stream_manager.snapshot_mp3(&book_id, chapter_index);
-            return serve_live_mp3_snapshot(snapshot, range_header);
-        }
-
-        // Subscribe early so completions during the first snapshot drain are not lost.
         let mut rx = live_stream_manager
             .get_or_create_channel(&book_id, chapter_index)
             .subscribe();
@@ -1482,7 +1507,7 @@ async fn handle_audio_live_stream(
             }
         };
 
-        Ok(Response::builder()
+        return Ok(Response::builder()
             .status(StatusCode::OK)
             .header("Content-Type", "audio/mpeg")
             .header("Accept-Ranges", "bytes")
@@ -1490,7 +1515,13 @@ async fn handle_audio_live_stream(
             .header("Cache-Control", "no-cache")
             .header("Access-Control-Allow-Origin", "*")
             .body(axum::body::Body::from_stream(stream))
-            .unwrap())
+            .unwrap());
+    }
+
+    #[cfg(target_os = "ios")]
+    {
+        let snapshot = live_stream_manager.snapshot_mp3(&book_id, chapter_index);
+        serve_live_mp3_snapshot(snapshot, range_header)
     }
 }
 
@@ -1838,6 +1869,20 @@ mod live_sync_marker_tests {
             start_sec: start,
             end_sec: end,
         }
+    }
+
+    #[test]
+    fn snapshot_query_opts_into_finite_live_mp3() {
+        assert!(!live_query_wants_snapshot(&LiveAudioQuery { snapshot: None }));
+        assert!(live_query_wants_snapshot(&LiveAudioQuery {
+            snapshot: Some("1".to_string()),
+        }));
+        assert!(!live_query_wants_snapshot(&LiveAudioQuery {
+            snapshot: Some("0".to_string()),
+        }));
+        assert!(!live_query_wants_snapshot(&LiveAudioQuery {
+            snapshot: Some("false".to_string()),
+        }));
     }
 
     #[test]

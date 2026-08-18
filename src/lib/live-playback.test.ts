@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  liveStreamPlaybackUrl,
   shouldHoldLivePlayback,
   shouldResumeLiveAfterHold,
 } from "./live-playback";
@@ -62,5 +63,16 @@ describe("shouldResumeLiveAfterHold", () => {
         heldAtTime: 12,
       })
     ).toBe(false);
+  });
+});
+
+describe("liveStreamPlaybackUrl", () => {
+  it("requests a finite snapshot so playbackRate can take effect", () => {
+    expect(liveStreamPlaybackUrl("http://localhost:1/audio-live/b/0", 99)).toBe(
+      "http://localhost:1/audio-live/b/0?snapshot=1&ts=99"
+    );
+    expect(
+      liveStreamPlaybackUrl("http://localhost:1/audio-live/b/0?x=1", 99)
+    ).toBe("http://localhost:1/audio-live/b/0?x=1&snapshot=1&ts=99");
   });
 });

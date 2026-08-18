@@ -67,6 +67,39 @@ export function filterSegmentsForTrack(
   return segments.filter((segment) => segment.audioTrackHref === trackHref);
 }
 
+/** Chapter the reader should show for the current live (or SMIL) playback. */
+export function chapterHrefForSync(options: {
+  markerChapterHref?: string;
+  isLiveTrack?: boolean;
+  trackChapterHref?: string;
+  liveMarkerChapterHref?: string;
+  liveChapterIndex?: number;
+  chapters: Array<{ href: string }>;
+}): string | undefined {
+  if (options.markerChapterHref) {
+    return options.markerChapterHref;
+  }
+  if (!options.isLiveTrack) {
+    return undefined;
+  }
+  if (options.liveMarkerChapterHref) {
+    return options.liveMarkerChapterHref;
+  }
+  if (options.trackChapterHref) {
+    return options.trackChapterHref;
+  }
+  const index = options.liveChapterIndex;
+  if (
+    typeof index === "number" &&
+    Number.isInteger(index) &&
+    index >= 0 &&
+    index < options.chapters.length
+  ) {
+    return options.chapters[index].href;
+  }
+  return undefined;
+}
+
 export function segmentsForPlayback(
   segments: AudioSyncSegment[],
   trackHref: string | undefined,

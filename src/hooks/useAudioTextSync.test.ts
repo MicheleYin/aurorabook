@@ -202,6 +202,7 @@ describe("useAudioTextSync", () => {
   afterEach(() => {
     document.body.innerHTML = "";
     audioRef.current = null;
+    invoke.mockReset();
     vi.useRealTimers();
   });
 
@@ -288,6 +289,57 @@ describe("useAudioTextSync", () => {
       "book-1",
       expect.objectContaining({ href: "ch2.xhtml" })
     );
+  });
+
+  it("loads the live track chapter when sync is enabled even without a SMIL marker", () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_live_sync_marker") {
+        return {};
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    currentAudioTrack = {
+      ...currentAudioTrack,
+      id: "live-book-1-1",
+      chapterHref: "ch2.xhtml",
+      filePath: "ch2.xhtml",
+      href: "ch2.xhtml",
+      isLiveStream: true,
+      liveChapterIndex: 1,
+      order: 1,
+    };
+
+    const { scrollContainer } = mountReaderDom();
+    const book = createBook();
+    book.audioSyncMap = { segments: [] };
+    book.chapters.push({
+      id: "ch-2",
+      bookId: "book-1",
+      title: "Chapter 2",
+      href: "ch2.xhtml",
+      chapterOrder: 1,
+    });
+
+    const { result: refs } = renderHook(() => {
+      const scrollContainerRef = useRef<HTMLDivElement | null>(scrollContainer);
+      return { scrollContainerRef };
+    });
+
+    renderHook(() =>
+      useAudioTextSync(book, refs.current.scrollContainerRef, undefined, true)
+    );
+
+    expect(loadChapterContent).toHaveBeenCalledTimes(1);
+    expect(loadChapterContent).toHaveBeenCalledWith(
+      "book-1",
+      expect.objectContaining({ href: "ch2.xhtml" })
+    );
+
+    act(() => {
+      seekAudio(audioRef.current as HTMLAudioElement, 1.0);
+    });
+    expect(loadChapterContent).toHaveBeenCalledTimes(1);
   });
 
   it("advances highlight to the next segment and scrolls when offscreen", () => {

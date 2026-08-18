@@ -14,6 +14,7 @@ import {
   hasNonCollapsedTextSelection,
   placeWordCuesOnTrack,
   resolvePlaybackMarker,
+  chapterHrefForSync,
   scrollTopToRevealRect,
   shouldRunSyncPass,
 } from "./audio-sync-utils";
@@ -36,6 +37,41 @@ describe("filterSegmentsForTrack", () => {
       seg({ audioTrackHref: "b.mp3", clipBegin: 0, clipEnd: 1 }),
     ];
     expect(filterSegmentsForTrack(segments, "a.mp3")).toHaveLength(1);
+  });
+});
+
+describe("chapterHrefForSync", () => {
+  const chapters = [{ href: "ch1.xhtml" }, { href: "ch2.xhtml" }];
+
+  it("uses the SMIL marker chapter for completed tracks", () => {
+    expect(
+      chapterHrefForSync({
+        markerChapterHref: "ch1.xhtml",
+        isLiveTrack: false,
+        chapters,
+      })
+    ).toBe("ch1.xhtml");
+  });
+
+  it("uses the live track chapter when there is no playback marker yet", () => {
+    expect(
+      chapterHrefForSync({
+        isLiveTrack: true,
+        trackChapterHref: "ch2.xhtml",
+        liveChapterIndex: 1,
+        chapters,
+      })
+    ).toBe("ch2.xhtml");
+  });
+
+  it("falls back to the live chapter index when the track href is missing", () => {
+    expect(
+      chapterHrefForSync({
+        isLiveTrack: true,
+        liveChapterIndex: 1,
+        chapters,
+      })
+    ).toBe("ch2.xhtml");
   });
 });
 

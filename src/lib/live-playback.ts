@@ -28,3 +28,12 @@ export function shouldResumeLiveAfterHold(input: {
   const threshold = input.thresholdSec ?? LIVE_UNDERRUN_THRESHOLD_SEC;
   return input.generatedDuration > input.heldAtTime + threshold;
 }
+
+/** Finite MP3 snapshot so live `<audio>` has a duration and honors playbackRate. */
+export function liveStreamPlaybackUrl(
+  baseUrl: string,
+  now = Date.now()
+): string {
+  const join = baseUrl.includes("?") ? "&" : "?";
+  return `${baseUrl}${join}snapshot=1&ts=${now}`;
+}

@@ -15,6 +15,7 @@ import {
   isElementFullyVisible,
   isFollowScrollPaused,
   hasNonCollapsedTextSelection,
+  chapterHrefForSync,
   resolvePlaybackMarker,
   scrollTopToRevealRect,
   segmentsForPlayback,
@@ -64,6 +65,7 @@ export function useAudioTextSync(
   const liveSyncLastPollRef = useRef(0);
   const lastLiveSentenceIndexRef = useRef<number | null>(null);
   const lastLiveElementOrderRef = useRef<number | null>(null);
+  const requestedChapterHrefRef = useRef<string | null>(null);
   const previousHeaderVisibleRef = useRef<boolean | undefined>(isHeaderVisible);
   const isScrubbingRef = useRef(false);
   const lastUserScrollAtRef = useRef<number | null>(null);
@@ -100,6 +102,7 @@ export function useAudioTextSync(
     liveSyncLastPollRef.current = 0;
     lastLiveSentenceIndexRef.current = null;
     lastLiveElementOrderRef.current = null;
+    requestedChapterHrefRef.current = null;
     highlightStateRef.current = emptyHighlightState();
   }, [book?.id, currentAudioTrack?.id]);
 
@@ -460,6 +463,32 @@ export function useAudioTextSync(
     }, AUTO_SCROLL_RESUME_MS);
   }, []);
 
+  const requestSyncedChapter = useCallback(
+    (chapterHref: string | undefined, bookValue: Book) => {
+      if (!chapterHref || hrefMatches(currentChapterRef.current?.href, chapterHref)) {
+        requestedChapterHrefRef.current = null;
+        return false;
+      }
+      if (hrefMatches(requestedChapterHrefRef.current ?? undefined, chapterHref)) {
+        return true;
+      }
+      requestedChapterHrefRef.current = chapterHref;
+      const targetChapter = bookValue.chapters.find((ch) =>
+        hrefMatches(ch.href, chapterHref)
+      );
+      if (!targetChapter) {
+        requestedChapterHrefRef.current = null;
+        return false;
+      }
+      loadChapterContentRef.current(bookValue.id, targetChapter).catch((err) => {
+        logger.error("[AudioSync] Failed to load chapter:", err);
+        requestedChapterHrefRef.current = null;
+      });
+      return true;
+    },
+    [hrefMatches]
+  );
+
   const syncFromClock = useCallback(
     (allowScroll: boolean) => {
       if (!isSyncEnabledRef.current) return;
@@ -482,13 +511,13 @@ export function useAudioTextSync(
         pollLiveMarker(currentTime);
       }
 
-      const liveChapterHref =
-        track.chapterHref ||
-        (typeof track.liveChapterIndex === "number" &&
-        track.liveChapterIndex >= 0 &&
-        track.liveChapterIndex < bookValue.chapters.length
-          ? bookValue.chapters[track.liveChapterIndex].href
-          : undefined);
+      const liveChapterHref = chapterHrefForSync({
+        isLiveTrack,
+        trackChapterHref: track.chapterHref,
+        liveMarkerChapterHref: liveSyncMarkerRef.current?.chapterHref,
+        liveChapterIndex: track.liveChapterIndex,
+        chapters: bookValue.chapters,
+      });
       const trackSegments = segmentsForPlayback(
         bookValue.audioSyncMap?.segments || [],
         track.href || track.filePath,
@@ -506,25 +535,19 @@ export function useAudioTextSync(
         isLiveTrack,
       });
 
-      if (!marker) return;
-
-      const chapterHref = marker.chapterHref;
-      if (
-        chapterHref &&
-        !hrefMatches(currentChapterRef.current?.href, chapterHref)
-      ) {
-        const targetChapter = bookValue.chapters.find((ch) =>
-          hrefMatches(ch.href, chapterHref)
-        );
-        if (targetChapter) {
-          loadChapterContentRef.current(bookValue.id, targetChapter).catch(
-            (err) => {
-              logger.error("[AudioSync] Failed to load chapter:", err);
-            }
-          );
-        }
+      const chapterHref = chapterHrefForSync({
+        markerChapterHref: marker?.chapterHref,
+        isLiveTrack,
+        trackChapterHref: track.chapterHref,
+        liveMarkerChapterHref: liveSyncMarkerRef.current?.chapterHref,
+        liveChapterIndex: track.liveChapterIndex,
+        chapters: bookValue.chapters,
+      });
+      if (requestSyncedChapter(chapterHref, bookValue)) {
         return;
       }
+
+      if (!marker) return;
 
       const contentContainer = getProseContainer(scrollContainer);
       if (!contentContainer) return;
@@ -566,6 +589,7 @@ export function useAudioTextSync(
       hrefMatches,
       locateSentenceElement,
       pollLiveMarker,
+      requestSyncedChapter,
       scrollToElement,
       isSelectionFrozen,
     ]
@@ -725,6 +749,7 @@ export function useAudioTextSync(
     isSyncEnabled,
     book,
     currentAudioTrack,
+    currentChapter?.id,
     audioRef,
     scrollContainerRef,
     removeAllHighlights,

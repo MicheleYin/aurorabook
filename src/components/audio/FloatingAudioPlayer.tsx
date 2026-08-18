@@ -24,8 +24,10 @@ import { useAudioSyncContext } from "@/context/AudioSyncContext";
 import { useChapterProgressContext } from "@/context/ChapterProgressContext";
 import { useConversionState } from "@/context/ConversionStateContext";
 
+import { applyMediaPlaybackRate } from "../../lib/audio-progress-utils";
 import { logger } from "../../lib/logger";
 import {
+  liveStreamPlaybackUrl,
   shouldHoldLivePlayback,
   shouldResumeLiveAfterHold,
 } from "../../lib/live-playback";
@@ -86,6 +88,7 @@ export function FloatingAudioPlayer() {
   const currentBookRef = useRef(currentBook);
   const currentAudioTrackRef = useRef(currentAudioTrack);
   const liveChapterIndexRef = useRef(-1);
+  const playbackRateRef = useRef(playbackRate);
   const { isSyncEnabled, toggleSync } = useAudioSyncContext();
 
   useEffect(() => {
@@ -95,6 +98,13 @@ export function FloatingAudioPlayer() {
   useEffect(() => {
     currentAudioTrackRef.current = currentAudioTrack;
   }, [currentAudioTrack]);
+
+  useEffect(() => {
+    playbackRateRef.current = playbackRate;
+    if (audioRef.current) {
+      applyMediaPlaybackRate(audioRef.current, playbackRate);
+    }
+  }, [audioRef, playbackRate]);
 
   useEffect(() => {
     if (!currentBook) return;
@@ -548,13 +558,15 @@ export function FloatingAudioPlayer() {
     } else {
       try {
         playbackIntentRef.current = true;
+        applyMediaPlaybackRate(audioRef.current, playbackRate);
         await audioRef.current.play();
+        applyMediaPlaybackRate(audioRef.current, playbackRate);
       } catch (err) {
         playbackIntentRef.current = false;
         logger.error("Failed to play audio:", err);
       }
     }
-  }, [audioRef, isPlaying]);
+  }, [audioRef, isPlaying, playbackRate]);
 
   const isLiveStream = useMemo(
     () => Boolean(currentAudioTrack?.isLiveStream),
@@ -843,6 +855,7 @@ export function FloatingAudioPlayer() {
       }
 
       const target = Math.max(minSeek, Math.min(resumeTime, maxSeek));
+      applyMediaPlaybackRate(audioEl, playbackRateRef.current);
 
       if (Number.isFinite(target) && target >= 0) {
         try {
@@ -856,6 +869,7 @@ export function FloatingAudioPlayer() {
       if (wasPlaying) {
         try {
           await audioEl.play();
+          applyMediaPlaybackRate(audioEl, playbackRateRef.current);
         } catch (err) {
           logger.warn("Failed to play live stream:", err);
         }
@@ -873,9 +887,9 @@ export function FloatingAudioPlayer() {
           return;
         }
 
-        const cacheBustedUrl = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}ts=${Date.now()}`;
+        const cacheBustedUrl = liveStreamPlaybackUrl(baseUrl);
         audioRef.current.pause();
-        audioRef.current.playbackRate = playbackRate;
+        applyMediaPlaybackRate(audioRef.current, playbackRateRef.current);
 
         const handleReady = () => {
           void applySeekAndPlayback();
@@ -913,7 +927,6 @@ export function FloatingAudioPlayer() {
     isLiveStream,
     livePlaybackRequestRef,
     livePlaybackRequestVersion,
-    playbackRate,
     liveStreamSourceKey,
   ]);
 
