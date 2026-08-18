@@ -142,7 +142,8 @@ pub async fn generate_tts_cached(
                 init_cfg,
                 1,
             )
-            .await;
+            .await
+            .map_err(|e| AppError::TtsGeneration(format!("TTS engine init failed: {e}")))?;
             let model_instance = engine.get_model_instance(worker_id.unwrap_or(0));
             engine
                 .tts_raw_audio_with_instance(
@@ -366,6 +367,30 @@ pub(crate) fn encode_pcm_to_mp3_bytes(
         ));
     }
     Ok(output)
+}
+
+#[cfg(test)]
+mod mp3_concat_clock_tests {
+    use super::encode_pcm_to_mp3_bytes;
+    use crate::utils::audio::f32_to_pcm_le_bytes;
+    use crate::utils::mp3::playback_duration_seconds;
+
+    #[test]
+    fn concatenated_sentence_mp3s_include_encoder_padding() {
+        let pcm = vec![0.05f32; 44_100];
+        let mp3 = encode_pcm_to_mp3_bytes(f32_to_pcm_le_bytes(&pcm), 44_100, 1, Some(128))
+            .expect("encode");
+        let mp3_duration = playback_duration_seconds(&mp3).expect("mp3 duration");
+        assert!(
+            mp3_duration > 1.0,
+            "concatenated live MP3s must account for encoder padding, got {mp3_duration}"
+        );
+
+        let mut concat = mp3.clone();
+        concat.extend_from_slice(&mp3);
+        let concat_duration = playback_duration_seconds(&concat).expect("concat duration");
+        assert!((concat_duration - 2.0 * mp3_duration).abs() < 1e-6);
+    }
 }
 
 fn map_bitrate_to_lame(kbps: u32) -> mp3lame_encoder::Bitrate {

@@ -32,6 +32,15 @@ pub struct AudioTrack {
     pub order: usize,
 }
 
+/// Word-level cue inside a sentence sync segment (chapter-relative seconds).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WordSyncCue {
+    pub word: String,
+    pub start_sec: f64,
+    pub end_sec: f64,
+}
+
 /// Audio synchronization segment for highlighting text during playback
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +50,8 @@ pub struct AudioSyncSegment {
     pub audio_track_href: String,
     pub clip_begin: f64,
     pub clip_end: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<WordSyncCue>>,
 }
 
 /// Audio synchronization map for a book

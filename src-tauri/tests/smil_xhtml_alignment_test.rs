@@ -367,7 +367,7 @@ async fn test_prologue_with_real_tts() {
         model_path_str,
         voices_path_str,
         1, // Single instance for testing
-    ).await;
+    ).await.expect("TTS init");
     
     println!("✅ TTS engine initialized");
     

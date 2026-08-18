@@ -341,6 +341,7 @@ pub fn parse_smil_file(
                                     audio_track_href: normalized_audio_src,
                                     clip_begin: begin_seconds,
                                     clip_end: end_seconds,
+                                    words: None,
                                 });
                                 
                                 // Reset for next par element (but keep in_par true until </par>)
@@ -387,6 +388,7 @@ pub fn parse_smil_file(
                                 audio_track_href: normalized_audio_src,
                                 clip_begin: begin_seconds,
                                 clip_end: end_seconds,
+                                words: None,
                             });
                         }
                     }
@@ -537,6 +539,8 @@ pub fn build_audio_sync_map(
         log::warn!("No audio sync segments found in any SMIL files");
         return Ok(None);
     }
+
+    attach_word_cues_from_archive(archive, &mut all_segments);
     
     log::info!(
         "Built audio sync map with {} total segments across {} chapters",
@@ -547,6 +551,70 @@ pub fn build_audio_sync_map(
     Ok(Some(AudioSyncMap {
         segments: all_segments,
     }))
+}
+
+fn attach_word_cues_from_archive(
+    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    segments: &mut [AudioSyncSegment],
+) {
+    use std::collections::{HashMap, HashSet};
+    use std::io::Read;
+    use crate::book_service::models::WordSyncCue;
+
+    let mut audio_hrefs: HashSet<String> = HashSet::new();
+    for segment in segments.iter() {
+        if !segment.audio_track_href.is_empty() {
+            audio_hrefs.insert(segment.audio_track_href.clone());
+        }
+    }
+
+    let zip_names: Vec<String> = (0..archive.len())
+        .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
+        .collect();
+
+    let mut words_by_span: HashMap<String, Vec<WordSyncCue>> = HashMap::new();
+
+    for audio_href in audio_hrefs {
+        let json_name = audio_href.replace(".mp3", ".words.json");
+        let file_name = json_name.rsplit('/').next().unwrap_or(&json_name);
+        let Some(zip_path) = zip_names.iter().find(|name| {
+            *name == &json_name || name.ends_with(&json_name) || name.ends_with(file_name)
+        }) else {
+            continue;
+        };
+
+        let mut content = String::new();
+        let read_ok = archive
+            .by_name(zip_path)
+            .ok()
+            .and_then(|mut file| file.read_to_string(&mut content).ok());
+        if read_ok.is_none() {
+            continue;
+        }
+
+        match serde_json::from_str::<HashMap<String, Vec<WordSyncCue>>>(&content) {
+            Ok(parsed) => {
+                for (span_id, words) in parsed {
+                    words_by_span.insert(span_id, words);
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to parse word timings from {}: {}", zip_path, e);
+            }
+        }
+    }
+
+    if words_by_span.is_empty() {
+        return;
+    }
+
+    for segment in segments.iter_mut() {
+        if let Some(words) = words_by_span.get(&segment.text_element_id) {
+            if !words.is_empty() {
+                segment.words = Some(words.clone());
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -633,6 +701,56 @@ mod tests {
             .expect("some map");
         assert_eq!(map.segments.len(), 1);
         assert_eq!(map.segments[0].text_element_id, "w1");
+        assert!(map.segments[0].words.is_none());
+    }
+
+    #[test]
+    fn build_audio_sync_map_attaches_word_cues_from_sidecar() {
+        let smil = r#"<?xml version="1.0" encoding="UTF-8"?>
+<smil xmlns="http://www.w3.org/ns/SMIL" version="3.0">
+  <body>
+    <seq>
+      <par>
+        <text src="Text/ch1.xhtml#w1"/>
+        <audio src="Audio/ch1.mp3" clipBegin="00:00:00.000" clipEnd="00:00:01.000"/>
+      </par>
+    </seq>
+  </body>
+</smil>"#;
+        let words_json = r#"{"w1":[{"word":"Hello","startSec":0.05,"endSec":0.4}]}"#;
+
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut buffer);
+            zip.start_file("Text/ch1.smil", FileOptions::default())
+                .expect("start smil");
+            zip.write_all(smil.as_bytes()).expect("write smil");
+            zip.start_file("Audio/ch1.words.json", FileOptions::default())
+                .expect("start words");
+            zip.write_all(words_json.as_bytes()).expect("write words");
+            zip.finish().expect("finish zip");
+        }
+        let bytes = buffer.into_inner();
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes.as_slice())).expect("open zip");
+
+        let chapters = vec![Chapter {
+            id: "c1".into(),
+            title: "One".into(),
+            content_html: None,
+            plain_text: None,
+            order: 0,
+            href: "Text/ch1.xhtml".into(),
+            word_count: None,
+            estimated_page_count: None,
+        }];
+
+        let map = build_audio_sync_map(&mut archive, &chapters)
+            .expect("build map")
+            .expect("some map");
+        let words = map.segments[0].words.as_ref().expect("words attached");
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].word, "Hello");
+        assert!((words[0].start_sec - 0.05).abs() < 1e-9);
     }
 
     #[test]

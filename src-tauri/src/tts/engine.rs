@@ -159,7 +159,16 @@ impl TtsEnginePool {
                 });
 
                 let engine = match engine_task.await {
-                    Ok(engine) => engine,
+                    Ok(Ok(engine)) => engine,
+                    Ok(Err(e)) => {
+                        log::error!("TTS engine initialization failed: {}", e);
+                        return Err(AppError::TtsGeneration(format!(
+                            "TTS engine initialization failed: {}\n\
+                                ONNX: {}\n\
+                                Voices: {}",
+                            e, onnx_path, voices_path
+                        )));
+                    }
                     Err(e) => {
                         // Task panicked or was cancelled
                         log::error!("TTS engine initialization task failed: {:?}", e);

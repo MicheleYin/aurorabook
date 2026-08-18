@@ -4,9 +4,18 @@ import type { Book, ChapterWithContent } from "../../types/book";
 import type { ReaderSettings } from "./ReaderSettings";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { useAudioTextSync } from "../../hooks/useAudioTextSync";
+import { useReaderDictionary } from "../../hooks/useReaderDictionary";
 import { logger } from "../../lib/logger";
+import { isDictionaryCardTarget } from "../../lib/reader-dictionary";
+import {
+  getPointerDistance,
+  prepareChapterHtmlForReader,
+  READER_CHROME_TOGGLE_DELAY_MS,
+  shouldToggleReaderHeaderOnClick,
+} from "../../lib/reader-utils";
 import { cn } from "../../lib/utils";
 import { LoadingScreen } from "../app/LoadingScreen";
+import { ReaderDictionaryCard } from "./ReaderDictionaryCard";
 
 interface ReaderContentProps {
   book: Book;
@@ -35,9 +44,16 @@ export function ReaderContent({
   const previousHeaderVisibleRef = useRef<boolean | undefined>(isHeaderVisible);
   const scrollPositionRef = useRef<number>(0);
   const restoredChapterKeyRef = useRef<string | null>(null);
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const chromeToggleTimeoutRef = useRef<number | null>(null);
   const { currentAudioTrack } = useAudioProgressContext();
   const previousAudioTrackRef =
     useRef<typeof currentAudioTrack>(currentAudioTrack);
+  const {
+    dictionary,
+    close: closeDictionary,
+    consumeChromeToggleSuppression,
+  } = useReaderDictionary(contentRef);
 
   // Preserve scroll position when header visibility changes
   useEffect(() => {
@@ -170,22 +186,77 @@ export function ReaderContent({
     };
   }, [currentChapter]);
 
+  useEffect(() => {
+    closeDictionary();
+  }, [closeDictionary, currentChapter.id, isLoading]);
+
+  const cancelPendingChromeToggle = useCallback(() => {
+    if (chromeToggleTimeoutRef.current !== null) {
+      window.clearTimeout(chromeToggleTimeoutRef.current);
+      chromeToggleTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      cancelPendingChromeToggle();
+    };
+  }, [cancelPendingChromeToggle]);
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      pointerStartRef.current = { x: e.clientX, y: e.clientY };
+    },
+    []
+  );
+
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      // Only trigger if clicking directly on the content area, not on links or interactive elements
-      const target = e.target as HTMLElement;
       if (
-        target.tagName === "A" ||
-        target.tagName === "BUTTON" ||
-        target.closest("a") ||
-        target.closest("button")
+        isDictionaryCardTarget(e.target) ||
+        consumeChromeToggleSuppression()
       ) {
+        cancelPendingChromeToggle();
         return;
       }
-      onContentClick?.();
+
+      const selectedText = window.getSelection()?.toString() ?? "";
+      const pointerDistancePx = getPointerDistance(pointerStartRef.current, {
+        x: e.clientX,
+        y: e.clientY,
+      });
+
+      if (
+        !shouldToggleReaderHeaderOnClick({
+          target: e.target,
+          selectedText,
+          pointerDistancePx,
+        })
+      ) {
+        cancelPendingChromeToggle();
+        return;
+      }
+
+      cancelPendingChromeToggle();
+      chromeToggleTimeoutRef.current = window.setTimeout(() => {
+        chromeToggleTimeoutRef.current = null;
+        const stillSelected = window.getSelection()?.toString().trim() ?? "";
+        if (stillSelected.length > 0) {
+          return;
+        }
+        onContentClick?.();
+      }, READER_CHROME_TOGGLE_DELAY_MS);
     },
-    [onContentClick]
+    [
+      cancelPendingChromeToggle,
+      consumeChromeToggleSuppression,
+      onContentClick,
+    ]
   );
+
+  const handleDoubleClick = useCallback(() => {
+    cancelPendingChromeToggle();
+  }, [cancelPendingChromeToggle]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -255,25 +326,34 @@ export function ReaderContent({
   return (
     <div
       ref={scrollContainerRef}
-      className={cn("flex-1 overflow-y-auto cursor-pointer", themeClass)}
+      className={cn("flex-1 overflow-y-auto", themeClass)}
+      onPointerDown={handlePointerDown}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       onKeyDown={handleKeyDown}
       tabIndex={-1}
       title="Tap to toggle header visibility"
     >
-      <div className="mx-auto py-8" style={paddingStyle}>
+      <div className="reader-content-selectable mx-auto py-8" style={paddingStyle}>
         <div
           ref={contentRef}
           className={cn(
-            "prose prose-slate dark:prose-invert reader-prose max-w-none",
+            "prose prose-slate dark:prose-invert reader-prose max-w-none cursor-text",
             fontFamilyClass
           )}
           style={fontSizeStyle}
           dangerouslySetInnerHTML={{
-            __html: currentChapter.contentHtml || "",
+            __html: prepareChapterHtmlForReader(currentChapter.contentHtml || ""),
           }}
         />
       </div>
+      {dictionary ? (
+        <ReaderDictionaryCard
+          dictionary={dictionary}
+          onClose={closeDictionary}
+          themeClass={themeClass}
+        />
+      ) : null}
     </div>
   );
 }

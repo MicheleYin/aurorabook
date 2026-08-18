@@ -426,7 +426,7 @@ export function Library() {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="flex h-full flex-col overflow-hidden select-none">
       <div className="flex-shrink-0 p-6 space-y-4 border-b">
         <div className="flex items-center justify-between">
           <div>

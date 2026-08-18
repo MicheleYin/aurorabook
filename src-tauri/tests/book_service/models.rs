@@ -124,6 +124,7 @@ fn test_audio_sync_map_creation() {
             audio_track_href: "Audio/ch1.mp3".to_string(),
             clip_begin: 0.0,
             clip_end: 5.0,
+            words: None,
         }],
     };
     

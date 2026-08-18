@@ -37,13 +37,136 @@ fn calculate_total_words_processed(
     (current_words_processed, total_words_processed)
 }
 
+fn sentence_text_matches(current: &str, saved: &str) -> bool {
+    normalize_sentence_key(current) == normalize_sentence_key(saved)
+}
+
+fn normalize_sentence_key(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn concatenate_mp3_in_sentence_order(
+    chunks: &BTreeMap<usize, Vec<u8>>,
+    sentence_count: usize,
+    chapter_index: usize,
+    chapter_title: &str,
+) -> Vec<u8> {
+    if sentence_count == 0 || chunks.is_empty() {
+        if chunks.is_empty() {
+            log::warn!(
+                "No audio generated for chapter {} '{}' - creating empty MP3 file",
+                chapter_index + 1,
+                chapter_title
+            );
+        }
+        return Vec::new();
+    }
+
+    let mut concatenated = Vec::new();
+    let mut missing: Vec<usize> = Vec::new();
+    for idx in 0..sentence_count {
+        match chunks.get(&idx) {
+            Some(chunk) if !chunk.is_empty() => concatenated.extend_from_slice(chunk),
+            _ => missing.push(idx),
+        }
+    }
+    if !missing.is_empty() {
+        log::warn!(
+            "Chapter {} '{}' MP3 is missing {} of {} sentences at indices {:?}",
+            chapter_index + 1,
+            chapter_title,
+            missing.len(),
+            sentence_count,
+            missing.iter().take(20).collect::<Vec<_>>()
+        );
+    }
+    concatenated
+}
+
+fn pcm_sample_count_for_duration(duration_sec: f32) -> usize {
+    (duration_sec.max(0.0) * SAMPLE_RATE as f32).round() as usize
+}
+
+fn silence_pcm_for_duration(duration_sec: f32) -> Vec<f32> {
+    vec![0.0; pcm_sample_count_for_duration(duration_sec)]
+}
+
+fn pad_or_trim_pcm(mut samples: Vec<f32>, duration_sec: f32) -> Vec<f32> {
+    let n = pcm_sample_count_for_duration(duration_sec);
+    if samples.len() > n {
+        samples.truncate(n);
+    } else if samples.len() < n {
+        samples.resize(n, 0.0);
+    }
+    samples
+}
+
+fn concatenate_pcm_in_sentence_order(
+    pcm_by_index: &BTreeMap<usize, Vec<f32>>,
+    sentence_count: usize,
+    durations: &[f32],
+) -> Vec<f32> {
+    let mut concatenated = Vec::new();
+    for idx in 0..sentence_count {
+        if let Some(samples) = pcm_by_index.get(&idx) {
+            concatenated.extend_from_slice(samples);
+            continue;
+        }
+        let duration = durations.get(idx).copied().unwrap_or(0.0);
+        concatenated.extend_from_slice(&silence_pcm_for_duration(duration));
+    }
+    concatenated
+}
+
+fn sentence_pcm_from_mp3(mp3: &[u8], duration_sec: f32) -> Option<Vec<f32>> {
+    if mp3.is_empty() {
+        return None;
+    }
+    let (pcm, sample_rate, channels) =
+        crate::utils::ffmpeg_audio::decode_audio_blob_to_pcm(mp3, "sentence.mp3", "mp3").ok()?;
+    Some(pad_or_trim_pcm(
+        s16le_to_f32_mono(&pcm, channels, sample_rate),
+        duration_sec,
+    ))
+}
+
+fn s16le_to_f32_mono(pcm: &[u8], channels: u32, _sample_rate: u32) -> Vec<f32> {
+    let channel_count = channels.max(1) as usize;
+    let frames: Vec<f32> = pcm
+        .chunks_exact(2)
+        .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / 32768.0)
+        .collect();
+    if channel_count == 1 {
+        return frames;
+    }
+    frames
+        .chunks(channel_count)
+        .map(|frame| {
+            let sum: f32 = frame.iter().sum();
+            sum / channel_count as f32
+        })
+        .collect()
+}
+
+/// Sentence clip plus the chapter-relative word cues that fall inside it.
+#[derive(Debug, Clone)]
+pub(crate) struct MappedAudioSegment {
+    pub span_id: String,
+    pub start: f64,
+    pub end: f64,
+    pub words: Vec<crate::book_service::models::WordSyncCue>,
+}
+
 /// Map word alignments to HTML span segments for SMIL synchronization
 pub(crate) fn map_alignments_to_segments(
     span_mappings: Vec<(String, usize, usize)>,
     word_alignments: &[kokoros::tts::koko::WordAlignment],
     audio_samples: &[f32],
     full_text: &str,
-) -> Vec<(String, f64, f64)> {
+) -> Vec<MappedAudioSegment> {
     let text_words: Vec<&str> = full_text
         .split_whitespace()
         .filter(|s| !s.is_empty())
@@ -54,6 +177,7 @@ pub(crate) fn map_alignments_to_segments(
     for (span_id, start_word_idx, end_word_idx) in span_mappings {
         let mut span_start_time: Option<f64> = None;
         let mut span_end_time: Option<f64> = None;
+        let mut word_range: Option<(usize, usize)> = None;
 
         let alignment_count = word_alignments.len();
         let text_word_count = text_words.len();
@@ -71,15 +195,27 @@ pub(crate) fn map_alignments_to_segments(
             if end_alignment_idx > 0 && end_alignment_idx <= alignment_count {
                 span_end_time = Some(word_alignments[end_alignment_idx - 1].end_sec as f64);
             }
+            if start_alignment_idx < end_alignment_idx {
+                word_range = Some((start_alignment_idx, end_alignment_idx));
+            }
         }
 
-        let (start_time, end_time) = match (span_start_time, span_end_time) {
+        let audio_duration = if audio_samples.is_empty() {
+            word_alignments
+                .last()
+                .map(|wa| wa.end_sec as f64)
+                .unwrap_or(0.0)
+                .max(0.0)
+        } else {
+            audio_samples.len() as f64 / SAMPLE_RATE as f64
+        };
+        let (raw_start, raw_end) = match (span_start_time, span_end_time) {
             (Some(start), Some(end)) => (start, end),
             (Some(start), None) => {
                 let end = word_alignments
                     .last()
                     .map(|wa| wa.end_sec as f64)
-                    .unwrap_or_else(|| audio_samples.len() as f64 / SAMPLE_RATE as f64);
+                    .unwrap_or(audio_duration);
                 (start, end)
             }
             (None, Some(end)) => (0.0, end),
@@ -87,7 +223,7 @@ pub(crate) fn map_alignments_to_segments(
                 let total_duration = word_alignments
                     .last()
                     .map(|wa| wa.end_sec as f64)
-                    .unwrap_or_else(|| audio_samples.len() as f64 / SAMPLE_RATE as f64);
+                    .unwrap_or(audio_duration);
                 let total_words = text_words.len().max(1);
                 let duration_per_word = total_duration / total_words as f64;
                 let estimated_start = (start_word_idx as f64) * duration_per_word;
@@ -95,10 +231,116 @@ pub(crate) fn map_alignments_to_segments(
                 (estimated_start, estimated_end)
             }
         };
+        let start_time = raw_start.max(0.0).min(audio_duration);
+        let end_time = raw_end.max(start_time).min(audio_duration);
 
-        audio_segments.push((span_id, start_time, end_time));
+        let words = word_range
+            .map(|(start_idx, end_idx)| {
+                clamp_word_cues(
+                    word_alignments[start_idx..end_idx]
+                        .iter()
+                        .map(|wa| crate::book_service::models::WordSyncCue {
+                            word: wa.word.clone(),
+                            start_sec: wa.start_sec as f64,
+                            end_sec: wa.end_sec as f64,
+                        })
+                        .collect(),
+                    start_time,
+                    end_time,
+                )
+            })
+            .unwrap_or_default();
+
+        audio_segments.push(MappedAudioSegment {
+            span_id,
+            start: start_time,
+            end: end_time,
+            words,
+        });
     }
 
+    audio_segments
+}
+
+/// Keep mapped word cues inside the sentence clip `[lo, hi]`.
+fn clamp_word_cues(
+    mut words: Vec<crate::book_service::models::WordSyncCue>,
+    lo: f64,
+    hi: f64,
+) -> Vec<crate::book_service::models::WordSyncCue> {
+    if words.is_empty() {
+        return words;
+    }
+    let span_lo = lo.min(hi);
+    let span_hi = lo.max(hi);
+    for word in &mut words {
+        word.start_sec = word.start_sec.max(span_lo).min(span_hi);
+        word.end_sec = word.end_sec.max(span_lo).min(span_hi);
+        if word.end_sec < word.start_sec {
+            word.end_sec = word.start_sec;
+        }
+    }
+    if let Some(last) = words.last_mut() {
+        last.end_sec = span_hi;
+        if last.end_sec < last.start_sec {
+            last.start_sec = last.end_sec;
+        }
+    }
+    words
+}
+
+fn span_id_to_sentence_index(span_id: &str) -> Option<usize> {
+    let digits = span_id.strip_prefix('f')?;
+    let parsed: usize = digits.parse().ok()?;
+    parsed.checked_sub(1)
+}
+
+/// Map each HTML sentence span to its PCM clip on the chapter timeline.
+///
+/// Clips are placed at the running track length so later sentences cannot
+/// inherit drift from estimated word ends or global word-index scaling.
+pub(crate) fn map_sentence_clips_to_segments(
+    span_mappings: Vec<(String, usize, usize)>,
+    sentence_clips: &[(usize, f64, f64, Vec<kokoros::tts::koko::WordAlignment>)],
+) -> Vec<MappedAudioSegment> {
+    let mut by_index: std::collections::HashMap<
+        usize,
+        (f64, f64, &Vec<kokoros::tts::koko::WordAlignment>),
+    > = std::collections::HashMap::new();
+    for (sentence_idx, start, end, words) in sentence_clips {
+        by_index.insert(*sentence_idx, (*start, *end, words));
+    }
+
+    let mut audio_segments = Vec::new();
+    for (span_id, _, _) in span_mappings {
+        let Some(sentence_idx) = span_id_to_sentence_index(&span_id) else {
+            continue;
+        };
+        let Some((start, end, words)) = by_index.get(&sentence_idx).copied() else {
+            continue;
+        };
+        if end <= start {
+            continue;
+        }
+        let cues = clamp_word_cues(
+            words
+                .iter()
+                .map(|alignment| crate::book_service::models::WordSyncCue {
+                    word: alignment.word.clone(),
+                    start_sec: alignment.start_sec as f64,
+                    end_sec: alignment.end_sec as f64,
+                })
+                .collect(),
+            start,
+            end,
+        );
+        audio_segments.push(MappedAudioSegment {
+            span_id,
+            start,
+            end,
+            words: cues,
+        });
+    }
     audio_segments
 }
 
@@ -330,22 +572,26 @@ pub(crate) async fn process_sentence(
             continue;
         }
 
-        // Offset word alignments by cumulative duration
-        let mut offset_alignments: Vec<kokoros::tts::koko::WordAlignment> = word_alignments
-            .iter()
-            .map(|wa| kokoros::tts::koko::WordAlignment {
-                word: wa.word.clone(),
-                start_sec: wa.start_sec + cumulative_duration,
-                end_sec: wa.end_sec + cumulative_duration,
-            })
-            .collect();
+        // Offset word alignments onto this chunk's position in the sentence audio.
+        let chunk_duration =
+            crate::tts::word_timing::pcm_duration_seconds(audio_samples.len(), SAMPLE_RATE);
+        let mut offset_alignments = crate::tts::word_timing::place_alignments_on_track(
+            &word_alignments,
+            cumulative_duration,
+            chunk_duration,
+        );
 
         all_word_alignments.append(&mut offset_alignments);
         all_audio_samples.extend_from_slice(&audio_samples);
-
-        // Update cumulative duration
-        cumulative_duration += audio_samples.len() as f32 / SAMPLE_RATE as f32;
+        cumulative_duration += chunk_duration;
     }
+
+    let sentence_pcm_duration =
+        crate::tts::word_timing::pcm_duration_seconds(all_audio_samples.len(), SAMPLE_RATE);
+    crate::tts::word_timing::fit_alignments_to_pcm_duration(
+        &mut all_word_alignments,
+        sentence_pcm_duration,
+    );
 
     Ok((all_audio_samples, all_word_alignments, text.to_string()))
 }
@@ -410,23 +656,11 @@ async fn process_single_chunk(
                 return Ok((Vec::new(), Vec::new(), String::new()));
             }
 
-            // Calculate word alignments from audio duration
-            let words: Vec<&str> = text.split_whitespace().filter(|s| !s.is_empty()).collect();
-            let audio_duration_sec = audio_samples.len() as f32 / SAMPLE_RATE as f32;
-
-            let mut word_alignments = Vec::new();
-            if !words.is_empty() {
-                let duration_per_word = audio_duration_sec / words.len() as f32;
-                for (idx, word) in words.iter().enumerate() {
-                    let start_sec = idx as f32 * duration_per_word;
-                    let end_sec = (idx + 1) as f32 * duration_per_word;
-                    word_alignments.push(kokoros::tts::koko::WordAlignment {
-                        word: word.to_string(),
-                        start_sec,
-                        end_sec,
-                    });
-                }
-            }
+            let word_alignments = crate::tts::word_timing::estimate_word_timings(
+                &text,
+                &audio_samples,
+                SAMPLE_RATE,
+            );
 
             Ok((audio_samples, word_alignments, text))
         }
@@ -465,32 +699,20 @@ async fn process_single_chunk(
                         match process_chunk_direct(sub_chunk, engine, worker_id, voice_id, language).await {
                             Ok(audio) => {
                                 if !audio.is_empty() {
-                                    // Calculate alignments for this sub-chunk
-                                    let words: Vec<&str> = sub_chunk
-                                        .split_whitespace()
-                                        .filter(|s| !s.is_empty())
-                                        .collect();
-                                    let audio_duration_sec =
-                                        audio.len() as f32 / SAMPLE_RATE as f32;
-
-                                    let mut sub_alignments = Vec::new();
-                                    if !words.is_empty() {
-                                        let duration_per_word =
-                                            audio_duration_sec / words.len() as f32;
-                                        for (idx, word) in words.iter().enumerate() {
-                                            let start_sec = idx as f32 * duration_per_word
-                                                + cumulative_duration;
-                                            let end_sec = (idx + 1) as f32 * duration_per_word
-                                                + cumulative_duration;
-                                            sub_alignments.push(
-                                                kokoros::tts::koko::WordAlignment {
-                                                    word: word.to_string(),
-                                                    start_sec,
-                                                    end_sec,
-                                                },
-                                            );
-                                        }
-                                    }
+                                    let audio_duration_sec = crate::tts::word_timing::pcm_duration_seconds(
+                                        audio.len(),
+                                        SAMPLE_RATE,
+                                    );
+                                    let sub_alignments =
+                                        crate::tts::word_timing::place_alignments_on_track(
+                                            &crate::tts::word_timing::estimate_word_timings(
+                                                sub_chunk,
+                                                &audio,
+                                                SAMPLE_RATE,
+                                            ),
+                                            cumulative_duration,
+                                            audio_duration_sec,
+                                        );
 
                                     all_alignments.extend(sub_alignments);
                                     all_audio.extend_from_slice(&audio);
@@ -508,6 +730,14 @@ async fn process_single_chunk(
                     }
 
                     if !all_audio.is_empty() {
+                        let sentence_pcm_duration = crate::tts::word_timing::pcm_duration_seconds(
+                            all_audio.len(),
+                            SAMPLE_RATE,
+                        );
+                        crate::tts::word_timing::fit_alignments_to_pcm_duration(
+                            &mut all_alignments,
+                            sentence_pcm_duration,
+                        );
                         return Ok((all_audio, all_alignments, text));
                     }
                 }
@@ -671,6 +901,7 @@ pub(crate) async fn process_chapter(
         String,
     )> = Vec::new();
     let mut sentence_mp3_chunks: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
+    let mut sentence_pcm_chunks: BTreeMap<usize, Vec<f32>> = BTreeMap::new();
 
     if let Some(bid) = book_id {
         let manager = crate::book_service::audio_stream::get_live_stream_manager();
@@ -696,6 +927,27 @@ pub(crate) async fn process_chapter(
                     saved_sentences.sort_by_key(|saved| saved.sentence_index);
 
                     for saved in saved_sentences {
+                        if saved.sentence_index >= sentences.len() {
+                            log::warn!(
+                                "Dropping checkpoint sentence {} for chapter {}: index is past current sentence count {}",
+                                saved.sentence_index,
+                                chapter_index + 1,
+                                sentences.len()
+                            );
+                            continue;
+                        }
+                        if !sentence_text_matches(
+                            &sentences[saved.sentence_index],
+                            &saved.sentence_text,
+                        ) {
+                            log::warn!(
+                                "Dropping checkpoint sentence {} for chapter {}: text no longer matches extracted HTML order",
+                                saved.sentence_index,
+                                chapter_index + 1
+                            );
+                            continue;
+                        }
+
                         let audio_bytes = match std::fs::read(&saved.audio_file_path) {
                             Ok(bytes) => bytes,
                             Err(e) => {
@@ -720,8 +972,27 @@ pub(crate) async fn process_chapter(
                             saved.word_alignments.clone(),
                         );
 
-                        // Restore for final chapter merge without re-running TTS or re-encoding.
-                        sentence_mp3_chunks.insert(saved.sentence_index, audio_bytes);
+                        // Restore for final chapter merge without re-running TTS.
+                        // Decode MP3 back to PCM and trim/pad to the saved generation
+                        // length so the chapter clock stays on sample counts, not LAME frames.
+                        sentence_mp3_chunks.insert(saved.sentence_index, audio_bytes.clone());
+                        let restored_duration = saved.duration_seconds as f32;
+                        match sentence_pcm_from_mp3(&audio_bytes, restored_duration) {
+                            Some(pcm) => {
+                                sentence_pcm_chunks.insert(saved.sentence_index, pcm);
+                            }
+                            None => {
+                                log::warn!(
+                                    "Could not decode checkpoint MP3 for sentence {} in chapter {}; inserting silence of saved PCM duration",
+                                    saved.sentence_index,
+                                    chapter_index + 1
+                                );
+                                sentence_pcm_chunks.insert(
+                                    saved.sentence_index,
+                                    silence_pcm_for_duration(restored_duration),
+                                );
+                            }
+                        }
                         if restored_sentence_indices.insert(saved.sentence_index) {
                             let restored_sentence_words = sentence_word_counts
                                 .get(saved.sentence_index)
@@ -994,20 +1265,42 @@ pub(crate) async fn process_chapter(
             ..Default::default()
         });
 
-        // Push completed sentence to the in-memory live stream manager.
+        // Keep generated PCM for the chapter encode so SMIL times match sample counts.
+        // Live preview concatenates per-sentence MP3s; the live clock uses MP3 frame
+        // duration so LAME Info/padding does not make later words run ahead of audio.
+        let sentence_pcm_duration =
+            crate::tts::word_timing::pcm_duration_seconds(audio.len(), SAMPLE_RATE);
         if !audio.is_empty() {
-            if let Some(bid) = book_id {
-                if let Ok(mp3_chunk) = convert_audio_to_mp3(&audio) {
-                    let manager = crate::book_service::audio_stream::get_live_stream_manager();
+            sentence_pcm_chunks.insert(idx, audio.clone());
+            match convert_audio_to_mp3(&audio) {
+                Ok(mp3_chunk) if !mp3_chunk.is_empty() => {
                     sentence_mp3_chunks.insert(idx, mp3_chunk.clone());
-                    manager.push_sentence(
-                        bid,
-                        chapter_storage_index,
+                    if let Some(bid) = book_id {
+                        let manager = crate::book_service::audio_stream::get_live_stream_manager();
+                        manager.push_sentence(
+                            bid,
+                            chapter_storage_index,
+                            idx,
+                            mp3_chunk,
+                            sentence_pcm_duration as f64,
+                            text.clone(),
+                            alignments.clone(),
+                        );
+                    }
+                }
+                Ok(_) => {
+                    log::warn!(
+                        "Empty MP3 for sentence {} in chapter {}; it will be omitted from the live preview",
                         idx,
-                        mp3_chunk,
-                        audio.len() as f64 / SAMPLE_RATE as f64,
-                        text.clone(),
-                        alignments.clone(),
+                        chapter_index + 1
+                    );
+                }
+                Err(e) => {
+                    log::warn!(
+                        "MP3 conversion failed for sentence {} in chapter {}: {}. Sentence omitted from the live preview",
+                        idx,
+                        chapter_index + 1,
+                        e
                     );
                 }
             }
@@ -1015,7 +1308,7 @@ pub(crate) async fn process_chapter(
 
         sentence_meta.push((
             idx,
-            audio.len() as f32 / SAMPLE_RATE as f32,
+            sentence_pcm_duration,
             alignments.clone(),
             text.clone(),
         ));
@@ -1103,37 +1396,40 @@ pub(crate) async fn process_chapter(
     // Sort by sentence index to maintain document order
     sentence_meta.sort_by_key(|(idx, _, _, _)| *idx);
 
-    // Merge alignment segments in order
-    let merged_audio: Vec<f32> = Vec::new();
-    let mut all_word_alignments: Vec<kokoros::tts::koko::WordAlignment> = Vec::new();
-
-    // Track cumulative audio duration for alignment offset
-    let mut cumulative_duration = 0.0;
-
-    for (_sentence_idx, sentence_duration_sec, word_alignments, _text) in sentence_meta {
-        if sentence_duration_sec <= 0.0 && word_alignments.is_empty() {
+    for (idx, audio, _, _) in &sentence_results {
+        if audio.is_empty() || sentence_pcm_chunks.contains_key(idx) {
             continue;
         }
+        sentence_pcm_chunks.insert(*idx, audio.clone());
+    }
 
-        // Offset word alignments by cumulative duration
-        let mut offset_alignments: Vec<kokoros::tts::koko::WordAlignment> = word_alignments
-            .iter()
-            .map(|wa| kokoros::tts::koko::WordAlignment {
-                word: wa.word.clone(),
-                start_sec: wa.start_sec + cumulative_duration,
-                end_sec: wa.end_sec + cumulative_duration,
-            })
-            .collect();
+    // The chapter clock is the sum of generated PCM lengths, not estimated word
+    // ends and not independently encoded MP3 frame durations.
+    for (idx, duration, _, _) in sentence_meta.iter_mut() {
+        if let Some(pcm) = sentence_pcm_chunks.get(idx) {
+            *duration = crate::tts::word_timing::pcm_duration_seconds(pcm.len(), SAMPLE_RATE);
+        }
+    }
 
-        all_word_alignments.append(&mut offset_alignments);
+    // Place each sentence on the chapter timeline using actual PCM duration.
+    let mut all_word_alignments: Vec<kokoros::tts::koko::WordAlignment> = Vec::new();
+    let mut sentence_clips: Vec<(usize, f64, f64, Vec<kokoros::tts::koko::WordAlignment>)> =
+        Vec::new();
+    let mut track_pos = 0.0f32;
 
-        // Update cumulative duration for next sentence
-        cumulative_duration = word_alignments
-            .last()
-            .map(|wa| wa.end_sec + cumulative_duration)
-            .unwrap_or_else(|| cumulative_duration + sentence_duration_sec);
+    for (sentence_idx, sentence_duration_sec, word_alignments, _text) in &sentence_meta {
+        let duration = (*sentence_duration_sec).max(0.0);
+        let start = track_pos;
+        let end = start + duration;
+        let placed = crate::tts::word_timing::place_alignments_on_track(
+            word_alignments,
+            start,
+            duration,
+        );
+        all_word_alignments.extend(placed.iter().cloned());
+        sentence_clips.push((*sentence_idx, start as f64, end as f64, placed));
+        track_pos = end;
 
-        // Check for cancellation after merging each sentence's audio
         check_cancellation!(cancel_token);
     }
 
@@ -1227,14 +1523,9 @@ pub(crate) async fn process_chapter(
         filtered_span_mappings.len()
     );
 
-    // Use the filtered span_mappings to ensure IDs match the HTML
-    // Map alignments to segments using merged audio
-    let audio_segments = map_alignments_to_segments(
-        filtered_span_mappings.clone(),
-        &all_word_alignments,
-        &merged_audio,
-        &extracted_full_text,
-    );
+    // Map each HTML sentence span to its PCM clip on the chapter track.
+    let audio_segments =
+        map_sentence_clips_to_segments(filtered_span_mappings.clone(), &sentence_clips);
 
     log::debug!(
         "Created {} audio segments from {} filtered span mappings (word alignments: {}, full text words: {})",
@@ -1246,7 +1537,7 @@ pub(crate) async fn process_chapter(
 
     // Verify all segment IDs exist in the HTML
     let segment_ids: std::collections::HashSet<String> =
-        audio_segments.iter().map(|(id, _, _)| id.clone()).collect();
+        audio_segments.iter().map(|seg| seg.span_id.clone()).collect();
     let missing_ids: Vec<String> = segment_ids
         .iter()
         .filter(|id| !actual_span_ids.contains(*id))
@@ -1279,21 +1570,54 @@ pub(crate) async fn process_chapter(
         ..Default::default()
     });
 
-    // Build chapter MP3 from per-sentence MP3 chunks (restored + newly generated)
-    // to avoid expensive re-encoding and to support resume without recomputing sentences.
-    let mp3_bytes = if sentence_mp3_chunks.is_empty() {
-        log::warn!(
-            "No audio generated for chapter {} '{}' - creating empty MP3 file",
-            chapter_index + 1,
-            chapter.title
-        );
-        Vec::new() // Return empty MP3 bytes
-    } else {
-        let mut concatenated = Vec::new();
-        for chunk in sentence_mp3_chunks.values() {
-            concatenated.extend_from_slice(chunk);
+    // Encode the chapter once from concatenated PCM so playback length matches SMIL.
+    let mut pcm_durations = vec![0.0f32; total_sentences];
+    for (idx, duration, _, _) in &sentence_meta {
+        if *idx < pcm_durations.len() {
+            pcm_durations[*idx] = *duration;
         }
-        concatenated
+    }
+
+    let chapter_pcm =
+        concatenate_pcm_in_sentence_order(&sentence_pcm_chunks, total_sentences, &pcm_durations);
+    let mp3_bytes = if chapter_pcm.is_empty() {
+        concatenate_mp3_in_sentence_order(
+            &sentence_mp3_chunks,
+            total_sentences,
+            chapter_index,
+            &chapter.title,
+        )
+    } else {
+        match convert_audio_to_mp3(&chapter_pcm) {
+            Ok(bytes) if !bytes.is_empty() => bytes,
+            Ok(_) => {
+                log::warn!(
+                    "Empty MP3 from concatenated PCM for chapter {} '{}'; falling back to per-sentence MP3 concat",
+                    chapter_index + 1,
+                    chapter.title
+                );
+                concatenate_mp3_in_sentence_order(
+                    &sentence_mp3_chunks,
+                    total_sentences,
+                    chapter_index,
+                    &chapter.title,
+                )
+            }
+            Err(e) => {
+                log::warn!(
+                    "Chapter PCM encode failed for chapter {} '{}': {}. Falling back to per-sentence MP3 concat",
+                    chapter_index + 1,
+                    chapter.title,
+                    e
+                );
+                concatenate_mp3_in_sentence_order(
+                    &sentence_mp3_chunks,
+                    total_sentences,
+                    chapter_index,
+                    &chapter.title,
+                )
+            }
+        }
     };
 
     // Generate audio file paths
@@ -1348,10 +1672,15 @@ pub(crate) async fn process_chapter(
         audio_href_manifest.clone()
     };
 
+    let smil_tuples: Vec<(String, f64, f64)> = audio_segments
+        .iter()
+        .map(|seg| (seg.span_id.clone(), seg.start, seg.end))
+        .collect();
+
     let smil_content = generate_smil_file(
         &validated_chapter_href,
         &audio_href_for_smil,
-        &audio_segments,
+        &smil_tuples,
     )
     .map_err(|e| AppError::XmlParse(format!("SMIL generation failed: {}", e)))?;
 
@@ -1372,6 +1701,28 @@ pub(crate) async fn process_chapter(
         chapter_index,
         smil_href_manifest
     );
+
+    let words_by_span: std::collections::BTreeMap<String, Vec<crate::book_service::models::WordSyncCue>> =
+        audio_segments
+            .iter()
+            .filter(|seg| !seg.words.is_empty())
+            .map(|seg| (seg.span_id.clone(), seg.words.clone()))
+            .collect();
+    if !words_by_span.is_empty() && !audio_href_zip.is_empty() {
+        match serde_json::to_vec(&words_by_span) {
+            Ok(bytes) => {
+                let words_zip = audio_href_zip.replace(".mp3", ".words.json");
+                files.insert(words_zip, bytes);
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to serialize word timings for chapter {}: {}",
+                    chapter_index + 1,
+                    e
+                );
+            }
+        }
+    }
 
     // Generate VTT file for this chapter (only if we have audio/alignments)
     let (vtt_href_zip, vtt_href_manifest) =
@@ -1449,9 +1800,58 @@ mod tests {
     use crate::utils::constants::{MAX_SENTENCE_WORDS, SAMPLE_RATE};
 
     use super::{
-        calculate_total_words_processed, clean_text_for_tts, generate_audio_path,
-        map_alignments_to_segments, resolve_chapter_path, split_long_sentence,
+        calculate_total_words_processed, clean_text_for_tts, concatenate_mp3_in_sentence_order,
+        concatenate_pcm_in_sentence_order, generate_audio_path, map_alignments_to_segments,
+        map_sentence_clips_to_segments, pad_or_trim_pcm, pcm_sample_count_for_duration,
+        resolve_chapter_path, sentence_text_matches, split_long_sentence,
     };
+
+    #[test]
+    fn concatenates_mp3_chunks_in_sentence_index_order() {
+        let mut chunks = std::collections::BTreeMap::new();
+        chunks.insert(2, b"c".to_vec());
+        chunks.insert(0, b"a".to_vec());
+        chunks.insert(1, b"b".to_vec());
+        chunks.insert(99, b"stale".to_vec());
+
+        let mp3 = concatenate_mp3_in_sentence_order(&chunks, 3, 0, "Test");
+        assert_eq!(mp3, b"abc");
+    }
+
+    #[test]
+    fn skips_missing_sentence_slots_instead_of_reordering() {
+        let mut chunks = std::collections::BTreeMap::new();
+        chunks.insert(0, b"a".to_vec());
+        chunks.insert(2, b"c".to_vec());
+
+        let mp3 = concatenate_mp3_in_sentence_order(&chunks, 3, 0, "Test");
+        assert_eq!(mp3, b"ac");
+    }
+
+    #[test]
+    fn concatenates_pcm_in_sentence_index_order_and_pads_missing_slots() {
+        let mut pcm = std::collections::BTreeMap::new();
+        pcm.insert(0, vec![0.1, 0.2]);
+        pcm.insert(2, vec![0.5]);
+        let durations = [0.0, 2.0 / SAMPLE_RATE as f32, 0.0];
+        let concatenated = concatenate_pcm_in_sentence_order(&pcm, 3, &durations);
+        assert_eq!(concatenated, vec![0.1, 0.2, 0.0, 0.0, 0.5]);
+    }
+
+    #[test]
+    fn pad_or_trim_pcm_matches_generation_length() {
+        let trimmed = pad_or_trim_pcm(vec![1.0, 2.0, 3.0, 4.0], 2.0 / SAMPLE_RATE as f32);
+        assert_eq!(trimmed, vec![1.0, 2.0]);
+        let padded = pad_or_trim_pcm(vec![1.0], 3.0 / SAMPLE_RATE as f32);
+        assert_eq!(padded, vec![1.0, 0.0, 0.0]);
+        assert_eq!(pcm_sample_count_for_duration(1.0), SAMPLE_RATE as usize);
+    }
+
+    #[test]
+    fn checkpoint_sentence_text_match_ignores_whitespace() {
+        assert!(sentence_text_matches("Hello   world.", "hello world."));
+        assert!(!sentence_text_matches("Hello world.", "Later sentence."));
+    }
 
     #[test]
     fn calculates_total_words_from_atomic_counter() {
@@ -1531,7 +1931,50 @@ mod tests {
             "one two three four",
         );
 
-        assert_eq!(segments, vec![("f000001".to_string(), 0.5, 1.5)]);
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].span_id, "f000001");
+        assert!((segments[0].start - 0.5).abs() < 1e-9);
+        assert!((segments[0].end - 1.5).abs() < 1e-9);
+        assert_eq!(segments[0].words.len(), 2);
+        assert_eq!(segments[0].words[0].word, "two");
+        assert_eq!(segments[0].words[1].word, "three");
+        for word in &segments[0].words {
+            assert!(word.start_sec >= segments[0].start - 1e-9);
+            assert!(word.end_sec <= segments[0].end + 1e-9);
+        }
+        assert!((segments[0].words.last().unwrap().end_sec - segments[0].end).abs() < 1e-9);
+    }
+
+    #[test]
+    fn mapped_words_are_clamped_to_the_sentence_clip() {
+        let alignments = vec![
+            WordAlignment {
+                word: "one".to_string(),
+                start_sec: -0.1,
+                end_sec: 0.6,
+            },
+            WordAlignment {
+                word: "two".to_string(),
+                start_sec: 0.6,
+                end_sec: 3.5,
+            },
+        ];
+
+        let segments = map_alignments_to_segments(
+            vec![("f000001".to_string(), 0, 2)],
+            &alignments,
+            &vec![0.0; SAMPLE_RATE as usize],
+            "one two",
+        );
+
+        assert_eq!(segments.len(), 1);
+        assert!(segments[0].start >= 0.0);
+        assert!(segments[0].end <= 1.0 + 1e-9);
+        for word in &segments[0].words {
+            assert!(word.start_sec >= segments[0].start - 1e-9);
+            assert!(word.end_sec <= segments[0].end + 1e-9);
+            assert!(word.end_sec >= word.start_sec);
+        }
     }
 
     #[test]
@@ -1543,6 +1986,79 @@ mod tests {
             "one two three four",
         );
 
-        assert_eq!(segments, vec![("f000002".to_string(), 1.0, 3.0)]);
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].span_id, "f000002");
+        assert!((segments[0].start - 1.0).abs() < 1e-9);
+        assert!((segments[0].end - 3.0).abs() < 1e-9);
+        assert!(segments[0].words.is_empty());
+    }
+
+    #[test]
+    fn sentence_clips_use_track_length_and_ignore_short_last_words() {
+        let first = vec![WordAlignment {
+            word: "Hello".to_string(),
+            start_sec: 0.0,
+            end_sec: 0.6,
+        }];
+        let second = vec![
+            WordAlignment {
+                word: "Later".to_string(),
+                start_sec: 0.0,
+                end_sec: 0.4,
+            },
+            WordAlignment {
+                word: "sentence.".to_string(),
+                start_sec: 0.4,
+                end_sec: 0.9,
+            },
+        ];
+        let placed_first = crate::tts::word_timing::place_alignments_on_track(&first, 0.0, 1.0);
+        let placed_second = crate::tts::word_timing::place_alignments_on_track(&second, 1.0, 1.5);
+        let segments = map_sentence_clips_to_segments(
+            vec![
+                ("f000001".to_string(), 0, 1),
+                ("f000002".to_string(), 1, 3),
+            ],
+            &[
+                (0, 0.0, 1.0, placed_first),
+                (1, 1.0, 2.5, placed_second),
+            ],
+        );
+
+        assert_eq!(segments.len(), 2);
+        assert!((segments[0].start - 0.0).abs() < 1e-9);
+        assert!((segments[0].end - 1.0).abs() < 1e-9);
+        assert!((segments[1].start - 1.0).abs() < 1e-9);
+        assert!((segments[1].end - 2.5).abs() < 1e-9);
+        for word in &segments[1].words {
+            assert!(word.start_sec >= 1.0 - 1e-9);
+            assert!(word.end_sec <= 2.5 + 1e-9);
+        }
+        assert!((segments[1].words.last().unwrap().end_sec - 2.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn empty_audio_samples_do_not_collapse_alignment_clips_to_zero() {
+        let alignments = vec![
+            WordAlignment {
+                word: "one".to_string(),
+                start_sec: 4.0,
+                end_sec: 4.5,
+            },
+            WordAlignment {
+                word: "two".to_string(),
+                start_sec: 4.5,
+                end_sec: 5.0,
+            },
+        ];
+        let segments = map_alignments_to_segments(
+            vec![("f000003".to_string(), 0, 2)],
+            &alignments,
+            &[],
+            "one two",
+        );
+        assert_eq!(segments.len(), 1);
+        assert!((segments[0].start - 4.0).abs() < 1e-9);
+        assert!((segments[0].end - 5.0).abs() < 1e-9);
     }
 }

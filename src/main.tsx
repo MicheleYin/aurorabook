@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 
 import App from "./App";
 import { initI18n } from "./lib/i18n";
+import { isNativeReaderContextMenuTarget } from "./lib/reader-utils";
 
 import "./index.css";
 
@@ -14,10 +15,11 @@ if (!rootElement) {
   );
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  document.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-  });
+document.addEventListener("contextmenu", (e) => {
+  if (isNativeReaderContextMenuTarget(e.target)) {
+    return;
+  }
+  e.preventDefault();
 });
 
 async function init() {

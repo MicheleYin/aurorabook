@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { Book, Chapter } from "../types/book";
-import { calculateBookProgress } from "./reader-utils";
+import {
+  calculateBookProgress,
+  getPointerDistance,
+  isNativeReaderContextMenuTarget,
+  prepareChapterHtmlForReader,
+  READER_CHROME_TOGGLE_DRAG_THRESHOLD_PX,
+  shouldToggleReaderHeaderOnClick,
+} from "./reader-utils";
 
 function createBook(chapters: Chapter[]): Book {
   return {
@@ -171,5 +178,92 @@ describe("calculateBookProgress", () => {
     expect(progress.currentChapterElementIndex).toBeUndefined();
     expect(progress.bookProgressPercent).toBe(0);
     expect(progress.chapterProgressPercent).toBe(20);
+  });
+});
+
+describe("reader chrome and native selection helpers", () => {
+  it("computes pointer travel from a start point", () => {
+    expect(getPointerDistance(null, { x: 10, y: 10 })).toBe(0);
+    expect(getPointerDistance({ x: 0, y: 0 }, { x: 3, y: 4 })).toBe(5);
+  });
+
+  it("allows the native context menu on reader chapter text", () => {
+    const prose = document.createElement("div");
+    prose.className = "reader-prose";
+    const word = document.createElement("span");
+    prose.appendChild(word);
+
+    expect(isNativeReaderContextMenuTarget(word)).toBe(true);
+    expect(isNativeReaderContextMenuTarget(document.createElement("div"))).toBe(
+      false
+    );
+    expect(isNativeReaderContextMenuTarget(null)).toBe(false);
+  });
+
+  it("toggles the header only for a tap that did not select text", () => {
+    const paragraph = document.createElement("p");
+
+    expect(
+      shouldToggleReaderHeaderOnClick({
+        target: paragraph,
+        selectedText: "",
+        pointerDistancePx: 2,
+      })
+    ).toBe(true);
+
+    expect(
+      shouldToggleReaderHeaderOnClick({
+        target: paragraph,
+        selectedText: "dictionary",
+        pointerDistancePx: 2,
+      })
+    ).toBe(false);
+
+    expect(
+      shouldToggleReaderHeaderOnClick({
+        target: paragraph,
+        selectedText: "",
+        pointerDistancePx: READER_CHROME_TOGGLE_DRAG_THRESHOLD_PX + 1,
+      })
+    ).toBe(false);
+
+    const button = document.createElement("button");
+    expect(
+      shouldToggleReaderHeaderOnClick({
+        target: button,
+        selectedText: "",
+        pointerDistancePx: 0,
+      })
+    ).toBe(false);
+  });
+});
+
+describe("prepareChapterHtmlForReader", () => {
+  it("keeps fragment HTML unchanged", () => {
+    const html =
+      '<p><span id="f000001">Alpha paragraph one is long enough.</span></p>';
+    expect(prepareChapterHtmlForReader(html)).toBe(html);
+  });
+
+  it("extracts body content and highlight spans from a wrapped chapter document", () => {
+    const html = `<html><body>
+      <p><span id="f000001">First spoken sentence is long enough to keep.</span></p>
+      <p><span id="f000002">Second spoken sentence is long enough to keep.</span></p>
+    </body></html>`;
+    const prepared = prepareChapterHtmlForReader(html);
+    expect(prepared).toContain('id="f000001"');
+    expect(prepared).toContain('id="f000002"');
+    expect(prepared.toLowerCase()).not.toContain("<html");
+    expect(prepared.toLowerCase()).not.toContain("<body");
+  });
+
+  it("preserves chapter styles from head when unwrapping xhtml", () => {
+    const html = `<html xmlns="http://www.w3.org/1999/xhtml">
+      <head><style>.chapter { color: red; }</style></head>
+      <body><p><span id="f000001">Spoken sentence is long enough to keep.</span></p></body>
+    </html>`;
+    const prepared = prepareChapterHtmlForReader(html);
+    expect(prepared).toContain(".chapter { color: red; }");
+    expect(prepared).toContain('id="f000001"');
   });
 });

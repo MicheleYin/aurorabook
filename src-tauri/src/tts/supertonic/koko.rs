@@ -12,7 +12,9 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WordAlignment {
     pub word: String,
+    #[serde(rename = "startSec", alias = "start_sec")]
     pub start_sec: f32,
+    #[serde(rename = "endSec", alias = "end_sec")]
     pub end_sec: f32,
 }
 
@@ -160,7 +162,7 @@ impl TTSKokoParallel {
         onnx_dir: &str,
         voices_root: &str,
         num_instances: usize,
-    ) -> Self {
+    ) -> Result<Self, String> {
         Self::from_config_with_instances(onnx_dir, voices_root, InitConfig::default(), num_instances)
             .await
     }
@@ -170,33 +172,38 @@ impl TTSKokoParallel {
         voices_root: &str,
         cfg: InitConfig,
         num_instances: usize,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let onnx_dir = onnx_dir.to_string();
         let voices_root = voices_root.to_string();
         let cfg = cfg.clone();
         tokio::task::spawn_blocking(move || Self::init_sync(&onnx_dir, &voices_root, cfg, num_instances))
             .await
-            .expect("TTS init task panicked")
+            .map_err(|e| format!("TTS init task panicked: {e}"))?
     }
 
-    fn init_sync(onnx_dir: &str, voices_root: &str, mut cfg: InitConfig, num_instances: usize) -> Self {
+    fn init_sync(
+        onnx_dir: &str,
+        voices_root: &str,
+        mut cfg: InitConfig,
+        num_instances: usize,
+    ) -> Result<Self, String> {
         let onnx_path = Path::new(onnx_dir);
         if !onnx_path.is_dir() || !onnx_path.join("tts.json").exists() {
-            panic!(
+            return Err(format!(
                 "Supertonic ONNX directory not found or invalid (expected tts.json): {}",
                 onnx_dir
-            );
+            ));
         }
 
         let voices_path = Path::new(voices_root);
         if !voices_path.is_dir() {
-            panic!(
+            return Err(format!(
                 "Supertonic voice assets directory not found: {}",
                 voices_root
-            );
+            ));
         }
 
-        let cfgs = load_cfgs(onnx_path).expect("load tts.json");
+        let cfgs = load_cfgs(onnx_path).map_err(|e| format!("load tts.json: {e}"))?;
         cfg.sample_rate = cfgs.ae.sample_rate.max(1) as u32;
 
         let mut models = Vec::with_capacity(num_instances.max(1));
@@ -207,27 +214,27 @@ impl TTSKokoParallel {
                 i + 1,
                 num_instances.max(1)
             );
-            let m = OrtKoko::new(onnx_dir.to_string()).unwrap_or_else(|e| {
-                panic!("Failed to create Supertonic OrtKoko instance {}: {}", i, e);
-            });
+            let m = OrtKoko::new(onnx_dir.to_string()).map_err(|e| {
+                format!("Failed to create Supertonic OrtKoko instance {}: {}", i, e)
+            })?;
             models.push(Arc::new(Mutex::new(m)));
         }
 
         let voice_files = collect_voice_catalog(voices_path);
         if voice_files.is_empty() {
-            panic!(
+            return Err(format!(
                 "No voice style JSON files found under {} (expected voice_styles/*.json or *.json).",
                 voices_path.display()
-            );
+            ));
         }
 
-        Self {
+        Ok(Self {
             model_path: onnx_dir.to_string(),
             voices_root: voices_path.to_path_buf(),
             models,
             voice_files,
             init_config: cfg,
-        }
+        })
     }
 
     pub fn get_model_instance(&self, worker_id: usize) -> Arc<Mutex<OrtKoko>> {

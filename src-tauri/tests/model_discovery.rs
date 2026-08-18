@@ -110,7 +110,7 @@ async fn test_onnx_model_and_voices_file() {
         model_path_str,
         voices_path_str,
         1, // Use 1 instance for testing
-    ).await;
+    ).await.expect("TTS init");
 
     println!("✅ Model loaded successfully with kokoros!");
 }

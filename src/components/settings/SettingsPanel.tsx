@@ -221,7 +221,7 @@ export function Settings() {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-auto">
+    <div className="flex h-full flex-col overflow-auto select-none">
       <div className="p-6 space-y-6">
         <div className="space-y-2">
           <h1 className="text-3xl font-bold tracking-tight">{t("app.settings")}</h1>

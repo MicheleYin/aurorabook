@@ -105,7 +105,7 @@ async fn test_tts_with_durations_save_wav_and_alignments() {
         onnx_path_str,
         voices_path_str,
         1, // Single instance for testing
-    ).await;
+    ).await.expect("TTS init");
     
     // Test text
     let test_text = "Hello, this is a test of the text to speech system with word alignments. How does it sound?";
@@ -272,7 +272,7 @@ async fn test_tts_duration_accuracy() {
         onnx_path_str,
         voices_path_str,
         1,
-    ).await;
+    ).await.expect("TTS init");
     
     // Create output directory for this test
     let test_dir = std::env::current_dir()
@@ -394,7 +394,7 @@ async fn test_tts_timestamp_accuracy() {
         onnx_path_str,
         voices_path_str,
         1,
-    ).await;
+    ).await.expect("TTS init");
     
     // Create output directory for this test
     let test_dir = std::env::current_dir()
