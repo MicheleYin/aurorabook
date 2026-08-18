@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Book, Chapter } from "../types/book";
 import {
   calculateBookProgress,
+  clearReaderTextSelection,
   getPointerDistance,
   isNativeReaderContextMenuTarget,
   prepareChapterHtmlForReader,
@@ -199,6 +200,45 @@ describe("reader chrome and native selection helpers", () => {
       false
     );
     expect(isNativeReaderContextMenuTarget(null)).toBe(false);
+  });
+
+  it("clears a text selection that started inside the reader", () => {
+    const container = document.createElement("div");
+    const word = document.createElement("span");
+    word.textContent = "Klara";
+    container.appendChild(word);
+    document.body.appendChild(container);
+
+    const range = document.createRange();
+    range.selectNodeContents(word);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    expect(selection?.toString()).toBe("Klara");
+    expect(clearReaderTextSelection(container, selection)).toBe(true);
+    expect(selection?.toString()).toBe("");
+
+    document.body.removeChild(container);
+  });
+
+  it("leaves a selection outside the reader alone", () => {
+    const reader = document.createElement("div");
+    const outside = document.createElement("span");
+    outside.textContent = "Settings";
+    document.body.append(reader, outside);
+
+    const range = document.createRange();
+    range.selectNodeContents(outside);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    expect(clearReaderTextSelection(reader, selection)).toBe(false);
+    expect(selection?.toString()).toBe("Settings");
+
+    reader.remove();
+    outside.remove();
   });
 
   it("toggles the header only for a tap that did not select text", () => {

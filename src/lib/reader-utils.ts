@@ -161,6 +161,32 @@ export function isNativeReaderContextMenuTarget(
   return false;
 }
 
+/** Collapse a selection that started inside the reader so it cannot jump the page. */
+export function clearReaderTextSelection(
+  container: ParentNode | null,
+  selection: Selection | null = typeof window === "undefined"
+    ? null
+    : window.getSelection()
+): boolean {
+  if (!container || !selection || selection.rangeCount === 0) {
+    return false;
+  }
+  const anchor = selection.anchorNode;
+  if (!anchor) {
+    return false;
+  }
+  const root = anchor.getRootNode();
+  const shadowHost = root instanceof ShadowRoot ? root.host : null;
+  const isInsideReader =
+    container.contains(anchor) ||
+    (shadowHost != null && container.contains(shadowHost));
+  if (!isInsideReader) {
+    return false;
+  }
+  selection.removeAllRanges();
+  return true;
+}
+
 function isReaderChromeToggleBlockedTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) {
     return false;

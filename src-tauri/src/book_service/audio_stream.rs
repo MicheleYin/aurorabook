@@ -303,6 +303,9 @@ fn append_reader_css_width_guards(css_text: &str) -> String {
     out.push_str(
         "[data-reader-chapter-content=\"true\"] :where(img,svg,canvas,video,iframe,table){max-width:100%!important;height:auto;}\n",
     );
+    out.push_str(
+        "[data-reader-chapter-content=\"true\"],[data-reader-chapter-content=\"true\"] *{-webkit-user-select:none!important;user-select:none!important;-webkit-touch-callout:none!important;}\n",
+    );
     out
 }
 

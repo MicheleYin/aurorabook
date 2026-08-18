@@ -108,20 +108,6 @@
     width: 100%;
     overflow: hidden;
   }
-
-  /* Reader chapter text is not selectable. */
-  .reader-content-selectable,
-  .reader-content-selectable *,
-  .reader-prose,
-  .reader-prose *,
-  [data-reader-chapter-content],
-  [data-reader-chapter-content] * {
-    -webkit-user-select: none !important;
-    -moz-user-select: none !important;
-    -ms-user-select: none !important;
-    user-select: none !important;
-    -webkit-touch-callout: none !important;
-  }
 }
 
 @layer base {
@@ -996,4 +982,18 @@
       transition-duration: 0.01ms !important;
     }
   }
+}
+
+/* Unlayered so EPUB <style> tags cannot re-enable selection. */
+.reader-content-selectable,
+.reader-content-selectable *,
+.reader-prose,
+.reader-prose *,
+[data-reader-chapter-content],
+[data-reader-chapter-content] * {
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
 }

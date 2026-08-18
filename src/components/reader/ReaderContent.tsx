@@ -8,6 +8,7 @@ import { useReaderDictionary } from "../../hooks/useReaderDictionary";
 import { logger } from "../../lib/logger";
 import { isDictionaryCardTarget } from "../../lib/reader-dictionary";
 import {
+  clearReaderTextSelection,
   getPointerDistance,
   prepareChapterHtmlForReader,
   READER_CHROME_TOGGLE_DELAY_MS,
@@ -155,6 +156,28 @@ export function ReaderContent({
     isLoading,
   ]);
 
+  useEffect(() => {
+    const container = scrollContainerRef?.current;
+    if (!container || isLoading) return;
+
+    const preventSelect = (event: Event) => {
+      event.preventDefault();
+    };
+    const onSelectionChange = () => {
+      clearReaderTextSelection(container);
+    };
+
+    container.addEventListener("selectstart", preventSelect);
+    container.addEventListener("dragstart", preventSelect);
+    document.addEventListener("selectionchange", onSelectionChange);
+
+    return () => {
+      container.removeEventListener("selectstart", preventSelect);
+      container.removeEventListener("dragstart", preventSelect);
+      document.removeEventListener("selectionchange", onSelectionChange);
+    };
+  }, [isLoading, scrollContainerRef, currentChapter.id]);
+
   // Disable all links in reader content
   useEffect(() => {
     if (!contentRef.current) return;
@@ -195,6 +218,13 @@ export function ReaderContent({
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       pointerStartRef.current = { x: e.clientX, y: e.clientY };
+      if (isDictionaryCardTarget(e.target)) {
+        return;
+      }
+      // Mouse/pen: block selection without breaking touch scrolling.
+      if (e.button === 0 && e.pointerType !== "touch") {
+        e.preventDefault();
+      }
     },
     []
   );
@@ -323,7 +353,7 @@ export function ReaderContent({
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
       onKeyDown={handleKeyDown}
-      onSelectStart={(event) => event.preventDefault()}
+      onDragStart={(event) => event.preventDefault()}
       title="Tap to toggle header visibility"
     >
       <div className="reader-content-selectable mx-auto py-8 select-none" style={paddingStyle}>
@@ -333,7 +363,11 @@ export function ReaderContent({
             "prose prose-slate dark:prose-invert reader-prose max-w-none cursor-default select-none",
             fontFamilyClass
           )}
-          style={fontSizeStyle}
+          style={{
+            ...fontSizeStyle,
+            userSelect: "none",
+            WebkitUserSelect: "none",
+          }}
           dangerouslySetInnerHTML={{
             __html: prepareChapterHtmlForReader(currentChapter.contentHtml || ""),
           }}
