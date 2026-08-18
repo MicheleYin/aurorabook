@@ -719,7 +719,7 @@ describe("useAudioTextSync", () => {
   });
 
   it("updates highlight immediately while scrubbing without autoscroll", () => {
-    const { scrollContainer, span1, span2 } = mountReaderDom();
+    const { scrollContainer, span2 } = mountReaderDom();
     scrollContainer.scrollTo = vi.fn();
     const book = createBook();
 
