@@ -120,8 +120,6 @@ export function calculateBookProgress(
   };
 }
 
-const READER_CONTENT_SELECTOR =
-  ".reader-content-selectable, .reader-prose, [data-reader-chapter-content]";
 const READER_INTERACTIVE_SELECTOR =
   "a, button, input, textarea, select, [role='button']";
 
@@ -130,6 +128,22 @@ export const READER_CHROME_TOGGLE_DRAG_THRESHOLD_PX = 8;
 
 /** Wait so double-click word selection can cancel a pending chrome toggle. */
 export const READER_CHROME_TOGGLE_DELAY_MS = 280;
+
+/** Ignore layout/scroll events from the header show/hide animation. */
+export const READER_CHROME_SCROLL_GUARD_MS = 400;
+
+/**
+ * Keep the same on-screen paragraph when in-flow header height changes.
+ * The scroll container grows/shrinks from the top, so scrollTop must move
+ * by the header height delta.
+ */
+export function scrollTopAfterChromeToggle(
+  scrollTop: number,
+  previousHeaderHeight: number,
+  nextHeaderHeight: number
+): number {
+  return Math.max(0, scrollTop + (nextHeaderHeight - previousHeaderHeight));
+}
 
 export function getPointerDistance(
   start: { x: number; y: number } | null,
@@ -142,12 +156,9 @@ export function getPointerDistance(
 }
 
 export function isNativeReaderContextMenuTarget(
-  target: EventTarget | null
+  _target: EventTarget | null
 ): boolean {
-  if (!(target instanceof Element)) {
-    return false;
-  }
-  return Boolean(target.closest(READER_CONTENT_SELECTOR));
+  return false;
 }
 
 function isReaderChromeToggleBlockedTarget(target: EventTarget | null): boolean {

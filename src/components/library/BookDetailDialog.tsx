@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { filesize } from "filesize";
@@ -18,6 +18,11 @@ import { toast } from "sonner";
 
 import type { Book } from "../../types/book";
 import { useIsMobile } from "../../hooks/useIsMobile";
+import { useUnfinishedChapterDuration } from "../../hooks/useUnfinishedChapterDuration";
+import {
+  sumAudioTrackDurationSeconds,
+  totalBookAudioDurationSeconds,
+} from "../../lib/book-audio-duration";
 import { logger } from "../../lib/logger";
 import { useTranslation } from "../../lib/i18n";
 import { humanizeDurationLocale } from "../../constants/languages";
@@ -77,14 +82,26 @@ const BookDetailContent = ({
   audioExportProgress,
   audioExportEtaMs,
   eta,
+  unfinishedChapterDurationSeconds,
 }: {
   book: Book;
   conversionProgress: ConversionProgress | null;
   audioExportProgress: AudioExportProgressPayload | null;
   audioExportEtaMs: number | null;
   eta: string | null;
+  unfinishedChapterDurationSeconds: number;
 }) => {
   const { t, lang } = useTranslation();
+  const totalAudioDurationSeconds = useMemo(
+    () =>
+      totalBookAudioDurationSeconds(
+        sumAudioTrackDurationSeconds(book.audioTracks),
+        unfinishedChapterDurationSeconds
+      ),
+    [book.audioTracks, unfinishedChapterDurationSeconds]
+  );
+  const hasAudiobookInfo =
+    (book.audioTracks?.length ?? 0) > 0 || totalAudioDurationSeconds > 0;
   const audioExportStepKey = audioExportProgress
     ? `conversion.step.${audioExportProgress.currentStep.replace(/-/g, "_")}`
     : "";
@@ -338,33 +355,30 @@ const BookDetailContent = ({
         </>
       )}
 
-      {book.audioTracks && book.audioTracks.length > 0 && (
+      {hasAudiobookInfo && (
         <>
           <Separator />
           <div>
             <p className="text-sm font-medium mb-2">{t("book.audiobook")}</p>
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">
-                  {t("audio.tracks")}
-                </span>
-                <span className="text-sm font-medium">
-                  {book.audioTracks.length}
-                </span>
-              </div>
-              {book.audioTracks.some((track) => track.duration) && (
+              {book.audioTracks.length > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">
+                    {t("audio.tracks")}
+                  </span>
+                  <span className="text-sm font-medium">
+                    {book.audioTracks.length}
+                  </span>
+                </div>
+              )}
+              {totalAudioDurationSeconds > 0 && (
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
                     {t("audio.total_duration")}
                   </span>
                   <span className="text-sm font-medium">
                     {humanizeDuration(
-                      Math.round(
-                        book.audioTracks.reduce(
-                          (total, track) => total + (track.duration || 0),
-                          0
-                        )
-                      ) * 1000,
+                      Math.round(totalAudioDurationSeconds) * 1000,
                       { language: humanizeDurationLocale(lang) }
                     )}
                   </span>
@@ -435,6 +449,10 @@ export function BookDetailDialog({
     void syncAudioExportStatus();
   }, [isOpen, syncAudioExportStatus]);
 
+  const unfinishedChapterDurationSeconds = useUnfinishedChapterDuration(
+    book,
+    isOpen
+  );
   const isConvertingThisBook = Boolean(
     book && convertingBookId === book.id
   );
@@ -607,6 +625,9 @@ export function BookDetailDialog({
                 audioExportProgress={bookExportProgress}
                 audioExportEtaMs={bookExportEtaMs}
                 eta={bookEta}
+                unfinishedChapterDurationSeconds={
+                  unfinishedChapterDurationSeconds
+                }
               />
             </div>
             <DialogFooter className="flex-shrink-0 gap-2">
@@ -726,6 +747,9 @@ export function BookDetailDialog({
                 audioExportProgress={bookExportProgress}
                 audioExportEtaMs={bookExportEtaMs}
                 eta={bookEta}
+                unfinishedChapterDurationSeconds={
+                  unfinishedChapterDurationSeconds
+                }
               />
             </div>
             <DrawerFooter className="flex-shrink-0 gap-2 p-4">

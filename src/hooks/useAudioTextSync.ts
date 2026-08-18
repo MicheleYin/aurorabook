@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 import type { Book } from "../types/book";
@@ -14,6 +14,7 @@ import {
   HIGHLIGHT_WORD_CLASS,
   isElementFullyVisible,
   isFollowScrollPaused,
+  hasNonCollapsedTextSelection,
   resolvePlaybackMarker,
   scrollTopToRevealRect,
   segmentsForPlayback,
@@ -26,6 +27,7 @@ import {
   removeAllAudioHighlights,
   type HighlightState,
 } from "../lib/audio-sync-highlight";
+import { READER_CHROME_SCROLL_GUARD_MS } from "../lib/reader-utils";
 
 const LIVE_POLL_MS = 250;
 
@@ -68,6 +70,7 @@ export function useAudioTextSync(
   const followResumeTimerRef = useRef<number | null>(null);
   const programmaticScrollRef = useRef(false);
   const programmaticScrollTimerRef = useRef<number | null>(null);
+  const pointerSelectingRef = useRef(false);
   const rafIdRef = useRef<number | null>(null);
   const bookRef = useRef(book);
   const currentChapterRef = useRef(currentChapter);
@@ -287,6 +290,25 @@ export function useAudioTextSync(
     return { topOffset, bottomOffset };
   }, []);
 
+  const markProgrammaticScroll = useCallback((holdMs: number) => {
+    programmaticScrollRef.current = true;
+    if (programmaticScrollTimerRef.current !== null) {
+      window.clearTimeout(programmaticScrollTimerRef.current);
+    }
+    programmaticScrollTimerRef.current = window.setTimeout(() => {
+      programmaticScrollRef.current = false;
+      programmaticScrollTimerRef.current = null;
+    }, holdMs);
+  }, []);
+
+  const beginChromeToggle = useCallback(() => {
+    markProgrammaticScroll(READER_CHROME_SCROLL_GUARD_MS);
+  }, [markProgrammaticScroll]);
+
+  const isSelectionFrozen = useCallback(() => {
+    return pointerSelectingRef.current || hasNonCollapsedTextSelection();
+  }, []);
+
   const scrollToElement = useCallback(
     (element: HTMLElement) => {
       const container = scrollContainerRefInner.current?.current;
@@ -316,20 +338,13 @@ export function useAudioTextSync(
         container.scrollHeight,
         offsets
       );
-      programmaticScrollRef.current = true;
-      if (programmaticScrollTimerRef.current !== null) {
-        window.clearTimeout(programmaticScrollTimerRef.current);
-      }
-      programmaticScrollTimerRef.current = window.setTimeout(() => {
-        programmaticScrollRef.current = false;
-        programmaticScrollTimerRef.current = null;
-      }, 700);
+      markProgrammaticScroll(700);
       container.scrollTo({
         top: target,
         behavior: "smooth",
       });
     },
-    [calculateOffsets]
+    [calculateOffsets, markProgrammaticScroll]
   );
 
   const locateSentenceElement = useCallback(
@@ -457,6 +472,8 @@ export function useAudioTextSync(
 
       const followScroll =
         allowScroll &&
+        !programmaticScrollRef.current &&
+        !isSelectionFrozen() &&
         !isFollowScrollPaused(lastUserScrollAtRef.current, Date.now());
 
       const currentTime = audio.currentTime;
@@ -540,6 +557,7 @@ export function useAudioTextSync(
         {
           allowScroll: followScroll,
           scrollToElement,
+          freezeForSelection: isSelectionFrozen(),
         }
       );
     },
@@ -549,6 +567,7 @@ export function useAudioTextSync(
       locateSentenceElement,
       pollLiveMarker,
       scrollToElement,
+      isSelectionFrozen,
     ]
   );
 
@@ -576,10 +595,31 @@ export function useAudioTextSync(
     });
     container.addEventListener("scroll", onScroll, { passive: true });
 
+    const onSelectStart = () => {
+      pointerSelectingRef.current = true;
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button === 0) {
+        pointerSelectingRef.current = true;
+      }
+    };
+    const onPointerUp = () => {
+      pointerSelectingRef.current = false;
+    };
+
+    container.addEventListener("selectstart", onSelectStart);
+    container.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+
     return () => {
       container.removeEventListener("wheel", onUserScrollIntent);
       container.removeEventListener("touchmove", onUserScrollIntent);
       container.removeEventListener("scroll", onScroll);
+      container.removeEventListener("selectstart", onSelectStart);
+      container.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
       if (followResumeTimerRef.current !== null) {
         window.clearTimeout(followResumeTimerRef.current);
         followResumeTimerRef.current = null;
@@ -589,6 +629,7 @@ export function useAudioTextSync(
         programmaticScrollTimerRef.current = null;
       }
       programmaticScrollRef.current = false;
+      pointerSelectingRef.current = false;
     };
   }, [isSyncEnabled, scrollContainerRef, pauseFollowScroll]);
 
@@ -690,6 +731,13 @@ export function useAudioTextSync(
     syncFromClock,
   ]);
 
+  useLayoutEffect(() => {
+    if (previousHeaderVisibleRef.current === isHeaderVisible) {
+      return;
+    }
+    markProgrammaticScroll(READER_CHROME_SCROLL_GUARD_MS);
+  }, [isHeaderVisible, markProgrammaticScroll]);
+
   useEffect(() => {
     if (
       !isSyncEnabled ||
@@ -719,4 +767,6 @@ export function useAudioTextSync(
     previousHeaderVisibleRef.current = isHeaderVisible;
     return () => clearTimeout(timeoutId);
   }, [isSyncEnabled, isHeaderVisible, scrollContainerRef]);
+
+  return { beginChromeToggle };
 }

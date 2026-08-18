@@ -11,6 +11,7 @@ import {
   getProseContainer,
   isElementFullyVisible,
   isFollowScrollPaused,
+  hasNonCollapsedTextSelection,
   placeWordCuesOnTrack,
   resolvePlaybackMarker,
   scrollTopToRevealRect,
@@ -139,6 +140,12 @@ describe("isFollowScrollPaused", () => {
     expect(isFollowScrollPaused(1000, 2000, 1800)).toBe(true);
     expect(isFollowScrollPaused(1000, 2800, 1800)).toBe(false);
     expect(isFollowScrollPaused(null, 2800, 1800)).toBe(false);
+  });
+});
+
+describe("hasNonCollapsedTextSelection", () => {
+  it("is false when the caret is collapsed", () => {
+    expect(hasNonCollapsedTextSelection()).toBe(false);
   });
 });
 

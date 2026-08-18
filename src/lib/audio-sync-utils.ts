@@ -463,3 +463,10 @@ export function isFollowScrollPaused(
   if (lastUserScrollAt === null) return false;
   return now - lastUserScrollAt < resumeMs;
 }
+
+export function hasNonCollapsedTextSelection(): boolean {
+  const selection = window.getSelection();
+  return Boolean(
+    selection && selection.rangeCount > 0 && !selection.isCollapsed
+  );
+}

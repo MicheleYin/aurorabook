@@ -51,6 +51,23 @@ describe("wrapSentenceWords / unwrapSentenceWords", () => {
     );
     expect(paragraph.querySelectorAll("[data-sync-word]")).toHaveLength(2);
   });
+
+  it("does not wrap while a live text selection is inside the node", () => {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = "Hello world extra words";
+    document.body.appendChild(paragraph);
+
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    expect(wrapSentenceWords(paragraph)).toBe(0);
+    expect(paragraph.querySelector("[data-sync-word]")).toBeNull();
+    expect(paragraph.textContent).toBe("Hello world extra words");
+    expect(selection?.toString()).toContain("Hello world");
+  });
 });
 
 describe("applyHighlight", () => {
@@ -143,5 +160,31 @@ describe("applyHighlight", () => {
         .querySelector('[data-sync-word="1"]')
         ?.classList.contains(HIGHLIGHT_WORD_CLASS)
     ).toBe(true);
+  });
+
+  it("does not wrap or scroll while freezeForSelection is set", () => {
+    const sentence = document.createElement("span");
+    sentence.id = "f000001";
+    sentence.textContent = "one two";
+    document.body.appendChild(sentence);
+    const scrollToElement = vi.fn();
+
+    applyHighlight(
+      {
+        time: 0.1,
+        sentenceId: "f000001",
+        wordIndex: 0,
+        words: [
+          { word: "one", startSec: 0, endSec: 0.5 },
+          { word: "two", startSec: 0.5, endSec: 1 },
+        ],
+      },
+      sentence,
+      emptyHighlightState(),
+      { allowScroll: true, scrollToElement, freezeForSelection: true }
+    );
+
+    expect(sentence.querySelector("[data-sync-word]")).toBeNull();
+    expect(scrollToElement).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
 import type { Book, ChapterWithContent } from "../../types/book";
 import type { ReaderSettings } from "./ReaderSettings";
@@ -11,6 +11,7 @@ import {
   getPointerDistance,
   prepareChapterHtmlForReader,
   READER_CHROME_TOGGLE_DELAY_MS,
+  scrollTopAfterChromeToggle,
   shouldToggleReaderHeaderOnClick,
 } from "../../lib/reader-utils";
 import { cn } from "../../lib/utils";
@@ -41,8 +42,11 @@ export function ReaderContent({
   isHeaderVisible,
 }: Readonly<ReaderContentProps>) {
   const contentRef = useRef<HTMLDivElement>(null);
-  const previousHeaderVisibleRef = useRef<boolean | undefined>(isHeaderVisible);
   const scrollPositionRef = useRef<number>(0);
+  const pendingChromeScrollRef = useRef<{
+    scrollTop: number;
+    headerHeight: number;
+  } | null>(null);
   const restoredChapterKeyRef = useRef<string | null>(null);
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const chromeToggleTimeoutRef = useRef<number | null>(null);
@@ -54,50 +58,6 @@ export function ReaderContent({
     close: closeDictionary,
     consumeChromeToggleSuppression,
   } = useReaderDictionary(contentRef);
-
-  // Preserve scroll position when header visibility changes
-  useEffect(() => {
-    if (!scrollContainerRef?.current) return;
-
-    const container = scrollContainerRef.current;
-    const headerVisibleChanged =
-      previousHeaderVisibleRef.current !== isHeaderVisible;
-
-    if (headerVisibleChanged) {
-      // Save current scroll position before header changes
-      scrollPositionRef.current = container.scrollTop;
-
-      // Wait for transition to complete, then restore scroll position
-      const timeoutId = setTimeout(() => {
-        if (container && scrollPositionRef.current !== undefined) {
-          // Get the header height difference
-          let previousHeaderHeight = 0;
-          if (headerRef?.current && previousHeaderVisibleRef.current) {
-            previousHeaderHeight =
-              headerRef.current.getBoundingClientRect().height;
-          }
-
-          let currentHeaderHeight = 0;
-          if (headerRef?.current && isHeaderVisible) {
-            currentHeaderHeight =
-              headerRef.current.getBoundingClientRect().height;
-          }
-
-          const headerHeightDiff = currentHeaderHeight - previousHeaderHeight;
-
-          // Adjust scroll position by the header height difference
-          const adjustedScrollTop =
-            scrollPositionRef.current + headerHeightDiff;
-
-          container.scrollTop = Math.max(0, adjustedScrollTop);
-        }
-      }, 350); // Wait for transition (300ms) + small buffer
-
-      previousHeaderVisibleRef.current = isHeaderVisible;
-
-      return () => clearTimeout(timeoutId);
-    }
-  }, [isHeaderVisible, scrollContainerRef, headerRef]);
 
   // Preserve scroll position when audio player opens/closes
   useEffect(() => {
@@ -130,12 +90,41 @@ export function ReaderContent({
     bookId: book?.id,
     hasScrollContainerRef: !!scrollContainerRef,
   });
-  useAudioTextSync(
+  const { beginChromeToggle } = useAudioTextSync(
     book,
     scrollContainerRef ?? null,
     headerRef,
     isHeaderVisible
   );
+
+  const captureChromeScroll = useCallback(() => {
+    const container = scrollContainerRef?.current;
+    const header = headerRef?.current;
+    pendingChromeScrollRef.current = {
+      scrollTop: container?.scrollTop ?? 0,
+      headerHeight: isHeaderVisible
+        ? (header?.getBoundingClientRect().height ?? 0)
+        : 0,
+    };
+    beginChromeToggle();
+  }, [beginChromeToggle, headerRef, isHeaderVisible, scrollContainerRef]);
+
+  useLayoutEffect(() => {
+    const pending = pendingChromeScrollRef.current;
+    const container = scrollContainerRef?.current;
+    if (!pending || !container) {
+      return;
+    }
+    pendingChromeScrollRef.current = null;
+    const nextHeaderHeight = isHeaderVisible
+      ? (headerRef?.current?.getBoundingClientRect().height ?? 0)
+      : 0;
+    container.scrollTop = scrollTopAfterChromeToggle(
+      pending.scrollTop,
+      pending.headerHeight,
+      nextHeaderHeight
+    );
+  }, [headerRef, isHeaderVisible, scrollContainerRef]);
 
   // Restore progress when chapter content is loaded
   useEffect(() => {
@@ -244,11 +233,13 @@ export function ReaderContent({
         if (stillSelected.length > 0) {
           return;
         }
+        captureChromeScroll();
         onContentClick?.();
       }, READER_CHROME_TOGGLE_DELAY_MS);
     },
     [
       cancelPendingChromeToggle,
+      captureChromeScroll,
       consumeChromeToggleSuppression,
       onContentClick,
     ]
@@ -263,10 +254,11 @@ export function ReaderContent({
       // Allow keyboard users to toggle header with Enter or Space
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
+        captureChromeScroll();
         onContentClick?.();
       }
     },
-    [onContentClick]
+    [captureChromeScroll, onContentClick]
   );
 
   // Apply settings styles - map backend string values to CSS
@@ -326,19 +318,19 @@ export function ReaderContent({
   return (
     <div
       ref={scrollContainerRef}
-      className={cn("flex-1 overflow-y-auto", themeClass)}
+      className={cn("flex-1 overflow-y-auto select-none", themeClass)}
       onPointerDown={handlePointerDown}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
       onKeyDown={handleKeyDown}
-      tabIndex={-1}
+      onSelectStart={(event) => event.preventDefault()}
       title="Tap to toggle header visibility"
     >
-      <div className="reader-content-selectable mx-auto py-8" style={paddingStyle}>
+      <div className="reader-content-selectable mx-auto py-8 select-none" style={paddingStyle}>
         <div
           ref={contentRef}
           className={cn(
-            "prose prose-slate dark:prose-invert reader-prose max-w-none cursor-text",
+            "prose prose-slate dark:prose-invert reader-prose max-w-none cursor-default select-none",
             fontFamilyClass
           )}
           style={fontSizeStyle}

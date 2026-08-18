@@ -109,36 +109,18 @@
     overflow: hidden;
   }
 
-  /* Do not set user-select:none on * or on ancestors of reader chapter text.
-     WebKit maps the caret/highlight to the wrong glyphs when a parent is
-     user-select:none and a descendant is user-select:text. App chrome uses
-     Tailwind select-none instead (those nodes are not reader ancestors). */
-  input[type="text"],
-  input[type="email"],
-  input[type="password"],
-  input[type="search"],
-  input[type="tel"],
-  input[type="url"],
-  input[type="number"],
-  textarea,
-  [contenteditable="true"] {
-    -webkit-user-select: text;
-    -moz-user-select: text;
-    -ms-user-select: text;
-    user-select: text;
-  }
-
+  /* Reader chapter text is not selectable. */
   .reader-content-selectable,
-  .reader-content-selectable * {
-    -webkit-user-select: text;
-    -moz-user-select: text;
-    -ms-user-select: text;
-    user-select: text;
-    -webkit-touch-callout: default;
-  }
-
-  .reader-content-selectable ::selection {
-    background-color: hsl(var(--primary) / 0.22);
+  .reader-content-selectable *,
+  .reader-prose,
+  .reader-prose *,
+  [data-reader-chapter-content],
+  [data-reader-chapter-content] * {
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
+    user-select: none !important;
+    -webkit-touch-callout: none !important;
   }
 }
 

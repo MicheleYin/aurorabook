@@ -7,6 +7,7 @@ import {
   isNativeReaderContextMenuTarget,
   prepareChapterHtmlForReader,
   READER_CHROME_TOGGLE_DRAG_THRESHOLD_PX,
+  scrollTopAfterChromeToggle,
   shouldToggleReaderHeaderOnClick,
 } from "./reader-utils";
 
@@ -187,13 +188,13 @@ describe("reader chrome and native selection helpers", () => {
     expect(getPointerDistance({ x: 0, y: 0 }, { x: 3, y: 4 })).toBe(5);
   });
 
-  it("allows the native context menu on reader chapter text", () => {
+  it("does not allow the native context menu on reader chapter text", () => {
     const prose = document.createElement("div");
     prose.className = "reader-prose";
     const word = document.createElement("span");
     prose.appendChild(word);
 
-    expect(isNativeReaderContextMenuTarget(word)).toBe(true);
+    expect(isNativeReaderContextMenuTarget(word)).toBe(false);
     expect(isNativeReaderContextMenuTarget(document.createElement("div"))).toBe(
       false
     );
@@ -265,5 +266,19 @@ describe("prepareChapterHtmlForReader", () => {
     const prepared = prepareChapterHtmlForReader(html);
     expect(prepared).toContain(".chapter { color: red; }");
     expect(prepared).toContain('id="f000001"');
+  });
+});
+
+describe("scrollTopAfterChromeToggle", () => {
+  it("decreases scrollTop when the header hides so content stays on screen", () => {
+    expect(scrollTopAfterChromeToggle(500, 64, 0)).toBe(436);
+  });
+
+  it("increases scrollTop when the header returns", () => {
+    expect(scrollTopAfterChromeToggle(436, 0, 64)).toBe(500);
+  });
+
+  it("does not scroll above the top of the chapter", () => {
+    expect(scrollTopAfterChromeToggle(20, 64, 0)).toBe(0);
   });
 });

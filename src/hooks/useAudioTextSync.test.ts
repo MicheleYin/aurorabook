@@ -346,6 +346,31 @@ describe("useAudioTextSync", () => {
     expect(scrollContainer.scrollTo).toHaveBeenCalled();
   });
 
+  it("does not follow-scroll while the pointer is selecting text", () => {
+    const { scrollContainer, span2 } = mountReaderDom();
+    scrollContainer.scrollTo = vi.fn();
+    const book = createBook();
+
+    const { result: refs } = renderHook(() => {
+      const scrollContainerRef = useRef<HTMLDivElement | null>(scrollContainer);
+      return { scrollContainerRef };
+    });
+
+    renderHook(() =>
+      useAudioTextSync(book, refs.current.scrollContainerRef, undefined, true)
+    );
+
+    act(() => {
+      scrollContainer.dispatchEvent(
+        new PointerEvent("pointerdown", { button: 0, bubbles: true })
+      );
+      seekAudio(audioRef.current as HTMLAudioElement, 6.0);
+    });
+
+    expect(span2.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
+    expect(scrollContainer.scrollTo).not.toHaveBeenCalled();
+  });
+
   it("preserves scroll position when sync is toggled", () => {
     const { scrollContainer } = mountReaderDom();
     scrollContainer.scrollTop = 240;
@@ -412,6 +437,43 @@ describe("useAudioTextSync", () => {
 
     expect(span1.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
     expect(span1.classList.contains(HIGHLIGHT_ACTIVE_CLASS)).toBe(true);
+  });
+
+  it("does not follow-scroll when the reader header is toggled", () => {
+    const { scrollContainer, span2 } = mountReaderDom();
+    scrollContainer.scrollTo = vi.fn();
+    const book = createBook();
+
+    const { result: refs } = renderHook(() => {
+      const scrollContainerRef = useRef<HTMLDivElement | null>(scrollContainer);
+      return { scrollContainerRef };
+    });
+
+    const { rerender } = renderHook(
+      ({ headerVisible }: { headerVisible: boolean }) =>
+        useAudioTextSync(
+          book,
+          refs.current.scrollContainerRef,
+          undefined,
+          headerVisible
+        ),
+      { initialProps: { headerVisible: true } }
+    );
+
+    act(() => {
+      seekAudio(audioRef.current as HTMLAudioElement, 6.0);
+    });
+    expect(span2.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
+    expect(scrollContainer.scrollTo).toHaveBeenCalled();
+    vi.mocked(scrollContainer.scrollTo).mockClear();
+
+    rerender({ headerVisible: false });
+    act(() => {
+      scrollContainer.dispatchEvent(new Event("scroll"));
+      vi.advanceTimersByTime(AUTO_SCROLL_RESUME_MS);
+    });
+
+    expect(scrollContainer.scrollTo).not.toHaveBeenCalled();
   });
 
   it("polls live sync markers and highlights the returned element", async () => {

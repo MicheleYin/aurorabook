@@ -13,6 +13,8 @@ const WRAPPED_ATTR = "data-sync-words-wrapped";
 export interface HighlightApplyOptions {
   allowScroll: boolean;
   scrollToElement: (element: HTMLElement) => void;
+  /** Skip wrap/unwrap/scroll so a live selection is not moved to the chapter start. */
+  freezeForSelection?: boolean;
 }
 
 export interface HighlightState {
@@ -25,12 +27,33 @@ export function emptyHighlightState(): HighlightState {
   return { sentenceId: null, wordIndex: null, sentenceEl: null };
 }
 
+export function selectionTouchesNode(node: Node): boolean {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return false;
+  }
+  try {
+    const range = selection.getRangeAt(0);
+    const ancestor = range.commonAncestorContainer;
+    if (node === ancestor || node.contains(ancestor)) {
+      return true;
+    }
+    return range.intersectsNode(node);
+  } catch {
+    return false;
+  }
+}
+
 export function wrapSentenceWords(
   sentenceEl: HTMLElement,
   expectedWords?: Array<{ word: string }>
 ): number {
   const expected =
     expectedWords && expectedWords.length > 0 ? expectedWords : undefined;
+
+  if (selectionTouchesNode(sentenceEl)) {
+    return sentenceEl.querySelectorAll("[data-sync-word]").length;
+  }
 
   if (sentenceEl.getAttribute(WRAPPED_ATTR) === "1") {
     const count = sentenceEl.querySelectorAll(`[data-sync-word]`).length;
@@ -154,6 +177,9 @@ function wrapTextNodeWords(node: Text, state: WrapWalkState): void {
 }
 
 export function unwrapSentenceWords(sentenceEl: HTMLElement): void {
+  if (selectionTouchesNode(sentenceEl)) {
+    return;
+  }
   const words = Array.from(
     sentenceEl.querySelectorAll<HTMLElement>("[data-sync-word]")
   );
@@ -220,8 +246,10 @@ export function applyHighlight(
 
   if (sentenceChanged) {
     if (state.sentenceEl && state.sentenceEl !== sentenceEl) {
-      clearWordHighlights(state.sentenceEl);
-      unwrapSentenceWords(state.sentenceEl);
+      if (!options.freezeForSelection) {
+        clearWordHighlights(state.sentenceEl);
+        unwrapSentenceWords(state.sentenceEl);
+      }
       state.sentenceEl.classList.remove(HIGHLIGHT_ACTIVE_CLASS);
       state.sentenceEl.classList.add(HIGHLIGHT_EXIT_CLASS);
       const previous = state.sentenceEl;
@@ -240,7 +268,9 @@ export function applyHighlight(
   }
 
   const expectedWords = marker.words;
-  const wrappedCount = wrapSentenceWords(sentenceEl, expectedWords);
+  const wrappedCount = options.freezeForSelection
+    ? sentenceEl.querySelectorAll("[data-sync-word]").length
+    : wrapSentenceWords(sentenceEl, expectedWords);
   if (typeof marker.wordIndex === "number" && wrappedCount > 0) {
     const wordIndex = Math.min(
       Math.max(0, marker.wordIndex),
@@ -260,7 +290,7 @@ export function applyHighlight(
     clearWordHighlights(sentenceEl);
   }
 
-  if (options.allowScroll) {
+  if (options.allowScroll && !options.freezeForSelection) {
     options.scrollToElement(sentenceEl);
   }
 
