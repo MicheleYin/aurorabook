@@ -1,12 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
 import type { Book, ChapterWithContent } from "../../types/book";
 import type { ReaderSettings } from "./ReaderSettings";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { useAudioTextSync } from "../../hooks/useAudioTextSync";
+import { useReaderDictionary } from "../../hooks/useReaderDictionary";
 import { logger } from "../../lib/logger";
+import { isDictionaryCardTarget } from "../../lib/reader-dictionary";
+import {
+  clearReaderTextSelection,
+  getPointerDistance,
+  prepareChapterHtmlForReader,
+  READER_CHROME_TOGGLE_DELAY_MS,
+  scrollTopAfterChromeToggle,
+  shouldToggleReaderHeaderOnClick,
+} from "../../lib/reader-utils";
 import { cn } from "../../lib/utils";
 import { LoadingScreen } from "../app/LoadingScreen";
+import { ReaderDictionaryCard } from "./ReaderDictionaryCard";
 
 interface ReaderContentProps {
   book: Book;
@@ -32,56 +43,22 @@ export function ReaderContent({
   isHeaderVisible,
 }: Readonly<ReaderContentProps>) {
   const contentRef = useRef<HTMLDivElement>(null);
-  const previousHeaderVisibleRef = useRef<boolean | undefined>(isHeaderVisible);
   const scrollPositionRef = useRef<number>(0);
+  const pendingChromeScrollRef = useRef<{
+    scrollTop: number;
+    headerHeight: number;
+  } | null>(null);
   const restoredChapterKeyRef = useRef<string | null>(null);
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const chromeToggleTimeoutRef = useRef<number | null>(null);
   const { currentAudioTrack } = useAudioProgressContext();
   const previousAudioTrackRef =
     useRef<typeof currentAudioTrack>(currentAudioTrack);
-
-  // Preserve scroll position when header visibility changes
-  useEffect(() => {
-    if (!scrollContainerRef?.current) return;
-
-    const container = scrollContainerRef.current;
-    const headerVisibleChanged =
-      previousHeaderVisibleRef.current !== isHeaderVisible;
-
-    if (headerVisibleChanged) {
-      // Save current scroll position before header changes
-      scrollPositionRef.current = container.scrollTop;
-
-      // Wait for transition to complete, then restore scroll position
-      const timeoutId = setTimeout(() => {
-        if (container && scrollPositionRef.current !== undefined) {
-          // Get the header height difference
-          let previousHeaderHeight = 0;
-          if (headerRef?.current && previousHeaderVisibleRef.current) {
-            previousHeaderHeight =
-              headerRef.current.getBoundingClientRect().height;
-          }
-
-          let currentHeaderHeight = 0;
-          if (headerRef?.current && isHeaderVisible) {
-            currentHeaderHeight =
-              headerRef.current.getBoundingClientRect().height;
-          }
-
-          const headerHeightDiff = currentHeaderHeight - previousHeaderHeight;
-
-          // Adjust scroll position by the header height difference
-          const adjustedScrollTop =
-            scrollPositionRef.current + headerHeightDiff;
-
-          container.scrollTop = Math.max(0, adjustedScrollTop);
-        }
-      }, 350); // Wait for transition (300ms) + small buffer
-
-      previousHeaderVisibleRef.current = isHeaderVisible;
-
-      return () => clearTimeout(timeoutId);
-    }
-  }, [isHeaderVisible, scrollContainerRef, headerRef]);
+  const {
+    dictionary,
+    close: closeDictionary,
+    consumeChromeToggleSuppression,
+  } = useReaderDictionary(contentRef);
 
   // Preserve scroll position when audio player opens/closes
   useEffect(() => {
@@ -114,12 +91,41 @@ export function ReaderContent({
     bookId: book?.id,
     hasScrollContainerRef: !!scrollContainerRef,
   });
-  useAudioTextSync(
+  const { beginChromeToggle } = useAudioTextSync(
     book,
     scrollContainerRef ?? null,
     headerRef,
     isHeaderVisible
   );
+
+  const captureChromeScroll = useCallback(() => {
+    const container = scrollContainerRef?.current;
+    const header = headerRef?.current;
+    pendingChromeScrollRef.current = {
+      scrollTop: container?.scrollTop ?? 0,
+      headerHeight: isHeaderVisible
+        ? (header?.getBoundingClientRect().height ?? 0)
+        : 0,
+    };
+    beginChromeToggle();
+  }, [beginChromeToggle, headerRef, isHeaderVisible, scrollContainerRef]);
+
+  useLayoutEffect(() => {
+    const pending = pendingChromeScrollRef.current;
+    const container = scrollContainerRef?.current;
+    if (!pending || !container) {
+      return;
+    }
+    pendingChromeScrollRef.current = null;
+    const nextHeaderHeight = isHeaderVisible
+      ? (headerRef?.current?.getBoundingClientRect().height ?? 0)
+      : 0;
+    container.scrollTop = scrollTopAfterChromeToggle(
+      pending.scrollTop,
+      pending.headerHeight,
+      nextHeaderHeight
+    );
+  }, [headerRef, isHeaderVisible, scrollContainerRef]);
 
   // Restore progress when chapter content is loaded
   useEffect(() => {
@@ -150,6 +156,28 @@ export function ReaderContent({
     isLoading,
   ]);
 
+  useEffect(() => {
+    const container = scrollContainerRef?.current;
+    if (!container || isLoading) return;
+
+    const preventSelect = (event: Event) => {
+      event.preventDefault();
+    };
+    const onSelectionChange = () => {
+      clearReaderTextSelection(container);
+    };
+
+    container.addEventListener("selectstart", preventSelect);
+    container.addEventListener("dragstart", preventSelect);
+    document.addEventListener("selectionchange", onSelectionChange);
+
+    return () => {
+      container.removeEventListener("selectstart", preventSelect);
+      container.removeEventListener("dragstart", preventSelect);
+      document.removeEventListener("selectionchange", onSelectionChange);
+    };
+  }, [isLoading, scrollContainerRef, currentChapter.id]);
+
   // Disable all links in reader content
   useEffect(() => {
     if (!contentRef.current) return;
@@ -170,32 +198,97 @@ export function ReaderContent({
     };
   }, [currentChapter]);
 
-  const handleClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      // Only trigger if clicking directly on the content area, not on links or interactive elements
-      const target = e.target as HTMLElement;
-      if (
-        target.tagName === "A" ||
-        target.tagName === "BUTTON" ||
-        target.closest("a") ||
-        target.closest("button")
-      ) {
+  useEffect(() => {
+    closeDictionary();
+  }, [closeDictionary, currentChapter.id, isLoading]);
+
+  const cancelPendingChromeToggle = useCallback(() => {
+    if (chromeToggleTimeoutRef.current !== null) {
+      window.clearTimeout(chromeToggleTimeoutRef.current);
+      chromeToggleTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      cancelPendingChromeToggle();
+    };
+  }, [cancelPendingChromeToggle]);
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      pointerStartRef.current = { x: e.clientX, y: e.clientY };
+      if (isDictionaryCardTarget(e.target)) {
         return;
       }
-      onContentClick?.();
+      // Mouse/pen: block selection without breaking touch scrolling.
+      if (e.button === 0 && e.pointerType !== "touch") {
+        e.preventDefault();
+      }
     },
-    [onContentClick]
+    []
   );
+
+  const handleClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (
+        isDictionaryCardTarget(e.target) ||
+        consumeChromeToggleSuppression()
+      ) {
+        cancelPendingChromeToggle();
+        return;
+      }
+
+      const selectedText = window.getSelection()?.toString() ?? "";
+      const pointerDistancePx = getPointerDistance(pointerStartRef.current, {
+        x: e.clientX,
+        y: e.clientY,
+      });
+
+      if (
+        !shouldToggleReaderHeaderOnClick({
+          target: e.target,
+          selectedText,
+          pointerDistancePx,
+        })
+      ) {
+        cancelPendingChromeToggle();
+        return;
+      }
+
+      cancelPendingChromeToggle();
+      chromeToggleTimeoutRef.current = window.setTimeout(() => {
+        chromeToggleTimeoutRef.current = null;
+        const stillSelected = window.getSelection()?.toString().trim() ?? "";
+        if (stillSelected.length > 0) {
+          return;
+        }
+        captureChromeScroll();
+        onContentClick?.();
+      }, READER_CHROME_TOGGLE_DELAY_MS);
+    },
+    [
+      cancelPendingChromeToggle,
+      captureChromeScroll,
+      consumeChromeToggleSuppression,
+      onContentClick,
+    ]
+  );
+
+  const handleDoubleClick = useCallback(() => {
+    cancelPendingChromeToggle();
+  }, [cancelPendingChromeToggle]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       // Allow keyboard users to toggle header with Enter or Space
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
+        captureChromeScroll();
         onContentClick?.();
       }
     },
-    [onContentClick]
+    [captureChromeScroll, onContentClick]
   );
 
   // Apply settings styles - map backend string values to CSS
@@ -255,25 +348,38 @@ export function ReaderContent({
   return (
     <div
       ref={scrollContainerRef}
-      className={cn("flex-1 overflow-y-auto cursor-pointer", themeClass)}
+      className={cn("flex-1 overflow-y-auto select-none", themeClass)}
+      onPointerDown={handlePointerDown}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       onKeyDown={handleKeyDown}
-      tabIndex={-1}
+      onDragStart={(event) => event.preventDefault()}
       title="Tap to toggle header visibility"
     >
-      <div className="mx-auto py-8" style={paddingStyle}>
+      <div className="reader-content-selectable mx-auto py-8 select-none" style={paddingStyle}>
         <div
           ref={contentRef}
           className={cn(
-            "prose prose-slate dark:prose-invert reader-prose max-w-none",
+            "prose prose-slate dark:prose-invert reader-prose max-w-none cursor-default select-none",
             fontFamilyClass
           )}
-          style={fontSizeStyle}
+          style={{
+            ...fontSizeStyle,
+            userSelect: "none",
+            WebkitUserSelect: "none",
+          }}
           dangerouslySetInnerHTML={{
-            __html: currentChapter.contentHtml || "",
+            __html: prepareChapterHtmlForReader(currentChapter.contentHtml || ""),
           }}
         />
       </div>
+      {dictionary ? (
+        <ReaderDictionaryCard
+          dictionary={dictionary}
+          onClose={closeDictionary}
+          themeClass={themeClass}
+        />
+      ) : null}
     </div>
   );
 }

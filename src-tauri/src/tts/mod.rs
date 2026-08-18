@@ -1,5 +1,6 @@
 pub mod engine;
 pub mod supertonic;
+pub mod word_timing;
 
 // Backward-compatible module path for existing code that references
 // `kokoros::tts::koko::*`.

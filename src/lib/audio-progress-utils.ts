@@ -80,6 +80,17 @@ export function canRestoreSavedTime(
   return Number.isFinite(savedTime) && savedTime >= 0 && savedTime < duration;
 }
 
+/** Apply speed so `load()` cannot reset the element back to 1x. */
+export function applyMediaPlaybackRate(
+  media: Pick<HTMLMediaElement, "playbackRate" | "defaultPlaybackRate">,
+  rate: number
+): number {
+  const nextRate = Number.isFinite(rate) && rate > 0 ? rate : 1;
+  media.defaultPlaybackRate = nextRate;
+  media.playbackRate = nextRate;
+  return nextRate;
+}
+
 export function trackDisplayTitle(
   title: string | undefined | null,
   order: number

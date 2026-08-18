@@ -26,6 +26,7 @@ import type {
 } from "../types/book";
 import {
   applyNativePlayerEvent,
+  applyMediaPlaybackRate,
   mimeTypeFromTrackHref,
   trackDisplayTitle,
 } from "../lib/audio-progress-utils";
@@ -159,11 +160,12 @@ export function AudioProgressProvider({
   }, []);
   const handleSetPlaybackRate = useCallback(
     (rate: number) => {
-      setPlaybackRate(rate);
-      if (audioRef.current) {
-        audioRef.current.playbackRate = rate;
-      }
-      saveSettings({ audioPlaybackSpeed: rate });
+      const nextRate = applyMediaPlaybackRate(
+        audioRef.current ?? { playbackRate: 1, defaultPlaybackRate: 1 },
+        rate
+      );
+      setPlaybackRate(nextRate);
+      saveSettings({ audioPlaybackSpeed: nextRate });
     },
     [audioRef, saveSettings]
   );
@@ -260,7 +262,10 @@ export function AudioProgressProvider({
           setPlaybackRate(settings.audioPlaybackSpeed);
 
           if (audioRef.current) {
-            audioRef.current.playbackRate = settings.audioPlaybackSpeed;
+            applyMediaPlaybackRate(
+              audioRef.current,
+              settings.audioPlaybackSpeed
+            );
           }
         }
       } catch (err) {
@@ -575,7 +580,7 @@ export function AudioProgressProvider({
               audioRef.current.pause();
             }
             audioRef.current.currentTime = 0;
-            audioRef.current.playbackRate = playbackRate;
+            applyMediaPlaybackRate(audioRef.current, playbackRate);
 
             await waitForAudioReady();
 

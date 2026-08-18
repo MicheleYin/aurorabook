@@ -1,6 +1,4 @@
-use regex::Regex;
 use htmlparser::{Tokenizer, Token};
-use once_cell::sync::Lazy;
 use crate::utils::errors::{ AppResult};
 
 /// Sentence with its position in the original HTML
@@ -10,15 +8,6 @@ pub struct SentenceWithSpan {
     pub start_byte: usize,
     pub end_byte: usize,
 }
-
-// Compile regex once at startup instead of on every call
-// Pattern matches sentences ending with: . ! ? … (ellipsis U+2026) or multiple periods (...)
-static SENTENCE_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    // Match sentences ending with: . ! ? … or ... (three periods)
-    // The ellipsis character (U+2026) is included as a sentence ending
-    Regex::new(r"([^.!?…]+(?:[.!?]+|…))\s*")
-        .expect("Failed to compile sentence regex pattern")
-});
 
 const MIN_SENTENCE_WORDS: usize = 10;
 const MIN_SENTENCE_ALNUM_CHARS: usize = 20;
@@ -33,6 +22,188 @@ fn is_too_short_sentence(text: &str) -> bool {
     let alnum_char_count = trimmed.chars().filter(|c| c.is_alphanumeric()).count();
 
     word_count < MIN_SENTENCE_WORDS || alnum_char_count < MIN_SENTENCE_ALNUM_CHARS
+}
+
+fn normalize_tag_name(tag: &str) -> &str {
+    tag.rsplit([':', '}'])
+        .next()
+        .filter(|part| !part.is_empty())
+        .unwrap_or(tag)
+}
+
+fn is_skip_tag(tag: &str) -> bool {
+    matches!(
+        normalize_tag_name(tag).to_ascii_lowercase().as_str(),
+        "script" | "style" | "svg" | "math" | "noscript" | "template" | "head"
+    )
+}
+
+fn is_body_tag(tag: &str) -> bool {
+    normalize_tag_name(tag).eq_ignore_ascii_case("body")
+}
+
+const PARSE_WRAP_PREFIX: &str = "<html><body>";
+const PARSE_WRAP_SUFFIX: &str = "</body></html>";
+
+fn html_has_body_element(html: &str) -> bool {
+    Tokenizer::from(html).any(|token| {
+        matches!(
+            token,
+            Ok(Token::ElementStart { local, .. }) if is_body_tag(local.as_str())
+        )
+    })
+}
+
+fn looks_like_full_html_document(html: &str) -> bool {
+    let trimmed = html.trim_start_matches('\u{feff}').trim_start();
+    let prefix: String = trimmed.chars().take(32).collect();
+    let lower = prefix.to_ascii_lowercase();
+    lower.starts_with("<?xml")
+        || lower.starts_with("<!doctype")
+        || lower.starts_with("<html")
+}
+
+/// Wrap multi-root fragments so the tokenizer keeps every paragraph. Full HTML/XHTML
+/// documents are left unchanged — wrapping those nested a second `<html><body>` and
+/// the reader then dropped highlight spans when injecting the chapter into a div.
+fn should_wrap_for_parse(html: &str) -> bool {
+    !html_has_body_element(html) && !looks_like_full_html_document(html)
+}
+
+fn wrap_for_parse(html: &str) -> String {
+    if should_wrap_for_parse(html) {
+        format!("{}{}{}", PARSE_WRAP_PREFIX, html, PARSE_WRAP_SUFFIX)
+    } else {
+        html.to_string()
+    }
+}
+
+fn unwrap_parse_wrap(updated: &str, original: &str) -> String {
+    if !should_wrap_for_parse(original) {
+        return updated.to_string();
+    }
+    let rest = match updated.strip_prefix(PARSE_WRAP_PREFIX) {
+        Some(rest) => rest,
+        None => return updated.to_string(),
+    };
+    if let Some(inner) = rest.strip_suffix(PARSE_WRAP_SUFFIX) {
+        return inner.to_string();
+    }
+    if let Some(idx) = rest.rfind(PARSE_WRAP_SUFFIX) {
+        format!(
+            "{}{}",
+            &rest[..idx],
+            &rest[idx + PARSE_WRAP_SUFFIX.len()..]
+        )
+    } else {
+        rest.to_string()
+    }
+}
+
+fn should_capture_text(in_body: bool, has_body: bool, skip_depth: usize) -> bool {
+    skip_depth == 0 && (in_body || !has_body)
+}
+
+const ABBREVIATIONS: &[&str] = &[
+    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "vs", "etc", "inc", "ltd", "st", "rd",
+    "ave", "no", "vol", "fig", "al", "cf", "eg", "ie", "ch", "pg", "pp", "ed", "eds",
+    "rev", "gen", "col", "sgt", "capt", "lt", "jan", "feb", "mar", "apr", "jun", "jul",
+    "aug", "sep", "sept", "oct", "nov", "dec",
+];
+
+fn word_before_dot(text: &str, dot_index: usize) -> &str {
+    let before = text.get(..dot_index).unwrap_or("");
+    before.rsplit(|c: char| !c.is_alphabetic()).next().unwrap_or("")
+}
+
+fn is_decimal_dot(text: &str, dot_index: usize) -> bool {
+    let prev = text.get(..dot_index).and_then(|s| s.chars().last());
+    let next = text.get(dot_index + 1..).and_then(|s| s.chars().next());
+    matches!((prev, next), (Some(p), Some(n)) if p.is_ascii_digit() && n.is_ascii_digit())
+}
+
+fn is_abbreviation_dot(text: &str, dot_index: usize) -> bool {
+    let word = word_before_dot(text, dot_index);
+    if word.is_empty() {
+        return false;
+    }
+    if word.chars().count() == 1 && word.chars().all(|c| c.is_uppercase()) {
+        return true;
+    }
+    ABBREVIATIONS
+        .iter()
+        .any(|abbr| word.eq_ignore_ascii_case(abbr))
+}
+
+fn consume_closing_quotes(text: &str, mut idx: usize) -> usize {
+    while let Some(ch) = text.get(idx..).and_then(|s| s.chars().next()) {
+        if matches!(ch, '"' | '\'' | '”' | '’' | '»') {
+            idx += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    idx
+}
+
+/// Split a text block into sentence ranges `[start, end)` that follow reading order.
+fn split_prose_sentences(text: &str) -> Vec<(usize, usize)> {
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut start = match text.find(|c: char| !c.is_whitespace()) {
+        Some(idx) => idx,
+        None => return ranges,
+    };
+    let mut idx = start;
+
+    while idx < text.len() {
+        let Some(ch) = text[idx..].chars().next() else {
+            break;
+        };
+        let ch_len = ch.len_utf8();
+        let is_ellipsis = ch == '…'
+            || (ch == '.'
+                && text.get(idx..idx + 3) == Some("..."));
+        let is_end_punct = ch == '.' || ch == '!' || ch == '?' || is_ellipsis;
+
+        if is_end_punct {
+            let term_end = if ch == '.' && text.get(idx..idx + 3) == Some("...") {
+                idx + 3
+            } else {
+                idx + ch_len
+            };
+            let should_split = if ch == '.' && !is_ellipsis {
+                !is_decimal_dot(text, idx) && !is_abbreviation_dot(text, idx)
+            } else {
+                true
+            };
+            if should_split {
+                let end = consume_closing_quotes(text, term_end);
+                let piece = text[start..end].trim_end();
+                if !piece.is_empty() {
+                    ranges.push((start, start + piece.len()));
+                }
+                let next = text[end..]
+                    .find(|c: char| !c.is_whitespace())
+                    .map(|offset| end + offset);
+                match next {
+                    Some(next_start) => {
+                        start = next_start;
+                        idx = next_start;
+                    }
+                    None => return ranges,
+                }
+                continue;
+            }
+        }
+
+        idx += ch_len;
+    }
+
+    let remaining = text[start..].trim_end();
+    if !remaining.is_empty() {
+        ranges.push((start, start + remaining.len()));
+    }
+    ranges
 }
 
 /// Two adjacent sentences may only be merged when their HTML byte ranges are not separated by
@@ -153,6 +324,10 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
     if sentences_with_spans.is_empty() {
         return Ok((String::new(), html.to_string(), Vec::new()));
     }
+
+    let original_html = html;
+    let document = wrap_for_parse(original_html);
+    let html = document.as_str();
     
     // Extract just the sentence texts for compatibility
     let sentences: Vec<String> = sentences_with_spans.iter().map(|s| s.text.clone()).collect();
@@ -193,9 +368,9 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
     
     // Single source of truth: is a span currently open in the output?
     let mut span_is_open = false;
-    
-    // Track if we are inside the body element
+    let has_body = html_has_body_element(html);
     let mut in_body = false;
+    let mut skip_depth = 0usize;
     
     // Track HTML element stack (for validation, not span management)
     let mut element_stack: Vec<String> = Vec::new();
@@ -210,14 +385,20 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                 // Self-closing tags don't need to be tracked in the stack
                 let element_str = &html[span.start()..span.end()];
                 let is_self_closing = element_str.ends_with("/>") || element_str.ends_with(" />");
+                let element_name = local.as_str();
+                let started_skip = is_skip_tag(element_name);
+                if started_skip {
+                    skip_depth += 1;
+                }
                 
                 // Only push to stack if not self-closing
                 if !is_self_closing {
-                    let element_name = local.as_str().to_string();
-                    if element_name.eq_ignore_ascii_case("body") {
+                    if is_body_tag(element_name) {
                         in_body = true;
                     }
-                    element_stack.push(element_name);
+                    element_stack.push(element_name.to_string());
+                } else if started_skip {
+                    skip_depth = skip_depth.saturating_sub(1);
                 }
                 
                 // Output the element start tag
@@ -226,30 +407,44 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
             }
             Ok(Token::ElementEnd { end, span, .. }) => {
                 use htmlparser::ElementEnd;
-                
-                // Output HTML before this token
+
                 output.push_str(&html[html_pos..span.start()]);
-                
-                // Check if this is a closing tag
-                if let ElementEnd::Close(closing_local, _) = end {
-                    let closing_name = closing_local.as_str();
-                    
-                    // Close any open span before element closes (prevents spans leaking across boundaries)
-                    if span_is_open {
-                        output.push_str("</span>");
-                        span_is_open = false;
-                    }
-                    
-                    // Find and remove matching opening tag from stack
-                    if let Some(stack_pos) = element_stack.iter().rposition(|name| name.eq_ignore_ascii_case(closing_name)) {
-                        let name = element_stack.remove(stack_pos);
-                        if name.eq_ignore_ascii_case("body") {
+
+                match end {
+                    // htmlparser emits Close(prefix, local); the local name is the second field.
+                    ElementEnd::Close(_prefix, closing_local) => {
+                        let closing_name = closing_local.as_str();
+                        if span_is_open {
+                            output.push_str("</span>");
+                            span_is_open = false;
+                        }
+                        if is_skip_tag(closing_name) {
+                            skip_depth = skip_depth.saturating_sub(1);
+                        }
+                        if is_body_tag(closing_name) {
                             in_body = false;
                         }
+                        if let Some(stack_pos) = element_stack.iter().rposition(|name| {
+                            name.eq_ignore_ascii_case(closing_name)
+                                || normalize_tag_name(name)
+                                    .eq_ignore_ascii_case(normalize_tag_name(closing_name))
+                        }) {
+                            element_stack.remove(stack_pos);
+                        }
                     }
+                    ElementEnd::Empty => {
+                        if let Some(name) = element_stack.pop() {
+                            if is_skip_tag(&name) {
+                                skip_depth = skip_depth.saturating_sub(1);
+                            }
+                            if is_body_tag(&name) {
+                                in_body = false;
+                            }
+                        }
+                    }
+                    ElementEnd::Open => {}
                 }
-                
-                // Output the element end tag
+
                 output.push_str(&html[span.start()..span.end()]);
                 html_pos = span.end();
             }
@@ -261,8 +456,8 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                 // Output HTML before this text token
                 output.push_str(&html[html_pos..text_start]);
                 
-                // Only process spans for content in the body
-                if in_body {
+                // Only wrap sentences in captured prose (body, or whole document if no body)
+                if should_capture_text(in_body, has_body, skip_depth) {
                     // Find all sentences that overlap with this text token, sorted by start position
                     let mut relevant_sentences: Vec<(usize, &SentenceWithSpan)> = sentences_with_spans
                         .iter()
@@ -353,18 +548,17 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
         }
     }
     
-    // Output any remaining HTML
+    // Close leftover spans before copying the remainder so a parse-only
+    // `</body></html>` suffix can be stripped cleanly.
+    if span_is_open {
+        output.push_str("</span>");
+    }
+
     if html_pos < html.len() {
         output.push_str(&html[html_pos..]);
     }
-    
-    // Close any remaining open spans
-    if span_is_open {
-        output.push_str("</span>");
-        span_is_open = false;
-    }
-    
-    let updated_html = output;
+
+    let updated_html = unwrap_parse_wrap(&output, original_html);
     
     log::debug!(
         "extract_text_with_spans: Processed {} sentences, added {} spans",
@@ -404,70 +598,75 @@ struct TextSegment {
 }
 
 fn is_inline_tag(tag: &str) -> bool {
-    match tag.to_lowercase().as_str() {
-        "a" | "b" | "i" | "em" | "strong" | "span" | "sub" | "sup" | "u" | "code" | "mark" | "cite" | "q" | "br" | "small" | "big" | "font" => true,
-        _ => false
-    }
+    matches!(
+        normalize_tag_name(tag).to_ascii_lowercase().as_str(),
+        "a" | "b" | "i" | "em" | "strong" | "span" | "sub" | "sup" | "u" | "code"
+            | "mark" | "cite" | "q" | "br" | "small" | "big" | "font" | "abbr" | "dfn"
+            | "time" | "ruby" | "rb" | "rt" | "rp" | "bdi" | "bdo" | "wbr" | "s"
+            | "strike" | "del" | "ins"
+    )
 }
 
 pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
-    let sentence_pattern = &*SENTENCE_PATTERN;
-    
-    // Extract text segments from HTML body, tracking their exact positions
+    let document = wrap_for_parse(html);
+    let html = document.as_str();
+    let has_body = html_has_body_element(html);
     let mut text_segments: Vec<TextSegment> = Vec::new();
     let mut in_body = false;
-    let mut body_depth = 0;
+    let mut skip_depth = 0usize;
+    let mut last_start_was_skip = false;
     let mut combined_byte_pos = 0;
-    
     let mut current_block_id = 0;
-    
+
     for token in Tokenizer::from(html) {
         match token {
-            Ok(Token::ElementStart { local, span, .. }) => {
-                let local_str = local.as_str();
-                if local_str.eq_ignore_ascii_case("body") {
+            Ok(Token::ElementStart { local, .. }) => {
+                let tag = local.as_str();
+                last_start_was_skip = is_skip_tag(tag);
+                if is_body_tag(tag) {
                     in_body = true;
-                    body_depth = 1;
-                } else if in_body {
-                    body_depth += 1;
                 }
-
-                // If it's a block tag and we're in the body, increment block ID
-                if in_body && !is_inline_tag(local_str) {
+                if last_start_was_skip {
+                    skip_depth += 1;
+                } else if should_capture_text(in_body, has_body, skip_depth)
+                    && !is_inline_tag(tag)
+                {
                     current_block_id += 1;
                 }
             }
             Ok(Token::ElementEnd { end, .. }) => {
                 use htmlparser::ElementEnd;
                 match end {
-                    ElementEnd::Close(local, _) => {
-                        let local_str = local.as_str();
-                        if local_str.eq_ignore_ascii_case("body") && in_body {
-                            in_body = false;
-                            body_depth = 0;
-                        } else if in_body && body_depth > 1 {
-                            body_depth -= 1;
+                    ElementEnd::Close(_prefix, local) => {
+                        let tag = local.as_str();
+                        if is_skip_tag(tag) {
+                            skip_depth = skip_depth.saturating_sub(1);
                         }
-
-                        // If it's a block tag and we're in the body, increment block ID
-                        if in_body && !is_inline_tag(local_str) {
+                        if is_body_tag(tag) {
+                            in_body = false;
+                        } else if should_capture_text(in_body, has_body, skip_depth)
+                            && !is_inline_tag(tag)
+                        {
                             current_block_id += 1;
                         }
+                        last_start_was_skip = false;
                     }
-                    _ => {
-                        if in_body && body_depth > 0 {
-                            body_depth -= 1;
+                    ElementEnd::Empty => {
+                        if last_start_was_skip {
+                            skip_depth = skip_depth.saturating_sub(1);
+                            last_start_was_skip = false;
                         }
                     }
+                    ElementEnd::Open => {}
                 }
             }
             Ok(Token::Text { text }) => {
-                if in_body {
+                if should_capture_text(in_body, has_body, skip_depth) {
                     let text_str = text.as_str();
                     let html_start = text.start();
                     let html_end = text.end();
                     let text_len = text_str.len();
-                    
+
                     text_segments.push(TextSegment {
                         text: text_str.to_string(),
                         html_start,
@@ -476,7 +675,7 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
                         combined_end: combined_byte_pos + text_len,
                         block_id: current_block_id,
                     });
-                    
+
                     combined_byte_pos += text_len;
                 }
             }
@@ -493,19 +692,41 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
     
     // Helper: map a byte position in combined text to HTML byte position
     let map_to_html = |combined_pos: usize, segments: &[TextSegment]| -> Option<usize> {
-        if segments.is_empty() { return None; }
-        // Handle exact end of the last segment
-        if combined_pos == segments.last().unwrap().combined_end {
-            return Some(segments.last().unwrap().html_end);
+        if segments.is_empty() {
+            return None;
         }
-        
+        if combined_pos <= segments[0].combined_start {
+            return Some(segments[0].html_start);
+        }
+        let last = segments.last()?;
+        if combined_pos >= last.combined_end {
+            return Some(last.html_end);
+        }
+
         for seg in segments {
-            if combined_pos >= seg.combined_start && combined_pos < seg.combined_end {
+            if combined_pos >= seg.combined_start && combined_pos <= seg.combined_end {
                 let offset_in_seg = combined_pos - seg.combined_start;
-                return Some(seg.html_start + offset_in_seg);
+                let html_len = seg.html_end.saturating_sub(seg.html_start);
+                return Some(seg.html_start + offset_in_seg.min(html_len));
             }
         }
-        None
+
+        segments
+            .iter()
+            .min_by_key(|seg| {
+                if combined_pos < seg.combined_start {
+                    seg.combined_start - combined_pos
+                } else {
+                    combined_pos - seg.combined_end
+                }
+            })
+            .map(|seg| {
+                if combined_pos < seg.combined_start {
+                    seg.html_start
+                } else {
+                    seg.html_end
+                }
+            })
     };
     
     // Group segments by block_id and process each block separately
@@ -529,60 +750,23 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
 
         if !trimmed_block.is_empty() {
             let block_offset = block_text.find(trimmed_block).unwrap_or(0);
-            let mut last_match_end = 0;
-
-            for m in sentence_pattern.find_iter(trimmed_block) {
-                // Gap before match
-                let gap_text = &trimmed_block[last_match_end..m.start()];
-                let trimmed_gap = gap_text.trim();
-                if !trimmed_gap.is_empty() {
-                    let start_in_block = last_match_end + gap_text.find(trimmed_gap).unwrap_or(0);
-                    let start_combined = block_segments[0].combined_start + block_offset + start_in_block;
-                    let end_combined = start_combined + trimmed_gap.len();
-                    
-                    let start_byte = map_to_html(start_combined, block_segments).unwrap_or(0);
-                    let end_byte = map_to_html(end_combined, block_segments).unwrap_or(html.len());
-                    
-                    all_sentences.push(SentenceWithSpan {
-                        text: trimmed_gap.to_string(),
-                        start_byte,
-                        end_byte,
-                    });
+            for (range_start, range_end) in split_prose_sentences(trimmed_block) {
+                if range_end <= range_start {
+                    continue;
                 }
-
-                // The match itself
-                let match_text = m.as_str();
-                let trimmed_match = match_text.trim();
-                if !trimmed_match.is_empty() {
-                    let start_in_block = m.start() + match_text.find(trimmed_match).unwrap_or(0);
-                    let start_combined = block_segments[0].combined_start + block_offset + start_in_block;
-                    let end_combined = start_combined + trimmed_match.len();
-                    
-                    let start_byte = map_to_html(start_combined, block_segments).unwrap_or(0);
-                    let end_byte = map_to_html(end_combined, block_segments).unwrap_or(html.len());
-                    
-                    all_sentences.push(SentenceWithSpan {
-                        text: trimmed_match.to_string(),
-                        start_byte,
-                        end_byte,
-                    });
-                }
-                last_match_end = m.end();
-            }
-
-            // Remaining text in block
-            let remaining_text = &trimmed_block[last_match_end..];
-            let trimmed_remaining = remaining_text.trim();
-            if !trimmed_remaining.is_empty() {
-                let start_in_block = last_match_end + remaining_text.find(trimmed_remaining).unwrap_or(0);
-                let start_combined = block_segments[0].combined_start + block_offset + start_in_block;
-                let end_combined = start_combined + trimmed_remaining.len();
-                
-                let start_byte = map_to_html(start_combined, block_segments).unwrap_or(0);
-                let end_byte = map_to_html(end_combined, block_segments).unwrap_or(html.len());
-                
+                let start_combined =
+                    block_segments[0].combined_start + block_offset + range_start;
+                let end_combined = start_combined + (range_end - range_start);
+                let start_byte = map_to_html(start_combined, block_segments)
+                    .unwrap_or(block_segments[0].html_start);
+                let end_byte = map_to_html(end_combined, block_segments).unwrap_or(
+                    block_segments
+                        .last()
+                        .map(|segment| segment.html_end)
+                        .unwrap_or(html.len()),
+                );
                 all_sentences.push(SentenceWithSpan {
-                    text: trimmed_remaining.to_string(),
+                    text: trimmed_block[range_start..range_end].to_string(),
                     start_byte,
                     end_byte,
                 });
@@ -598,8 +782,10 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
         let trimmed_all = all_text.trim();
         if !trimmed_all.is_empty() {
             let trim_offset = all_text.find(trimmed_all).unwrap_or(0);
-            let start_byte = map_to_html(trim_offset, &text_segments).unwrap_or(0);
-            let end_byte = map_to_html(trim_offset + trimmed_all.len(), &text_segments).unwrap_or(html.len());
+            let start_byte = map_to_html(trim_offset, &text_segments)
+                .unwrap_or(text_segments[0].html_start);
+            let end_byte = map_to_html(trim_offset + trimmed_all.len(), &text_segments)
+                .unwrap_or(text_segments.last().map(|s| s.html_end).unwrap_or(html.len()));
             all_sentences.push(SentenceWithSpan {
                 text: trimmed_all.to_string(),
                 start_byte,
@@ -610,6 +796,7 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
     
     let sentence_count_before_merge = all_sentences.len();
     all_sentences = merge_short_sentences(html, all_sentences);
+    all_sentences.sort_by_key(|sentence| (sentence.start_byte, sentence.end_byte));
 
     log::debug!(
         "Extracted {} sentences from HTML body ({} after short-fragment merge)",
@@ -643,6 +830,139 @@ mod tests {
                 .any(|x| x.text.trim().eq_ignore_ascii_case("ok.")),
             "Ok. must stay its own sentence when </p>…<p> lies between; merging would break span/highlight alignment"
         );
+    }
+
+    #[test]
+    fn extracts_fragment_html_without_body_in_document_order() {
+        let html = "<p>Alpha paragraph one is long enough to remain a standalone spoken sentence.</p><p>Beta paragraph two is long enough to remain a standalone spoken sentence.</p>";
+        let sentences = extract_all_sentences(html).unwrap();
+        assert!(
+            sentences.len() >= 2,
+            "expected two sentences, got {}: {:?}",
+            sentences.len(),
+            sentences.iter().map(|s| s.text.as_str()).collect::<Vec<_>>()
+        );
+        assert!(sentences[0].text.contains("Alpha"));
+        assert!(sentences[1].text.contains("Beta"));
+        assert!(sentences[0].start_byte < sentences[1].start_byte);
+    }
+
+    #[test]
+    fn does_not_split_decimals_or_abbreviations() {
+        let html = "<html><body><p>Dr. Smith measured 3.14 as the value and then kept talking long enough.</p></body></html>";
+        let sentences = extract_all_sentences(html).unwrap();
+        assert_eq!(sentences.len(), 1);
+        assert!(sentences[0].text.contains("3.14"));
+        assert!(sentences[0].text.contains("Dr. Smith"));
+    }
+
+    #[test]
+    fn skips_script_and_keeps_paragraph_order() {
+        let html = r#"<html><body>
+            <p>First spoken sentence is long enough to keep.</p>
+            <script>ignored.payload();</script>
+            <p>Second spoken sentence is long enough to keep.</p>
+        </body></html>"#;
+        let sentences = extract_all_sentences(html).unwrap();
+        let joined = sentences.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
+        assert!(joined.contains("First spoken"));
+        assert!(joined.contains("Second spoken"));
+        assert!(!joined.contains("ignored.payload"));
+        assert!(sentences[0].text.contains("First"));
+        assert!(sentences.last().unwrap().text.contains("Second"));
+    }
+
+    #[test]
+    fn split_prose_keeps_reading_order() {
+        let ranges = split_prose_sentences("Hello there everyone listening. Then came the second spoken sentence.");
+        assert_eq!(ranges.len(), 2);
+        assert!(ranges[0].0 < ranges[1].0);
+    }
+
+    fn span_ids_in_html(html: &str) -> Vec<String> {
+        let needle = r#"<span id=""#;
+        let mut ids = Vec::new();
+        let mut search_from = 0;
+        while let Some(idx) = html[search_from..].find(needle) {
+            let start = search_from + idx + needle.len();
+            match html[start..].find('"') {
+                Some(end) => {
+                    ids.push(html[start..start + end].to_string());
+                    search_from = start + end + 1;
+                }
+                None => break,
+            }
+        }
+        ids
+    }
+
+    #[test]
+    fn fragment_html_keeps_highlight_spans_without_wrapping_the_chapter() {
+        let html = "<p>Alpha paragraph one is long enough to remain a standalone spoken sentence.</p><p>Beta paragraph two is long enough to remain a standalone spoken sentence.</p>";
+        let sentences = extract_all_sentences(html).unwrap();
+        let (_text, updated, mappings) = extract_text_with_spans(html, Some(&sentences)).unwrap();
+
+        assert!(
+            !updated.trim_start().to_ascii_lowercase().starts_with("<html"),
+            "fragment chapters must not be stored as a nested html/body document: {updated}"
+        );
+        assert!(updated.contains("<p>"));
+        assert!(
+            mappings.len() >= 2,
+            "expected mappings for both paragraphs, got {mappings:?}"
+        );
+        let ids = span_ids_in_html(&updated);
+        for (span_id, _, _) in &mappings {
+            assert!(
+                ids.contains(span_id),
+                "missing highlight span {span_id} in {updated}"
+            );
+        }
+    }
+
+    #[test]
+    fn html_without_body_keeps_document_root_and_highlight_spans() {
+        let html = r#"<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Chapter</title></head>
+<p>Alpha paragraph one is long enough to remain a standalone spoken sentence.</p>
+<p>Beta paragraph two is long enough to remain a standalone spoken sentence.</p>
+</html>"#;
+        let sentences = extract_all_sentences(html).unwrap();
+        assert!(sentences.len() >= 2, "got {:?}", sentences.iter().map(|s| s.text.as_str()).collect::<Vec<_>>());
+        let (_text, updated, mappings) = extract_text_with_spans(html, Some(&sentences)).unwrap();
+
+        let lower = updated.to_ascii_lowercase();
+        assert!(lower.contains("<html"));
+        assert!(
+            !lower.contains("<html><body><html"),
+            "must not nest a parse wrap around an existing html document: {updated}"
+        );
+        let ids = span_ids_in_html(&updated);
+        assert!(!ids.is_empty(), "expected highlight spans, got html: {updated}");
+        for (span_id, _, _) in &mappings {
+            assert!(
+                ids.contains(span_id),
+                "missing highlight span {span_id} in {updated}"
+            );
+        }
+    }
+
+    #[test]
+    fn xhtml_with_body_keeps_every_sentence_span() {
+        let html = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Ch</title></head><body>
+<p>First spoken sentence is long enough to keep in this chapter.</p>
+<p>Second spoken sentence is long enough to keep in this chapter.</p>
+</body></html>"#;
+        let (_text, updated, mappings) = extract_text_with_spans(html, None).unwrap();
+        assert!(updated.contains("<body"));
+        assert!(mappings.len() >= 2);
+        let ids = span_ids_in_html(&updated);
+        for (span_id, _, _) in &mappings {
+            assert!(
+                ids.contains(span_id),
+                "missing highlight span {span_id} in {updated}"
+            );
+        }
     }
 }
 

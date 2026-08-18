@@ -24,7 +24,13 @@ import { useAudioSyncContext } from "@/context/AudioSyncContext";
 import { useChapterProgressContext } from "@/context/ChapterProgressContext";
 import { useConversionState } from "@/context/ConversionStateContext";
 
+import { applyMediaPlaybackRate } from "../../lib/audio-progress-utils";
 import { logger } from "../../lib/logger";
+import {
+  liveStreamPlaybackUrl,
+  shouldHoldLivePlayback,
+  shouldResumeLiveAfterHold,
+} from "../../lib/live-playback";
 import { cn, formatTime } from "../../lib/utils";
 import type { AudioTrack, Book } from "../../types/book";
 import { Badge } from "../ui/badge";
@@ -77,9 +83,12 @@ export function FloatingAudioPlayer() {
   const isRefreshingLiveSeekRef = useRef(false);
   const liveReloadRequestIdRef = useRef(0);
   const lastLiveBoundaryRefreshAtRef = useRef(0);
+  const waitingForLiveChunksRef = useRef(false);
+  const heldLiveTimeRef = useRef(0);
   const currentBookRef = useRef(currentBook);
   const currentAudioTrackRef = useRef(currentAudioTrack);
   const liveChapterIndexRef = useRef(-1);
+  const playbackRateRef = useRef(playbackRate);
   const { isSyncEnabled, toggleSync } = useAudioSyncContext();
 
   useEffect(() => {
@@ -89,6 +98,13 @@ export function FloatingAudioPlayer() {
   useEffect(() => {
     currentAudioTrackRef.current = currentAudioTrack;
   }, [currentAudioTrack]);
+
+  useEffect(() => {
+    playbackRateRef.current = playbackRate;
+    if (audioRef.current) {
+      applyMediaPlaybackRate(audioRef.current, playbackRate);
+    }
+  }, [audioRef, playbackRate]);
 
   useEffect(() => {
     if (!currentBook) return;
@@ -352,6 +368,7 @@ export function FloatingAudioPlayer() {
     };
     const handlePlay = () => {
       playbackIntentRef.current = true;
+      waitingForLiveChunksRef.current = false;
       setIsPlaying(true);
     };
     const handlePause = async () => {
@@ -366,6 +383,28 @@ export function FloatingAudioPlayer() {
       }
     };
     const handleEnded = async () => {
+      const isLive = Boolean(currentAudioTrack?.isLiveStream);
+      const liveHref = currentAudioTrack?.chapterHref;
+      const chapterCompleted = Boolean(
+        liveHref && (currentBook?.completedChapters ?? []).includes(liveHref)
+      );
+      if (
+        shouldHoldLivePlayback({
+          isLiveStream: isLive,
+          chapterCompleted,
+          generatedDuration: liveGeneratedDuration,
+          currentTime: audio.currentTime,
+        })
+      ) {
+        waitingForLiveChunksRef.current = playbackIntentRef.current;
+        heldLiveTimeRef.current = Number.isFinite(audio.currentTime)
+          ? audio.currentTime
+          : 0;
+        setIsPlaying(false);
+        return;
+      }
+
+      waitingForLiveChunksRef.current = false;
       setIsPlaying(false);
       setCurrentTime(0);
 
@@ -422,6 +461,7 @@ export function FloatingAudioPlayer() {
     saveAudioProgress,
     restoreAudioProgress,
     currentAudioTrack,
+    liveGeneratedDuration,
   ]);
 
   // Auto-save progress every 2 seconds
@@ -518,18 +558,28 @@ export function FloatingAudioPlayer() {
     } else {
       try {
         playbackIntentRef.current = true;
+        applyMediaPlaybackRate(audioRef.current, playbackRate);
         await audioRef.current.play();
+        applyMediaPlaybackRate(audioRef.current, playbackRate);
       } catch (err) {
         playbackIntentRef.current = false;
         logger.error("Failed to play audio:", err);
       }
     }
-  }, [audioRef, isPlaying]);
+  }, [audioRef, isPlaying, playbackRate]);
 
   const isLiveStream = useMemo(
     () => Boolean(currentAudioTrack?.isLiveStream),
     [currentAudioTrack]
   );
+
+  const liveChapterCompleted = useMemo(() => {
+    if (!isLiveStream || !currentBook || !currentAudioTrack) {
+      return false;
+    }
+    const href = currentAudioTrack.chapterHref;
+    return Boolean(href && (currentBook.completedChapters ?? []).includes(href));
+  }, [currentAudioTrack, currentBook, isLiveStream]);
 
   const liveChapterIndex = useMemo(() => {
     if (!currentAudioTrack) {
@@ -736,7 +786,7 @@ export function FloatingAudioPlayer() {
     };
 
     refreshLiveDuration();
-    const interval = setInterval(refreshLiveDuration, 1000);
+    const interval = setInterval(refreshLiveDuration, 400);
 
     return () => {
       cancelled = true;
@@ -805,6 +855,7 @@ export function FloatingAudioPlayer() {
       }
 
       const target = Math.max(minSeek, Math.min(resumeTime, maxSeek));
+      applyMediaPlaybackRate(audioEl, playbackRateRef.current);
 
       if (Number.isFinite(target) && target >= 0) {
         try {
@@ -818,6 +869,7 @@ export function FloatingAudioPlayer() {
       if (wasPlaying) {
         try {
           await audioEl.play();
+          applyMediaPlaybackRate(audioEl, playbackRateRef.current);
         } catch (err) {
           logger.warn("Failed to play live stream:", err);
         }
@@ -835,9 +887,9 @@ export function FloatingAudioPlayer() {
           return;
         }
 
-        const cacheBustedUrl = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}ts=${Date.now()}`;
+        const cacheBustedUrl = liveStreamPlaybackUrl(baseUrl);
         audioRef.current.pause();
-        audioRef.current.playbackRate = playbackRate;
+        applyMediaPlaybackRate(audioRef.current, playbackRateRef.current);
 
         const handleReady = () => {
           void applySeekAndPlayback();
@@ -875,7 +927,6 @@ export function FloatingAudioPlayer() {
     isLiveStream,
     livePlaybackRequestRef,
     livePlaybackRequestVersion,
-    playbackRate,
     liveStreamSourceKey,
   ]);
 
@@ -943,8 +994,12 @@ export function FloatingAudioPlayer() {
       const hasFutureContent = timelineMax > seekMax + boundaryThreshold;
       const nearSeekableBoundary =
         seekableEnd !== null && currentPosition >= seekableEnd - boundaryThreshold;
+      // On finite snapshots (iOS), `ended` should refresh whenever generated audio
+      // has grown past what the current media element can play.
+      const endedWithMoreAudio =
+        reason === "ended" && liveGeneratedDuration > currentPosition + boundaryThreshold;
 
-      if (!hasFutureContent || !nearSeekableBoundary) {
+      if ((!hasFutureContent && !endedWithMoreAudio) || (!nearSeekableBoundary && reason !== "ended")) {
         return;
       }
 
@@ -978,6 +1033,7 @@ export function FloatingAudioPlayer() {
       currentBook,
       isLiveStream,
       isLoadingAudio,
+      liveGeneratedDuration,
       refreshLiveSourceAtTime,
       seekMax,
       timelineMax,
@@ -990,13 +1046,33 @@ export function FloatingAudioPlayer() {
     }
 
     const audio = audioRef.current;
+    const holdIfUnderrun = () => {
+      if (
+        !playbackIntentRef.current ||
+        !shouldHoldLivePlayback({
+          isLiveStream: true,
+          chapterCompleted: liveChapterCompleted,
+          generatedDuration: liveGeneratedDuration,
+          currentTime: audio.currentTime,
+        })
+      ) {
+        return;
+      }
+      waitingForLiveChunksRef.current = true;
+      heldLiveTimeRef.current = Number.isFinite(audio.currentTime)
+        ? audio.currentTime
+        : 0;
+    };
     const handleWaiting = () => {
+      holdIfUnderrun();
       maybeRefreshLiveAtBoundary("waiting");
     };
     const handleStalled = () => {
+      holdIfUnderrun();
       maybeRefreshLiveAtBoundary("stalled");
     };
     const handleEnded = () => {
+      holdIfUnderrun();
       maybeRefreshLiveAtBoundary("ended");
     };
 
@@ -1014,7 +1090,27 @@ export function FloatingAudioPlayer() {
       audio.removeEventListener("ended", handleEnded);
       clearInterval(interval);
     };
-  }, [audioRef, isLiveStream, maybeRefreshLiveAtBoundary]);
+  }, [audioRef, isLiveStream, liveChapterCompleted, liveGeneratedDuration, maybeRefreshLiveAtBoundary]);
+
+  useEffect(() => {
+    if (!isLiveStream || !waitingForLiveChunksRef.current) {
+      return;
+    }
+    if (
+      !shouldResumeLiveAfterHold({
+        generatedDuration: liveGeneratedDuration,
+        heldAtTime: heldLiveTimeRef.current,
+      })
+    ) {
+      return;
+    }
+    const audio = audioRef.current;
+    if (audio && !audio.paused && !audio.ended) {
+      waitingForLiveChunksRef.current = false;
+      return;
+    }
+    void refreshLiveSourceAtTime(heldLiveTimeRef.current);
+  }, [audioRef, isLiveStream, liveGeneratedDuration, refreshLiveSourceAtTime]);
 
   const handleSeek = useCallback(
     (value: number[]) => {
@@ -1335,7 +1431,7 @@ export function FloatingAudioPlayer() {
   return (
     <div
       className={cn(
-        "fixed bottom-20 left-1/2 -translate-x-1/2 z-50",
+        "fixed bottom-20 left-1/2 -translate-x-1/2 z-50 select-none",
         "w-full max-w-2xl",
         "px-4",
         "transition-all duration-300"

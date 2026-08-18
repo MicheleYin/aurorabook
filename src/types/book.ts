@@ -32,12 +32,19 @@ export interface Chapter {
   estimatedPageCount?: number;
 }
 
+export interface WordSyncCue {
+  word: string;
+  startSec: number;
+  endSec: number;
+}
+
 export interface AudioSyncSegment {
   textElementId: string;
   chapterHref: string;
   audioTrackHref: string;
   clipBegin: number;
   clipEnd: number;
+  words?: WordSyncCue[];
 }
 
 export interface AudioSyncMap {

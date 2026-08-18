@@ -20,6 +20,12 @@ use tokio::signal;
 use tokio::sync::{broadcast, oneshot};
 use tower_http::cors::{Any, CorsLayer};
 
+/// Workers finish sentences out of order and faster than the HTTP client reads.
+/// Keep enough room that a slow player does not drop later chunks; lag is still
+/// recovered by resyncing from the in-memory snapshot.
+const LIVE_BROADCAST_CAPACITY: usize = 4096;
+const LIVE_SNAPSHOT_RESYNC_MS: u64 = 250;
+
 // Global flag to track if server has started
 static SERVER_STARTED: OnceLock<Arc<std::sync::atomic::AtomicBool>> = OnceLock::new();
 
@@ -53,6 +59,18 @@ struct EpubResourceQuery {
     book_id: String,
     href: String,
     chapter_href: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct LiveAudioQuery {
+    snapshot: Option<String>,
+}
+
+fn live_query_wants_snapshot(query: &LiveAudioQuery) -> bool {
+    query
+        .snapshot
+        .as_deref()
+        .is_some_and(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
 }
 
 async fn ensure_server_started_and_get_port(
@@ -297,6 +315,9 @@ fn append_reader_css_width_guards(css_text: &str) -> String {
     out.push_str(
         "[data-reader-chapter-content=\"true\"] :where(img,svg,canvas,video,iframe,table){max-width:100%!important;height:auto;}\n",
     );
+    out.push_str(
+        "[data-reader-chapter-content=\"true\"],[data-reader-chapter-content=\"true\"] *{-webkit-user-select:none!important;user-select:none!important;-webkit-touch-callout:none!important;}\n",
+    );
     out
 }
 
@@ -372,8 +393,23 @@ pub struct SentencePayload {
     pub sentence_index: usize,
     pub audio_bytes: Vec<u8>,
     pub duration_seconds: f64,
+    pub playback_duration_seconds: f64,
     pub sentence_text: String,
     pub word_alignments: Vec<WordAlignment>,
+}
+
+impl SentencePayload {
+    fn clip_duration(&self) -> f64 {
+        if self.playback_duration_seconds > 0.0 {
+            self.playback_duration_seconds
+        } else {
+            self.duration_seconds
+        }
+    }
+}
+
+fn sentence_playback_duration(audio: &[u8], pcm_duration: f64) -> f64 {
+    crate::utils::mp3::playback_duration_seconds(audio).unwrap_or(pcm_duration)
 }
 
 #[derive(Clone, Default)]
@@ -411,6 +447,60 @@ pub struct LiveStreamManager {
     channels: std::sync::Mutex<HashMap<String, broadcast::Sender<SentencePayload>>>,
     snapshots: std::sync::Mutex<HashMap<String, LiveChapterSnapshot>>,
     current_chapter_by_book: std::sync::Mutex<HashMap<String, (usize, u64)>>,
+}
+
+fn contiguous_sentence_prefix(
+    sentences: &BTreeMap<usize, SentencePayload>,
+) -> Vec<&SentencePayload> {
+    let mut prefix = Vec::new();
+    for expected in 0.. {
+        match sentences.get(&expected) {
+            Some(sentence) => prefix.push(sentence),
+            None => break,
+        }
+    }
+    prefix
+}
+
+fn flush_ready_live_chunks(
+    pending: &mut BTreeMap<usize, Vec<u8>>,
+    next_expected: &mut usize,
+) -> Vec<Vec<u8>> {
+    let mut ready = Vec::new();
+    while let Some(chunk) = pending.remove(next_expected) {
+        ready.push(chunk);
+        *next_expected += 1;
+    }
+    ready
+}
+
+fn enqueue_live_sentence_audio(
+    pending: &mut BTreeMap<usize, Vec<u8>>,
+    next_expected: &mut usize,
+    sentence_index: usize,
+    audio_bytes: Vec<u8>,
+) -> Vec<Vec<u8>> {
+    if audio_bytes.is_empty() || sentence_index < *next_expected {
+        return Vec::new();
+    }
+    pending.entry(sentence_index).or_insert(audio_bytes);
+    flush_ready_live_chunks(pending, next_expected)
+}
+
+fn enqueue_live_sentences<'a>(
+    pending: &mut BTreeMap<usize, Vec<u8>>,
+    next_expected: &mut usize,
+    sentences: impl IntoIterator<Item = (usize, &'a [u8])>,
+) -> Vec<Vec<u8>> {
+    for (sentence_index, audio_bytes) in sentences {
+        if audio_bytes.is_empty() || sentence_index < *next_expected {
+            continue;
+        }
+        pending
+            .entry(sentence_index)
+            .or_insert_with(|| audio_bytes.to_vec());
+    }
+    flush_ready_live_chunks(pending, next_expected)
 }
 
 impl LiveStreamManager {
@@ -478,7 +568,7 @@ impl LiveStreamManager {
             );
         }
         let mut map = self.channels.lock().unwrap();
-        let (tx, _) = broadcast::channel(100);
+        let (tx, _) = broadcast::channel(LIVE_BROADCAST_CAPACITY);
         map.insert(key, tx);
     }
     
@@ -488,7 +578,7 @@ impl LiveStreamManager {
         if let Some(tx) = map.get(&key) {
             return tx.clone();
         }
-        let (tx, _) = broadcast::channel(100);
+        let (tx, _) = broadcast::channel(LIVE_BROADCAST_CAPACITY);
         map.insert(key, tx.clone());
         tx
     }
@@ -507,10 +597,12 @@ impl LiveStreamManager {
         self.mark_current_chapter(book_id, chapter_index);
 
         let key = format!("{}_{}", book_id, chapter_index);
+        let playback_duration_seconds = sentence_playback_duration(&audio, duration_seconds);
         let payload = SentencePayload {
             sentence_index,
             audio_bytes: audio,
             duration_seconds,
+            playback_duration_seconds,
             sentence_text,
             word_alignments,
         };
@@ -534,18 +626,70 @@ impl LiveStreamManager {
             .unwrap_or_default()
     }
 
+    /// Playable live audio is the contiguous prefix from sentence 0.
+    /// Later sentences that finished early stay buffered until the gap is filled.
+    pub fn snapshot_contiguous_sentences(
+        &self,
+        book_id: &str,
+        chapter_index: usize,
+    ) -> Vec<SentencePayload> {
+        let key = format!("{}_{}", book_id, chapter_index);
+        let snapshots = self.snapshots.lock().unwrap();
+        snapshots
+            .get(&key)
+            .map(|snapshot| {
+                contiguous_sentence_prefix(&snapshot.sentences)
+                    .into_iter()
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub fn snapshot_mp3(&self, book_id: &str, chapter_index: usize) -> Vec<u8> {
-        self.snapshot_sentences(book_id, chapter_index)
+        self.snapshot_contiguous_sentences(book_id, chapter_index)
             .into_iter()
             .flat_map(|sentence| sentence.audio_bytes)
             .collect()
     }
 
     pub fn duration_seconds(&self, book_id: &str, chapter_index: usize) -> f64 {
-        self.snapshot_sentences(book_id, chapter_index)
+        self.snapshot_contiguous_sentences(book_id, chapter_index)
             .into_iter()
-            .map(|sentence| sentence.duration_seconds)
+            .map(|sentence| sentence.clip_duration())
             .sum()
+    }
+
+    pub fn has_sentences(&self, book_id: &str, chapter_index: usize) -> bool {
+        let key = format!("{}_{}", book_id, chapter_index);
+        let snapshots = self.snapshots.lock().unwrap();
+        snapshots
+            .get(&key)
+            .map(|snapshot| !snapshot.sentences.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Copy any snapshot sentences the HTTP body has not emitted yet, in index order.
+    fn copy_ready_live_chunks(
+        &self,
+        book_id: &str,
+        chapter_index: usize,
+        pending: &mut BTreeMap<usize, Vec<u8>>,
+        next_expected: &mut usize,
+    ) -> Vec<Vec<u8>> {
+        let key = format!("{}_{}", book_id, chapter_index);
+        let snapshots = self.snapshots.lock().unwrap();
+        let Some(snapshot) = snapshots.get(&key) else {
+            return flush_ready_live_chunks(pending, next_expected);
+        };
+        enqueue_live_sentences(
+            pending,
+            next_expected,
+            snapshot
+                .sentences
+                .range(*next_expected..)
+                .map(|(idx, sentence)| (*idx, sentence.audio_bytes.as_slice())),
+        )
     }
 
     pub fn resolve_sync_marker(
@@ -572,54 +716,57 @@ impl LiveStreamManager {
         };
 
         let mut elapsed = 0.0_f64;
-        let mut selected_sentence_index: Option<usize> = None;
-        let mut selected_clip_begin: Option<f64> = None;
-        let mut selected_clip_end: Option<f64> = None;
-        let mut selected_sentence_text: Option<String> = None;
-        let mut selected_word_alignments: Option<Vec<WordAlignment>> = None;
-        let mut selected_current_word_index: Option<usize> = None;
+        let mut selected_sentence: Option<&SentencePayload> = None;
+        let mut selected_clip_begin = 0.0_f64;
 
-        for sentence in snapshot.sentences.values() {
+        for sentence in contiguous_sentence_prefix(&snapshot.sentences) {
             let start = elapsed;
-            let end = elapsed + sentence.duration_seconds;
+            let end = elapsed + sentence.clip_duration();
+            selected_sentence = Some(sentence);
+            selected_clip_begin = start;
             if current_time_seconds <= end {
-                selected_sentence_index = Some(sentence.sentence_index);
-                selected_clip_begin = Some(start);
-                selected_clip_end = Some(end);
-                selected_sentence_text = Some(sentence.sentence_text.clone());
-                selected_word_alignments = Some(sentence.word_alignments.clone());
-                
-                // Calculate current word index based on time within the sentence
-                let time_in_sentence = current_time_seconds - start;
-                let current_word_idx = sentence.word_alignments
-                    .iter()
-                    .position(|wa| (wa.start_sec as f64) <= time_in_sentence && time_in_sentence < (wa.end_sec as f64))
-                    .unwrap_or(0);
-                selected_current_word_index = Some(current_word_idx);
                 break;
             }
             elapsed = end;
-            selected_sentence_index = Some(sentence.sentence_index);
-            selected_clip_begin = Some(start);
-            selected_clip_end = Some(end);
-            selected_sentence_text = Some(sentence.sentence_text.clone());
-            selected_word_alignments = Some(sentence.word_alignments.clone());
-            selected_current_word_index = Some(0);
         }
 
-        let text_element_id = selected_sentence_index.map(|idx| format!("f{:06}", idx + 1));
+        let Some(sentence) = selected_sentence else {
+            return LiveSyncMarker {
+                text_element_id: None,
+                smil_id: None,
+                chapter_id: snapshot.chapter_id.clone(),
+                chapter_href: snapshot.chapter_href.clone(),
+                sentence_index: None,
+                clip_begin: None,
+                clip_end: None,
+                sentence_text: None,
+                word_alignments: None,
+                current_word_index: None,
+            };
+        };
+
+        let clip_end = selected_clip_begin + sentence.clip_duration();
+        let mut word_alignments = sentence.word_alignments.clone();
+        crate::tts::word_timing::fit_alignments_to_pcm_duration(
+            &mut word_alignments,
+            sentence.clip_duration().max(0.0) as f32,
+        );
+        let time_in_sentence = (current_time_seconds - selected_clip_begin).max(0.0);
+        let current_word_index =
+            crate::tts::word_timing::word_index_at_time(&word_alignments, time_in_sentence as f32);
+        let text_element_id = Some(format!("f{:06}", sentence.sentence_index + 1));
 
         LiveSyncMarker {
             text_element_id: text_element_id.clone(),
             smil_id: text_element_id,
             chapter_id: snapshot.chapter_id.clone(),
             chapter_href: snapshot.chapter_href.clone(),
-            sentence_index: selected_sentence_index,
-            clip_begin: selected_clip_begin,
-            clip_end: selected_clip_end,
-            sentence_text: selected_sentence_text,
-            word_alignments: selected_word_alignments,
-            current_word_index: selected_current_word_index,
+            sentence_index: Some(sentence.sentence_index),
+            clip_begin: Some(selected_clip_begin),
+            clip_end: Some(clip_end),
+            sentence_text: Some(sentence.sentence_text.clone()),
+            word_alignments: Some(word_alignments),
+            current_word_index,
         }
     }
 
@@ -631,16 +778,17 @@ impl LiveStreamManager {
         };
 
         let mut elapsed = 0.0_f64;
-        let mut manifest = Vec::with_capacity(snapshot.sentences.len());
+        let prefix = contiguous_sentence_prefix(&snapshot.sentences);
+        let mut manifest = Vec::with_capacity(prefix.len());
 
-        for sentence in snapshot.sentences.values() {
+        for sentence in prefix {
             manifest.push(LiveSegmentMeta {
                 sentence_index: sentence.sentence_index,
                 start_time_seconds: elapsed,
-                duration_seconds: sentence.duration_seconds,
+                duration_seconds: sentence.clip_duration(),
                 byte_length: sentence.audio_bytes.len(),
             });
-            elapsed += sentence.duration_seconds;
+            elapsed += sentence.clip_duration();
         }
 
         manifest
@@ -764,8 +912,26 @@ impl LiveStreamManager {
     ) -> Result<usize, String> {
         use crate::book_service::repositories::ConversionCheckpointRepository;
 
+        let checkpoint = ConversionCheckpointRepository::load_checkpoint(
+            pool,
+            book_id,
+            chapter_index,
+        )
+        .await
+        .ok()
+        .flatten();
+        let resolved_chapter_id =
+            chapter_id.or_else(|| checkpoint.as_ref().and_then(|c| c.chapter_id.clone()));
+        let resolved_chapter_href =
+            chapter_href.or_else(|| checkpoint.as_ref().and_then(|c| c.chapter_href.clone()));
+
         // Start a new stream session
-        self.start_stream(book_id, chapter_index, chapter_id, chapter_href);
+        self.start_stream(
+            book_id,
+            chapter_index,
+            resolved_chapter_id,
+            resolved_chapter_href,
+        );
 
         // Load all saved sentences from checkpoint
         let sentences = ConversionCheckpointRepository::load_chapter_sentences(
@@ -828,11 +994,16 @@ impl LiveStreamManager {
                 // Load audio from file instead of database
                 let audio_bytes = std::fs::read(&sentence.audio_file_path)
                     .map_err(|e| format!("Failed to read checkpoint audio file {}: {}", sentence.audio_file_path, e))?;
+                let playback_duration_seconds = sentence_playback_duration(
+                    &audio_bytes,
+                    sentence.duration_seconds,
+                );
 
                 Ok(Some(SentencePayload {
                     sentence_index: sentence.sentence_index,
                     audio_bytes,
                     duration_seconds: sentence.duration_seconds,
+                    playback_duration_seconds,
                     sentence_text: sentence.sentence_text,
                     word_alignments: sentence.word_alignments,
                 }))
@@ -856,7 +1027,7 @@ async fn hydrate_live_stream_from_checkpoint(
     chapter_index: usize,
 ) {
     let manager = get_live_stream_manager();
-    if manager.duration_seconds(book_id, chapter_index) > 0.0 {
+    if manager.has_sentences(book_id, chapter_index) {
         return;
     }
 
@@ -1176,41 +1347,25 @@ async fn health_check() -> &'static str {
     "OK"
 }
 
-/// Handle live audio streaming HTTP requests
-async fn handle_audio_live_stream(
-    Path((book_id, chapter_index_str)): Path<(String, String)>,
-    State(_app): State<Arc<AppHandle>>,
-    headers: HeaderMap,
+/// Serve a finite MP3 snapshot (full body or byte range). Used for Range clients and for
+/// iOS, where WKWebView/AVFoundation cannot grow an infinite progressive HTTP MP3 stream.
+fn serve_live_mp3_snapshot(
+    snapshot: Vec<u8>,
+    range_header: Option<&str>,
 ) -> Result<Response<axum::body::Body>, StatusCode> {
-    log::debug!(
-        "Live streaming audio: book_id='{}', chapter_index='{}'",
-        book_id,
-        chapter_index_str
-    );
+    let total_len = snapshot.len();
+    if total_len == 0 {
+        return Ok(Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .header("Content-Type", "audio/mpeg")
+            .header("Accept-Ranges", "bytes")
+            .header("Cache-Control", "no-cache")
+            .header("Access-Control-Allow-Origin", "*")
+            .body(axum::body::Body::empty())
+            .unwrap());
+    }
 
-    let chapter_index = match chapter_index_str.parse::<usize>() {
-        Ok(idx) => idx,
-        Err(_) => return Err(StatusCode::BAD_REQUEST),
-    };
-
-    let live_stream_manager = get_live_stream_manager();
-
-    // If the client asks for byte ranges, serve a finite snapshot with range support.
-    if let Some(range_header) = headers.get(header::RANGE).and_then(|h| h.to_str().ok()) {
-        let snapshot = live_stream_manager.snapshot_mp3(&book_id, chapter_index);
-
-        let total_len = snapshot.len();
-        if total_len == 0 {
-            return Ok(Response::builder()
-                .status(StatusCode::NO_CONTENT)
-                .header("Content-Type", "audio/mpeg")
-                .header("Accept-Ranges", "bytes")
-                .header("Cache-Control", "no-cache")
-                .header("Access-Control-Allow-Origin", "*")
-                .body(axum::body::Body::empty())
-                .unwrap());
-        }
-
+    if let Some(range_header) = range_header {
         let Some((start, end)) = parse_range_header(range_header, total_len) else {
             return Ok(Response::builder()
                 .status(StatusCode::RANGE_NOT_SATISFIABLE)
@@ -1235,82 +1390,139 @@ async fn handle_audio_live_stream(
             .unwrap());
     }
 
-    // Subscribe to new sentences early to avoid missing data between DB read and subscribe
-    let mut rx = live_stream_manager.get_or_create_channel(&book_id, chapter_index).subscribe();
-
-    let stream = stream! {
-        // 1. Fetch existing persisted sentence chunks.
-        // Emit only contiguous indices from 0, buffering any gaps until they can be emitted in order.
-        let mut next_expected_sentence_index: usize = 0;
-        let mut pending_chunks: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
-
-        for sentence in live_stream_manager.snapshot_sentences(&book_id, chapter_index) {
-            if sentence.audio_bytes.is_empty() {
-                continue;
-            }
-
-            if sentence.sentence_index < next_expected_sentence_index {
-                continue;
-            }
-
-            if sentence.sentence_index == next_expected_sentence_index {
-                yield Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(sentence.audio_bytes));
-                next_expected_sentence_index += 1;
-
-                while let Some(buffered_chunk) = pending_chunks.remove(&next_expected_sentence_index) {
-                    yield Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(buffered_chunk));
-                    next_expected_sentence_index += 1;
-                }
-            } else {
-                pending_chunks.entry(sentence.sentence_index).or_insert(sentence.audio_bytes);
-            }
-        }
-
-        // 2. Read newly completed sentences, preserving strict index order.
-        loop {
-            match rx.recv().await {
-                Ok(payload) => {
-                    if payload.audio_bytes.is_empty() {
-                        continue;
-                    }
-
-                    if payload.sentence_index < next_expected_sentence_index {
-                        continue;
-                    }
-
-                    if payload.sentence_index == next_expected_sentence_index {
-                        yield Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(payload.audio_bytes));
-                        next_expected_sentence_index += 1;
-
-                        while let Some(buffered_chunk) = pending_chunks.remove(&next_expected_sentence_index) {
-                            yield Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(buffered_chunk));
-                            next_expected_sentence_index += 1;
-                        }
-                    } else {
-                        pending_chunks.entry(payload.sentence_index).or_insert(payload.audio_bytes);
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    // Channel closed means stream ended
-                    break;
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    // Receiver lagged behind, just continue receiving
-                    continue;
-                }
-            }
-        }
-    };
-
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "audio/mpeg")
         .header("Accept-Ranges", "bytes")
-        // Not setting transfer-encoding chunked explicitly, as axum handles this for streams implicitly via chunked transfer encoding or raw stream transport down the pipe
+        .header("Content-Length", total_len.to_string())
         .header("Cache-Control", "no-cache")
         .header("Access-Control-Allow-Origin", "*")
-        .body(axum::body::Body::from_stream(stream))
+        .body(axum::body::Body::from(snapshot))
         .unwrap())
+}
+
+/// Handle live audio streaming HTTP requests
+async fn handle_audio_live_stream(
+    Path((book_id, chapter_index_str)): Path<(String, String)>,
+    Query(query): Query<LiveAudioQuery>,
+    State(_app): State<Arc<AppHandle>>,
+    headers: HeaderMap,
+) -> Result<Response<axum::body::Body>, StatusCode> {
+    log::debug!(
+        "Live streaming audio: book_id='{}', chapter_index='{}'",
+        book_id,
+        chapter_index_str
+    );
+
+    let chapter_index = match chapter_index_str.parse::<usize>() {
+        Ok(idx) => idx,
+        Err(_) => return Err(StatusCode::BAD_REQUEST),
+    };
+
+    let live_stream_manager = get_live_stream_manager();
+    let range_header = headers.get(header::RANGE).and_then(|h| h.to_str().ok());
+    let force_snapshot = cfg!(target_os = "ios") || live_query_wants_snapshot(&query);
+
+    // Range clients, snapshot requests, and iOS get a finite MP3 so `<audio>` has a
+    // duration and playbackRate works. The frontend reloads as more sentences arrive.
+    if range_header.is_some() || force_snapshot {
+        let snapshot = live_stream_manager.snapshot_mp3(&book_id, chapter_index);
+        return serve_live_mp3_snapshot(snapshot, range_header);
+    }
+
+    #[cfg(not(target_os = "ios"))]
+    {
+        let mut rx = live_stream_manager
+            .get_or_create_channel(&book_id, chapter_index)
+            .subscribe();
+
+        let stream = stream! {
+            let mut next_expected_sentence_index: usize = 0;
+            let mut pending_chunks: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
+
+            for chunk in live_stream_manager.copy_ready_live_chunks(
+                &book_id,
+                chapter_index,
+                &mut pending_chunks,
+                &mut next_expected_sentence_index,
+            ) {
+                yield Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(chunk));
+            }
+
+            loop {
+                match tokio::time::timeout(
+                    std::time::Duration::from_millis(LIVE_SNAPSHOT_RESYNC_MS),
+                    rx.recv(),
+                )
+                .await
+                {
+                    Ok(Ok(payload)) => {
+                        for chunk in enqueue_live_sentence_audio(
+                            &mut pending_chunks,
+                            &mut next_expected_sentence_index,
+                            payload.sentence_index,
+                            payload.audio_bytes,
+                        ) {
+                            yield Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(chunk));
+                        }
+                    }
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                        for chunk in live_stream_manager.copy_ready_live_chunks(
+                            &book_id,
+                            chapter_index,
+                            &mut pending_chunks,
+                            &mut next_expected_sentence_index,
+                        ) {
+                            yield Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(chunk));
+                        }
+                        break;
+                    }
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped))) => {
+                        log::warn!(
+                            "Live audio receiver lagged by {} sentences for book_id={}, chapter={}; resyncing from snapshot",
+                            skipped,
+                            book_id,
+                            chapter_index
+                        );
+                        for chunk in live_stream_manager.copy_ready_live_chunks(
+                            &book_id,
+                            chapter_index,
+                            &mut pending_chunks,
+                            &mut next_expected_sentence_index,
+                        ) {
+                            yield Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(chunk));
+                        }
+                    }
+                    Err(_) => {
+                        for chunk in live_stream_manager.copy_ready_live_chunks(
+                            &book_id,
+                            chapter_index,
+                            &mut pending_chunks,
+                            &mut next_expected_sentence_index,
+                        ) {
+                            yield Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(chunk));
+                        }
+                    }
+                }
+            }
+        };
+
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Type", "audio/mpeg")
+            .header("Accept-Ranges", "bytes")
+            // Not setting transfer-encoding chunked explicitly, as axum handles this for streams implicitly via chunked transfer encoding or raw stream transport down the pipe
+            .header("Cache-Control", "no-cache")
+            .header("Access-Control-Allow-Origin", "*")
+            .body(axum::body::Body::from_stream(stream))
+            .unwrap());
+    }
+
+    #[cfg(target_os = "ios")]
+    {
+        let snapshot = live_stream_manager.snapshot_mp3(&book_id, chapter_index);
+        serve_live_mp3_snapshot(snapshot, range_header)
+    }
 }
 
 
@@ -1644,5 +1856,244 @@ fn detect_audio_mime_type(audio_path: &str, audio_href: &str) -> &'static str {
     } else {
         // Default to MP3 if unknown
         "audio/mpeg"
+    }
+}
+
+#[cfg(test)]
+mod live_sync_marker_tests {
+    use super::*;
+
+    fn alignment(word: &str, start: f32, end: f32) -> WordAlignment {
+        WordAlignment {
+            word: word.to_string(),
+            start_sec: start,
+            end_sec: end,
+        }
+    }
+
+    #[test]
+    fn snapshot_query_opts_into_finite_live_mp3() {
+        assert!(!live_query_wants_snapshot(&LiveAudioQuery { snapshot: None }));
+        assert!(live_query_wants_snapshot(&LiveAudioQuery {
+            snapshot: Some("1".to_string()),
+        }));
+        assert!(!live_query_wants_snapshot(&LiveAudioQuery {
+            snapshot: Some("0".to_string()),
+        }));
+        assert!(!live_query_wants_snapshot(&LiveAudioQuery {
+            snapshot: Some("false".to_string()),
+        }));
+    }
+
+    #[test]
+    fn live_word_index_follows_time_inside_the_sentence() {
+        let manager = LiveStreamManager::new();
+        manager.start_stream("book", 0, None, Some("ch.xhtml".to_string()));
+        manager.push_sentence(
+            "book",
+            0,
+            0,
+            vec![1, 2, 3],
+            2.0,
+            "Hello world".to_string(),
+            vec![alignment("Hello", 0.0, 1.0), alignment("world", 1.0, 2.0)],
+        );
+
+        let marker = manager.resolve_sync_marker("book", 0, 1.4);
+        assert_eq!(marker.current_word_index, Some(1));
+        assert_eq!(marker.clip_begin, Some(0.0));
+        assert_eq!(marker.clip_end, Some(2.0));
+    }
+
+    #[test]
+    fn live_word_index_uses_last_word_when_past_last_alignment() {
+        let manager = LiveStreamManager::new();
+        manager.start_stream("book", 0, None, None);
+        manager.push_sentence(
+            "book",
+            0,
+            0,
+            vec![1, 2, 3],
+            2.0,
+            "Hello world".to_string(),
+            vec![alignment("Hello", 0.0, 0.8), alignment("world", 0.8, 1.4)],
+        );
+
+        let marker = manager.resolve_sync_marker("book", 0, 1.9);
+        assert_eq!(marker.current_word_index, Some(1));
+        let words = marker.word_alignments.expect("alignments");
+        assert!((words.last().unwrap().end_sec - 2.0).abs() < 1e-3);
+        let hello_span = words[0].end_sec - words[0].start_sec;
+        let world_span = words[1].end_sec - words[1].start_sec;
+        assert!(
+            (hello_span / 0.8 - world_span / 0.6).abs() < 0.05,
+            "live words must scale to PCM duration instead of dumping leftover time on the last word"
+        );
+    }
+
+    #[test]
+    fn live_word_alignments_are_clamped_to_sentence_duration() {
+        let manager = LiveStreamManager::new();
+        manager.start_stream("book", 0, None, None);
+        manager.push_sentence(
+            "book",
+            0,
+            0,
+            vec![1, 2, 3],
+            1.0,
+            "Hello world".to_string(),
+            vec![alignment("Hello", -0.2, 0.6), alignment("world", 0.6, 1.8)],
+        );
+
+        let marker = manager.resolve_sync_marker("book", 0, 0.7);
+        let words = marker.word_alignments.expect("alignments");
+        for word in &words {
+            assert!(word.start_sec >= 0.0);
+            assert!(word.end_sec <= 1.0 + 1e-3);
+        }
+    }
+
+    #[test]
+    fn live_sentence_clock_advances_by_pcm_duration() {
+        let manager = LiveStreamManager::new();
+        manager.start_stream("book", 0, None, Some("ch.xhtml".to_string()));
+        manager.push_sentence(
+            "book",
+            0,
+            0,
+            vec![1],
+            1.25,
+            "First.".to_string(),
+            vec![alignment("First.", 0.0, 0.8)],
+        );
+        manager.push_sentence(
+            "book",
+            0,
+            1,
+            vec![2],
+            0.75,
+            "Second.".to_string(),
+            vec![alignment("Second.", 0.0, 0.4)],
+        );
+
+        let first = manager.resolve_sync_marker("book", 0, 1.0);
+        assert_eq!(first.sentence_index, Some(0));
+        assert_eq!(first.clip_begin, Some(0.0));
+        assert_eq!(first.clip_end, Some(1.25));
+
+        let second = manager.resolve_sync_marker("book", 0, 1.4);
+        assert_eq!(second.sentence_index, Some(1));
+        assert_eq!(second.clip_begin, Some(1.25));
+        assert_eq!(second.clip_end, Some(2.0));
+    }
+
+    #[test]
+    fn live_sentence_clock_uses_concatenated_mp3_duration() {
+        let manager = LiveStreamManager::new();
+        manager.start_stream("book", 0, None, Some("ch.xhtml".to_string()));
+        let frame = crate::utils::mp3::silent_mpeg1_layer3_cbr128_frame();
+        let mp3_duration = crate::utils::mp3::playback_duration_seconds(&frame).unwrap();
+        manager.push_sentence(
+            "book",
+            0,
+            0,
+            frame.clone(),
+            1.0,
+            "First.".to_string(),
+            vec![alignment("First.", 0.0, 0.8)],
+        );
+        manager.push_sentence(
+            "book",
+            0,
+            1,
+            frame,
+            1.0,
+            "Second.".to_string(),
+            vec![alignment("Second.", 0.0, 0.8)],
+        );
+
+        assert!((manager.duration_seconds("book", 0) - 2.0 * mp3_duration).abs() < 1e-9);
+
+        let first = manager.resolve_sync_marker("book", 0, mp3_duration * 0.5);
+        assert_eq!(first.sentence_index, Some(0));
+        assert!((first.clip_end.unwrap() - mp3_duration).abs() < 1e-9);
+
+        let second = manager.resolve_sync_marker("book", 0, mp3_duration + mp3_duration * 0.5);
+        assert_eq!(second.sentence_index, Some(1));
+        assert!((second.clip_begin.unwrap() - mp3_duration).abs() < 1e-9);
+        assert!((second.clip_end.unwrap() - 2.0 * mp3_duration).abs() < 1e-9);
+    }
+
+    fn push_audio(
+        manager: &LiveStreamManager,
+        index: usize,
+        bytes: &[u8],
+        duration: f64,
+    ) {
+        manager.push_sentence(
+            "book",
+            0,
+            index,
+            bytes.to_vec(),
+            duration,
+            format!("s{index}"),
+            vec![alignment(&format!("s{index}"), 0.0, duration as f32)],
+        );
+    }
+
+    #[test]
+    fn live_mp3_snapshot_holds_later_sentences_until_the_gap_fills() {
+        let manager = LiveStreamManager::new();
+        manager.start_stream("book", 0, None, None);
+        push_audio(&manager, 0, b"a", 1.0);
+        push_audio(&manager, 2, b"c", 1.0);
+        push_audio(&manager, 3, b"d", 1.0);
+
+        assert_eq!(manager.snapshot_mp3("book", 0), b"a");
+        assert_eq!(manager.duration_seconds("book", 0), 1.0);
+        assert!(manager.has_sentences("book", 0));
+
+        let marker = manager.resolve_sync_marker("book", 0, 1.5);
+        assert_eq!(marker.sentence_index, Some(0));
+
+        push_audio(&manager, 1, b"b", 1.0);
+        assert_eq!(manager.snapshot_mp3("book", 0), b"abcd");
+        assert_eq!(manager.duration_seconds("book", 0), 4.0);
+
+        let marker = manager.resolve_sync_marker("book", 0, 2.5);
+        assert_eq!(marker.sentence_index, Some(2));
+    }
+
+    #[test]
+    fn live_stream_emits_buffered_sentences_only_in_index_order() {
+        let mut pending = BTreeMap::new();
+        let mut next = 0usize;
+
+        assert!(enqueue_live_sentence_audio(&mut pending, &mut next, 2, b"c".to_vec()).is_empty());
+        assert!(enqueue_live_sentence_audio(&mut pending, &mut next, 1, b"b".to_vec()).is_empty());
+        assert_eq!(
+            enqueue_live_sentence_audio(&mut pending, &mut next, 0, b"a".to_vec()),
+            vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]
+        );
+        assert_eq!(next, 3);
+    }
+
+    #[test]
+    fn live_snapshot_resync_recovers_a_dropped_broadcast() {
+        let manager = LiveStreamManager::new();
+        manager.start_stream("book", 0, None, None);
+        push_audio(&manager, 0, b"a", 1.0);
+        push_audio(&manager, 1, b"b", 1.0);
+
+        let mut pending = BTreeMap::new();
+        let mut next = 0usize;
+        let first = manager.copy_ready_live_chunks("book", 0, &mut pending, &mut next);
+        assert_eq!(first, vec![b"a".to_vec(), b"b".to_vec()]);
+        assert_eq!(next, 2);
+
+        push_audio(&manager, 2, b"c", 1.0);
+        let recovered = manager.copy_ready_live_chunks("book", 0, &mut pending, &mut next);
+        assert_eq!(recovered, vec![b"c".to_vec()]);
+        assert_eq!(next, 3);
     }
 }

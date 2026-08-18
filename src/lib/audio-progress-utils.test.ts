@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  applyMediaPlaybackRate,
   applyNativePlayerEvent,
   canRestoreSavedTime,
   mimeTypeFromTrackHref,
@@ -93,5 +94,21 @@ describe("trackDisplayTitle", () => {
     expect(trackDisplayTitle("Intro", 0)).toBe("Intro");
     expect(trackDisplayTitle(null, 2)).toBe("Track 3");
     expect(trackDisplayTitle(undefined, 0)).toBe("Track 1");
+  });
+});
+
+describe("applyMediaPlaybackRate", () => {
+  it("sets both playbackRate and defaultPlaybackRate", () => {
+    const media = { playbackRate: 1, defaultPlaybackRate: 1 };
+    expect(applyMediaPlaybackRate(media, 1.5)).toBe(1.5);
+    expect(media.playbackRate).toBe(1.5);
+    expect(media.defaultPlaybackRate).toBe(1.5);
+  });
+
+  it("falls back to 1x for invalid rates", () => {
+    const media = { playbackRate: 2, defaultPlaybackRate: 2 };
+    expect(applyMediaPlaybackRate(media, Number.NaN)).toBe(1);
+    expect(media.playbackRate).toBe(1);
+    expect(media.defaultPlaybackRate).toBe(1);
   });
 });

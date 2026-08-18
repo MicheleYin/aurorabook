@@ -45,7 +45,7 @@ export function ReaderHeader({
     loadLastOpenedAudioTrack(book, false);
   }, [loadLastOpenedAudioTrack, book]);
   return (
-    <div className="flex-shrink-0 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <div className="flex-shrink-0 select-none border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="flex items-center justify-between p-4">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" onClick={onBack}>

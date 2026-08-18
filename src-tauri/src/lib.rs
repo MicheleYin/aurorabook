@@ -14,6 +14,7 @@ pub mod epub;  // Made public for testing
 pub mod utils;  // Made public for testing
 pub mod background;
 pub mod native_player;
+pub mod dictionary;
 mod window;
 mod logging;
 
@@ -199,6 +200,7 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             greet,
+            dictionary::lookup_dictionary,
             tts_commands::init_kokoros_engine,
             tts_commands::generate_tts_cached,
             tts_commands::generate_tts_batch,

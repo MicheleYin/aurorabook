@@ -102,7 +102,7 @@ async fn test_onnx_model_and_voices_file() {
         voices_path_str,
         1, // Use 1 instance for testing
     )
-    .await;
+    .await.expect("TTS init");
 
     println!("✅ Model loaded successfully with kokoros!");
 }
@@ -146,7 +146,7 @@ async fn test_simple_tts_generation() {
         voices_path_str,
         1, // Use 1 instance for simple test
     )
-    .await;
+    .await.expect("TTS init");
 
     println!("✅ Engine initialized");
 
@@ -263,7 +263,7 @@ async fn test_onnx_only() {
         voices_path_str,
         1, // Use 1 instance for testing
     )
-    .await;
+    .await.expect("TTS init");
 
     println!("✅ ONNX engine initialized successfully!");
 
@@ -389,7 +389,7 @@ async fn test_generate_and_save_audio() {
     // Initialize Supertonic-backed engine (legacy tests referred to this as "kokoros").
     let engine =
         aurorabook_lib::tts::koko::TTSKokoParallel::new_with_instances(model_path_str, voices_path_str, 1)
-            .await;
+            .await.expect("TTS init");
 
     // Generate audio
     let test_text = "Hello, this is a test of the text to speech system. How does it sound?";
@@ -566,18 +566,14 @@ async fn test_quantized_model_tts() {
 
     // Initialize kokoros engine with the quantized model
     println!("\n📦 Initializing kokoros engine with quantized model...");
-    let engine = match aurorabook_lib::tts::koko::TTSKokoParallel::new_with_instances(
+    let engine = aurorabook_lib::tts::koko::TTSKokoParallel::new_with_instances(
         model_path_str,
         voices_path_str,
         1, // Use 1 instance for testing
     )
     .await
-    {
-        engine => {
-            println!("✅ Engine initialized successfully!");
-            engine
-        }
-    };
+    .expect("TTS init");
+    println!("✅ Engine initialized successfully!");
 
     // Generate audio
     let test_text = "Hello, this is a test using a quantized model from Kokoro-82M-v1.0-ONNX.";
@@ -762,7 +758,8 @@ async fn generate_voice_samples() {
     println!("\n📦 Initializing TTS engine...");
     let engine =
         aurorabook_lib::tts::koko::TTSKokoParallel::new_with_instances(model_path_str, voices_path_str, 1)
-            .await;
+            .await
+            .expect("TTS init");
 
     println!("✅ Engine initialized\n");
 

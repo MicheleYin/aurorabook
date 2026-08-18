@@ -87,11 +87,13 @@
   html,
   body {
     @apply bg-background text-foreground;
-    /* Prevent body scroll on mobile - app handles all scrolling internally */
+    /* Prevent body scroll on mobile - app handles all scrolling internally.
+       Avoid position:fixed here: WebKit then paints text selection against
+       un-scrolled coordinates, so the highlight lands on text above the cursor. */
     overflow: hidden;
     height: 100%;
     width: 100%;
-    position: fixed;
+    overscroll-behavior: none;
   }
 
   body {
@@ -105,30 +107,6 @@
     height: 100%;
     width: 100%;
     overflow: hidden;
-  }
-
-  /* Prevent text selection on all elements except input text elements */
-  * {
-    -webkit-user-select: none;
-    -moz-user-select: none;
-    -ms-user-select: none;
-    user-select: none;
-  }
-
-  /* Allow text selection for input and textarea elements */
-  input[type="text"],
-  input[type="email"],
-  input[type="password"],
-  input[type="search"],
-  input[type="tel"],
-  input[type="url"],
-  input[type="number"],
-  textarea,
-  [contenteditable="true"] {
-    -webkit-user-select: text;
-    -moz-user-select: text;
-    -ms-user-select: text;
-    user-select: text;
   }
 }
 
@@ -376,12 +354,33 @@
 
   /* Active state - background fully visible, still no shadows/layout props */
   .audio-highlight.audio-highlight-active {
-    background-color: rgba(254, 240, 138, 0.6);
+    background-color: rgba(254, 240, 138, 0.35);
     box-shadow: none !important;
   }
 
   .dark .audio-highlight.audio-highlight-active {
-    background-color: rgba(133, 77, 14, 0.4);
+    background-color: rgba(133, 77, 14, 0.25);
+  }
+
+  .audio-word {
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+    outline: none !important;
+    box-shadow: none !important;
+    color: inherit;
+    background-color: transparent;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    border-radius: 0.125em;
+  }
+
+  .audio-word.audio-highlight-word {
+    background-color: rgba(254, 240, 138, 0.85);
+  }
+
+  .dark .audio-word.audio-highlight-word {
+    background-color: rgba(133, 77, 14, 0.55);
   }
 
   /* Fade out animation when removing highlight - only affects background */
@@ -983,4 +982,18 @@
       transition-duration: 0.01ms !important;
     }
   }
+}
+
+/* Unlayered so EPUB <style> tags cannot re-enable selection. */
+.reader-content-selectable,
+.reader-content-selectable *,
+.reader-prose,
+.reader-prose *,
+[data-reader-chapter-content],
+[data-reader-chapter-content] * {
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
 }

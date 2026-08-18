@@ -96,10 +96,11 @@ cocoa = "0.26"
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 ort = { version = "2.0.0-rc.12", features = ["webgpu"] }
 
-# iOS: CoreML EP with ORT_DIRECT_LINK + locally built static libs (see LOCAL_IOS_BUILD.md).
+# iOS: CPU EP only (CoreML EP previously aborted / spiked memory). ORT_DIRECT_LINK +
+# locally built static libs (see LOCAL_IOS_BUILD.md).
 # waterkit-background: BGContinuedProcessingTaskRequest (iOS 26+) via Swift bridge.
 [target.'cfg(target_os = "ios")'.dependencies]
-ort = { version = "2.0.0-rc.12", features = ["coreml"] }
+ort = { version = "2.0.0-rc.12" }
 waterkit-background = { path = "../patches/waterkit-background" }
 
 
@@ -114,13 +115,10 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = true
-# Changed from "abort" to "unwind" to allow tokio to catch panics in tasks
-# With "abort", any panic immediately terminates the process (SIGABRT) before
-# tokio can catch it and convert to JoinError. With "unwind", panics can be
-# caught and handled gracefully, allowing the conversion to continue or fail
-# with a proper error message instead of crashing the entire app.
-# Trade-off: slightly larger binary size (~5-10%), but much better error handling
-panic = "abort"
+# Must be "unwind" so tokio can catch panics in tasks as JoinError.
+# With "abort", any Rust panic (including OOM during ONNX load) becomes SIGABRT
+# and kills the whole iOS process before our error handling runs.
+panic = "unwind"
 # Preserve floating-point precision for audio processing
 # This prevents aggressive optimizations that could affect audio quality
 overflow-checks = false

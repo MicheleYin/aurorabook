@@ -4,7 +4,7 @@ import { useRef } from "react";
 
 import { useAudioTextSync } from "./useAudioTextSync";
 import type { Book, Chapter } from "../types/book";
-import { HIGHLIGHT_ACTIVE_CLASS, HIGHLIGHT_CLASS } from "../lib/audio-sync-utils";
+import { HIGHLIGHT_ACTIVE_CLASS, HIGHLIGHT_CLASS, HIGHLIGHT_WORD_CLASS, AUTO_SCROLL_RESUME_MS } from "../lib/audio-sync-utils";
 import { invoke } from "../test/tauri-mocks";
 
 const loadChapterContent = vi.fn(async () => undefined);
@@ -166,6 +166,14 @@ function mountReaderDom() {
   return { scrollContainer, span1, span2, audio };
 }
 
+function seekAudio(audio: HTMLAudioElement, time: number, emitSeeked = true) {
+  audio.currentTime = time;
+  audio.dispatchEvent(new Event("seeking"));
+  if (emitSeeked) {
+    audio.dispatchEvent(new Event("seeked"));
+  }
+}
+
 describe("useAudioTextSync", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -194,6 +202,7 @@ describe("useAudioTextSync", () => {
   afterEach(() => {
     document.body.innerHTML = "";
     audioRef.current = null;
+    invoke.mockReset();
     vi.useRealTimers();
   });
 
@@ -211,8 +220,7 @@ describe("useAudioTextSync", () => {
     );
 
     act(() => {
-      if (audioRef.current) audioRef.current.currentTime = 1.0;
-      vi.advanceTimersByTime(250);
+      seekAudio(audioRef.current as HTMLAudioElement, 1.0);
     });
 
     expect(span1.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
@@ -240,8 +248,7 @@ describe("useAudioTextSync", () => {
     );
 
     act(() => {
-      if (audioRef.current) audioRef.current.currentTime = 1.0;
-      vi.advanceTimersByTime(250);
+      seekAudio(audioRef.current as HTMLAudioElement, 1.0);
     });
 
     expect(span1.classList.contains(HIGHLIGHT_CLASS)).toBe(false);
@@ -275,14 +282,64 @@ describe("useAudioTextSync", () => {
     );
 
     act(() => {
-      if (audioRef.current) audioRef.current.currentTime = 1.0;
-      vi.advanceTimersByTime(250);
+      seekAudio(audioRef.current as HTMLAudioElement, 1.0);
     });
 
     expect(loadChapterContent).toHaveBeenCalledWith(
       "book-1",
       expect.objectContaining({ href: "ch2.xhtml" })
     );
+  });
+
+  it("loads the live track chapter when sync is enabled even without a SMIL marker", () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_live_sync_marker") {
+        return {};
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    currentAudioTrack = {
+      ...currentAudioTrack,
+      id: "live-book-1-1",
+      chapterHref: "ch2.xhtml",
+      filePath: "ch2.xhtml",
+      href: "ch2.xhtml",
+      isLiveStream: true,
+      liveChapterIndex: 1,
+      order: 1,
+    };
+
+    const { scrollContainer } = mountReaderDom();
+    const book = createBook();
+    book.audioSyncMap = { segments: [] };
+    book.chapters.push({
+      id: "ch-2",
+      bookId: "book-1",
+      title: "Chapter 2",
+      href: "ch2.xhtml",
+      chapterOrder: 1,
+    });
+
+    const { result: refs } = renderHook(() => {
+      const scrollContainerRef = useRef<HTMLDivElement | null>(scrollContainer);
+      return { scrollContainerRef };
+    });
+
+    renderHook(() =>
+      useAudioTextSync(book, refs.current.scrollContainerRef, undefined, true)
+    );
+
+    expect(loadChapterContent).toHaveBeenCalledTimes(1);
+    expect(loadChapterContent).toHaveBeenCalledWith(
+      "book-1",
+      expect.objectContaining({ href: "ch2.xhtml" })
+    );
+
+    act(() => {
+      seekAudio(audioRef.current as HTMLAudioElement, 1.0);
+    });
+    expect(loadChapterContent).toHaveBeenCalledTimes(1);
   });
 
   it("advances highlight to the next segment and scrolls when offscreen", () => {
@@ -300,18 +357,70 @@ describe("useAudioTextSync", () => {
     );
 
     act(() => {
-      if (audioRef.current) audioRef.current.currentTime = 1.0;
-      vi.advanceTimersByTime(250);
+      seekAudio(audioRef.current as HTMLAudioElement, 1.0);
     });
     expect(span1.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
 
     act(() => {
-      if (audioRef.current) audioRef.current.currentTime = 6.0;
-      vi.advanceTimersByTime(250);
+      seekAudio(audioRef.current as HTMLAudioElement, 6.0);
     });
 
     expect(span2.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
     expect(scrollContainer.scrollTo).toHaveBeenCalled();
+  });
+
+  it("lets the user scroll and resumes follow-scroll after idle", () => {
+    const { scrollContainer, span2 } = mountReaderDom();
+    scrollContainer.scrollTo = vi.fn();
+    const book = createBook();
+
+    const { result: refs } = renderHook(() => {
+      const scrollContainerRef = useRef<HTMLDivElement | null>(scrollContainer);
+      return { scrollContainerRef };
+    });
+
+    renderHook(() =>
+      useAudioTextSync(book, refs.current.scrollContainerRef, undefined, true)
+    );
+
+    act(() => {
+      scrollContainer.dispatchEvent(new Event("wheel", { bubbles: true }));
+      seekAudio(audioRef.current as HTMLAudioElement, 6.0);
+    });
+
+    expect(span2.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
+    expect(scrollContainer.scrollTo).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(AUTO_SCROLL_RESUME_MS);
+    });
+
+    expect(scrollContainer.scrollTo).toHaveBeenCalled();
+  });
+
+  it("does not follow-scroll while the pointer is selecting text", () => {
+    const { scrollContainer, span2 } = mountReaderDom();
+    scrollContainer.scrollTo = vi.fn();
+    const book = createBook();
+
+    const { result: refs } = renderHook(() => {
+      const scrollContainerRef = useRef<HTMLDivElement | null>(scrollContainer);
+      return { scrollContainerRef };
+    });
+
+    renderHook(() =>
+      useAudioTextSync(book, refs.current.scrollContainerRef, undefined, true)
+    );
+
+    act(() => {
+      scrollContainer.dispatchEvent(
+        new PointerEvent("pointerdown", { button: 0, bubbles: true })
+      );
+      seekAudio(audioRef.current as HTMLAudioElement, 6.0);
+    });
+
+    expect(span2.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
+    expect(scrollContainer.scrollTo).not.toHaveBeenCalled();
   });
 
   it("preserves scroll position when sync is toggled", () => {
@@ -365,8 +474,7 @@ describe("useAudioTextSync", () => {
     );
 
     act(() => {
-      if (audioRef.current) audioRef.current.currentTime = 1.0;
-      vi.advanceTimersByTime(250);
+      seekAudio(audioRef.current as HTMLAudioElement, 1.0);
       vi.advanceTimersByTime(100);
     });
     expect(span1.classList.contains(HIGHLIGHT_ACTIVE_CLASS)).toBe(true);
@@ -381,6 +489,43 @@ describe("useAudioTextSync", () => {
 
     expect(span1.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
     expect(span1.classList.contains(HIGHLIGHT_ACTIVE_CLASS)).toBe(true);
+  });
+
+  it("does not follow-scroll when the reader header is toggled", () => {
+    const { scrollContainer, span2 } = mountReaderDom();
+    scrollContainer.scrollTo = vi.fn();
+    const book = createBook();
+
+    const { result: refs } = renderHook(() => {
+      const scrollContainerRef = useRef<HTMLDivElement | null>(scrollContainer);
+      return { scrollContainerRef };
+    });
+
+    const { rerender } = renderHook(
+      ({ headerVisible }: { headerVisible: boolean }) =>
+        useAudioTextSync(
+          book,
+          refs.current.scrollContainerRef,
+          undefined,
+          headerVisible
+        ),
+      { initialProps: { headerVisible: true } }
+    );
+
+    act(() => {
+      seekAudio(audioRef.current as HTMLAudioElement, 6.0);
+    });
+    expect(span2.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
+    expect(scrollContainer.scrollTo).toHaveBeenCalled();
+    vi.mocked(scrollContainer.scrollTo).mockClear();
+
+    rerender({ headerVisible: false });
+    act(() => {
+      scrollContainer.dispatchEvent(new Event("scroll"));
+      vi.advanceTimersByTime(AUTO_SCROLL_RESUME_MS);
+    });
+
+    expect(scrollContainer.scrollTo).not.toHaveBeenCalled();
   });
 
   it("polls live sync markers and highlights the returned element", async () => {
@@ -422,11 +567,15 @@ describe("useAudioTextSync", () => {
     );
 
     await act(async () => {
-      if (audioRef.current) audioRef.current.currentTime = 1.5;
-      vi.advanceTimersByTime(250);
       await Promise.resolve();
       await Promise.resolve();
+    });
+
+    await act(async () => {
       vi.advanceTimersByTime(250);
+      seekAudio(audioRef.current as HTMLAudioElement, 1.5);
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(invoke).toHaveBeenCalledWith(
@@ -439,13 +588,155 @@ describe("useAudioTextSync", () => {
     );
 
     await act(async () => {
-      if (audioRef.current) audioRef.current.currentTime = 1.7;
       vi.advanceTimersByTime(250);
+      seekAudio(audioRef.current as HTMLAudioElement, 1.7);
       await Promise.resolve();
       await Promise.resolve();
       vi.advanceTimersByTime(100);
     });
 
     expect(span2.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
+  });
+
+  it("highlights the spoken word while live streaming from clock time", async () => {
+    currentAudioTrack = {
+      ...currentAudioTrack,
+      id: "live-book-1-0",
+      href: "ch1.xhtml",
+      filePath: "ch1.xhtml",
+      isLiveStream: true,
+      liveChapterIndex: 0,
+    };
+
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_live_sync_marker") {
+        return {
+          textElementId: "f000001",
+          chapterHref: "ch1.xhtml",
+          sentenceIndex: 0,
+          clipBegin: 0,
+          clipEnd: 2,
+          currentWordIndex: 0,
+          sentenceText: "Hello world this is spoken",
+          wordAlignments: [
+            { word: "Hello", startSec: 0, endSec: 0.4 },
+            { word: "world", startSec: 0.4, endSec: 0.8 },
+            { word: "this", startSec: 0.8, endSec: 1.2 },
+            { word: "is", startSec: 1.2, endSec: 1.5 },
+            { word: "spoken", startSec: 1.5, endSec: 2 },
+          ],
+        };
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const scrollContainer = document.createElement("div");
+    Object.defineProperties(scrollContainer, {
+      scrollTop: { configurable: true, writable: true, value: 0 },
+      scrollHeight: { configurable: true, value: 1000 },
+      offsetTop: { configurable: true, value: 0 },
+    });
+    scrollContainer.getBoundingClientRect = () =>
+      ({
+        top: 0,
+        bottom: 500,
+        left: 0,
+        right: 300,
+        width: 300,
+        height: 500,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    scrollContainer.scrollTo = vi.fn();
+
+    const prose = document.createElement("div");
+    prose.className = "prose";
+    const paragraph = document.createElement("p");
+    paragraph.textContent =
+      "Once upon a time Hello world this is spoken and then more.";
+    paragraph.getBoundingClientRect = () =>
+      ({
+        top: 200,
+        bottom: 220,
+        left: 10,
+        right: 100,
+        width: 90,
+        height: 20,
+        x: 10,
+        y: 200,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    Object.defineProperty(paragraph, "offsetTop", { value: 200 });
+    prose.appendChild(paragraph);
+    scrollContainer.appendChild(prose);
+    document.body.appendChild(scrollContainer);
+
+    const audio = document.createElement("audio");
+    Object.defineProperty(audio, "currentTime", {
+      configurable: true,
+      writable: true,
+      value: 0,
+    });
+    audioRef.current = audio;
+
+    const book = createBook();
+    book.audioSyncMap = { segments: [] };
+
+    const { result: refs } = renderHook(() => {
+      const scrollContainerRef = useRef<HTMLDivElement | null>(scrollContainer);
+      return { scrollContainerRef };
+    });
+
+    renderHook(() =>
+      useAudioTextSync(book, refs.current.scrollContainerRef, undefined, true)
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+      seekAudio(audio, 1.35);
+      await Promise.resolve();
+      await Promise.resolve();
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(paragraph.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
+    expect(
+      paragraph
+        .querySelector('[data-sync-word="3"]')
+        ?.classList.contains(HIGHLIGHT_WORD_CLASS)
+    ).toBe(true);
+    expect(
+      paragraph.querySelector('[data-sync-word="0"]')?.classList.contains(
+        HIGHLIGHT_WORD_CLASS
+      )
+    ).toBe(false);
+  });
+
+  it("updates highlight immediately while scrubbing without autoscroll", () => {
+    const { scrollContainer, span2 } = mountReaderDom();
+    scrollContainer.scrollTo = vi.fn();
+    const book = createBook();
+
+    const { result: refs } = renderHook(() => {
+      const scrollContainerRef = useRef<HTMLDivElement | null>(scrollContainer);
+      return { scrollContainerRef };
+    });
+
+    renderHook(() =>
+      useAudioTextSync(book, refs.current.scrollContainerRef, undefined, true)
+    );
+
+    act(() => {
+      seekAudio(audioRef.current as HTMLAudioElement, 6.0, false);
+    });
+
+    expect(span2.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
+    expect(scrollContainer.scrollTo).not.toHaveBeenCalled();
   });
 });

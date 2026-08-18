@@ -25,7 +25,7 @@ export function ReaderNavigation({
   const hasNext = currentChapterIndex < book.chapters.length - 1;
 
   return (
-    <div className="absolute left-0 right-0 z-10 flex-shrink-0 bottom-0 safe-area-bottom">
+    <div className="absolute left-0 right-0 z-10 flex-shrink-0 bottom-0 select-none safe-area-bottom">
       <div className="flex items-center justify-between p-4">
         <Button
           variant="outline"

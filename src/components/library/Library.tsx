@@ -9,14 +9,19 @@ import { useAudioProgressContext } from "@/context/AudioProgressContext";
 import type { Book } from "../../types/book";
 import { useAppContext } from "../../context/AppContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
+import { useUnfinishedChapterDuration } from "../../hooks/useUnfinishedChapterDuration";
 import { staggerDelay } from "../../lib/animations";
+import {
+  sumAudioTrackDurationSeconds,
+  totalBookAudioDurationSeconds,
+} from "../../lib/book-audio-duration";
 import { logger } from "../../lib/logger";
 import {
   showLoadingToast,
   updateLoadingToastToError,
   updateLoadingToastToSuccess,
 } from "../../lib/toast-utils";
-import { cn } from "../../lib/utils";
+import { cn, formatTime } from "../../lib/utils";
 import { LoadingScreen } from "../app/LoadingScreen";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardFooter } from "../ui/card";
@@ -25,6 +30,24 @@ import { Progress } from "../ui/progress";
 import { BookDetailDialog } from "./BookDetailDialog";
 
 type ViewMode = "grid" | "list";
+
+function LibraryBookDuration({ book }: Readonly<{ book: Book }>) {
+  const unfinishedDurationSeconds = useUnfinishedChapterDuration(book, true);
+  const totalDurationSeconds = totalBookAudioDurationSeconds(
+    sumAudioTrackDurationSeconds(book.audioTracks),
+    unfinishedDurationSeconds
+  );
+
+  if (totalDurationSeconds <= 0) {
+    return null;
+  }
+
+  return (
+    <span className="text-xs text-muted-foreground">
+      {formatTime(totalDurationSeconds)}
+    </span>
+  );
+}
 
 export function Library() {
   const {
@@ -426,7 +449,7 @@ export function Library() {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="flex h-full flex-col overflow-hidden select-none">
       <div className="flex-shrink-0 p-6 space-y-4 border-b">
         <div className="flex items-center justify-between">
           <div>
@@ -539,6 +562,7 @@ export function Library() {
                       >
                         {book.author}
                       </p>
+                      <LibraryBookDuration book={book} />
                     </div>
                     {convertingBookId === book.id && conversionProgress && (
                       <div className="space-y-1">
@@ -619,6 +643,7 @@ export function Library() {
                           <span>{book.chapters.length} chapters</span>
                         )}
                         {book.pageCount && <span>{book.pageCount} pages</span>}
+                        <LibraryBookDuration book={book} />
                         {!!book.progress?.bookProgressPercent && (
                           <span>
                             {Math.round(book.progress.bookProgressPercent)}%

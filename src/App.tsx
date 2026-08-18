@@ -62,7 +62,7 @@ function AppContent() {
             <Settings />
           </TabsContent>
         </main>
-        <div className="absolute bottom-0 left-0 right-0 flex justify-center pb-4 pointer-events-none z-10">
+        <div className="absolute bottom-0 left-0 right-0 flex justify-center pb-4 pointer-events-none z-10 select-none">
           <TabsList className="rounded-full bg-background/80 backdrop-blur-lg border shadow-lg px-1 py-2 gap-1 pointer-events-auto">
             <TabsTrigger
               value="library"
