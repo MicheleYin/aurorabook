@@ -100,13 +100,34 @@ if (!fs.existsSync(appPath)) {
 const nestedBinaryCandidates = [
   path.join(appPath, "Contents", "Resources", "resources", "ort-dylibs", "libwebgpu_dawn.dylib"),
   path.join(appPath, "Contents", "Resources", "ort-dylibs", "libwebgpu_dawn.dylib"),
+  path.join(appPath, "Contents", "Resources", "resources", "ffmpeg-bin", "ffmpeg"),
+  path.join(appPath, "Contents", "Resources", "ffmpeg-bin", "ffmpeg"),
   path.join(appPath, "Contents", "Resources", "resources", "ffmpeg"),
   path.join(appPath, "Contents", "Resources", "ffmpeg"),
-  path.join(appPath, "Contents", "Resources", "resources", "bin", "ffmpeg"),
-  path.join(appPath, "Contents", "Resources", "bin", "ffmpeg"),
 ];
 
-const nestedBinaryPaths = nestedBinaryCandidates.filter((p) => fs.existsSync(p) && fs.statSync(p).isFile());
+function collectFfmpegLibDylibs(appBundlePath) {
+  const libDirs = [
+    path.join(appBundlePath, "Contents", "Resources", "resources", "ffmpeg-bin", "lib"),
+    path.join(appBundlePath, "Contents", "Resources", "ffmpeg-bin", "lib"),
+  ];
+  const out = [];
+  for (const libDir of libDirs) {
+    if (!fs.existsSync(libDir) || !fs.statSync(libDir).isDirectory()) continue;
+    for (const entry of fs.readdirSync(libDir)) {
+      const full = path.join(libDir, entry);
+      if (entry.endsWith(".dylib") && fs.statSync(full).isFile()) {
+        out.push(full);
+      }
+    }
+  }
+  return out;
+}
+
+const nestedBinaryPaths = [
+  ...nestedBinaryCandidates.filter((p) => fs.existsSync(p) && fs.statSync(p).isFile()),
+  ...collectFfmpegLibDylibs(appPath),
+];
 
 if (nestedBinaryPaths.length > 0) {
   const appSigningIdentity = (process.env.APPLE_SIGNING_IDENTITY || "").trim();

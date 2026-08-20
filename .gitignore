@@ -52,6 +52,7 @@ src-tauri/signing/*
 # Copied at bundle time from Cargo output (see scripts/copy-ort-webgpu-dylib.cjs)
 src-tauri/resources/ort-dylibs/*.dylib
 # Optional local App Store resource staging (copied by scripts/ensure-macos-ffmpeg-resource.cjs)
+src-tauri/resources/ffmpeg-bin/
 src-tauri/resources/ffmpeg
 src-tauri/resources/ffmpeg.exe
 

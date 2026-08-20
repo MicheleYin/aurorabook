@@ -189,6 +189,10 @@ export function AudioExportStateProvider({
       return null;
     }
     void exportEtaTick;
+    // Prefer backend ETA (from FFmpeg media clock / speed) when present.
+    if (exportProgress.etaMs != null) {
+      return exportProgress.etaMs;
+    }
     return linearAudioExportEtaMs(
       exportStartedAtMs,
       exportProgress.processedTracks,

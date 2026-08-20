@@ -8,10 +8,10 @@ cd "$ROOT/src-tauri"
 
 export PATH="${HOME}/.cargo/bin:${PATH}"
 
-mkdir -p resources/ort-dylibs
-if [[ ! -f resources/ffmpeg ]]; then
-  : > resources/ffmpeg
-  chmod +x resources/ffmpeg
+mkdir -p resources/ort-dylibs resources/ffmpeg-bin
+if [[ ! -f resources/ffmpeg-bin/ffmpeg ]]; then
+  : > resources/ffmpeg-bin/ffmpeg
+  chmod +x resources/ffmpeg-bin/ffmpeg
 fi
 
 if [[ $# -eq 0 ]]; then

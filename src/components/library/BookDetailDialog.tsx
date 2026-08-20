@@ -301,9 +301,11 @@ const BookDetailContent = ({
             <p className="text-sm font-medium mb-2">{t("book.export_progress")}</p>
             <div className="space-y-2">
               <div className="text-sm text-muted-foreground">
-                {audioExportStepLabel === audioExportStepKey
-                  ? audioExportProgress.message || audioExportProgress.currentStep
-                  : audioExportStepLabel}
+                {audioExportProgress.message
+                  ? audioExportProgress.message
+                  : audioExportStepLabel === audioExportStepKey
+                    ? audioExportProgress.currentStep
+                    : audioExportStepLabel}
               </div>
               <div className="text-xs text-muted-foreground">
                 {t("book.export_track_count", {
