@@ -32,6 +32,19 @@ fn candidate_if_file(path: PathBuf) -> Option<PathBuf> {
     }
 }
 
+fn bundled_ffmpeg_candidates(base: PathBuf) -> [PathBuf; 2] {
+    [
+        base.join("ffmpeg-bin").join("ffmpeg"),
+        base.join("ffmpeg"),
+    ]
+}
+
+fn first_bundled_ffmpeg(base: PathBuf) -> Option<PathBuf> {
+    bundled_ffmpeg_candidates(base)
+        .into_iter()
+        .find_map(candidate_if_file)
+}
+
 fn detect_ffmpeg_path() -> PathBuf {
     if let Ok(p) = std::env::var("AURORABOOK_FFMPEG") {
         let pb = PathBuf::from(p.trim());
@@ -42,41 +55,38 @@ fn detect_ffmpeg_path() -> PathBuf {
 
     if let Ok(p) = std::env::var("TAURI_RESOURCE_DIR") {
         let root = PathBuf::from(p);
-        if let Some(found) = candidate_if_file(root.join("ffmpeg")) {
+        if let Some(found) = first_bundled_ffmpeg(root.clone()) {
             return found;
         }
-        if let Some(found) = candidate_if_file(root.join("resources").join("ffmpeg")) {
+        if let Some(found) = first_bundled_ffmpeg(root.join("resources")) {
             return found;
         }
     }
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(contents_dir) = exe.parent().and_then(|p| p.parent()) {
-            if let Some(found) = candidate_if_file(contents_dir.join("Resources").join("ffmpeg")) {
+            let resources = contents_dir.join("Resources");
+            if let Some(found) = first_bundled_ffmpeg(resources.join("resources")) {
                 return found;
             }
-            if let Some(found) =
-                candidate_if_file(contents_dir.join("Resources").join("resources").join("ffmpeg"))
-            {
+            if let Some(found) = first_bundled_ffmpeg(resources) {
                 return found;
             }
         }
     }
 
     if let Ok(current_dir) = std::env::current_dir() {
-        if let Some(found) = candidate_if_file(current_dir.join("src-tauri").join("resources").join("ffmpeg")) {
+        let dev_resources = current_dir.join("src-tauri").join("resources");
+        if let Some(found) = first_bundled_ffmpeg(dev_resources.clone()) {
             return found;
         }
-        if let Some(found) = candidate_if_file(current_dir.join("resources").join("ffmpeg")) {
+        if let Some(found) = first_bundled_ffmpeg(current_dir.join("resources")) {
             return found;
         }
     }
 
-    if let Some(found) = candidate_if_file(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join("ffmpeg"),
-    ) {
+    let manifest_resources = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+    if let Some(found) = first_bundled_ffmpeg(manifest_resources) {
         return found;
     }
 

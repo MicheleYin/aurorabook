@@ -21,24 +21,17 @@ APPLE_TEAM_ID=XXXXXXXXXX bun run scripts/gen-macos-appstore-entitlements.cjs
 
 Or set `APPLE_TEAM_ID` in your shell environment and run without the prefix.
 
-## Bundled FFmpeg for Mac App Store
+## Bundled FFmpeg for macOS
 
-`bun run build:macos:appstore` now verifies a bundled FFmpeg binary at `src-tauri/resources/ffmpeg`.
+macOS builds bundle a self-contained FFmpeg directory at `src-tauri/resources/ffmpeg-bin/`
+(executable + dylibs). iOS builds never include FFmpeg.
 
-- If the file is already there, it is reused.
-- Otherwise set `MACOS_APPSTORE_FFMPEG=/absolute/path/to/ffmpeg` and the build script copies it into `src-tauri/resources/ffmpeg`.
+- `bun run build:macos` and `bun run build:macos:appstore` run `ensure-macos-ffmpeg-resource.cjs` first.
+- Auto-detects Homebrew ffmpeg when present; override with `AURORABOOK_FFMPEG` or `MACOS_APPSTORE_FFMPEG`.
+- Manual staging: `bun run sync:ffmpeg -- /path/to/ffmpeg` or `bun run bundle:ffmpeg:macos`.
 
-The App Store signing step re-signs this nested binary with `Entitlements.macos-appstore.nested-exec.plist`.
-
-### Copy FFmpeg into `src-tauri/resources/ffmpeg` (any time)
-
-From `tts-tauri/`:
-
-```bash
-bun run sync:ffmpeg -- /path/to/ffmpeg
-```
-
-Same as `node scripts/copy-ffmpeg-to-resources.cjs /path/to/ffmpeg`. The destination is gitignored.
+The App Store signing step re-signs the nested ffmpeg binary (and bundled dylibs) with
+`Entitlements.macos-appstore.nested-exec.plist`.
 
 ## Regenerating src-tauri/gen/apple/ (Xcode project)
 

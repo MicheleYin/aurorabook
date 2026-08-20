@@ -83,9 +83,9 @@ bun run test:rust:coverage
 cd src-tauri && cargo llvm-cov --html --open --lib --test mod
 ```
 
-On macOS, `tauri.macos.conf.json` requires `resources/ffmpeg` (and the ORT
+On macOS, `tauri.macos.conf.json` requires `resources/ffmpeg-bin/` (and the ORT
 WebGPU dylib path) to exist for `tauri_build`. The coverage / test scripts stub
-`resources/ffmpeg` when missing; CI does the same.
+`resources/ffmpeg-bin/ffmpeg` when missing; CI does the same.
 
 ### Full local suite
 

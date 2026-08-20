@@ -74,10 +74,10 @@ jobs:
 
       - name: Fast tests with coverage
         run: |
-          mkdir -p resources/ort-dylibs
-          if [ ! -f resources/ffmpeg ]; then
-            : > resources/ffmpeg
-            chmod +x resources/ffmpeg
+          mkdir -p resources/ort-dylibs resources/ffmpeg-bin
+          if [ ! -f resources/ffmpeg-bin/ffmpeg ]; then
+            : > resources/ffmpeg-bin/ffmpeg
+            chmod +x resources/ffmpeg-bin/ffmpeg
           fi
           # Stable path under src-tauri/ (independent of CARGO_TARGET_DIR)
           OUT="${{ github.workspace }}/src-tauri/target/llvm-cov/lcov.info"

@@ -15,11 +15,11 @@ export PATH="${HOME}/.cargo/bin:${PATH}"
 
 # tauri.macos.conf.json lists bundle resources that must exist for `tauri_build`
 # even when we are only compiling tests (paths are gitignored).
-mkdir -p resources/ort-dylibs
-if [[ ! -f resources/ffmpeg ]]; then
+mkdir -p resources/ort-dylibs resources/ffmpeg-bin
+if [[ ! -f resources/ffmpeg-bin/ffmpeg ]]; then
   # Placeholder so Tauri resource validation passes; runtime tests use PATH ffmpeg.
-  : > resources/ffmpeg
-  chmod +x resources/ffmpeg
+  : > resources/ffmpeg-bin/ffmpeg
+  chmod +x resources/ffmpeg-bin/ffmpeg
 fi
 
 if ! command -v cargo-llvm-cov >/dev/null 2>&1; then

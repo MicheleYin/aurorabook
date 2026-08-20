@@ -7,7 +7,7 @@ use super::repositories::{AudioRepository, BookRepository};
 use super::get_db_connection;
 use crate::utils::constants::DEFAULT_MP3_BITRATE;
 use crate::utils::errors::{AppError, AppResult};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -294,6 +294,110 @@ fn estimate_eta_ms(started: &Instant, processed: usize, total: usize) -> Option<
     Some((est_total_ms - elapsed_ms).max(0.0).round() as u64)
 }
 
+/// ETA from FFmpeg media clock: prefer reported `speed`, else wall-clock fraction of total duration.
+fn estimate_eta_ms_from_media(
+    started: &Instant,
+    out_time_seconds: f64,
+    total_duration_seconds: f64,
+    speed: Option<f64>,
+) -> Option<u64> {
+    if total_duration_seconds <= 0.0 || !total_duration_seconds.is_finite() {
+        return None;
+    }
+    let remaining = (total_duration_seconds - out_time_seconds).max(0.0);
+    if remaining <= 0.0 {
+        return Some(0);
+    }
+    if let Some(speed) = speed {
+        if speed.is_finite() && speed > 0.05 {
+            return Some(((remaining / speed) * 1000.0).round() as u64);
+        }
+    }
+    if out_time_seconds <= 0.0 {
+        return None;
+    }
+    let elapsed_ms = started.elapsed().as_millis() as f64;
+    let fraction = (out_time_seconds / total_duration_seconds).clamp(0.0, 1.0);
+    if fraction <= 0.0 {
+        return None;
+    }
+    let est_total_ms = elapsed_ms / fraction;
+    Some((est_total_ms - elapsed_ms).max(0.0).round() as u64)
+}
+
+/// Parse FFmpeg `out_time=HH:MM:SS.microseconds` (or `MM:SS.ms`).
+fn parse_ffmpeg_clock(value: &str) -> Option<f64> {
+    let value = value.trim();
+    if value.is_empty() || value == "N/A" {
+        return None;
+    }
+    let parts: Vec<&str> = value.split(':').collect();
+    let (hours, minutes, seconds) = match parts.as_slice() {
+        [h, m, s] => (h.parse::<f64>().ok()?, m.parse::<f64>().ok()?, s.parse::<f64>().ok()?),
+        [m, s] => (0.0, m.parse::<f64>().ok()?, s.parse::<f64>().ok()?),
+        [s] => (0.0, 0.0, s.parse::<f64>().ok()?),
+        _ => return None,
+    };
+    Some(hours * 3600.0 + minutes * 60.0 + seconds)
+}
+
+fn parse_ffmpeg_speed(value: &str) -> Option<f64> {
+    let trimmed = value.trim().trim_end_matches('x');
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("N/A") {
+        return None;
+    }
+    let speed = trimmed.parse::<f64>().ok()?;
+    if speed.is_finite() && speed > 0.0 {
+        Some(speed)
+    } else {
+        None
+    }
+}
+
+/// Cumulative track end times (seconds) used to map FFmpeg `out_time` onto track indices.
+fn track_end_times_seconds(tracks: &[PreparedTrackInput]) -> Vec<f64> {
+    let mut ends = Vec::with_capacity(tracks.len());
+    let mut elapsed = 0.0f64;
+    for track in tracks {
+        let dur = track
+            .duration_seconds
+            .filter(|d| d.is_finite() && *d > 0.0)
+            .or_else(|| {
+                crate::utils::ffmpeg_audio::probe_media_duration_seconds(track.path.as_path())
+                    .ok()
+                    .filter(|d| d.is_finite() && *d > 0.0)
+            })
+            .unwrap_or(0.0);
+        elapsed += dur;
+        ends.push(elapsed);
+    }
+    ends
+}
+
+fn tracks_completed_for_out_time(track_ends: &[f64], out_time_seconds: f64) -> usize {
+    if track_ends.is_empty() {
+        return 0;
+    }
+    let mut completed = 0usize;
+    for end in track_ends {
+        if out_time_seconds + 0.05 >= *end {
+            completed += 1;
+        } else {
+            break;
+        }
+    }
+    completed.min(track_ends.len())
+}
+
+struct FfmpegEncodeProgress {
+    processed_tracks: usize,
+    total_tracks: usize,
+    /// Overall export percent (encode phase maps into 40..=99).
+    percent: u8,
+    eta_ms: Option<u64>,
+    message: String,
+}
+
 #[derive(Debug, Clone)]
 struct PreparedTrackInput {
     path: PathBuf,
@@ -392,24 +496,33 @@ fn ffmpeg_stderr_snippet(stderr: &[u8]) -> String {
 }
 
 /// Concatenate track files via FFmpeg concat demuxer and encode/mux to target format.
+/// Streams `-progress` updates so the UI can show live percent / ETA while FFmpeg runs.
 #[cfg(not(target_os = "ios"))]
 fn ffmpeg_concat_filelist_export(
     output_path: &str,
     filelist_path: &std::path::Path,
-    total_tracks: usize,
+    tracks: &[PreparedTrackInput],
     encoder_args: &[&str],
     process_label: &str,
-    mut on_track_encoded: impl FnMut(usize, usize) + Send,
+    encode_started: Instant,
+    mut on_progress: impl FnMut(FfmpegEncodeProgress) + Send,
 ) -> AppResult<()> {
+    let total_tracks = tracks.len();
     if total_tracks == 0 {
         return Err(AppError::Store(
             "No exportable audio tracks found for export".to_string(),
         ));
     }
 
+    let track_ends = track_end_times_seconds(tracks);
+    let total_duration_seconds = track_ends.last().copied().unwrap_or(0.0);
+
     let mut cmd = crate::utils::ffmpeg_audio::ffmpeg_command();
     cmd.arg("-nostdin")
         .arg("-y")
+        .arg("-progress")
+        .arg("pipe:1")
+        .arg("-nostats")
         .arg("-f")
         .arg("concat")
         .arg("-safe")
@@ -421,9 +534,9 @@ fn ffmpeg_concat_filelist_export(
     }
     cmd.arg(output_path)
         .stderr(Stdio::piped())
-        .stdout(Stdio::null());
+        .stdout(Stdio::piped());
 
-    let child = cmd.spawn().map_err(|e| {
+    let mut child = cmd.spawn().map_err(|e| {
         AppError::Encoding(format!(
             "Failed to spawn FFmpeg for {}: {}",
             process_label, e
@@ -441,25 +554,153 @@ fn ffmpeg_concat_filelist_export(
     }
     let _ffmpeg_pid_guard = FfmpegAudioExportPidGuard(ffmpeg_pid);
 
-    let output = child.wait_with_output().map_err(|e| {
-        AppError::Encoding(format!("FFmpeg {} process failed: {}", process_label, e))
-    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AppError::Encoding("ffmpeg has no stdout for progress".into()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| AppError::Encoding("ffmpeg has no stderr".into()))?;
 
-    if !output.status.success() {
+    let (progress_tx, progress_rx) = std::sync::mpsc::sync_channel::<FfmpegEncodeProgress>(4);
+    let track_ends_for_thread = track_ends.clone();
+    let progress_thread = std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        let mut out_time_seconds = 0.0f64;
+        let mut speed: Option<f64> = None;
+        let mut last_emitted = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(1))
+            .unwrap_or_else(Instant::now);
+
+        for line in reader.lines().map_while(Result::ok) {
+            let line = line.trim();
+            if let Some(value) = line.strip_prefix("out_time=") {
+                if let Some(t) = parse_ffmpeg_clock(value) {
+                    out_time_seconds = t;
+                }
+            } else if let Some(value) = line.strip_prefix("out_time_ms=") {
+                // Historical FFmpeg quirk: out_time_ms is microseconds.
+                if let Ok(us) = value.trim().parse::<u64>() {
+                    out_time_seconds = us as f64 / 1_000_000.0;
+                }
+            } else if let Some(value) = line.strip_prefix("out_time_us=") {
+                if let Ok(us) = value.trim().parse::<u64>() {
+                    out_time_seconds = us as f64 / 1_000_000.0;
+                }
+            } else if let Some(value) = line.strip_prefix("speed=") {
+                speed = parse_ffmpeg_speed(value);
+            } else if line == "progress=continue" || line == "progress=end" {
+                if last_emitted.elapsed() < std::time::Duration::from_millis(400)
+                    && line != "progress=end"
+                {
+                    continue;
+                }
+                last_emitted = Instant::now();
+
+                let completed = tracks_completed_for_out_time(&track_ends_for_thread, out_time_seconds);
+                // Show the track currently being encoded (1-based), not only completed ones.
+                let current_track = if total_tracks == 0 {
+                    0
+                } else {
+                    (completed + 1).min(total_tracks)
+                };
+                let fraction = if total_duration_seconds > 0.0 {
+                    (out_time_seconds / total_duration_seconds).clamp(0.0, 1.0)
+                } else if total_tracks > 0 {
+                    completed as f64 / total_tracks as f64
+                } else {
+                    0.0
+                };
+                let percent = (40.0 + fraction * 59.0).round().clamp(40.0, 99.0) as u8;
+                let eta_ms = estimate_eta_ms_from_media(
+                    &encode_started,
+                    out_time_seconds,
+                    total_duration_seconds,
+                    speed,
+                )
+                .or_else(|| estimate_eta_ms(&encode_started, completed.max(1).min(total_tracks), total_tracks));
+
+                let message = if total_duration_seconds > 0.0 {
+                    format!(
+                        "Encoding track {}/{} ({:.0}%)",
+                        current_track,
+                        total_tracks,
+                        fraction * 100.0
+                    )
+                } else {
+                    format!("Encoding track {}/{}", current_track, total_tracks)
+                };
+
+                let _ = progress_tx.send(FfmpegEncodeProgress {
+                    processed_tracks: completed,
+                    total_tracks,
+                    percent,
+                    eta_ms,
+                    message,
+                });
+            }
+        }
+    });
+
+    let stderr_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let mut reader = BufReader::new(stderr);
+        let _ = std::io::copy(&mut reader, &mut buf);
+        buf
+    });
+
+    // Forward progress while FFmpeg is running.
+    let exit_status = loop {
+        match progress_rx.recv_timeout(std::time::Duration::from_millis(250)) {
+            Ok(update) => on_progress(update),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => continue,
+                Err(e) => {
+                    return Err(AppError::Encoding(format!(
+                        "FFmpeg {} process failed: {}",
+                        process_label, e
+                    )));
+                }
+            },
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                break child.wait().map_err(|e| {
+                    AppError::Encoding(format!("FFmpeg {} process failed: {}", process_label, e))
+                })?;
+            }
+        }
+    };
+
+    while let Ok(update) = progress_rx.try_recv() {
+        on_progress(update);
+    }
+
+    let status = exit_status;
+    let _ = progress_thread.join();
+    let stderr_bytes = stderr_thread.join().unwrap_or_default();
+
+    if !status.success() {
         let _ = std::fs::remove_file(output_path);
-        if export_cancelled_by_signal(&output.status) {
+        if export_cancelled_by_signal(&status) {
             return Err(AppError::Store("Audio export cancelled".to_string()));
         }
-        let tail = ffmpeg_stderr_snippet(&output.stderr);
+        let tail = ffmpeg_stderr_snippet(&stderr_bytes);
         return Err(AppError::Encoding(format!(
             "FFmpeg {} failed (status {:?}): {}",
             process_label,
-            output.status.code(),
+            status.code(),
             tail
         )));
     }
 
-    on_track_encoded(total_tracks, total_tracks);
+    on_progress(FfmpegEncodeProgress {
+        processed_tracks: total_tracks,
+        total_tracks,
+        percent: 99,
+        eta_ms: Some(0),
+        message: format!("Processed {} / {} tracks", total_tracks, total_tracks),
+    });
 
     Ok(())
 }
@@ -516,9 +757,10 @@ fn apply_mp4_metadata_and_chapters(
 
 fn create_mp3_export_file(
     output_path: &str,
+    tracks: &[PreparedTrackInput],
     filelist_path: &std::path::Path,
-    total_tracks: usize,
-    on_track_encoded: impl FnMut(usize, usize) + Send,
+    encode_started: Instant,
+    on_progress: impl FnMut(FfmpegEncodeProgress) + Send,
 ) -> AppResult<()> {
     require_ffmpeg_for_export()?;
     #[cfg(not(target_os = "ios"))]
@@ -537,16 +779,17 @@ fn create_mp3_export_file(
         ffmpeg_concat_filelist_export(
             output_path,
             filelist_path,
-            total_tracks,
+            tracks,
             &enc_args,
             "MP3 export",
-            on_track_encoded,
+            encode_started,
+            on_progress,
         )?;
         Ok(())
     }
     #[cfg(target_os = "ios")]
     {
-        let _ = (output_path, filelist_path, total_tracks, on_track_encoded);
+        let _ = (output_path, tracks, filelist_path, encode_started, on_progress);
         Ok(())
     }
 }
@@ -557,7 +800,8 @@ fn create_mp4_export_file(
     tracks: &[PreparedTrackInput],
     filelist_path: &std::path::Path,
     format: AudioExportFormat,
-    on_track_encoded: impl FnMut(usize, usize) + Send,
+    encode_started: Instant,
+    on_progress: impl FnMut(FfmpegEncodeProgress) + Send,
 ) -> AppResult<()> {
     require_ffmpeg_for_export()?;
     #[cfg(not(target_os = "ios"))]
@@ -572,7 +816,7 @@ fn create_mp4_export_file(
         ffmpeg_concat_filelist_export(
             output_path,
             filelist_path,
-            tracks.len(),
+            tracks,
             &[
                 "-c:a",
                 "aac",
@@ -588,7 +832,8 @@ fn create_mp4_export_file(
                 "mp4",
             ],
             "M4A/M4B export",
-            on_track_encoded,
+            encode_started,
+            on_progress,
         )?;
 
         if let Err(e) = apply_mp4_metadata_and_chapters(output_path, book, format, &chapter_starts)
@@ -603,7 +848,15 @@ fn create_mp4_export_file(
     }
     #[cfg(target_os = "ios")]
     {
-        let _ = (output_path, book, tracks, filelist_path, format, on_track_encoded);
+        let _ = (
+            output_path,
+            book,
+            tracks,
+            filelist_path,
+            format,
+            encode_started,
+            on_progress,
+        );
         Ok(())
     }
 }
@@ -752,27 +1005,40 @@ async fn export_as_mp4(
         .to_str()
         .ok_or_else(|| AppError::Store("Output path is not valid UTF-8".to_string()))?;
 
+    emit_progress(
+        &app,
+        format,
+        &book_id,
+        "encoding-aac",
+        format!(
+            "Encoding {} tracks to {}...",
+            prepared_tracks.len(),
+            format.as_str().to_uppercase()
+        ),
+        0,
+        prepared_tracks.len(),
+        40,
+        None,
+    );
+
     if let Err(e) = create_mp4_export_file(
         final_output_str,
         &book,
         &prepared_tracks,
         &filelist_path,
         format,
-        |encoded_tracks, total_tracks| {
+        started,
+        |progress| {
             emit_progress(
                 &app,
                 format,
                 &book_id,
                 "encoding-aac",
-                format!("Processed {} / {} tracks", encoded_tracks, total_tracks),
-                encoded_tracks,
-                total_tracks,
-                if total_tracks > 0 {
-                    (40 + (encoded_tracks * 59) / total_tracks).min(99) as u8
-                } else {
-                    0
-                },
-                estimate_eta_ms(&started, encoded_tracks, total_tracks),
+                progress.message,
+                progress.processed_tracks,
+                progress.total_tracks,
+                progress.percent,
+                progress.eta_ms,
             );
         },
     ) {
@@ -938,25 +1204,34 @@ pub async fn export_as_mp3(
         .to_str()
         .ok_or_else(|| AppError::Store("Output path is not valid UTF-8".to_string()))?;
 
+    emit_progress(
+        &app,
+        AudioExportFormat::Mp3,
+        &book_id,
+        "encoding-mp3",
+        format!("Encoding {} tracks to MP3...", prepared_tracks.len()),
+        0,
+        prepared_tracks.len(),
+        40,
+        None,
+    );
+
     if let Err(e) = create_mp3_export_file(
         final_output_str,
+        &prepared_tracks,
         &filelist_path,
-        prepared_tracks.len(),
-        |encoded_tracks, total_tracks| {
+        started,
+        |progress| {
             emit_progress(
                 &app,
                 AudioExportFormat::Mp3,
                 &book_id,
                 "encoding-mp3",
-                format!("Processed {} / {} tracks", encoded_tracks, total_tracks),
-                encoded_tracks,
-                total_tracks,
-                if total_tracks > 0 {
-                    (40 + (encoded_tracks * 59) / total_tracks).min(99) as u8
-                } else {
-                    0
-                },
-                estimate_eta_ms(&started, encoded_tracks, total_tracks),
+                progress.message,
+                progress.processed_tracks,
+                progress.total_tracks,
+                progress.percent,
+                progress.eta_ms,
             );
         },
     ) {
@@ -1016,6 +1291,39 @@ mod helper_tests {
         std::thread::sleep(Duration::from_millis(20));
         let eta = estimate_eta_ms(&started, 1, 2).expect("eta");
         assert!(eta > 0);
+    }
+
+    #[test]
+    fn parse_ffmpeg_clock_parses_hms() {
+        assert!((parse_ffmpeg_clock("00:01:30.5").unwrap() - 90.5).abs() < 0.001);
+        assert!((parse_ffmpeg_clock("01:00:00").unwrap() - 3600.0).abs() < 0.001);
+        assert!((parse_ffmpeg_clock("45.25").unwrap() - 45.25).abs() < 0.001);
+        assert!(parse_ffmpeg_clock("N/A").is_none());
+    }
+
+    #[test]
+    fn parse_ffmpeg_speed_parses_multiplier() {
+        assert!((parse_ffmpeg_speed("1.85x").unwrap() - 1.85).abs() < 0.001);
+        assert!((parse_ffmpeg_speed("2").unwrap() - 2.0).abs() < 0.001);
+        assert!(parse_ffmpeg_speed("N/A").is_none());
+    }
+
+    #[test]
+    fn tracks_completed_for_out_time_maps_media_clock() {
+        let ends = vec![10.0, 25.0, 40.0];
+        assert_eq!(tracks_completed_for_out_time(&ends, 0.0), 0);
+        assert_eq!(tracks_completed_for_out_time(&ends, 10.0), 1);
+        assert_eq!(tracks_completed_for_out_time(&ends, 24.0), 1);
+        assert_eq!(tracks_completed_for_out_time(&ends, 25.0), 2);
+        assert_eq!(tracks_completed_for_out_time(&ends, 100.0), 3);
+    }
+
+    #[test]
+    fn estimate_eta_ms_from_media_uses_speed() {
+        let started = Instant::now();
+        let eta = estimate_eta_ms_from_media(&started, 10.0, 30.0, Some(2.0)).expect("eta");
+        // 20s remaining at 2x => ~10s
+        assert!((eta as i64 - 10_000).abs() < 50);
     }
 
     #[test]
@@ -1298,7 +1606,8 @@ mod m4b_export_tests {
             &prepared_tracks,
             &filelist_path,
             AudioExportFormat::M4b,
-            |_, _| {},
+            Instant::now(),
+            |_| {},
         )
         .expect("create m4b");
 
@@ -1445,7 +1754,8 @@ mod m4b_export_tests {
             &prepared_tracks,
             &filelist_path,
             AudioExportFormat::M4a,
-            |_, _| {},
+            Instant::now(),
+            |_| {},
         )
         .expect("export sample m4a");
         create_mp4_export_file(
@@ -1454,7 +1764,8 @@ mod m4b_export_tests {
             &prepared_tracks,
             &filelist_path,
             AudioExportFormat::M4b,
-            |_, _| {},
+            Instant::now(),
+            |_| {},
         )
         .expect("export sample m4b");
 
