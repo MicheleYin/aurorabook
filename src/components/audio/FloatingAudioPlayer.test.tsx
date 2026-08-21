@@ -214,24 +214,24 @@ describe("FloatingAudioPlayer live → completed handoff", () => {
       </Wrapper>
     );
 
-    const player = await waitFor(() => {
-      const node = document.querySelector(
-        '[data-testid="floating-audio-player"]'
-      );
-      expect(node).toBeTruthy();
-      return node as HTMLElement;
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-testid="floating-audio-player"]')
+      ).toBeTruthy();
     });
 
+    const player = document.querySelector(
+      '[data-testid="floating-audio-player"]'
+    ) as HTMLElement;
+    const playPause = document.querySelector(
+      '[data-testid="audio-play-pause"]'
+    ) as HTMLButtonElement;
+    const spinner = document.querySelector(
+      '[data-testid="audio-loading-spinner"]'
+    );
+
     expect(player.getAttribute("data-loading-audio")).toBe("true");
-    expect(
-      document.querySelector('[data-testid="audio-loading-spinner"]')
-    ).toBeTruthy();
-    expect(
-      (
-        document.querySelector(
-          '[data-testid="audio-play-pause"]'
-        ) as HTMLButtonElement
-      ).disabled
-    ).toBe(true);
+    expect(Boolean(spinner)).toBe(true);
+    expect(playPause.disabled).toBe(true);
   });
 });

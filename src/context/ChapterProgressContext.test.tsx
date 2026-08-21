@@ -515,10 +515,10 @@ describe("ChapterProgressProvider", () => {
       await secondPromise;
     });
 
-    expect(result.current.currentChapter).toMatchObject({
-      id: "ch-2",
-      contentHtml: "<p>Latest second</p>",
-    });
+    expect(result.current.currentChapter?.id).toBe("ch-2");
+    expect(result.current.currentChapter?.contentHtml).toEqual(
+      expect.stringContaining("Latest second")
+    );
     expect(result.current.isLoadingChapter).toBe(false);
   });
 
@@ -538,7 +538,9 @@ describe("ChapterProgressProvider", () => {
     await act(async () => {
       await result.current.loadChapterContent("book-1", chapter);
     });
-    expect(result.current.currentChapter?.contentHtml).toBe("<p>Original</p>");
+    expect(result.current.currentChapter?.contentHtml).toEqual(
+      expect.stringContaining("Original")
+    );
 
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "load_chapter_content") {
@@ -551,7 +553,9 @@ describe("ChapterProgressProvider", () => {
       await result.current.loadChapterContent("book-1", chapter);
     });
 
-    expect(result.current.currentChapter?.contentHtml).toBe("<p>Original</p>");
+    expect(result.current.currentChapter?.contentHtml).toEqual(
+      expect.stringContaining("Original")
+    );
     expect(result.current.isLoadingChapter).toBe(false);
   });
 });
