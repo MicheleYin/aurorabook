@@ -66,11 +66,12 @@ jobs:
       - name: Stage DirectML redistributable
         run: node scripts/bundle-windows-directml.cjs --arch=x64
 
-      - name: Stage Dawn placeholder for tauri_build path validation
+      - name: Stage ort-dylibs placeholders for tauri_build
         shell: bash
         run: |
           mkdir -p src-tauri/resources/ort-dylibs
           # Real Dawn is refreshed in beforeBundleCommand after ort builds.
+          # Array-style resources/ort-dylibs/ (not install-root maps) — maps break tauri_build.
           if [ ! -f src-tauri/resources/ort-dylibs/webgpu_dawn.dll ] || \
              grep -q 'placeholder' src-tauri/resources/ort-dylibs/webgpu_dawn.dll 2>/dev/null || \
              [ "$(wc -c < src-tauri/resources/ort-dylibs/webgpu_dawn.dll)" -lt 64 ]; then
@@ -86,30 +87,31 @@ jobs:
           node scripts/ensure-windows-ffmpeg-resource.cjs --arch=x64
           node scripts/bundle-windows-directml.cjs --arch=x64
           # Dawn is copied in beforeBundleCommand after cargo/ort produces it.
+          # NSIS POSTINSTALL hook promotes Dawn/DirectML beside the installed exe.
           node scripts/tauri-cli.cjs build --target "${RUST_TARGET}"
 
-      - name: Verify Dawn + DirectML DLLs beside the built exe
+      - name: Verify Dawn + DirectML DLLs (resources + beside exe)
         shell: bash
         run: |
           exe_dir=".cargo-target/${RUST_TARGET}/release"
-          # Real PE next to the exe (NSIS packages siblings / mapped resources).
+          # beforeBundleCommand must leave real PEs under resources/ort-dylibs/
+          # and copies them beside the exe for local/dev runs.
           for dll in webgpu_dawn.dll DirectML.dll; do
+            src="src-tauri/resources/ort-dylibs/${dll}"
+            test -f "${src}"
+            ! grep -q "placeholder" "${src}"
+            size=$(wc -c < "${src}")
+            test "$size" -gt 100000
+            file "${src}"
             if [ -f "${exe_dir}/${dll}" ]; then
               file "${exe_dir}/${dll}"
               ! grep -q "placeholder" "${exe_dir}/${dll}"
-              size=$(wc -c < "${exe_dir}/${dll}")
-              test "$size" -gt 100000
-            elif [ -f "src-tauri/resources/ort-dylibs/${dll}" ]; then
-              file "src-tauri/resources/ort-dylibs/${dll}"
-              ! grep -q "placeholder" "src-tauri/resources/ort-dylibs/${dll}"
-              size=$(wc -c < "src-tauri/resources/ort-dylibs/${dll}")
-              test "$size" -gt 100000
             else
-              echo "missing ${dll}" >&2
-              exit 1
+              echo "warn: ${dll} not beside exe yet (NSIS hook covers installed layout)" >&2
             fi
           done
           ls -la "${exe_dir}"/*.dll src-tauri/resources/ort-dylibs/ 2>/dev/null || true
+          test -f src-tauri/windows/nsis-hooks.nsh
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4

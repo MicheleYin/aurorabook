@@ -34,10 +34,10 @@ fn with_dedicated_handle(app_handle: &tauri::AppHandle, f: impl FnOnce(&tokio::r
 
 /// Ensure Windows can resolve `webgpu_dawn.dll` / `DirectML.dll` (and companion DXC DLLs).
 ///
-/// These are load-time DLL deps and must sit next to `AuroraBook.exe` (see
-/// `tauri.windows.conf.json`). PATH is still prepended for delay-loaded helpers
-/// under `resources/ort-dylibs` and the install root derived from Tauri's
-/// resource directory (avoids `current_exe` for path discovery).
+/// Load-time DLL deps must sit next to `AuroraBook.exe` (NSIS POSTINSTALL hook
+/// copies them from `resources/ort-dylibs/`). PATH is still prepended for
+/// delay-loaded helpers under `resources/ort-dylibs` and the install root
+/// derived from Tauri's resource directory.
 #[cfg(target_os = "windows")]
 fn prepend_windows_ort_dylib_dir(resource_dir: &std::path::Path) {
     let mut extras: Vec<String> = Vec::new();

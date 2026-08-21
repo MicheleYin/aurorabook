@@ -5,13 +5,17 @@
   },
   "bundle": {
     "targets": ["nsis"],
-    "resources": {
-      "resources/voice-samples/": "resources/voice-samples/",
-      "resources/supertonic/onnx/": "resources/supertonic/onnx/",
-      "resources/supertonic/voice_styles/": "resources/supertonic/voice_styles/",
-      "resources/ffmpeg-bin/": "resources/ffmpeg-bin/",
-      "resources/ort-dylibs/webgpu_dawn.dll": "webgpu_dawn.dll",
-      "resources/ort-dylibs/DirectML.dll": "DirectML.dll"
+    "resources": [
+      "resources/voice-samples/",
+      "resources/supertonic/onnx/",
+      "resources/supertonic/voice_styles/",
+      "resources/ort-dylibs/",
+      "resources/ffmpeg-bin/"
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/nsis-hooks.nsh"
+      }
     }
   }
 }

@@ -13,7 +13,9 @@
  *
  * Critical on Windows: webgpu_dawn.dll is a load-time dependency of the ORT
  * WebGPU build. It must sit next to AuroraBook.exe (not only under resources/).
- * tauri.windows.conf.json maps the resource to the install root for that reason.
+ * We copy it beside the built exe here; the NSIS POSTINSTALL hook also promotes
+ * it from resources/ort-dylibs/ to the install root (resource maps to the
+ * install root break tauri_build on Windows).
  */
 const fs = require("fs");
 const path = require("path");
