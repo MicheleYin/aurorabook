@@ -157,9 +157,7 @@ describe("FloatingAudioPlayer live → completed handoff", () => {
     );
 
     await waitFor(() => {
-      expect(
-        document.querySelector('[data-testid="floating-audio-player"]')
-      ).toBeTruthy();
+      expect(screen.getByTestId("floating-audio-player")).toBeInTheDocument();
     });
 
     const completedTrack: AudioTrack = {
