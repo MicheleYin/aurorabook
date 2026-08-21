@@ -1,4 +1,4 @@
-use tauri::{AppHandle, WebviewWindow};
+use tauri::{AppHandle, Emitter, WebviewWindow};
 
 /// Window state information
 #[derive(Debug, Clone)]
@@ -148,6 +148,10 @@ pub fn create_main_window(app: &tauri::App) -> Result<WebviewWindow, String> {
     window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { .. } = event {
             save_window_state(&window_clone, &app_handle);
+            // Kick off progress flush as early as possible (before ExitRequested).
+            if let Err(e) = window_clone.emit("app-closing", ()) {
+                log::warn!("Failed to emit app-closing on CloseRequested: {}", e);
+            }
         }
     });
 

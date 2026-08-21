@@ -120,13 +120,14 @@ export function AudioProgressProvider({
   const [playbackRate, setPlaybackRate] = useState(1);
   const [livePlaybackRequestVersion, setLivePlaybackRequestVersion] =
     useState(0);
-  const calculateAudioProgress = useCallback(() => {
+  const calculateAudioProgress = useCallback((): BookAudioState | null => {
     if (!currentAudioTrack) return null;
     return {
-      currentTrackId: currentAudioTrack?.id,
-      currentTrackHref: currentAudioTrack?.href,
-      currentTrackIndex: currentAudioTrack?.order,
-      currentTimeSeconds: audioRef.current?.currentTime,
+      currentTrackId: currentAudioTrack.id,
+      currentTrackHref:
+        currentAudioTrack.href ?? currentAudioTrack.filePath ?? "",
+      currentTrackIndex: currentAudioTrack.order,
+      currentTimeSeconds: audioRef.current?.currentTime ?? 0,
       updatedAt: new Date().toISOString(),
     };
   }, [currentAudioTrack]);

@@ -1,5 +1,6 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import type { Book } from "./types/book";
 import { FloatingAudioPlayer } from "./components/audio/FloatingAudioPlayer";
@@ -212,6 +213,35 @@ function ConversionCallbackHandler() {
   return null;
 }
 
+/** Flush chapter + audio progress when Rust emits `app-closing` on quit. */
+function AppClosingHandler() {
+  const { currentBook } = useAppContext();
+  const { saveProgress } = useChapterProgressContext();
+  const { saveAudioProgress } = useAudioProgressContext();
+  const currentBookRef = useRef(currentBook);
+  currentBookRef.current = currentBook;
+
+  useEffect(() => {
+    const unlisten = listen("app-closing", async () => {
+      const book = currentBookRef.current;
+      if (!book) return;
+      logger.info("[app-closing] flushing progress before quit", {
+        bookId: book.id,
+      });
+      try {
+        await Promise.all([saveProgress(book), saveAudioProgress(book)]);
+      } catch (err) {
+        logger.error("[app-closing] failed to save progress:", err);
+      }
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [saveProgress, saveAudioProgress]);
+
+  return null;
+}
+
 function AppWithProviders() {
   const {
     saveProgress,
@@ -253,6 +283,7 @@ function AppWithProviders() {
       calculateAudioProgress={calculateAudioProgress}
       saveAudioProgress={saveAudioProgress}
     >
+      <AppClosingHandler />
       <ConversionCallbackHandler />
       <AppContent />
     </AppProvider>

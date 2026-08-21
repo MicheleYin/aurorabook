@@ -1271,6 +1271,7 @@ pub(crate) async fn process_chapter(
         let sentence_pcm_duration =
             crate::tts::word_timing::pcm_duration_seconds(audio.len(), SAMPLE_RATE);
         if !audio.is_empty() {
+            check_cancellation!(cancel_token);
             sentence_pcm_chunks.insert(idx, audio.clone());
             match convert_audio_to_mp3(&audio) {
                 Ok(mp3_chunk) if !mp3_chunk.is_empty() => {
@@ -1570,6 +1571,8 @@ pub(crate) async fn process_chapter(
         ..Default::default()
     });
 
+    check_cancellation!(cancel_token);
+
     // Encode the chapter once from concatenated PCM so playback length matches SMIL.
     let mut pcm_durations = vec![0.0f32; total_sentences];
     for (idx, duration, _, _) in &sentence_meta {
@@ -1580,6 +1583,7 @@ pub(crate) async fn process_chapter(
 
     let chapter_pcm =
         concatenate_pcm_in_sentence_order(&sentence_pcm_chunks, total_sentences, &pcm_durations);
+    check_cancellation!(cancel_token);
     let mp3_bytes = if chapter_pcm.is_empty() {
         concatenate_mp3_in_sentence_order(
             &sentence_mp3_chunks,
@@ -1648,6 +1652,8 @@ pub(crate) async fn process_chapter(
         message: format!("Creating SMIL file for chapter {}...", chapter_index + 1),
         ..Default::default()
     });
+
+    check_cancellation!(cancel_token);
 
     // Generate SMIL file
     let chapter_href_for_smil = if !base_path.is_empty() && chapter.href.starts_with(base_path) {

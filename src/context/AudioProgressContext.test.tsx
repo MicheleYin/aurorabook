@@ -292,7 +292,10 @@ describe("AudioProgressProvider", () => {
     const book = createBook({
       audioState: {
         currentTrackId: track.id,
+        currentTrackHref: track.href ?? track.filePath ?? "",
+        currentTrackIndex: track.order,
         currentTimeSeconds: 33,
+        updatedAt: new Date().toISOString(),
       },
     });
 
@@ -309,7 +312,13 @@ describe("AudioProgressProvider", () => {
     const track = createTrack({ id: "track-2", order: 1, title: "Next" });
     const book = createBook({
       audioTracks: [createTrack(), track],
-      audioState: { currentTrackId: "track-2", currentTimeSeconds: 10 },
+      audioState: {
+        currentTrackId: "track-2",
+        currentTrackHref: track.href ?? track.filePath ?? "ch1.xhtml",
+        currentTrackIndex: 1,
+        currentTimeSeconds: 10,
+        updatedAt: new Date().toISOString(),
+      },
     });
 
     invoke.mockImplementation(async (cmd: string) => {
@@ -362,7 +371,13 @@ describe("AudioProgressProvider", () => {
     result.current.audioRef.current = audio;
 
     const book = createBook({
-      audioState: { currentTrackId: "track-1", currentTimeSeconds: 5 },
+      audioState: {
+        currentTrackId: "track-1",
+        currentTrackHref: "ch1.xhtml",
+        currentTrackIndex: 0,
+        currentTimeSeconds: 5,
+        updatedAt: new Date().toISOString(),
+      },
     });
 
     await act(async () => {

@@ -1,25 +1,27 @@
 export type ConversionStatus = "notStarted" | "started" | "done";
 
+/** Wire-complete reading progress (matches Rust `BookProgress`). */
 export interface BookProgress {
-  currentChapterId?: string;
-  currentChapterHref?: string;
-  currentChapterIndex?: number;
+  currentChapterId: string;
+  currentChapterHref: string;
+  currentChapterIndex: number;
   currentChapterElementId?: string;
   currentChapterElementIndex?: number;
-  currentChapterScrollTop?: number;
-  currentChapterScrollHeight?: number;
-  currentChapterClientHeight?: number;
-  chapterProgressPercent?: number;
-  bookProgressPercent?: number;
-  updatedAt?: string;
+  currentChapterScrollTop: number;
+  currentChapterScrollHeight: number;
+  currentChapterClientHeight: number;
+  chapterProgressPercent: number;
+  bookProgressPercent: number;
+  updatedAt: string;
 }
 
+/** Wire-complete audio playback state (matches Rust `BookAudioState`). */
 export interface BookAudioState {
-  currentTrackId?: string;
-  currentTrackHref?: string;
-  currentTrackIndex?: number;
-  currentTimeSeconds?: number;
-  updatedAt?: string;
+  currentTrackId: string;
+  currentTrackHref: string;
+  currentTrackIndex: number;
+  currentTimeSeconds: number;
+  updatedAt: string;
 }
 
 export interface Chapter {
