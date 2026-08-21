@@ -7,6 +7,9 @@
       "resources/supertonic/voice_styles/",
       "resources/ort-dylibs/libwebgpu_dawn.dylib",
       "resources/ffmpeg-bin/"
-    ]
+    ],
+    "macOS": {
+      "entitlements": "Entitlements.macos.plist"
+    }
   }
 }

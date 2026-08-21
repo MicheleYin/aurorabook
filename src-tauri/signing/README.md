@@ -12,7 +12,9 @@ Files in this directory are **gitignored** — never commit them.
 
 ## Generating Entitlements.macos-appstore.plist
 
-The file `src-tauri/Entitlements.macos-appstore.plist` is **generated** — do not commit it.
+Non–App Store / CI builds use the committed `src-tauri/Entitlements.macos.plist`
+(no Team ID). Mac App Store builds still use a **generated**
+`src-tauri/Entitlements.macos-appstore.plist` — do not commit it.
 Generate it from the template using your Team ID:
 
 ```sh

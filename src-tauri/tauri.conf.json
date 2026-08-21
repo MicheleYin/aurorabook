@@ -40,7 +40,7 @@
       "exceptionDomain": "",
       "hardenedRuntime": true,
       "signingIdentity": null,
-      "entitlements": "Entitlements.macos-appstore.plist"
+      "entitlements": "Entitlements.macos.plist"
     },
     "iOS": {
       "developmentTeam": "YOUR_TEAM_ID",
