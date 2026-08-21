@@ -8,7 +8,7 @@
     "dev:debug": "RUST_LOG=debug bun tauri dev",
     "dev:trace": "RUST_LOG=trace bun tauri dev",
     "dev:smil": "RUST_LOG=aurorabook::epub::converter::smil=debug,aurorabook::book_service=debug,aurorabook=info,info bun tauri dev",
-    "build": "tsc && vite build",
+    "build": "tsc -p tsconfig.build.json && vite build",
     "preview": "vite preview",
     "tauri": "node scripts/tauri-cli.cjs",
     "sync:ffmpeg": "node scripts/copy-ffmpeg-to-resources.cjs",

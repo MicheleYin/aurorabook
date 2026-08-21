@@ -48,6 +48,8 @@ const deps = {
   loadAudioTrack: vi.fn(async () => undefined),
   calculateAudioProgress: vi.fn(() => ({
     currentTrackId: "t1",
+    currentTrackHref: "ch1.xhtml",
+    currentTrackIndex: 0,
     currentTimeSeconds: 12,
     updatedAt: new Date().toISOString(),
   })),
