@@ -182,6 +182,11 @@ bun run build:windows:arm64
 Windows x86_64 uses the **WebGPU** ONNX Runtime EP (Dawn DLL under `resources/ort-dylibs/`).
 Windows ARM64 uses **DirectML**. Export requires the bundled `ffmpeg.exe` with `libmp3lame`.
 
+CI builds an NSIS installer for x86_64 via
+[`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml)
+(`pull_request`, pushes to `dev`/`main`, version tags `v*`, published releases,
+or `workflow_dispatch`). Artifacts are uploaded from the Actions run.
+
 ### iOS
 ```bash
 # Build ONNX Runtime for iOS (Required for first-time iOS builds)
