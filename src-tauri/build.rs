@@ -886,23 +886,27 @@ fn copy_ort_webgpu_dylib_for_desktop_bundle() {
         return;
     }
 
-    // ARM64 Windows: DirectML only — still stage a placeholder webgpu_dawn.dll so
-    // `tauri.windows.conf.json` (shared x64/arm64) can map that path for NSIS.
+    // All Windows ORT builds need DirectML.dll beside the exe (pyke links DML even
+    // for WebGPU). Stage a placeholder so tauri resource validation passes; the
+    // real redistributable is downloaded by `bundle-windows-directml.cjs`.
+    if is_windows_x64 || is_windows_arm64 {
+        let dml = dest_dir.join("DirectML.dll");
+        if !dml.is_file() || fs::metadata(&dml).map(|m| m.len() < 64).unwrap_or(true) {
+            let _ = fs::write(
+                &dml,
+                b"placeholder DirectML.dll; run `bun run bundle:directml:windows`\n",
+            );
+        }
+    }
+
+    // ARM64 Windows: DirectML only — still stage a placeholder webgpu_dawn.dll only
+    // when the shared x64 Windows conf is used; arm64-specific conf omits Dawn.
     if is_windows_arm64 {
         let marker = dest_dir.join("README-directml.txt");
         if !marker.is_file() {
             let _ = fs::write(
                 &marker,
-                b"Windows ARM64 builds use the DirectML EP (system DirectML.dll). No Dawn dylib.\n",
-            );
-        }
-        let dawn_placeholder = dest_dir.join("webgpu_dawn.dll");
-        if !dawn_placeholder.is_file()
-            || fs::metadata(&dawn_placeholder).map(|m| m.len() == 0).unwrap_or(true)
-        {
-            let _ = fs::write(
-                &dawn_placeholder,
-                b"placeholder webgpu_dawn.dll; ARM64 uses DirectML and does not load Dawn\n",
+                b"Windows ARM64 builds use the DirectML EP. Ship DirectML.dll next to the exe.\n",
             );
         }
         return;

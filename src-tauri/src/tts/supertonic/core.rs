@@ -964,12 +964,13 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
             .map_err(|e| anyhow!("ORT intra-threads setup failed: {e}"))?
             .with_memory_pattern(true)
             .map_err(|e| anyhow!("ORT memory pattern setup failed: {e}"))?;
-        // Windows ARM64: DirectML (system DirectML.dll; no Dawn).
+        // Windows ARM64: DirectML (redistributable DirectML.dll next to the exe).
         #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
         let mut builder = builder
             .with_execution_providers([ep::DirectML::default().build().error_on_failure()])
             .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
-        // macOS + Windows x86_64: WebGPU (Dawn).
+        // macOS + Windows x86_64: WebGPU (Dawn). Windows x64 also ships DirectML.dll
+        // because pyke ORT binaries link it even when using WebGPU.
         #[cfg(any(
             target_os = "macos",
             all(target_os = "windows", target_arch = "x86_64")

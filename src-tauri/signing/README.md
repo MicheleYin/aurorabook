@@ -49,14 +49,19 @@ Windows builds stage a pinned **BtbN FFmpeg n8.1 static GPL** binary at
 | Platform | EP |
 | -------- | -- |
 | macOS | WebGPU (Dawn dylib in `resources/ort-dylibs/`) |
-| Windows x86_64 | WebGPU (`webgpu_dawn.dll` next to `AuroraBook.exe`, also under `resources/ort-dylibs/`) |
-| Windows ARM64 | DirectML (system `DirectML.dll`) |
+| Windows x86_64 | WebGPU (`webgpu_dawn.dll` + `DirectML.dll` next to `AuroraBook.exe`) |
+| Windows ARM64 | DirectML (`DirectML.dll` next to `AuroraBook.exe`; see `tauri.windows-arm64.conf.json`) |
 | iOS | CPU only |
 
-On Windows, Dawn is a load-time DLL dependency — it must sit beside the `.exe`, not
-only under `resources/`. `tauri.windows.conf.json` maps
-`resources/ort-dylibs/webgpu_dawn.dll` → install-root `webgpu_dawn.dll`, and
-`beforeBundleCommand` refreshes that file from ort’s copy-dylibs output.
+On Windows, helper DLLs are **load-time** dependencies — they must sit beside the `.exe`,
+not only under `resources/`.
+
+- x64: `tauri.windows.conf.json` maps Dawn + DirectML to the install root; `beforeBundleCommand`
+  runs `ensure-windows-ort-dlls.cjs`.
+- ARM64: `tauri.windows-arm64.conf.json` maps DirectML only (no Dawn). DirectML comes from
+  pinned **Microsoft.AI.DirectML 1.15.4** (`bun run bundle:directml:windows`).
+- System `DirectML.dll` is often too old; shipping the redistributable avoids
+  `STATUS_ENTRYPOINT_NOT_FOUND` / EP registration failures.
 ## Regenerating src-tauri/gen/apple/ (Xcode project)
 
 The `src-tauri/gen/apple/` directory is also gitignored because it contains your Team ID.

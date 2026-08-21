@@ -63,28 +63,38 @@ jobs:
       - name: Bundle FFmpeg for the app
         run: bun run bundle:ffmpeg:windows
 
+      - name: Stage DirectML redistributable
+        run: node scripts/bundle-windows-directml.cjs --arch=x64
+
       - name: Build AuroraBook (NSIS)
         shell: bash
         run: |
           node scripts/ensure-windows-ffmpeg-resource.cjs --arch=x64
+          node scripts/ensure-windows-ort-dlls.cjs --arch=x64
           node scripts/tauri-cli.cjs build --target "${RUST_TARGET}"
 
-      - name: Verify Dawn DLL is beside the built exe
+      - name: Verify Dawn + DirectML DLLs beside the built exe
         shell: bash
         run: |
           exe_dir=".cargo-target/${RUST_TARGET}/release"
-          test -f "${exe_dir}/webgpu_dawn.dll" || test -f "src-tauri/resources/ort-dylibs/webgpu_dawn.dll"
-          # Prefer the real PE next to the exe (NSIS packages siblings / mapped resources).
-          if [ -f "${exe_dir}/webgpu_dawn.dll" ]; then
-            file "${exe_dir}/webgpu_dawn.dll"
-            # Reject leftover text placeholders from build.rs.
-            ! grep -q "placeholder webgpu_dawn" "${exe_dir}/webgpu_dawn.dll"
-            # Also require a non-trivial size (real Dawn is multi-MB).
-            size=$(wc -c < "${exe_dir}/webgpu_dawn.dll")
-            test "$size" -gt 100000
-          fi
-          ls -la "${exe_dir}/webgpu_dawn.dll" "${exe_dir}"/*.dll 2>/dev/null || true
-          ls -la src-tauri/resources/ort-dylibs/
+          # Real PE next to the exe (NSIS packages siblings / mapped resources).
+          for dll in webgpu_dawn.dll DirectML.dll; do
+            if [ -f "${exe_dir}/${dll}" ]; then
+              file "${exe_dir}/${dll}"
+              ! grep -q "placeholder" "${exe_dir}/${dll}"
+              size=$(wc -c < "${exe_dir}/${dll}")
+              test "$size" -gt 100000
+            elif [ -f "src-tauri/resources/ort-dylibs/${dll}" ]; then
+              file "src-tauri/resources/ort-dylibs/${dll}"
+              ! grep -q "placeholder" "src-tauri/resources/ort-dylibs/${dll}"
+              size=$(wc -c < "src-tauri/resources/ort-dylibs/${dll}")
+              test "$size" -gt 100000
+            else
+              echo "missing ${dll}" >&2
+              exit 1
+            fi
+          done
+          ls -la "${exe_dir}"/*.dll src-tauri/resources/ort-dylibs/ 2>/dev/null || true
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
