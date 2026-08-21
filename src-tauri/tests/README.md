@@ -84,8 +84,10 @@ cd src-tauri && cargo llvm-cov --html --open --lib --test mod
 ```
 
 On macOS, `tauri.macos.conf.json` requires `resources/ffmpeg-bin/` (and the ORT
-WebGPU dylib path) to exist for `tauri_build`. The coverage / test scripts stub
-`resources/ffmpeg-bin/ffmpeg` when missing; CI does the same.
+WebGPU dylib path) to exist for `tauri_build`. On Windows, `tauri.windows.conf.json`
+requires `resources/ffmpeg-bin/` (and `resources/ort-dylibs/` for Dawn on x86_64).
+The coverage / test scripts stub `resources/ffmpeg-bin/ffmpeg` when missing; CI does
+the same. Use `bun run bundle:ffmpeg:windows` to stage a real `ffmpeg.exe`.
 
 ### Full local suite
 

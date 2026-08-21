@@ -32,11 +32,29 @@ fn candidate_if_file(path: PathBuf) -> Option<PathBuf> {
     }
 }
 
-fn bundled_ffmpeg_candidates(base: PathBuf) -> [PathBuf; 2] {
-    [
-        base.join("ffmpeg-bin").join("ffmpeg"),
-        base.join("ffmpeg"),
-    ]
+fn ffmpeg_bin_name() -> &'static str {
+    if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    }
+}
+
+fn bundled_ffmpeg_candidates(base: PathBuf) -> Vec<PathBuf> {
+    let name = ffmpeg_bin_name();
+    let mut out = vec![
+        base.join("ffmpeg-bin").join(name),
+        base.join(name),
+    ];
+    // Accept either name when cross-checking staged resources during development.
+    if cfg!(windows) {
+        out.push(base.join("ffmpeg-bin").join("ffmpeg"));
+        out.push(base.join("ffmpeg"));
+    } else {
+        out.push(base.join("ffmpeg-bin").join("ffmpeg.exe"));
+        out.push(base.join("ffmpeg.exe"));
+    }
+    out
 }
 
 fn first_bundled_ffmpeg(base: PathBuf) -> Option<PathBuf> {
@@ -64,6 +82,16 @@ fn detect_ffmpeg_path() -> PathBuf {
     }
 
     if let Ok(exe) = std::env::current_exe() {
+        // Desktop (Windows / Linux / sidecars): resources next to the executable.
+        if let Some(exe_dir) = exe.parent() {
+            if let Some(found) = first_bundled_ffmpeg(exe_dir.join("resources")) {
+                return found;
+            }
+            if let Some(found) = first_bundled_ffmpeg(exe_dir.to_path_buf()) {
+                return found;
+            }
+        }
+        // macOS app bundle: Contents/Resources[/resources]/ffmpeg-bin
         if let Some(contents_dir) = exe.parent().and_then(|p| p.parent()) {
             let resources = contents_dir.join("Resources");
             if let Some(found) = first_bundled_ffmpeg(resources.join("resources")) {
@@ -90,7 +118,7 @@ fn detect_ffmpeg_path() -> PathBuf {
         return found;
     }
 
-    PathBuf::from("ffmpeg")
+    PathBuf::from(ffmpeg_bin_name())
 }
 
 pub fn ffmpeg_command() -> Command {

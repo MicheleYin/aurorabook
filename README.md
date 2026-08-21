@@ -23,7 +23,7 @@ AuroraBook is designed for book lovers who want a seamless reading and listening
 - **Offline TTS** — High-quality AI voices running locally on your hardware.
 - **EPUB Support** — Import and read your EPUB library with ease.
 - **Live Sync** — Follow along as the text is highlighted during speech synthesis.
-- **Cross-Platform** — Native experience on macOS and iOS.
+- **Cross-Platform** — Native experience on macOS, iOS, and Windows.
 - **Privacy First** — Your books and data stay on your device.
 
 ---
@@ -169,6 +169,18 @@ signing separately when you have real cert secrets.
 
 TTS weights are cloned from Hugging Face (`Supertone/supertonic-3`) during the
 job; locally, clone that pack into `./supertonic-3` with Git LFS before building.
+
+### Windows
+```bash
+# Stage pinned FFmpeg n8.1 (BtbN static GPL) then build NSIS installer (x86_64)
+bun run build:windows
+
+# ARM64 (DirectML EP; set arch for the FFmpeg download)
+bun run build:windows:arm64
+```
+
+Windows x86_64 uses the **WebGPU** ONNX Runtime EP (Dawn DLL under `resources/ort-dylibs/`).
+Windows ARM64 uses **DirectML**. Export requires the bundled `ffmpeg.exe` with `libmp3lame`.
 
 ### iOS
 ```bash
