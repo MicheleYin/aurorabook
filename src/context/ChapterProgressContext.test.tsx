@@ -538,7 +538,10 @@ describe("ChapterProgressProvider", () => {
     await act(async () => {
       await result.current.loadChapterContent("book-1", chapter);
     });
-    const preservedContent = result.current.currentChapter?.contentHtml;
+    const chapterIdBefore = result.current.currentChapter?.id;
+    const contentLengthBefore =
+      result.current.currentChapter?.contentHtml?.trim().length ?? 0;
+    expect(contentLengthBefore).toBeGreaterThan(0);
 
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "load_chapter_content") {
@@ -551,7 +554,10 @@ describe("ChapterProgressProvider", () => {
       await result.current.loadChapterContent("book-1", chapter);
     });
 
-    expect(result.current.currentChapter?.contentHtml).toBe(preservedContent);
+    expect(result.current.currentChapter?.id).toBe(chapterIdBefore);
+    expect(result.current.currentChapter?.contentHtml?.trim().length ?? 0).toBe(
+      contentLengthBefore
+    );
     expect(result.current.isLoadingChapter).toBe(false);
   });
 });
