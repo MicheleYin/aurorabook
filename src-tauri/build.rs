@@ -822,11 +822,38 @@ fn copy_ort_webgpu_dylib_for_macos_bundle() {
         }
     }
 
-    if !dest.is_file() {
+    if dest.is_file() {
+        return;
+    }
+
+    eprintln!(
+        "cargo:warning=libwebgpu_dawn.dylib not found under any of {:?} (profile={}); ort (webgpu) must have been built first",
+        target_roots,
+        profile
+    );
+
+    // Last resort: non-empty placeholder so `tauri_build` path validation passes in
+    // CI / fast tests before ort has produced the real Dawn dylib.
+    if let Err(e) = fs::create_dir_all(&dest_dir) {
         eprintln!(
-            "cargo:warning=libwebgpu_dawn.dylib not found under any of {:?} (profile={}); ort (webgpu) must have been built first",
-            target_roots,
-            profile
+            "cargo:warning=ort-dylibs: failed to create {}: {}",
+            dest_dir.display(),
+            e
         );
+        return;
+    }
+    match fs::write(
+        &dest,
+        b"placeholder libwebgpu_dawn.dylib; rebuild after ort (webgpu) links Dawn\n",
+    ) {
+        Ok(()) => eprintln!(
+            "cargo:warning=Created placeholder {} — real dylib is copied after ort builds",
+            dest.display()
+        ),
+        Err(e) => eprintln!(
+            "cargo:warning=ort-dylibs resource missing at {} and could not create placeholder: {}",
+            dest.display(),
+            e
+        ),
     }
 }

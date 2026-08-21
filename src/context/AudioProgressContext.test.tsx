@@ -270,7 +270,7 @@ describe("AudioProgressProvider", () => {
     const book = createBook({
       audioState: {
         currentTrackId: track.id,
-        currentTrackHref: track.href ?? track.filePath ?? "",
+        currentTrackHref: track.href ?? track.filePath,
         currentTrackIndex: track.order,
         currentTimeSeconds: 33,
         updatedAt: new Date().toISOString(),
@@ -311,7 +311,7 @@ describe("AudioProgressProvider", () => {
     });
 
     expect(audio.currentTime).toBe(17);
-    expect(audio.play).not.toHaveBeenCalled();
+    expect(vi.mocked(audio.play)).not.toHaveBeenCalled();
   });
 
   it("restores saved track time matched by chapter index", async () => {
@@ -537,7 +537,7 @@ describe("AudioProgressProvider", () => {
       audioTracks: [createTrack(), track],
       audioState: {
         currentTrackId: "track-2",
-        currentTrackHref: track.href ?? track.filePath ?? "ch1.xhtml",
+        currentTrackHref: track.href ?? track.filePath,
         currentTrackIndex: 1,
         currentTimeSeconds: 10,
         updatedAt: new Date().toISOString(),

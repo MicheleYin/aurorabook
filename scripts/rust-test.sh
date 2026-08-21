@@ -14,6 +14,9 @@ if [[ ! -f resources/ffmpeg-bin/ffmpeg ]]; then
   : > resources/ffmpeg-bin/ffmpeg
   chmod +x resources/ffmpeg-bin/ffmpeg
 fi
+if [[ ! -f resources/ort-dylibs/libwebgpu_dawn.dylib ]]; then
+  printf 'placeholder\n' > resources/ort-dylibs/libwebgpu_dawn.dylib
+fi
 
 if [[ $# -eq 0 ]]; then
   cargo test --lib --test mod

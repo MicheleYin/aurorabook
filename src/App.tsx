@@ -150,7 +150,7 @@ function ConversionCallbackHandler() {
                 audioRef.current && !audioRef.current.paused
               );
               await saveAudioProgress(currentBook);
-              setCurrentBookWithLoading(normalized, wasPlaying);
+              await setCurrentBookWithLoading(normalized, wasPlaying);
               logger.log("Refreshed currently open book from completion event");
             }
           }
@@ -188,7 +188,7 @@ function ConversionCallbackHandler() {
               audioRef.current && !audioRef.current.paused
             );
             await saveAudioProgress(currentBook);
-            setCurrentBookWithLoading(book, wasPlaying);
+            await setCurrentBookWithLoading(book, wasPlaying);
           }
         }
       },

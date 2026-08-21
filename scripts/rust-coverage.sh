@@ -22,6 +22,10 @@ if [[ ! -f resources/ffmpeg-bin/ffmpeg ]]; then
   : > resources/ffmpeg-bin/ffmpeg
   chmod +x resources/ffmpeg-bin/ffmpeg
 fi
+if [[ ! -f resources/ort-dylibs/libwebgpu_dawn.dylib ]]; then
+  # Placeholder for tauri.macos.conf.json resource path validation.
+  printf 'placeholder\n' > resources/ort-dylibs/libwebgpu_dawn.dylib
+fi
 
 if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
   echo "cargo-llvm-cov not found. Install with:"

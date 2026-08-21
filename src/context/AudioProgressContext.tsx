@@ -125,7 +125,7 @@ export function AudioProgressProvider({
     return {
       currentTrackId: currentAudioTrack.id,
       currentTrackHref:
-        currentAudioTrack.href ?? currentAudioTrack.filePath ?? "",
+        currentAudioTrack.href ?? currentAudioTrack.filePath,
       currentTrackIndex: currentAudioTrack.order,
       currentTimeSeconds: audioRef.current?.currentTime ?? 0,
       updatedAt: new Date().toISOString(),
