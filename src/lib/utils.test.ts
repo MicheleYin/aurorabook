@@ -5,7 +5,7 @@ import { cn, formatTime } from "./utils";
 describe("cn", () => {
   it("merges class names and resolves Tailwind conflicts", () => {
     expect(cn("px-2", "px-4")).toBe("px-4");
-    expect(cn("text-sm", false && "hidden", "font-medium")).toBe(
+    expect(cn("text-sm", undefined, "font-medium")).toBe(
       "text-sm font-medium"
     );
   });

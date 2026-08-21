@@ -219,7 +219,10 @@ function AppClosingHandler() {
   const { saveProgress } = useChapterProgressContext();
   const { saveAudioProgress } = useAudioProgressContext();
   const currentBookRef = useRef(currentBook);
-  currentBookRef.current = currentBook;
+
+  useEffect(() => {
+    currentBookRef.current = currentBook;
+  }, [currentBook]);
 
   useEffect(() => {
     const unlisten = listen("app-closing", async () => {

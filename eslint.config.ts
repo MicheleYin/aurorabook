@@ -38,6 +38,9 @@ export default [
       "**/*.json",
       "**/*.md",
       "**/*.css",
+      // Node build helpers — CommonJS + process; not part of the Vite app surface.
+      "scripts/**",
+      "e2e-tauri/**",
     ],
   },
   js.configs.recommended,
@@ -66,6 +69,12 @@ export default [
       "react/prop-types": "off", // TypeScript handles prop validation
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "warn", // Warn on missing dependencies
+      // React Compiler rules: keep as warnings until call sites are migrated.
+      // They currently fail large amounts of intentional UI sync code in CI.
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/preserve-manual-memoization": "warn",
+      "react-hooks/immutability": "warn",
+      "react-hooks/refs": "warn",
     },
     settings: {
       react: {

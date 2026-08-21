@@ -137,6 +137,9 @@ fn sync_supertonic_assets_for_bundle() {
             "cargo:warning=Supertonic ONNX folder not found at {} — clone https://huggingface.co/Supertone/supertonic-3 into ./supertonic-3 (Git LFS for .onnx)",
             src_onnx.display()
         );
+        // tauri.conf.json lists these resource dirs; create placeholders so
+        // `tauri_build` path validation succeeds in CI without the model pack.
+        ensure_supertonic_resource_placeholders(&manifest_dir);
         return;
     }
 
@@ -182,6 +185,35 @@ fn sync_supertonic_assets_for_bundle() {
     if !dest_onnx.join("duration_predictor.onnx").exists() {
         println!(
             "cargo:warning=Supertonic ONNX weights missing (only JSON copied). In repo root: `cd supertonic-3 && git lfs pull`"
+        );
+    }
+}
+
+/// Ensure `resources/supertonic/{onnx,voice_styles}/` exist so `tauri_build`
+/// does not fail with `resource path … doesn't exist` when the Hugging Face
+/// pack is not checked out (CI / fresh clones).
+fn ensure_supertonic_resource_placeholders(manifest_dir: &Path) {
+    let dest_root = manifest_dir.join("resources").join("supertonic");
+    for sub in ["onnx", "voice_styles"] {
+        let dir = dest_root.join(sub);
+        if dir.is_dir() {
+            continue;
+        }
+        if let Err(e) = fs::create_dir_all(&dir) {
+            eprintln!(
+                "cargo:warning=Failed to create placeholder {}: {}",
+                dir.display(),
+                e
+            );
+            continue;
+        }
+        let keep = dir.join(".gitkeep");
+        if !keep.exists() {
+            let _ = fs::write(&keep, b"");
+        }
+        println!(
+            "cargo:warning=Created placeholder {} for tauri_build resource validation",
+            dir.display()
         );
     }
 }

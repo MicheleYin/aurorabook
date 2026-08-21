@@ -15,7 +15,8 @@ export PATH="${HOME}/.cargo/bin:${PATH}"
 
 # tauri.macos.conf.json lists bundle resources that must exist for `tauri_build`
 # even when we are only compiling tests (paths are gitignored).
-mkdir -p resources/ort-dylibs resources/ffmpeg-bin
+mkdir -p resources/ort-dylibs resources/ffmpeg-bin \
+  resources/supertonic/onnx resources/supertonic/voice_styles
 if [[ ! -f resources/ffmpeg-bin/ffmpeg ]]; then
   # Placeholder so Tauri resource validation passes; runtime tests use PATH ffmpeg.
   : > resources/ffmpeg-bin/ffmpeg

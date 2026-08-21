@@ -8,7 +8,8 @@ cd "$ROOT/src-tauri"
 
 export PATH="${HOME}/.cargo/bin:${PATH}"
 
-mkdir -p resources/ort-dylibs resources/ffmpeg-bin
+mkdir -p resources/ort-dylibs resources/ffmpeg-bin \
+  resources/supertonic/onnx resources/supertonic/voice_styles
 if [[ ! -f resources/ffmpeg-bin/ffmpeg ]]; then
   : > resources/ffmpeg-bin/ffmpeg
   chmod +x resources/ffmpeg-bin/ffmpeg
