@@ -436,4 +436,122 @@ describe("ChapterProgressProvider", () => {
 
     expect(container.scrollTop).toBe(40);
   });
+
+  it("sets isLoadingChapter true while a chapter fetch is in flight", async () => {
+    let resolveLoad: ((value: unknown) => void) | undefined;
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_chapter_content") {
+        return new Promise((resolve) => {
+          resolveLoad = resolve;
+        });
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useChapterProgressContext(), {
+      wrapper,
+    });
+
+    let loadPromise: Promise<void> | undefined;
+    act(() => {
+      loadPromise = result.current.loadChapterContent("book-1", createChapter());
+    });
+
+    expect(result.current.isLoadingChapter).toBe(true);
+
+    await act(async () => {
+      resolveLoad?.({ contentHtml: "<p>Hello</p>" });
+      await loadPromise;
+    });
+
+    expect(result.current.isLoadingChapter).toBe(false);
+  });
+
+  it("ignores a stale chapter response and only clears loading for the latest request", async () => {
+    const resolvers: Array<(value: unknown) => void> = [];
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_chapter_content") {
+        return new Promise((resolve) => {
+          resolvers.push(resolve);
+        });
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useChapterProgressContext(), {
+      wrapper,
+    });
+
+    const firstChapter = createChapter({ id: "ch-1", href: "ch1.xhtml" });
+    const secondChapter = createChapter({
+      id: "ch-2",
+      href: "ch2.xhtml",
+      chapterOrder: 1,
+    });
+
+    let firstPromise: Promise<void> | undefined;
+    let secondPromise: Promise<void> | undefined;
+    act(() => {
+      firstPromise = result.current.loadChapterContent("book-1", firstChapter);
+      secondPromise = result.current.loadChapterContent(
+        "book-1",
+        secondChapter
+      );
+    });
+
+    expect(resolvers).toHaveLength(2);
+
+    await act(async () => {
+      resolvers[0]?.({ contentHtml: "<p>Stale first</p>" });
+      await firstPromise;
+    });
+
+    // Stale response must not win; still loading until latest settles.
+    expect(result.current.currentChapter?.id).not.toBe("ch-1");
+    expect(result.current.isLoadingChapter).toBe(true);
+
+    await act(async () => {
+      resolvers[1]?.({ contentHtml: "<p>Latest second</p>" });
+      await secondPromise;
+    });
+
+    expect(result.current.currentChapter).toMatchObject({
+      id: "ch-2",
+      contentHtml: "<p>Latest second</p>",
+    });
+    expect(result.current.isLoadingChapter).toBe(false);
+  });
+
+  it("keeps previous non-empty HTML when a newer fetch returns empty for the same chapter", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_chapter_content") {
+        return { contentHtml: "<p>Original</p>" };
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useChapterProgressContext(), {
+      wrapper,
+    });
+    const chapter = createChapter();
+
+    await act(async () => {
+      await result.current.loadChapterContent("book-1", chapter);
+    });
+    expect(result.current.currentChapter?.contentHtml).toBe("<p>Original</p>");
+
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_chapter_content") {
+        return { contentHtml: "   " };
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    await act(async () => {
+      await result.current.loadChapterContent("book-1", chapter);
+    });
+
+    expect(result.current.currentChapter?.contentHtml).toBe("<p>Original</p>");
+    expect(result.current.isLoadingChapter).toBe(false);
+  });
 });

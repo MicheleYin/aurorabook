@@ -336,7 +336,10 @@ export function ReaderContent({
 
   if (isLoading) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div
+        className="flex h-full items-center justify-center"
+        data-testid="reader-loading"
+      >
         <div className="text-center space-y-2">
           <LoadingScreen />
           <p className="text-sm text-muted-foreground">Loading chapter...</p>
@@ -349,6 +352,7 @@ export function ReaderContent({
     <div
       ref={scrollContainerRef}
       className={cn("flex-1 overflow-y-auto select-none", themeClass)}
+      data-testid="reader-scroll-container"
       onPointerDown={handlePointerDown}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}

@@ -1097,4 +1097,43 @@ describe("AudioProgressProvider", () => {
       expect(result.current.livePlaybackRequestVersion).toBe(versionBefore + 1);
     });
   });
+
+  it("sets isLoadingAudio while a track stream URL is loading", async () => {
+    let resolveStream: ((value: string) => void) | undefined;
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_app_settings") return { audioPlaybackSpeed: 1 };
+      if (cmd === "get_current_converting_chapter") return null;
+      if (cmd === "get_audio_stream_url") {
+        return new Promise<string>((resolve) => {
+          resolveStream = resolve;
+        });
+      }
+      if (cmd.startsWith("ios_player_")) {
+        return cmd === "ios_player_is_playing" ? false : undefined;
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    result.current.audioRef.current = audio;
+    const book = createBook();
+    const track = createTrack();
+
+    act(() => {
+      void result.current.loadAudioTrack(book.id, track, book);
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoadingAudio).toBe(true);
+    });
+
+    await act(async () => {
+      resolveStream?.("https://stream.local/track.mp3");
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoadingAudio).toBe(false);
+    });
+  });
 });

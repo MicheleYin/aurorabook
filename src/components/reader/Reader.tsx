@@ -86,7 +86,7 @@ export function Reader() {
     setIsHeaderVisible((prev) => !prev);
   };
 
-  if (!currentBook || !currentChapter) {
+  if (!currentBook) {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-4">
@@ -97,6 +97,33 @@ export function Reader() {
       </div>
     );
   }
+
+  // First open: chapter content is not available yet — show the loading state
+  // instead of the empty "no book" placeholder while the fetch is in flight.
+  if (!currentChapter) {
+    if (isLoadingChapter) {
+      return (
+        <div
+          className="flex h-full items-center justify-center"
+          data-testid="reader-loading"
+        >
+          <div className="text-center space-y-2">
+            <p className="text-sm text-muted-foreground">Loading chapter...</p>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="text-center space-y-4">
+          <BookOpen className="h-12 w-12 text-muted-foreground mx-auto" />
+          <p className="text-lg font-medium">{t("reader.no_book")}</p>
+          <Button onClick={handleBack}>{t("reader.back_to_library")}</Button>
+        </div>
+      </div>
+    );
+  }
+
   logger.info("[reader] current chapter snapshot", {
     currentBookId: currentBook.id,
     currentChapterId: currentChapter.id,
