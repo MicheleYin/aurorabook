@@ -35,6 +35,39 @@ fn with_dedicated_handle(app_handle: &tauri::AppHandle, f: impl FnOnce(&tokio::r
     }
 }
 
+/// Prepend `resources/ort-dylibs` (and nested `resources/resources/ort-dylibs`) to PATH
+/// so Windows can resolve `webgpu_dawn.dll` / companion DXC DLLs shipped as Tauri resources.
+#[cfg(target_os = "windows")]
+fn prepend_windows_ort_dylib_dir(resource_dir: &std::path::Path) {
+    let candidates = [
+        resource_dir.join("ort-dylibs"),
+        resource_dir.join("resources").join("ort-dylibs"),
+    ];
+    let mut extras: Vec<String> = Vec::new();
+    for dir in candidates {
+        if dir.is_dir() {
+            if let Some(s) = dir.to_str() {
+                extras.push(s.to_string());
+            }
+        }
+    }
+    if extras.is_empty() {
+        return;
+    }
+    let joined = extras.join(";");
+    let new_path = match std::env::var_os("PATH") {
+        Some(existing) => {
+            let mut s = joined;
+            s.push(';');
+            s.push_str(&existing.to_string_lossy());
+            s
+        }
+        None => joined,
+    };
+    std::env::set_var("PATH", new_path);
+    log::info!("✓ Prepended Windows ort-dylibs directories to PATH");
+}
+
 // In-tree Supertonic wrapper uses ONNX Runtime (CPU/CoreML depending on platform and ORT EP configuration).
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -105,6 +138,13 @@ pub fn run() {
                         let msg = format!("✓ Set TAURI_RESOURCE_DIR to: {}", resource_str);
                         log::info!("{}", msg);
                         logging::log("info", &msg, None);
+
+                        // Windows: Dawn / DirectML helper DLLs live under resources/ort-dylibs.
+                        // Prepend that directory to PATH so LoadLibrary finds them before system dirs.
+                        #[cfg(target_os = "windows")]
+                        {
+                            prepend_windows_ort_dylib_dir(&resource_dir);
+                        }
 
                         let exists_msg = format!("  Resource directory exists: {}", resource_dir.exists());
                         log::info!("{}", exists_msg);

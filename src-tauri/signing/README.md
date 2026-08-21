@@ -35,6 +35,24 @@ macOS builds bundle a self-contained FFmpeg directory at `src-tauri/resources/ff
 The App Store signing step re-signs the nested ffmpeg binary (and bundled dylibs) with
 `Entitlements.macos-appstore.nested-exec.plist`.
 
+## Bundled FFmpeg for Windows
+
+Windows builds stage a pinned **BtbN FFmpeg n8.1 static GPL** binary at
+`src-tauri/resources/ffmpeg-bin/ffmpeg.exe` (includes `libmp3lame` + AAC/MP4).
+
+- `bun run build:windows` / `build:windows:arm64` run `ensure-windows-ffmpeg-resource.cjs` first.
+- Download/stage: `bun run bundle:ffmpeg:windows` (set `AURORABOOK_FFMPEG_ARCH=arm64` for ARM64).
+- Override with a local binary via `AURORABOOK_FFMPEG` or `bun run sync:ffmpeg -- path\to\ffmpeg.exe`.
+
+## ONNX Runtime execution providers (desktop)
+
+| Platform | EP |
+| -------- | -- |
+| macOS | WebGPU (Dawn dylib in `resources/ort-dylibs/`) |
+| Windows x86_64 | WebGPU (Dawn DLL in `resources/ort-dylibs/`) |
+| Windows ARM64 | DirectML (system `DirectML.dll`) |
+| iOS | CPU only |
+
 ## Regenerating src-tauri/gen/apple/ (Xcode project)
 
 The `src-tauri/gen/apple/` directory is also gitignored because it contains your Team ID.

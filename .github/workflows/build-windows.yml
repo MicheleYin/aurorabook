@@ -1,0 +1,78 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+  release:
+    types: [published]
+
+concurrency:
+  group: build-windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Windows (x86_64 / WebGPU)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
+      RUST_TARGET: x86_64-pc-windows-msvc
+      AURORABOOK_FFMPEG_ARCH: x64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cargo-target
+            .cache/ffmpeg-windows
+          key: ${{ runner.os }}-x86_64-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-x86_64-cargo-
+            ${{ runner.os }}-cargo-
+
+      - name: Fetch Supertonic TTS models (Git LFS)
+        shell: bash
+        run: |
+          git lfs install
+          if [ ! -d supertonic-3/.git ]; then
+            git clone --depth 1 https://huggingface.co/Supertone/supertonic-3 supertonic-3
+          fi
+          git -C supertonic-3 lfs pull
+          test -f supertonic-3/onnx/tts.json
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Bundle FFmpeg for the app
+        run: bun run bundle:ffmpeg:windows
+
+      - name: Build AuroraBook (NSIS)
+        shell: bash
+        run: |
+          node scripts/ensure-windows-ffmpeg-resource.cjs
+          node scripts/tauri-cli.cjs build --target "${RUST_TARGET}"
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurorabook-windows-x86_64
+          path: |
+            .cargo-target/${{ env.RUST_TARGET }}/release/bundle/nsis/*.exe
+            .cargo-target/${{ env.RUST_TARGET }}/release/*.exe
+          if-no-files-found: error
+          retention-days: 14

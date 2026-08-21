@@ -81,7 +81,7 @@ anyhow = "1.0"
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
 
 # In-tree Supertonic TTS runtime
-# Base ort (no EP feature). WebGPU is desktop/macOS; iOS uses CoreML via static ORT.
+# Base ort (no EP feature). Platform targets add WebGPU / DirectML below.
 ort = { version = "2.0.0-rc.12" }
 ndarray = "0.17"
 rand = "0.8"
@@ -91,10 +91,16 @@ async-stream = "0.3.6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
-
-# Desktop/macOS: WebGPU EP (links libwebgpu_dawn). iOS cannot use Dawn.
-[target.'cfg(not(target_os = "ios"))'.dependencies]
+# macOS desktop: WebGPU EP (links libwebgpu_dawn).
 ort = { version = "2.0.0-rc.12", features = ["webgpu"] }
+
+# Windows x86_64: WebGPU EP (Dawn / DX12).
+[target.'cfg(all(target_os = "windows", target_arch = "x86_64"))'.dependencies]
+ort = { version = "2.0.0-rc.12", features = ["webgpu"] }
+
+# Windows ARM64: DirectML EP (no Dawn).
+[target.'cfg(all(target_os = "windows", target_arch = "aarch64"))'.dependencies]
+ort = { version = "2.0.0-rc.12", features = ["directml"] }
 
 # iOS: CPU EP only (CoreML EP previously aborted / spiked memory). ORT_DIRECT_LINK +
 # locally built static libs (see LOCAL_IOS_BUILD.md).

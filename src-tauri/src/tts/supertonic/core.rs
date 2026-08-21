@@ -912,8 +912,20 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
     }
     #[cfg(target_os = "ios")]
     log::debug!("Supertonic TTS: using CPU EP on iOS (CoreML disabled — native abort risk)");
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+    log::debug!("Supertonic TTS: using DirectML (ONNX Runtime) for inference");
+    #[cfg(any(
+        target_os = "macos",
+        all(target_os = "windows", target_arch = "x86_64")
+    ))]
     log::debug!("Supertonic TTS: using WebGPU (ONNX Runtime) for inference");
+    #[cfg(all(
+        not(target_os = "ios"),
+        not(target_os = "macos"),
+        not(all(target_os = "windows", target_arch = "x86_64")),
+        not(all(target_os = "windows", target_arch = "aarch64"))
+    ))]
+    log::debug!("Supertonic TTS: using CPU EP (no GPU EP configured for this platform)");
 
     // Ensure a single ORT environment is committed before session create.
     // On iOS, pin CPU so sessions don't inherit unexpected default EPs.
@@ -952,9 +964,28 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
             .map_err(|e| anyhow!("ORT intra-threads setup failed: {e}"))?
             .with_memory_pattern(true)
             .map_err(|e| anyhow!("ORT memory pattern setup failed: {e}"))?;
-        #[cfg(not(target_os = "ios"))]
+        // Windows ARM64: DirectML (system DirectML.dll; no Dawn).
+        #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+        let mut builder = builder
+            .with_execution_providers([ep::DirectML::default().build().error_on_failure()])
+            .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
+        // macOS + Windows x86_64: WebGPU (Dawn).
+        #[cfg(any(
+            target_os = "macos",
+            all(target_os = "windows", target_arch = "x86_64")
+        ))]
         let mut builder = builder
             .with_execution_providers([ep::WebGPU::default().build().error_on_failure()])
+            .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
+        // Other desktop targets (e.g. Linux): CPU until an EP is wired.
+        #[cfg(all(
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(all(target_os = "windows", target_arch = "x86_64")),
+            not(all(target_os = "windows", target_arch = "aarch64"))
+        ))]
+        let mut builder = builder
+            .with_execution_providers([ep::CPU::default().build()])
             .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
         log::info!("Loading ONNX model: {}", path);
         let session = builder
