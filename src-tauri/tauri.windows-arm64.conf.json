@@ -10,7 +10,6 @@
       "resources/supertonic/onnx/": "resources/supertonic/onnx/",
       "resources/supertonic/voice_styles/": "resources/supertonic/voice_styles/",
       "resources/ffmpeg-bin/": "resources/ffmpeg-bin/",
-      "resources/ort-dylibs/": "resources/ort-dylibs/",
       "resources/ort-dylibs/DirectML.dll": "DirectML.dll"
     }
   }

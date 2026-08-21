@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "build": {
-    "beforeBundleCommand": "node ../scripts/ensure-windows-ort-dlls.cjs --require-dawn"
+    "beforeBundleCommand": "node ../scripts/ensure-windows-ort-dlls.cjs --arch=x64 --require-dawn"
   },
   "bundle": {
     "targets": ["nsis"],
@@ -10,7 +10,6 @@
       "resources/supertonic/onnx/": "resources/supertonic/onnx/",
       "resources/supertonic/voice_styles/": "resources/supertonic/voice_styles/",
       "resources/ffmpeg-bin/": "resources/ffmpeg-bin/",
-      "resources/ort-dylibs/": "resources/ort-dylibs/",
       "resources/ort-dylibs/webgpu_dawn.dll": "webgpu_dawn.dll",
       "resources/ort-dylibs/DirectML.dll": "DirectML.dll"
     }
