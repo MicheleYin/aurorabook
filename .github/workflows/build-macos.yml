@@ -1,0 +1,99 @@
+name: Build macOS
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+  release:
+    types: [published]
+
+concurrency:
+  group: build-macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: macOS (aarch64)
+    runs-on: macos-15
+    permissions:
+      contents: read
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
+      RUST_TARGET: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cargo-target
+          key: ${{ runner.os }}-aarch64-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-aarch64-cargo-
+            ${{ runner.os }}-cargo-
+
+      - name: Install FFmpeg (Homebrew)
+        run: |
+          brew install ffmpeg
+          ffmpeg -version | head -n 1
+
+      - name: Fetch Supertonic TTS models (Git LFS)
+        run: |
+          git lfs install
+          if [ ! -d supertonic-3/.git ]; then
+            git clone --depth 1 https://huggingface.co/Supertone/supertonic-3 supertonic-3
+          fi
+          # Ensure LFS payloads (not just pointer files) are present.
+          git -C supertonic-3 lfs pull
+          test -f supertonic-3/onnx/tts.json
+          # Spot-check that at least one weight file is a real blob, not an LFS pointer.
+          python3 - <<'PY'
+          from pathlib import Path
+          onnx = list(Path("supertonic-3/onnx").glob("*.onnx"))
+          assert onnx, "no .onnx files under supertonic-3/onnx"
+          sample = onnx[0]
+          data = sample.read_bytes()[:120]
+          assert not data.startswith(b"version https://git-lfs.github.com/spec/v1"), f"{sample} is still an LFS pointer"
+          print(f"ok: {sample} ({sample.stat().st_size} bytes)")
+          PY
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Bundle FFmpeg for the app
+        run: bun run bundle:ffmpeg:macos
+
+      - name: Build AuroraBook (unsigned)
+        run: |
+          node scripts/ensure-macos-ffmpeg-resource.cjs
+          node scripts/tauri-cli.cjs build --target "${RUST_TARGET}"
+        env:
+          # Optional Developer ID signing / notarization. Leave unset for unsigned CI builds.
+          # For signing to work you also need a step that imports APPLE_CERTIFICATE into a keychain.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurorabook-macos-aarch64
+          path: |
+            .cargo-target/${{ env.RUST_TARGET }}/release/bundle/dmg/*.dmg
+            .cargo-target/${{ env.RUST_TARGET }}/release/bundle/macos/*.app
+          if-no-files-found: error
+          retention-days: 14

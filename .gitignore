@@ -49,6 +49,9 @@ src-tauri/Entitlements.macos-appstore.plist
 src-tauri/signing/*
 !src-tauri/signing/README.md
 
+# Non–App Store entitlements are committed (Entitlements.macos.plist).
+# App Store entitlements are generated from the .template; do not commit them.
+
 # Copied at bundle time from Cargo output (see scripts/copy-ort-webgpu-dylib.cjs)
 src-tauri/resources/ort-dylibs/*.dylib
 # Optional local App Store resource staging (copied by scripts/ensure-macos-ffmpeg-resource.cjs)
@@ -64,6 +67,9 @@ src-tauri/watermark_test.mp3
 
 .cargo-target/
 src-tauri/resources/espeak-ng-data/
+
+# Hugging Face Supertonic pack (clone into ./supertonic-3 with Git LFS; synced by build.rs)
+supertonic-3/
 
 #Ignore cursor AI rules
 .cursor/rules/codacy.mdc

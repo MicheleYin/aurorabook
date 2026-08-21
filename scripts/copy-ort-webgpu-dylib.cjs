@@ -28,7 +28,8 @@ const dest = path.join(destDir, "libwebgpu_dawn.dylib");
 function resolveCargoTargetDir() {
   const fromEnv = (process.env.CARGO_TARGET_DIR || "").trim();
   if (fromEnv) return path.resolve(fromEnv);
-  return path.resolve(tauriDir, "..", "..", ".cargo-target");
+  // Match src-tauri/.cargo/config.toml target-dir → repo-root .cargo-target
+  return path.resolve(tauriDir, "..", ".cargo-target");
 }
 
 const targetRoot = resolveCargoTargetDir();

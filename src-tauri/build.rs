@@ -126,8 +126,8 @@ fn sync_supertonic_assets_for_bundle() {
         Ok(s) => PathBuf::from(s),
         Err(_) => return,
     };
-    // `src-tauri` crate dir → workspace root is two levels up (…/tts-tauri/src-tauri → aurorabook)
-    let workspace_root = manifest_dir.join("..").join("..");
+    // `src-tauri` crate dir → repo root is one level up.
+    let workspace_root = manifest_dir.join("..");
     let src_pack = workspace_root.join("supertonic-3");
     let src_onnx = src_pack.join("onnx");
     let src_voices = src_pack.join("voice_styles");
@@ -137,6 +137,9 @@ fn sync_supertonic_assets_for_bundle() {
             "cargo:warning=Supertonic ONNX folder not found at {} — clone https://huggingface.co/Supertone/supertonic-3 into ./supertonic-3 (Git LFS for .onnx)",
             src_onnx.display()
         );
+        // tauri.conf.json lists these resource dirs; create placeholders so
+        // `tauri_build` path validation succeeds in CI without the model pack.
+        ensure_supertonic_resource_placeholders(&manifest_dir);
         return;
     }
 
@@ -182,6 +185,35 @@ fn sync_supertonic_assets_for_bundle() {
     if !dest_onnx.join("duration_predictor.onnx").exists() {
         println!(
             "cargo:warning=Supertonic ONNX weights missing (only JSON copied). In repo root: `cd supertonic-3 && git lfs pull`"
+        );
+    }
+}
+
+/// Ensure `resources/supertonic/{onnx,voice_styles}/` exist so `tauri_build`
+/// does not fail with `resource path … doesn't exist` when the Hugging Face
+/// pack is not checked out (CI / fresh clones).
+fn ensure_supertonic_resource_placeholders(manifest_dir: &Path) {
+    let dest_root = manifest_dir.join("resources").join("supertonic");
+    for sub in ["onnx", "voice_styles"] {
+        let dir = dest_root.join(sub);
+        if dir.is_dir() {
+            continue;
+        }
+        if let Err(e) = fs::create_dir_all(&dir) {
+            eprintln!(
+                "cargo:warning=Failed to create placeholder {}: {}",
+                dir.display(),
+                e
+            );
+            continue;
+        }
+        let keep = dir.join(".gitkeep");
+        if !keep.exists() {
+            let _ = fs::write(&keep, b"");
+        }
+        println!(
+            "cargo:warning=Created placeholder {} for tauri_build resource validation",
+            dir.display()
         );
     }
 }
@@ -739,14 +771,14 @@ fn copy_ort_webgpu_dylib_for_macos_bundle() {
         Err(_) => return,
     };
     let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
-    // Match `src-tauri/.cargo/config.toml` `[build] target-dir = "../../.cargo-target"`.
+    // Match `src-tauri/.cargo/config.toml` `[build] target-dir = "../../.cargo-target"`
+    // (relative to `src-tauri/.cargo/` → repo-root `.cargo-target`).
     // Build scripts do not always get `CARGO_TARGET_DIR`, so fall back to the same layout.
     let cargo_target_from_config = manifest_dir
         .join("..")
-        .join("..")
         .join(".cargo-target")
         .canonicalize()
-        .unwrap_or_else(|_| manifest_dir.join("..").join("..").join(".cargo-target"));
+        .unwrap_or_else(|_| manifest_dir.join("..").join(".cargo-target"));
 
     let mut target_roots: Vec<PathBuf> = Vec::new();
     if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
@@ -790,11 +822,38 @@ fn copy_ort_webgpu_dylib_for_macos_bundle() {
         }
     }
 
-    if !dest.is_file() {
+    if dest.is_file() {
+        return;
+    }
+
+    eprintln!(
+        "cargo:warning=libwebgpu_dawn.dylib not found under any of {:?} (profile={}); ort (webgpu) must have been built first",
+        target_roots,
+        profile
+    );
+
+    // Last resort: non-empty placeholder so `tauri_build` path validation passes in
+    // CI / fast tests before ort has produced the real Dawn dylib.
+    if let Err(e) = fs::create_dir_all(&dest_dir) {
         eprintln!(
-            "cargo:warning=libwebgpu_dawn.dylib not found under any of {:?} (profile={}); ort (webgpu) must have been built first",
-            target_roots,
-            profile
+            "cargo:warning=ort-dylibs: failed to create {}: {}",
+            dest_dir.display(),
+            e
         );
+        return;
+    }
+    match fs::write(
+        &dest,
+        b"placeholder libwebgpu_dawn.dylib; rebuild after ort (webgpu) links Dawn\n",
+    ) {
+        Ok(()) => eprintln!(
+            "cargo:warning=Created placeholder {} — real dylib is copied after ort builds",
+            dest.display()
+        ),
+        Err(e) => eprintln!(
+            "cargo:warning=ort-dylibs resource missing at {} and could not create placeholder: {}",
+            dest.display(),
+            e
+        ),
     }
 }
