@@ -70,7 +70,8 @@ jobs:
         shell: bash
         run: |
           node scripts/ensure-windows-ffmpeg-resource.cjs --arch=x64
-          node scripts/ensure-windows-ort-dlls.cjs --arch=x64
+          node scripts/bundle-windows-directml.cjs --arch=x64
+          # Dawn is copied in beforeBundleCommand after cargo/ort produces it.
           node scripts/tauri-cli.cjs build --target "${RUST_TARGET}"
 
       - name: Verify Dawn + DirectML DLLs beside the built exe

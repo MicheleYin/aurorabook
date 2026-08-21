@@ -4,12 +4,14 @@
  *   - DirectML.dll (all Windows arches; redistributable from NuGet)
  *   - webgpu_dawn.dll (+ dxil/dxcompiler when present) on x86_64 only
  *
- * Used as `beforeBundleCommand` so load-time DLLs are real PEs before NSIS packs
- * them next to AuroraBook.exe.
+ * Used as `beforeBundleCommand` (after cargo) so Dawn from ort copy-dylibs exists.
+ * Safe to run before cargo as well: pass nothing and Dawn is skipped if missing,
+ * or pass `--require-dawn` to fail hard (beforeBundleCommand).
  *
  * Usage:
  *   node scripts/ensure-windows-ort-dlls.cjs
  *   node scripts/ensure-windows-ort-dlls.cjs --arch=arm64
+ *   node scripts/ensure-windows-ort-dlls.cjs --arch=x64 --require-dawn
  */
 const fs = require("fs");
 const path = require("path");
@@ -46,16 +48,23 @@ function run(script, extraArgs = []) {
     cwd: root,
     env: process.env,
   });
-  if (result.status !== 0) {
-    process.exit(result.status === null ? 1 : result.status);
-  }
+  return result.status === null ? 1 : result.status;
 }
+
+const requireDawn =
+  process.argv.includes("--require-dawn") ||
+  process.env.AURORABOOK_REQUIRE_DAWN === "1";
 
 const arch = resolveArch();
 process.env.AURORABOOK_DIRECTML_ARCH = arch;
 process.env.AURORABOOK_FFMPEG_ARCH = arch === "arm64" ? "arm64" : "x64";
 
-run(path.join(__dirname, "bundle-windows-directml.cjs"), [`--arch=${arch}`]);
+{
+  const status = run(path.join(__dirname, "bundle-windows-directml.cjs"), [
+    `--arch=${arch}`,
+  ]);
+  if (status !== 0) process.exit(status);
+}
 
 // Also place DirectML.dll beside the built exe when present (NSIS sibling / load-time).
 const targetRoot =
@@ -79,8 +88,15 @@ if (fs.existsSync(dmlSrc) && fs.statSync(dmlSrc).size > 64) {
 }
 
 if (arch !== "arm64") {
-  // Refresh Dawn from ort copy-dylibs output (x64 WebGPU only).
-  run(path.join(__dirname, "copy-ort-webgpu-dylib.cjs"));
+  const status = run(path.join(__dirname, "copy-ort-webgpu-dylib.cjs"));
+  if (status !== 0) {
+    if (requireDawn) {
+      process.exit(status);
+    }
+    console.log(
+      "ensure-windows-ort-dlls: Dawn not available yet (ok before cargo build); will refresh in beforeBundleCommand"
+    );
+  }
 } else {
   console.log("ensure-windows-ort-dlls: ARM64 — DirectML only (skip Dawn)");
 }

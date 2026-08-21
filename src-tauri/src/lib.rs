@@ -32,21 +32,24 @@ fn with_dedicated_handle(app_handle: &tauri::AppHandle, f: impl FnOnce(&tokio::r
     }
 }
 
-/// Ensure Windows can resolve `webgpu_dawn.dll` (and companion DXC DLLs).
+/// Ensure Windows can resolve `webgpu_dawn.dll` / `DirectML.dll` (and companion DXC DLLs).
 ///
-/// ORT's WebGPU build links Dawn as a DLL. The install must place
-/// `webgpu_dawn.dll` next to `AuroraBook.exe` (see `tauri.windows.conf.json`).
-/// PATH is still prepended for companions / delay-loaded helpers under
-/// `resources/ort-dylibs`.
+/// These are load-time DLL deps and must sit next to `AuroraBook.exe` (see
+/// `tauri.windows.conf.json`). PATH is still prepended for delay-loaded helpers
+/// under `resources/ort-dylibs` and the install root derived from Tauri's
+/// resource directory (avoids `current_exe` for path discovery).
 #[cfg(target_os = "windows")]
 fn prepend_windows_ort_dylib_dir(resource_dir: &std::path::Path) {
     let mut extras: Vec<String> = Vec::new();
 
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            if let Some(s) = exe_dir.to_str() {
-                extras.push(s.to_string());
-            }
+    // Tauri resource_dir is typically the install root or a `resources` subfolder.
+    // Prefer both so exe-adjacent DLLs and nested ort-dylibs are on PATH.
+    if let Some(s) = resource_dir.to_str() {
+        extras.push(s.to_string());
+    }
+    if let Some(parent) = resource_dir.parent() {
+        if let Some(s) = parent.to_str() {
+            extras.push(s.to_string());
         }
     }
 
@@ -65,6 +68,10 @@ fn prepend_windows_ort_dylib_dir(resource_dir: &std::path::Path) {
         return;
     }
 
+    // Deduplicate while preserving order.
+    let mut seen = std::collections::HashSet::new();
+    extras.retain(|p| seen.insert(p.clone()));
+
     let joined = extras.join(";");
     let new_path = match std::env::var_os("PATH") {
         Some(existing) => {
@@ -76,7 +83,7 @@ fn prepend_windows_ort_dylib_dir(resource_dir: &std::path::Path) {
         None => joined,
     };
     std::env::set_var("PATH", new_path);
-    log::info!("✓ Prepended Windows Dawn DLL search dirs to PATH");
+    log::info!("✓ Prepended Windows Dawn/DirectML DLL search dirs to PATH");
 }
 
 // In-tree Supertonic wrapper uses ONNX Runtime (CPU/CoreML depending on platform and ORT EP configuration).
