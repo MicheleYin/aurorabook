@@ -18,7 +18,7 @@
 
 ## Why AuroraBook?
 
-AuroraBook is designed for book lovers who want a seamless reading and listening experience. By integrating the powerful Kokoros TTS engine directly into a native shell, AuroraBook offers ultra-fast high-quality speech synthesis without the need for an internet connection.
+AuroraBook is designed for book lovers who want a seamless reading and listening experience. By integrating the powerful Supertonic TTS engine directly into a native shell, AuroraBook offers ultra-fast high-quality speech synthesis without the need for an internet connection.
 
 - **Offline TTS** — High-quality AI voices running locally on your hardware.
 - **EPUB Support** — Import and read your EPUB library with ease.
@@ -33,7 +33,7 @@ AuroraBook is designed for book lovers who want a seamless reading and listening
 | Feature | Description |
 | :--- | :--- |
 | **Reader** | Clean, customizable reading interface for EPUB files |
-| **TTS Engine** | Powered by [Kokoros](https://github.com/MicheleYin/kokoros) (ONNX) |
+| **TTS Engine** | Powered by [Supertonic](https://huggingface.co/Supertone/supertonic-3) (ONNX) |
 | **Voices** | Multiple natural-sounding voices with adjustable speed |
 | **Audiobooks** | Convert EPUB chapters to high-quality audio offline |
 | **Layout** | Responsive design optimized for both desktop and mobile |
@@ -47,7 +47,7 @@ AuroraBook is designed for book lovers who want a seamless reading and listening
 | **UI** | [React](https://reactjs.org/), [Vite](https://vitejs.dev/), [Tailwind CSS](https://tailwindcss.com/) |
 | **State** | [Redux Toolkit](https://redux-toolkit.js.org/) |
 | **Shell** | [Tauri 2](https://tauri.app/) (Rust) |
-| **TTS** | [Kokoros](https://github.com/MicheleYin/kokoros) (ONNX Runtime) |
+| **TTS** | [Supertonic](https://huggingface.co/Supertone/supertonic-3) (ONNX Runtime) |
 | **EPUB** | [Epub.js](https://github.com/futurepress/epub.js/) |
 
 ---
@@ -214,7 +214,7 @@ This project is released under the [MIT License](LICENSE).
 
 ## Acknowledgements
 
-- [Kokoros](https://github.com/MicheleYin/kokoros) — Local TTS engine inspiration
+- [Supertonic](https://huggingface.co/Supertone/supertonic-3) — Local TTS engine
 - [Tauri](https://tauri.app/) — Lightweight native apps
 - [ONNX Runtime](https://onnxruntime.ai/) — High-performance ML inference
 - [Epub.js](http://epubjs.org/) — EPUB rendering in the browser
