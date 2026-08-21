@@ -179,8 +179,10 @@ bun run build:windows
 bun run build:windows:arm64
 ```
 
-Windows x86_64 uses the **WebGPU** ONNX Runtime EP (Dawn DLL under `resources/ort-dylibs/`).
-Windows ARM64 uses **DirectML**. Export requires the bundled `ffmpeg.exe` with `libmp3lame`.
+Windows x86_64 uses the **WebGPU** ONNX Runtime EP (`webgpu_dawn.dll` is installed
+**next to** `AuroraBook.exe`, because Windows load-time DLL search does not look under
+`resources/`). Windows ARM64 uses **DirectML**. Export requires the bundled
+`ffmpeg.exe` with `libmp3lame`.
 
 CI builds an NSIS installer for x86_64 via
 [`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml)

@@ -32,25 +32,39 @@ fn with_dedicated_handle(app_handle: &tauri::AppHandle, f: impl FnOnce(&tokio::r
     }
 }
 
-/// Prepend `resources/ort-dylibs` (and nested `resources/resources/ort-dylibs`) to PATH
-/// so Windows can resolve `webgpu_dawn.dll` / companion DXC DLLs shipped as Tauri resources.
+/// Ensure Windows can resolve `webgpu_dawn.dll` (and companion DXC DLLs).
+///
+/// ORT's WebGPU build links Dawn as a DLL. The install must place
+/// `webgpu_dawn.dll` next to `AuroraBook.exe` (see `tauri.windows.conf.json`).
+/// PATH is still prepended for companions / delay-loaded helpers under
+/// `resources/ort-dylibs`.
 #[cfg(target_os = "windows")]
 fn prepend_windows_ort_dylib_dir(resource_dir: &std::path::Path) {
-    let candidates = [
+    let mut extras: Vec<String> = Vec::new();
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            if let Some(s) = exe_dir.to_str() {
+                extras.push(s.to_string());
+            }
+        }
+    }
+
+    for dir in [
         resource_dir.join("ort-dylibs"),
         resource_dir.join("resources").join("ort-dylibs"),
-    ];
-    let mut extras: Vec<String> = Vec::new();
-    for dir in candidates {
+    ] {
         if dir.is_dir() {
             if let Some(s) = dir.to_str() {
                 extras.push(s.to_string());
             }
         }
     }
+
     if extras.is_empty() {
         return;
     }
+
     let joined = extras.join(";");
     let new_path = match std::env::var_os("PATH") {
         Some(existing) => {
@@ -62,7 +76,7 @@ fn prepend_windows_ort_dylib_dir(resource_dir: &std::path::Path) {
         None => joined,
     };
     std::env::set_var("PATH", new_path);
-    log::info!("✓ Prepended Windows ort-dylibs directories to PATH");
+    log::info!("✓ Prepended Windows Dawn DLL search dirs to PATH");
 }
 
 // In-tree Supertonic wrapper uses ONNX Runtime (CPU/CoreML depending on platform and ORT EP configuration).
