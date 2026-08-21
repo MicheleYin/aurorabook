@@ -119,8 +119,9 @@ fn compile_native_player_swift_for_ios() {
 /// Copy Supertonic 3 assets from the repo’s `supertonic-3/` tree (Hugging Face layout) into
 /// `src-tauri/resources/supertonic/` so Tauri can bundle them.
 ///
-/// Expects `../../supertonic-3/onnx` and `../../supertonic-3/voice_styles` relative to this crate.
-/// Pull large files with Git LFS from [Supertone/supertonic-3](https://huggingface.co/Supertone/supertonic-3).
+/// Expects `../supertonic-3/onnx` and `../supertonic-3/voice_styles` relative to this crate
+/// (repo-root `./supertonic-3`). Pull large files with Git LFS from
+/// [Supertone/supertonic-3](https://huggingface.co/Supertone/supertonic-3).
 fn sync_supertonic_assets_for_bundle() {
     let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
         Ok(s) => PathBuf::from(s),
