@@ -518,6 +518,7 @@ export function Library() {
             {filteredBooks.map((book, index) => (
               <Card
                 key={`${book.id}-${filterKey}`}
+                data-testid={`library-book-${book.id}`}
                 className={cn(
                   "cursor-pointer hover:shadow-lg transition-shadow library-item-enter flex flex-col justify-between 2xl:w-60",
                   staggerDelay(index, 30)

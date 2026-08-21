@@ -1,0 +1,63 @@
+{
+  "id": "book-e2e-001",
+  "title": "The Mocked Voyage",
+  "author": "Ada Lovelace",
+  "chapters": [
+    {
+      "id": "ch-1",
+      "title": "Departure",
+      "chapterOrder": 0,
+      "href": "Text/chap1.xhtml",
+      "wordCount": 120,
+      "estimatedPageCount": 2
+    },
+    {
+      "id": "ch-2",
+      "title": "Horizon",
+      "chapterOrder": 1,
+      "href": "Text/chap2.xhtml",
+      "wordCount": 200,
+      "estimatedPageCount": 3
+    }
+  ],
+  "sourcePath": "/tmp/e2e/the-mocked-voyage.epub",
+  "publisher": "Analytical Press",
+  "publishedYear": "1843",
+  "subjects": ["Fiction", "Adventure"],
+  "fileSizeBytes": 102400,
+  "audioTracks": [
+    {
+      "id": "track-1",
+      "title": "Departure",
+      "href": "Audio/chap1.mp3",
+      "duration": 42.5,
+      "order": 0
+    }
+  ],
+  "audioState": {
+    "currentTrackId": "track-1",
+    "currentTrackHref": "Audio/chap1.mp3",
+    "currentTrackIndex": 0,
+    "currentTimeSeconds": 12.0,
+    "updatedAt": "2026-01-15T12:00:00.000Z"
+  },
+  "progress": {
+    "currentChapterId": "ch-1",
+    "currentChapterHref": "Text/chap1.xhtml",
+    "currentChapterIndex": 0,
+    "currentChapterElementId": "p1",
+    "currentChapterElementIndex": 0,
+    "currentChapterScrollTop": 0.0,
+    "currentChapterScrollHeight": 1000.0,
+    "currentChapterClientHeight": 800.0,
+    "chapterProgressPercent": 0.0,
+    "bookProgressPercent": 5.0,
+    "updatedAt": "2026-01-15T12:00:00.000Z"
+  },
+  "pageCount": 5,
+  "conversionStatus": "done",
+  "completedChapters": ["Text/chap1.xhtml"],
+  "voiceId": "F1",
+  "totalWords": 320,
+  "wordsProcessed": 120
+}

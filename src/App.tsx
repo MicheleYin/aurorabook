@@ -25,6 +25,7 @@ import { ConversionStateProvider } from "./context/ConversionStateContext";
 import { SettingsProvider } from "./context/SettingsContext";
 import { useBookConversion } from "./hooks/useBookConversion";
 import { logger } from "./lib/logger";
+import { normalizeBook } from "./lib/normalize-book";
 
 function AppContent() {
   const { currentTab, setCurrentTab, currentBook } = useAppContext();
@@ -125,21 +126,22 @@ function ConversionCallbackHandler() {
         });
 
         if (updatedBook) {
+          const normalized = normalizeBook(updatedBook);
           // Update library state
           setLibrary((prevBooks) =>
             prevBooks.map((book) =>
-              book.id === updatedBook.id ? updatedBook : book
+              book.id === normalized.id ? normalized : book
             )
           );
 
           // Keep reader state in sync when book is currently open
-          if (currentBook?.id === updatedBook.id) {
+          if (currentBook?.id === normalized.id) {
             if (additiveOnly) {
               setCurrentBook((openBook) => {
-                if (!openBook || openBook.id !== updatedBook.id) {
+                if (!openBook || openBook.id !== normalized.id) {
                   return openBook;
                 }
-                return mergeOpenBookAdditively(openBook, updatedBook);
+                return mergeOpenBookAdditively(openBook, normalized);
               });
               logger.log("Additively refreshed currently open book from chapter completion event");
             } else {
@@ -147,7 +149,7 @@ function ConversionCallbackHandler() {
                 audioRef.current && !audioRef.current.paused
               );
               await saveAudioProgress(currentBook);
-              setCurrentBookWithLoading(updatedBook, wasPlaying);
+              setCurrentBookWithLoading(normalized, wasPlaying);
               logger.log("Refreshed currently open book from completion event");
             }
           }

@@ -1,0 +1,9 @@
+{
+  "id": "ch-1",
+  "title": "Departure",
+  "chapterOrder": 0,
+  "href": "Text/chap1.xhtml",
+  "wordCount": 120,
+  "estimatedPageCount": 2,
+  "contentHtml": "<html><body><p id=\"p1\">The engines hummed as the ship left the dock.</p><p id=\"p2\">Ada watched the shoreline shrink.</p></body></html>"
+}

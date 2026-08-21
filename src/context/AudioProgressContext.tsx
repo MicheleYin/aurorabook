@@ -31,6 +31,7 @@ import {
   trackDisplayTitle,
 } from "../lib/audio-progress-utils";
 import { logger } from "../lib/logger";
+import { normalizeBook } from "../lib/normalize-book";
 import { useConversionState } from "./ConversionStateContext";
 
 export interface AudioProgressContextType {
@@ -217,13 +218,15 @@ export function AudioProgressProvider({
     };
   }, [currentAudioTrack, audioRef]);
 
-  // Detect iOS once on mount.
+  // Detect iOS once on mount (plugin-os `type()` is async).
   useEffect(() => {
-    try {
-      isIosRef.current = type() === "ios";
-    } catch {
-      isIosRef.current = false;
-    }
+    void (async () => {
+      try {
+        isIosRef.current = (await type()) === "ios";
+      } catch {
+        isIosRef.current = false;
+      }
+    })();
   }, []);
 
   // Listen for native-player-event (AVPlayer callbacks from Swift).
@@ -656,9 +659,10 @@ export function AudioProgressProvider({
       setIsLoadingAudio(true);
       let audioTrackToLoad: AudioTrack | null = null;
       // load from be
-      const loadedBook = await invoke<Book | null>("read_one_book", {
+      const loadedBookRaw = await invoke<Book | null>("read_one_book", {
         bookId: book.id,
       });
+      const loadedBook = loadedBookRaw ? normalizeBook(loadedBookRaw) : null;
       
       // First priority: use centralized converting chapter state for live chapters.
       if (loadedBook) {

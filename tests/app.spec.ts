@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * Phase 5 — UI stays at smoke coverage.
- * Do not expand Playwright into shadcn/layout pixel assertions; dense logic
- * is covered by Vitest (lib/context/hooks) and Rust llvm-cov gates.
+ * Smoke coverage against the Vite app with mocked Tauri IPC
+ * (`VITE_E2E_MOCK=1` via playwright.config.ts).
+ * Dense logic stays in Vitest; native WebView E2E lives under e2e-tauri/.
  */
 test.describe("AuroraBook", () => {
   test("renders the library screen header and add-book action", async ({
@@ -11,7 +11,6 @@ test.describe("AuroraBook", () => {
   }) => {
     await page.goto("/");
 
-    // Browser-only smoke: Tauri IPC fails, library still loads empty state.
     await expect(
       page.getByRole("heading", { name: "Library" }),
     ).toBeVisible({ timeout: 30_000 });

@@ -4,6 +4,45 @@ import { defineConfig } from "vite";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+// @ts-expect-error process is a nodejs global
+const e2eMock = process.env.VITE_E2E_MOCK === "1";
+
+const e2eTauriAliases = e2eMock
+  ? {
+      "@tauri-apps/api/core": path.resolve(
+        __dirname,
+        "src/test/e2e/shims/tauri-core.ts"
+      ),
+      "@tauri-apps/api/event": path.resolve(
+        __dirname,
+        "src/test/e2e/shims/tauri-event.ts"
+      ),
+      "@tauri-apps/api/app": path.resolve(
+        __dirname,
+        "src/test/e2e/shims/tauri-app.ts"
+      ),
+      "@tauri-apps/plugin-os": path.resolve(
+        __dirname,
+        "src/test/e2e/shims/tauri-plugin-os.ts"
+      ),
+      "@tauri-apps/plugin-dialog": path.resolve(
+        __dirname,
+        "src/test/e2e/shims/tauri-plugin-dialog.ts"
+      ),
+      "@tauri-apps/plugin-fs": path.resolve(
+        __dirname,
+        "src/test/e2e/shims/tauri-plugin-fs.ts"
+      ),
+      "@tauri-apps/plugin-store": path.resolve(
+        __dirname,
+        "src/test/e2e/shims/tauri-plugin-store.ts"
+      ),
+      "@tauri-apps/plugin-opener": path.resolve(
+        __dirname,
+        "src/test/e2e/shims/tauri-plugin-opener.ts"
+      ),
+    }
+  : {};
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
@@ -12,6 +51,7 @@ export default defineConfig(async () => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      ...e2eTauriAliases,
     },
   },
 

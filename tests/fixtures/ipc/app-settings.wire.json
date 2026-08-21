@@ -1,0 +1,9 @@
+{
+  "theme": "system",
+  "language": "en",
+  "ttsVoiceId": "F1",
+  "ttsLanguage": "en",
+  "ttsSynthesisQuality": "balanced",
+  "autoScrollEnabled": true,
+  "audioPlaybackSpeed": 1.0
+}

@@ -19,6 +19,7 @@ import type {
   BookProgress,
 } from "../types/book";
 import { logger } from "../lib/logger";
+import { normalizeBooks } from "../lib/normalize-book";
 
 export type TabValue = "library" | "reader" | "settings";
 
@@ -85,7 +86,7 @@ export function AppProvider({
       const loadedBooks = await invoke<Book[]>("read_all_books", {
         filter: null,
       });
-      setLibrary(loadedBooks);
+      setLibrary(normalizeBooks(loadedBooks));
     } catch (err) {
       logger.error("Failed to load books:", err);
       toast.error("Failed to load books");

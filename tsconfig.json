@@ -29,6 +29,6 @@
     "forceConsistentCasingInFileNames": true,
     "sourceMap": true
   },
-  "include": ["src"],
+  "include": ["src", "tests/fixtures/ipc/**/*.json", "tests/**/*.spec.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
