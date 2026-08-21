@@ -1,10 +1,7 @@
 
 extern crate self as kokoros;
 
-// ONNX Runtime with CoreML EP support (macOS/iOS only)
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-
-use tauri::{Manager, Emitter};
+use tauri::{Emitter, Manager};
 
 pub mod book_service;  // Made public for testing
 pub mod resources;  // Made public for testing
