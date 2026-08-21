@@ -191,7 +191,100 @@ describe("ChapterProgressProvider", () => {
     expect(target.scrollIntoView).toHaveBeenCalled();
   });
 
-  it("saves progress for the current chapter", async () => {
+  it("restores scroll position when element id is missing", async () => {
+    const { result } = renderHook(() => useChapterProgressContext(), {
+      wrapper,
+    });
+
+    const container = document.createElement("div");
+    Object.defineProperty(container, "scrollTop", {
+      configurable: true,
+      writable: true,
+      value: 0,
+    });
+    result.current.containerRef.current = container;
+
+    await act(async () => {
+      await result.current.loadChapterContent("book-1", createChapter());
+    });
+
+    act(() => {
+      result.current.restoreProgress(
+        createBook({
+          progress: {
+            currentChapterId: "ch-1",
+            currentChapterHref: "ch1.xhtml",
+            currentChapterIndex: 0,
+            currentChapterScrollTop: 88,
+            currentChapterScrollHeight: 400,
+            currentChapterClientHeight: 200,
+            chapterProgressPercent: 22,
+            bookProgressPercent: 11,
+            updatedAt: new Date().toISOString(),
+          },
+        })
+      );
+    });
+
+    expect(container.scrollTop).toBe(88);
+  });
+
+  it("does not restore progress when the saved chapter differs from the active one", async () => {
+    const { result } = renderHook(() => useChapterProgressContext(), {
+      wrapper,
+    });
+
+    const container = document.createElement("div");
+    Object.defineProperty(container, "scrollTop", {
+      configurable: true,
+      writable: true,
+      value: 5,
+    });
+    result.current.containerRef.current = container;
+
+    await act(async () => {
+      await result.current.loadChapterContent("book-1", createChapter());
+    });
+
+    act(() => {
+      result.current.restoreProgress(
+        createBook({
+          progress: {
+            currentChapterId: "ch-2",
+            currentChapterHref: "ch2.xhtml",
+            currentChapterIndex: 1,
+            currentChapterScrollTop: 999,
+            currentChapterScrollHeight: 500,
+            currentChapterClientHeight: 200,
+            chapterProgressPercent: 50,
+            bookProgressPercent: 50,
+            updatedAt: new Date().toISOString(),
+          },
+        })
+      );
+    });
+
+    expect(container.scrollTop).toBe(5);
+  });
+
+  it("does not restore when book progress or container is missing", async () => {
+    const { result } = renderHook(() => useChapterProgressContext(), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.loadChapterContent("book-1", createChapter());
+    });
+
+    expect(() => {
+      act(() => {
+        result.current.restoreProgress(null);
+        result.current.restoreProgress(createBook());
+      });
+    }).not.toThrow();
+  });
+
+  it("saves a complete wire-format progress payload for the current chapter", async () => {
     const { result } = renderHook(() => useChapterProgressContext(), {
       wrapper,
     });
@@ -214,6 +307,9 @@ describe("ChapterProgressProvider", () => {
         y: 0,
         toJSON: () => ({}),
       }) as DOMRect;
+    const prose = document.createElement("div");
+    prose.className = "prose";
+    container.appendChild(prose);
     result.current.containerRef.current = container;
 
     await act(async () => {
@@ -224,9 +320,120 @@ describe("ChapterProgressProvider", () => {
       await result.current.saveProgress(createBook());
     });
 
-    expect(invoke).toHaveBeenCalledWith(
-      "update_book_progress",
-      expect.objectContaining({ bookId: "book-1" })
+    expect(invoke).toHaveBeenCalledWith("update_book_progress", {
+      bookId: "book-1",
+      progress: expect.objectContaining({
+        currentChapterId: "ch-1",
+        currentChapterHref: "ch1.xhtml",
+        currentChapterIndex: 0,
+        currentChapterScrollTop: 10,
+        currentChapterScrollHeight: 100,
+        currentChapterClientHeight: 50,
+        chapterProgressPercent: expect.any(Number),
+        bookProgressPercent: expect.any(Number),
+        updatedAt: expect.any(String),
+      }),
+    });
+
+    const saveCall = invoke.mock.calls.find(
+      (call) => call[0] === "update_book_progress"
     );
+    const progress = (saveCall?.[1] as { progress: Record<string, unknown> })
+      .progress;
+    expect(progress.currentChapterId).toEqual(expect.any(String));
+    expect(progress.currentChapterHref).toEqual(expect.any(String));
+    expect(typeof progress.currentChapterIndex).toBe("number");
+    expect(typeof progress.currentChapterScrollTop).toBe("number");
+    expect(typeof progress.currentChapterScrollHeight).toBe("number");
+    expect(typeof progress.currentChapterClientHeight).toBe("number");
+    expect(typeof progress.chapterProgressPercent).toBe("number");
+    expect(typeof progress.bookProgressPercent).toBe("number");
+    expect(typeof progress.updatedAt).toBe("string");
+  });
+
+  it("does not save progress when no chapter is loaded", async () => {
+    const { result } = renderHook(() => useChapterProgressContext(), {
+      wrapper,
+    });
+
+    invoke.mockClear();
+    await act(async () => {
+      await result.current.saveProgress(createBook());
+    });
+
+    expect(invoke).not.toHaveBeenCalledWith(
+      "update_book_progress",
+      expect.anything()
+    );
+  });
+
+  it("round-trips save then restore for the same chapter", async () => {
+    const { result } = renderHook(() => useChapterProgressContext(), {
+      wrapper,
+    });
+
+    const container = document.createElement("div");
+    Object.defineProperties(container, {
+      scrollTop: { configurable: true, writable: true, value: 40 },
+      scrollHeight: { configurable: true, value: 200 },
+      clientHeight: { configurable: true, value: 100 },
+    });
+    container.getBoundingClientRect = () =>
+      ({
+        top: 0,
+        bottom: 100,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 100,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    const prose = document.createElement("div");
+    prose.className = "prose";
+    container.appendChild(prose);
+    result.current.containerRef.current = container;
+
+    await act(async () => {
+      await result.current.loadChapterContent("book-1", createChapter());
+    });
+
+    await act(async () => {
+      await result.current.saveProgress(createBook());
+    });
+
+    const saveCall = invoke.mock.calls.find(
+      (call) => call[0] === "update_book_progress"
+    );
+    const savedProgress = (
+      saveCall?.[1] as {
+        progress: {
+          currentChapterId: string;
+          currentChapterHref: string;
+          currentChapterIndex: number;
+          currentChapterScrollTop: number;
+          currentChapterScrollHeight: number;
+          currentChapterClientHeight: number;
+          chapterProgressPercent: number;
+          bookProgressPercent: number;
+          updatedAt: string;
+        };
+      }
+    ).progress;
+
+    container.scrollTop = 0;
+    act(() => {
+      result.current.restoreProgress(
+        createBook({
+          progress: {
+            ...savedProgress,
+            currentChapterScrollTop: 40,
+          },
+        })
+      );
+    });
+
+    expect(container.scrollTop).toBe(40);
   });
 });

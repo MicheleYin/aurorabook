@@ -170,9 +170,12 @@ describe("AudioProgressProvider", () => {
     );
 
     audio.currentTime = 42;
-    expect(result.current.calculateAudioProgress()).toMatchObject({
+    expect(result.current.calculateAudioProgress()).toEqual({
       currentTrackId: "track-1",
+      currentTrackHref: "audio/01.mp3",
+      currentTrackIndex: 0,
       currentTimeSeconds: 42,
+      updatedAt: expect.any(String),
     });
 
     await act(async () => {
@@ -180,8 +183,253 @@ describe("AudioProgressProvider", () => {
     });
     expect(invoke).toHaveBeenCalledWith("update_book_audio_state", {
       bookId: "book-1",
-      audioState: expect.objectContaining({ currentTrackId: "track-1" }),
+      audioState: {
+        currentTrackId: "track-1",
+        currentTrackHref: "audio/01.mp3",
+        currentTrackIndex: 0,
+        currentTimeSeconds: 42,
+        updatedAt: expect.any(String),
+      },
     });
+  });
+
+  it("does not save audio progress when no track is loaded", async () => {
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    invoke.mockClear();
+
+    await act(async () => {
+      await result.current.saveAudioProgress(createBook());
+    });
+
+    expect(invoke).not.toHaveBeenCalledWith(
+      "update_book_audio_state",
+      expect.anything()
+    );
+  });
+
+  it("defaults currentTimeSeconds to 0 when the audio element has no time", async () => {
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    result.current.audioRef.current = audio;
+
+    const book = createBook();
+    await act(async () => {
+      await result.current.loadAudioTrack(book.id, book.audioTracks[0], book);
+    });
+
+    // Leave currentTime at default 0 and ensure wire payload is complete.
+    await act(async () => {
+      await result.current.saveAudioProgress(book);
+    });
+
+    expect(invoke).toHaveBeenCalledWith("update_book_audio_state", {
+      bookId: "book-1",
+      audioState: expect.objectContaining({
+        currentTrackId: "track-1",
+        currentTrackHref: "audio/01.mp3",
+        currentTrackIndex: 0,
+        currentTimeSeconds: 0,
+        updatedAt: expect.any(String),
+      }),
+    });
+  });
+
+  it("swallows save errors without throwing", async () => {
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    result.current.audioRef.current = audio;
+
+    const book = createBook();
+    await act(async () => {
+      await result.current.loadAudioTrack(book.id, book.audioTracks[0], book);
+    });
+
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "update_book_audio_state") {
+        throw new Error("db locked");
+      }
+      if (cmd === "get_app_settings") return { audioPlaybackSpeed: 1 };
+      if (cmd === "get_current_converting_chapter") return null;
+      if (cmd === "get_audio_stream_url") return "https://stream.local/track.mp3";
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    await expect(
+      act(async () => {
+        await result.current.saveAudioProgress(book);
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it("restores saved track time matched by track id", async () => {
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    result.current.audioRef.current = audio;
+
+    const track = createTrack();
+    const book = createBook({
+      audioState: {
+        currentTrackId: track.id,
+        currentTrackHref: track.href ?? track.filePath ?? "",
+        currentTrackIndex: track.order,
+        currentTimeSeconds: 33,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+
+    act(() => {
+      result.current.restoreAudioProgress(book, track, true);
+    });
+
+    audio.dispatchEvent(new Event("loadedmetadata"));
+    expect(audio.currentTime).toBe(33);
+    expect(audio.play).toHaveBeenCalled();
+  });
+
+  it("restores saved track time matched by href when ids differ", async () => {
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    Object.defineProperty(audio, "readyState", {
+      configurable: true,
+      get: () => 2,
+    });
+    result.current.audioRef.current = audio;
+
+    const track = createTrack({ id: "track-new" });
+    const book = createBook({
+      audioState: {
+        currentTrackId: "track-old",
+        currentTrackHref: "audio/01.mp3",
+        currentTrackIndex: 99,
+        currentTimeSeconds: 17,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+
+    act(() => {
+      result.current.restoreAudioProgress(book, track, false);
+    });
+
+    expect(audio.currentTime).toBe(17);
+    expect(audio.play).not.toHaveBeenCalled();
+  });
+
+  it("restores saved track time matched by chapter index", async () => {
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    Object.defineProperty(audio, "readyState", {
+      configurable: true,
+      get: () => 2,
+    });
+    result.current.audioRef.current = audio;
+
+    const track = createTrack({
+      id: "track-live",
+      href: "Text/ch1.xhtml",
+      filePath: "Text/ch1.xhtml",
+      order: 0,
+    });
+    const book = createBook({
+      audioState: {
+        currentTrackId: "other-id",
+        currentTrackHref: "Audio/other.mp3",
+        currentTrackIndex: 0,
+        currentTimeSeconds: 9.5,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+
+    act(() => {
+      result.current.restoreAudioProgress(book, track, false);
+    });
+
+    expect(audio.currentTime).toBe(9.5);
+  });
+
+  it("does not seek when saved audio state is for a different track", async () => {
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    audio.currentTime = 3;
+    Object.defineProperty(audio, "readyState", {
+      configurable: true,
+      get: () => 2,
+    });
+    result.current.audioRef.current = audio;
+
+    const track = createTrack({ id: "track-1", order: 0, href: "a.mp3" });
+    const book = createBook({
+      audioState: {
+        currentTrackId: "track-2",
+        currentTrackHref: "b.mp3",
+        currentTrackIndex: 1,
+        currentTimeSeconds: 55,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+
+    act(() => {
+      result.current.restoreAudioProgress(book, track, false);
+    });
+
+    expect(audio.currentTime).toBe(3);
+  });
+
+  it("round-trips audio save then restore for the same track", async () => {
+    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+    const audio = createAudioElement();
+    result.current.audioRef.current = audio;
+
+    const book = createBook();
+    const track = book.audioTracks[0];
+
+    await act(async () => {
+      await result.current.loadAudioTrack(book.id, track, book);
+    });
+
+    audio.currentTime = 28;
+    await act(async () => {
+      await result.current.saveAudioProgress(book);
+    });
+
+    const saveCall = invoke.mock.calls.find(
+      (call) => call[0] === "update_book_audio_state"
+    );
+    const audioState = (
+      saveCall?.[1] as {
+        audioState: {
+          currentTrackId: string;
+          currentTrackHref: string;
+          currentTrackIndex: number;
+          currentTimeSeconds: number;
+          updatedAt: string;
+        };
+      }
+    ).audioState;
+
+    expect(audioState).toEqual({
+      currentTrackId: "track-1",
+      currentTrackHref: "audio/01.mp3",
+      currentTrackIndex: 0,
+      currentTimeSeconds: 28,
+      updatedAt: expect.any(String),
+    });
+
+    const restoreAudio = createAudioElement();
+    Object.defineProperty(restoreAudio, "readyState", {
+      configurable: true,
+      get: () => 2,
+    });
+    result.current.audioRef.current = restoreAudio;
+
+    act(() => {
+      result.current.restoreAudioProgress(
+        { ...book, audioState },
+        track,
+        false
+      );
+    });
+
+    expect(restoreAudio.currentTime).toBe(28);
   });
 
   it("mirrors playback into the native iOS player when on iOS", async () => {
@@ -281,31 +529,6 @@ describe("AudioProgressProvider", () => {
         })
       );
     });
-  });
-
-  it("restores saved track time after metadata loads", async () => {
-    const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
-    const audio = createAudioElement();
-    result.current.audioRef.current = audio;
-
-    const track = createTrack();
-    const book = createBook({
-      audioState: {
-        currentTrackId: track.id,
-        currentTrackHref: track.href ?? track.filePath ?? "",
-        currentTrackIndex: track.order,
-        currentTimeSeconds: 33,
-        updatedAt: new Date().toISOString(),
-      },
-    });
-
-    act(() => {
-      result.current.restoreAudioProgress(book, track, true);
-    });
-
-    audio.dispatchEvent(new Event("loadedmetadata"));
-    expect(audio.currentTime).toBe(33);
-    expect(audio.play).toHaveBeenCalled();
   });
 
   it("loads the last opened track from the backend book state", async () => {
