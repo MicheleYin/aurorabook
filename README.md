@@ -158,13 +158,14 @@ bun run build:macos:unsigned
 bun run build:macos:appstore
 ```
 
-CI builds an unsigned `.dmg` / `.app` for Apple Silicon (aarch64) via
-[`.github/workflows/build-macos.yml`](.github/workflows/build-macos.yml)
-(`workflow_dispatch`, version tags `v*`, or published releases). Artifacts are
-uploaded from the Actions run. Optional Apple signing/notarization secrets
-(`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`,
-`APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`) are wired in — leave them unset
-for unsigned builds.
+CI builds an unsigned (ad-hoc signed) `.dmg` / `.app` for Apple Silicon via
+[`.github/workflows/build-macos.yml`](.github/workflows/build-macos.yml) on
+pull requests, pushes to `dev`/`main`, version tags `v*`, published releases,
+and `workflow_dispatch`. Artifacts are uploaded from the Actions run.
+
+Do not set empty `APPLE_*` secrets in the job env — Tauri treats a present
+`APPLE_CERTIFICATE` as “sign” and fails keychain import. Wire Developer ID
+signing separately when you have real cert secrets.
 
 TTS weights are cloned from Hugging Face (`Supertone/supertonic-3`) during the
 job; locally, clone that pack into `./supertonic-3` with Git LFS before building.

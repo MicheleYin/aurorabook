@@ -2,7 +2,9 @@ name: Build macOS
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
+    branches: [dev, main]
     tags:
       - "v*"
   release:
@@ -74,24 +76,20 @@ jobs:
       - name: Bundle FFmpeg for the app
         run: bun run bundle:ffmpeg:macos
 
-      - name: Build AuroraBook (unsigned)
+      # Intentionally do NOT set APPLE_CERTIFICATE / related secrets here.
+      # Missing Actions secrets become empty strings; Tauri treats a present
+      # APPLE_CERTIFICATE as "sign" and fails with SecKeychainItemImport.
+      # Builds use ad-hoc signingIdentity "-" until Developer ID secrets are wired.
+      - name: Build AuroraBook (unsigned / ad-hoc)
         run: |
           node scripts/ensure-macos-ffmpeg-resource.cjs
-          node scripts/tauri-cli.cjs build --target "${RUST_TARGET}"
-        env:
-          # Optional Developer ID signing / notarization. Leave unset for unsigned CI builds.
-          # For signing to work you also need a step that imports APPLE_CERTIFICATE into a keychain.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          node scripts/tauri-cli.cjs build --target "${RUST_TARGET}" \
+            --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: aurorabook-macos-aarch64
+          name: aurorabook-macos-aarch64-${{ github.run_id }}
           path: |
             .cargo-target/${{ env.RUST_TARGET }}/release/bundle/dmg/*.dmg
             .cargo-target/${{ env.RUST_TARGET }}/release/bundle/macos/*.app
