@@ -559,14 +559,16 @@ fn test_html_validation_simple() {
 
 #[test]
 fn test_html_validation_complex_nesting() {
+    // Keep each clause ≥ MIN_SENTENCE_WORDS so short-fragment merge does not
+    // pull speech across the <em> boundary (which reopens the same span id).
     let html = r#"<html><body>
-        <p>First sentence. <em>Emphasized text.</em> Second sentence!</p>
-        <div><p>Nested paragraph. Another sentence?</p></div>
+        <p>This is the first sufficiently long spoken sentence for nesting tests. <em>This emphasized spoken sentence is also long enough to stand alone here.</em> This is the second sufficiently long spoken sentence for nesting tests!</p>
+        <div><p>This nested paragraph sentence is long enough to stand alone in tests. Another nested spoken sentence is long enough for validation as well?</p></div>
     </body></html>"#;
-    
+
     let result = extract_text_with_spans(html, None);
     assert!(result.is_ok());
-    
+
     let (_, updated_html, _) = result.unwrap();
     validate_html_structure(&updated_html).expect("HTML should be valid with nested elements");
 }

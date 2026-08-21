@@ -289,6 +289,11 @@ describe("AudioProgressProvider", () => {
   it("restores saved track time matched by href when ids differ", async () => {
     const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
     const audio = createAudioElement();
+    const playMock = vi.fn(async () => undefined);
+    Object.defineProperty(audio, "play", {
+      configurable: true,
+      value: playMock,
+    });
     Object.defineProperty(audio, "readyState", {
       configurable: true,
       get: () => 2,
@@ -311,7 +316,7 @@ describe("AudioProgressProvider", () => {
     });
 
     expect(audio.currentTime).toBe(17);
-    expect(vi.mocked(audio.play)).not.toHaveBeenCalled();
+    expect(playMock).not.toHaveBeenCalled();
   });
 
   it("restores saved track time matched by chapter index", async () => {
