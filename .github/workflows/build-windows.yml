@@ -2,7 +2,9 @@ name: Build Windows
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
+    branches: [dev, main]
     tags:
       - "v*"
   release:
@@ -64,13 +66,13 @@ jobs:
       - name: Build AuroraBook (NSIS)
         shell: bash
         run: |
-          node scripts/ensure-windows-ffmpeg-resource.cjs
+          node scripts/ensure-windows-ffmpeg-resource.cjs --arch=x64
           node scripts/tauri-cli.cjs build --target "${RUST_TARGET}"
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: aurorabook-windows-x86_64
+          name: aurorabook-windows-x86_64-${{ github.run_id }}
           path: |
             .cargo-target/${{ env.RUST_TARGET }}/release/bundle/nsis/*.exe
             .cargo-target/${{ env.RUST_TARGET }}/release/*.exe
