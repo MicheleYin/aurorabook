@@ -1,4 +1,4 @@
-import { act, render, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
@@ -215,23 +215,14 @@ describe("FloatingAudioPlayer live → completed handoff", () => {
     );
 
     await waitFor(() => {
-      expect(
-        document.querySelector('[data-testid="floating-audio-player"]')
-      ).toBeTruthy();
+      expect(screen.getByTestId("floating-audio-player")).toBeInTheDocument();
     });
 
-    const player = document.querySelector(
-      '[data-testid="floating-audio-player"]'
-    ) as HTMLElement;
-    const playPause = document.querySelector(
-      '[data-testid="audio-play-pause"]'
-    ) as HTMLButtonElement;
-    const spinner = document.querySelector(
-      '[data-testid="audio-loading-spinner"]'
+    expect(screen.getByTestId("floating-audio-player")).toHaveAttribute(
+      "data-loading-audio",
+      "true"
     );
-
-    expect(player.getAttribute("data-loading-audio")).toBe("true");
-    expect(Boolean(spinner)).toBe(true);
-    expect(playPause.disabled).toBe(true);
+    expect(screen.getByTestId("audio-loading-spinner")).toBeInTheDocument();
+    expect(screen.getByTestId("audio-play-pause")).toBeDisabled();
   });
 });
