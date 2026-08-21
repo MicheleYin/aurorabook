@@ -156,8 +156,9 @@ export function getPointerDistance(
 }
 
 export function isNativeReaderContextMenuTarget(
-  _target: EventTarget | null
+  _target?: EventTarget | null
 ): boolean {
+  void _target;
   return false;
 }
 

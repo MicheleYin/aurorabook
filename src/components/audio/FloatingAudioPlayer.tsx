@@ -1436,9 +1436,13 @@ export function FloatingAudioPlayer() {
         "px-4",
         "transition-all duration-300"
       )}
+      data-testid="floating-audio-player"
+      data-loading-audio={isLoadingAudio ? "true" : "false"}
+      data-track-id={currentAudioTrack?.id ?? ""}
+      data-live={currentAudioTrack?.isLiveStream ? "true" : "false"}
     >
       <div className="bg-background/95 backdrop-blur-lg border rounded-lg shadow-lg space-y-3 p-4">
-        <audio ref={audioRef} preload="auto">
+        <audio ref={audioRef} preload="auto" data-testid="floating-audio-element">
           <track kind="captions" />
         </audio>
         <div className="flex items-center gap-2">
@@ -1506,6 +1510,7 @@ export function FloatingAudioPlayer() {
             variant="ghost"
             size="icon"
             className="h-8 w-8 shrink-0"
+            data-testid="audio-close"
             onClick={async () => {
               if (currentBook) {
                 playbackIntentRef.current = false;
@@ -1545,8 +1550,8 @@ export function FloatingAudioPlayer() {
             disabled={isLoadingAudio}
           />
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>{formatTime(currentTime)}</span>
-            <span>{formatTime(timelineMax)}</span>
+            <span data-testid="audio-current-time">{formatTime(currentTime)}</span>
+            <span data-testid="audio-duration">{formatTime(timelineMax)}</span>
           </div>
         </div>
 
@@ -1577,11 +1582,15 @@ export function FloatingAudioPlayer() {
             variant="ghost"
             size="icon"
             className="h-12 w-12 shrink-0"
+            data-testid="audio-play-pause"
             onClick={handlePlayPause}
             disabled={isLoadingAudio}
           >
             {isLoadingAudio ? (
-              <Loader2 className="h-6 w-6 animate-spin shrink-0" />
+              <Loader2
+                className="h-6 w-6 animate-spin shrink-0"
+                data-testid="audio-loading-spinner"
+              />
             ) : isPlaying ? (
               <Pause className="h-6 w-6" />
             ) : (

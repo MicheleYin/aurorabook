@@ -1,0 +1,55 @@
+{
+  "id": "book-e2e-002",
+  "title": "Second Expedition",
+  "author": "Grace Hopper",
+  "chapters": [
+    {
+      "id": "ch-b1",
+      "title": "Launch",
+      "chapterOrder": 0,
+      "href": "Text/b-chap1.xhtml",
+      "wordCount": 90,
+      "estimatedPageCount": 1
+    }
+  ],
+  "sourcePath": "/tmp/e2e/second-expedition.epub",
+  "publisher": "Analytical Press",
+  "publishedYear": "1952",
+  "subjects": ["Fiction"],
+  "fileSizeBytes": 51200,
+  "audioTracks": [
+    {
+      "id": "track-b1",
+      "title": "Launch",
+      "href": "Audio/b-chap1.mp3",
+      "duration": 30.0,
+      "order": 0
+    }
+  ],
+  "audioState": {
+    "currentTrackId": "track-b1",
+    "currentTrackHref": "Audio/b-chap1.mp3",
+    "currentTrackIndex": 0,
+    "currentTimeSeconds": 7.0,
+    "updatedAt": "2026-01-15T12:00:00.000Z"
+  },
+  "progress": {
+    "currentChapterId": "ch-b1",
+    "currentChapterHref": "Text/b-chap1.xhtml",
+    "currentChapterIndex": 0,
+    "currentChapterElementId": "pb1",
+    "currentChapterElementIndex": 0,
+    "currentChapterScrollTop": 0.0,
+    "currentChapterScrollHeight": 500.0,
+    "currentChapterClientHeight": 400.0,
+    "chapterProgressPercent": 0.0,
+    "bookProgressPercent": 10.0,
+    "updatedAt": "2026-01-15T12:00:00.000Z"
+  },
+  "pageCount": 1,
+  "conversionStatus": "done",
+  "completedChapters": ["Text/b-chap1.xhtml"],
+  "voiceId": "M1",
+  "totalWords": 90,
+  "wordsProcessed": 90
+}

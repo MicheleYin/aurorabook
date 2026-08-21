@@ -138,6 +138,11 @@ describe("AppProvider", () => {
     expect(deps.saveChapterProgress).toHaveBeenCalledWith(book);
     expect(deps.saveAudioProgress).toHaveBeenCalledWith(book);
     expect(result.current.currentTab).toBe("reader");
+    expect(result.current.currentBook).toMatchObject({
+      id: "book-1",
+      progress: expect.objectContaining({ bookProgressPercent: 10 }),
+      audioState: expect.objectContaining({ currentTrackId: "t1" }),
+    });
     expect(result.current.library[0]).toMatchObject({
       id: "book-1",
       progress: expect.objectContaining({ bookProgressPercent: 10 }),

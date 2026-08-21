@@ -18,6 +18,23 @@ pub mod dictionary;
 mod window;
 mod logging;
 
+/// Owns the dedicated Tokio runtime used for DB init and the audio HTTP server.
+/// Stored in managed state so we never `mem::forget` it; ExitRequested uses the
+/// cloned [`tokio::runtime::Handle`] also kept in managed state.
+struct DedicatedRuntime {
+    _runtime: tokio::runtime::Runtime,
+}
+
+fn with_dedicated_handle(app_handle: &tauri::AppHandle, f: impl FnOnce(&tokio::runtime::Handle)) {
+    if let Some(handle) = app_handle.try_state::<tokio::runtime::Handle>() {
+        f(&*handle);
+    } else if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        f(&handle);
+    } else {
+        log::warn!("No dedicated Tokio runtime handle available");
+    }
+}
+
 // In-tree Supertonic wrapper uses ONNX Runtime (CPU/CoreML depending on platform and ORT EP configuration).
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -149,31 +166,30 @@ pub fn run() {
             // Create and configure the main window
             window::create_main_window(app)?;
             
-            // Initialize database connection (single connection for entire app)
-            // Use blocking wait since setup is synchronous
+            // Initialize database connection (single pool for entire app)
+            // Use a dedicated runtime kept in managed state (no mem::forget).
             let app_handle = app.handle().clone();
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-            rt.block_on(async {
-                book_service::database::init_db_connection(&app_handle).await
-            }).map_err(|e| {
-                log::error!("Failed to initialize database connection: {}", e);
-                e
-            })?;
+            let runtime =
+                tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            let handle = runtime.handle().clone();
+            handle
+                .block_on(async {
+                    book_service::database::init_db_connection(&app_handle).await
+                })
+                .map_err(|e| {
+                    log::error!("Failed to initialize database connection: {}", e);
+                    e
+                })?;
 
             // iOS 26+ continued processing (BGContinuedProcessingTaskRequest)
             background::init_background_runtime(app.handle());
 
             // Native AVPlayer bridge — enables lock-screen controls on iOS
             native_player::init(app.handle());
-            
+
             // Start audio streaming HTTP server tied to app lifecycle
-            // Use the runtime handle to spawn the task
             let app_handle_for_server = app.handle().clone();
-            let handle = rt.handle().clone();
-            
-            // Spawn the server task - the handle keeps the runtime alive
             handle.spawn(async move {
-                // Small delay to ensure everything is initialized
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 log::info!("Starting audio streaming server (tied to app lifecycle)...");
                 match book_service::audio_stream::start_audio_server(app_handle_for_server).await {
@@ -185,11 +201,10 @@ pub fn run() {
                     }
                 }
             });
-            
-            // Keep the runtime alive by leaking it (it will run for the app lifetime)
-            // This is safe because the runtime will be cleaned up when the app exits
-            std::mem::forget(rt);
-            
+
+            app.manage(handle);
+            app.manage(DedicatedRuntime { _runtime: runtime });
+
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
@@ -276,8 +291,8 @@ pub fn run() {
                             log::warn!("Failed to emit app-closing event: {}", e);
                         } else {
                             log::info!("Emitted app-closing event to frontend");
-                            // Give frontend a moment to save progress
-                            std::thread::sleep(std::time::Duration::from_millis(500));
+                            // Give frontend time to flush chapter/audio progress via IPC
+                            std::thread::sleep(std::time::Duration::from_millis(800));
                         }
                     }
                     
@@ -310,21 +325,16 @@ pub fn run() {
                         }
                     }
                     
-                    // Stop the audio streaming server gracefully
-                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                        handle.spawn(async move {
-                            if let Err(e) = book_service::audio_stream::stop_audio_server().await {
-                                log::error!("Failed to stop audio streaming server: {}", e);
-                            } else {
-                                log::info!("Audio streaming server stopped gracefully");
-                            }
-                        });
-                        // Give the server a moment to shut down
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                    } else {
-                        // Fallback: try to stop synchronously if no runtime handle
-                        log::warn!("No tokio runtime handle available, server may not shut down gracefully");
-                    }
+                    // Stop the audio streaming server gracefully via the dedicated runtime.
+                    with_dedicated_handle(app_handle, |handle| {
+                        if let Err(e) =
+                            handle.block_on(book_service::audio_stream::stop_audio_server())
+                        {
+                            log::error!("Failed to stop audio streaming server: {}", e);
+                        } else {
+                            log::info!("Audio streaming server stopped gracefully");
+                        }
+                    });
                     
                     log::info!("Cleanup completed, app will now close");
                 }
@@ -334,11 +344,9 @@ pub fn run() {
                 tauri::RunEvent::Ready => {
                     log::info!("App is ready, ensuring audio server is running (tied to app lifecycle)...");
                     let app_handle_clone = app_handle.clone();
-                    // Use Tauri's runtime if available
-                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    with_dedicated_handle(app_handle, |handle| {
                         handle.spawn(async move {
                             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-                            // Check if server is running, restart if not
                             if !book_service::audio_stream::check_server_running().await {
                                 log::info!("Audio server not running, starting it...");
                                 if let Err(e) = book_service::audio_stream::restart_audio_server(app_handle_clone).await {
@@ -346,16 +354,14 @@ pub fn run() {
                                 }
                             }
                         });
-                    }
+                    });
                 }
                 
                 #[cfg(target_os = "ios")]
                 tauri::RunEvent::Resumed => {
                     log::info!("App resumed from background, restarting audio server (tied to app lifecycle)...");
                     let app_handle_clone = app_handle.clone();
-                    // Always restart server when app resumes on iOS
-                    // iOS may have killed the server when app was backgrounded
-                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    with_dedicated_handle(app_handle, |handle| {
                         handle.spawn(async move {
                             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                             log::info!("Restarting audio server after app resume...");
@@ -363,7 +369,7 @@ pub fn run() {
                                 log::error!("Failed to restart audio server after resume: {}", e);
                             }
                         });
-                    }
+                    });
                 }
                 
                 // Handle file open events (when app is opened with a file)

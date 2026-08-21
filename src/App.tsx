@@ -1,5 +1,6 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import type { Book } from "./types/book";
 import { FloatingAudioPlayer } from "./components/audio/FloatingAudioPlayer";
@@ -25,6 +26,7 @@ import { ConversionStateProvider } from "./context/ConversionStateContext";
 import { SettingsProvider } from "./context/SettingsContext";
 import { useBookConversion } from "./hooks/useBookConversion";
 import { logger } from "./lib/logger";
+import { normalizeBook } from "./lib/normalize-book";
 
 function AppContent() {
   const { currentTab, setCurrentTab, currentBook } = useAppContext();
@@ -125,21 +127,22 @@ function ConversionCallbackHandler() {
         });
 
         if (updatedBook) {
+          const normalized = normalizeBook(updatedBook);
           // Update library state
           setLibrary((prevBooks) =>
             prevBooks.map((book) =>
-              book.id === updatedBook.id ? updatedBook : book
+              book.id === normalized.id ? normalized : book
             )
           );
 
           // Keep reader state in sync when book is currently open
-          if (currentBook?.id === updatedBook.id) {
+          if (currentBook?.id === normalized.id) {
             if (additiveOnly) {
               setCurrentBook((openBook) => {
-                if (!openBook || openBook.id !== updatedBook.id) {
+                if (!openBook || openBook.id !== normalized.id) {
                   return openBook;
                 }
-                return mergeOpenBookAdditively(openBook, updatedBook);
+                return mergeOpenBookAdditively(openBook, normalized);
               });
               logger.log("Additively refreshed currently open book from chapter completion event");
             } else {
@@ -147,7 +150,7 @@ function ConversionCallbackHandler() {
                 audioRef.current && !audioRef.current.paused
               );
               await saveAudioProgress(currentBook);
-              setCurrentBookWithLoading(updatedBook, wasPlaying);
+              await setCurrentBookWithLoading(normalized, wasPlaying);
               logger.log("Refreshed currently open book from completion event");
             }
           }
@@ -185,7 +188,7 @@ function ConversionCallbackHandler() {
               audioRef.current && !audioRef.current.paused
             );
             await saveAudioProgress(currentBook);
-            setCurrentBookWithLoading(book, wasPlaying);
+            await setCurrentBookWithLoading(book, wasPlaying);
           }
         }
       },
@@ -206,6 +209,38 @@ function ConversionCallbackHandler() {
 
     return unregister;
   }, [registerCallbacks, refreshBookById, currentBook, setLibrary, setCurrentBookWithLoading, audioRef, saveAudioProgress]);
+
+  return null;
+}
+
+/** Flush chapter + audio progress when Rust emits `app-closing` on quit. */
+function AppClosingHandler() {
+  const { currentBook } = useAppContext();
+  const { saveProgress } = useChapterProgressContext();
+  const { saveAudioProgress } = useAudioProgressContext();
+  const currentBookRef = useRef(currentBook);
+
+  useEffect(() => {
+    currentBookRef.current = currentBook;
+  }, [currentBook]);
+
+  useEffect(() => {
+    const unlisten = listen("app-closing", async () => {
+      const book = currentBookRef.current;
+      if (!book) return;
+      logger.info("[app-closing] flushing progress before quit", {
+        bookId: book.id,
+      });
+      try {
+        await Promise.all([saveProgress(book), saveAudioProgress(book)]);
+      } catch (err) {
+        logger.error("[app-closing] failed to save progress:", err);
+      }
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [saveProgress, saveAudioProgress]);
 
   return null;
 }
@@ -251,6 +286,7 @@ function AppWithProviders() {
       calculateAudioProgress={calculateAudioProgress}
       saveAudioProgress={saveAudioProgress}
     >
+      <AppClosingHandler />
       <ConversionCallbackHandler />
       <AppContent />
     </AppProvider>

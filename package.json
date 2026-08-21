@@ -30,6 +30,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:playwright": "playwright test",
+    "test:e2e": "playwright test",
+    "test:e2e:tauri": "bun --cwd e2e-tauri run test",
     "test:all": "bun run test && bun run test:playwright",
     "test:rust": "bash scripts/rust-test.sh",
     "test:rust:coverage": "bash scripts/rust-coverage.sh",

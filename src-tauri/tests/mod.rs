@@ -10,6 +10,8 @@ pub mod utils;
 pub mod tts;
 pub mod tts_commands;
 pub mod resources;
+/// Shared JSON fixtures under `tests/fixtures/ipc/` (FE + Rust contract).
+pub mod ipc_wire;
 
 // Shared test helpers
 pub mod helpers;

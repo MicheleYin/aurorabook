@@ -19,6 +19,7 @@ import type {
   BookProgress,
 } from "../types/book";
 import { logger } from "../lib/logger";
+import { normalizeBooks } from "../lib/normalize-book";
 
 export type TabValue = "library" | "reader" | "settings";
 
@@ -85,7 +86,7 @@ export function AppProvider({
       const loadedBooks = await invoke<Book[]>("read_all_books", {
         filter: null,
       });
-      setLibrary(loadedBooks);
+      setLibrary(normalizeBooks(loadedBooks));
     } catch (err) {
       logger.error("Failed to load books:", err);
       toast.error("Failed to load books");
@@ -117,8 +118,8 @@ export function AppProvider({
       if (currentBook) {
         const progress = calculateBookProgress(currentBook);
         const audioState = calculateAudioProgress(currentBook);
-        saveChapterProgress(currentBook);
-        saveAudioProgress(currentBook);
+        void saveChapterProgress(currentBook);
+        void saveAudioProgress(currentBook);
         let newBook = currentBook;
         if (progress) {
           newBook = {
@@ -132,9 +133,9 @@ export function AppProvider({
             audioState: audioState,
           };
         }
-        // setCurrentBook(newBook);
-        setLibrary(
-          library.map((book) => (book.id === currentBook.id ? newBook : book))
+        setCurrentBook(newBook);
+        setLibrary((prev) =>
+          prev.map((book) => (book.id === currentBook.id ? newBook : book))
         );
       }
     },
@@ -144,7 +145,6 @@ export function AppProvider({
       calculateAudioProgress,
       saveChapterProgress,
       saveAudioProgress,
-      library,
     ]
   );
 

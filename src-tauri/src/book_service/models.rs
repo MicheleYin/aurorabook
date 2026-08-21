@@ -82,6 +82,8 @@ pub struct Chapter {
     pub content_html: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plain_text: Option<String>,
+    /// Wire name is `chapterOrder` (frontend). Accept legacy `order` on deserialize.
+    #[serde(rename = "chapterOrder", alias = "order")]
     pub order: usize,
     pub href: String,
     #[serde(skip_serializing_if = "Option::is_none")]

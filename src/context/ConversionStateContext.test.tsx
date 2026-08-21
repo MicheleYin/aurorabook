@@ -311,6 +311,51 @@ describe("ConversionStateProvider", () => {
     });
   });
 
+  it("rejects starting a different book while one is converting", async () => {
+    let resolveConvert: (value: null) => void = () => undefined;
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_app_settings") {
+        return { ttsVoiceId: "F1", ttsLanguage: "en" };
+      }
+      if (cmd === "get_current_converting_chapter") {
+        return null;
+      }
+      if (cmd === "convert_epub_to_audiobook_command") {
+        return new Promise<null>((resolve) => {
+          resolveConvert = resolve;
+        });
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useConversionState(), { wrapper });
+
+    let first: Promise<void> = Promise.resolve();
+    await act(async () => {
+      first = result.current.convertBook("book-1");
+    });
+    await waitFor(() => expect(result.current.isConverting).toBe(true));
+
+    await act(async () => {
+      await result.current.convertBook("book-2");
+    });
+
+    expect(toast.error).toHaveBeenCalledWith(
+      "Another conversion is already in progress"
+    );
+    expect(result.current.convertingBookId).toBe("book-1");
+    expect(
+      invoke.mock.calls.filter(
+        (c) => c[0] === "convert_epub_to_audiobook_command"
+      )
+    ).toHaveLength(1);
+
+    await act(async () => {
+      resolveConvert(null);
+      await first;
+    });
+  });
+
   it("falls through when iOS continued processing is unsupported", async () => {
     osType.mockReturnValue("ios");
     invoke.mockImplementation(async (cmd: string) => {

@@ -36,6 +36,10 @@ static SERVER_PORT: OnceLock<Arc<std::sync::atomic::AtomicU16>> = OnceLock::new(
 static SERVER_SHUTDOWN: OnceLock<Arc<std::sync::Mutex<Option<oneshot::Sender<()>>>>> =
     OnceLock::new();
 
+// JoinHandle for the axum serve task (awaited on stop instead of mem::forget)
+static SERVER_TASK: OnceLock<Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>> =
+    OnceLock::new();
+
 fn get_server_started_flag() -> Arc<std::sync::atomic::AtomicBool> {
     SERVER_STARTED
         .get_or_init(|| Arc::new(std::sync::atomic::AtomicBool::new(false)))
@@ -53,6 +57,21 @@ fn get_server_shutdown() -> Arc<std::sync::Mutex<Option<oneshot::Sender<()>>>> {
         .get_or_init(|| Arc::new(std::sync::Mutex::new(None)))
         .clone()
 }
+
+fn get_server_task() -> Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>> {
+    SERVER_TASK
+        .get_or_init(|| Arc::new(std::sync::Mutex::new(None)))
+        .clone()
+}
+
+/// Recover from a poisoned mutex instead of panicking the live audio HTTP task.
+fn recover_lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| {
+        log::warn!("Recovering poisoned mutex in audio_stream");
+        poisoned.into_inner()
+    })
+}
+
 
 #[derive(serde::Deserialize)]
 struct EpubResourceQuery {
@@ -523,18 +542,18 @@ impl LiveStreamManager {
 
     pub fn mark_current_chapter(&self, book_id: &str, chapter_index: usize) {
         let now_ms = Self::now_unix_millis();
-        let mut map = self.current_chapter_by_book.lock().unwrap();
+        let mut map = recover_lock(&self.current_chapter_by_book);
         map.insert(book_id.to_string(), (chapter_index, now_ms));
     }
 
     pub fn clear_current_chapter(&self, book_id: &str) {
-        let mut map = self.current_chapter_by_book.lock().unwrap();
+        let mut map = recover_lock(&self.current_chapter_by_book);
         map.remove(book_id);
     }
 
     pub fn current_chapter(&self, book_id: &str, max_staleness_ms: Option<u64>) -> Option<usize> {
         let now_ms = Self::now_unix_millis();
-        let map = self.current_chapter_by_book.lock().unwrap();
+        let map = recover_lock(&self.current_chapter_by_book);
         let (chapter_index, updated_at_ms) = map.get(book_id).copied()?;
 
         if let Some(max_age_ms) = max_staleness_ms {
@@ -557,7 +576,7 @@ impl LiveStreamManager {
 
         let key = format!("{}_{}", book_id, chapter_index);
         {
-            let mut snapshots = self.snapshots.lock().unwrap();
+            let mut snapshots = recover_lock(&self.snapshots);
             snapshots.insert(
                 key.clone(),
                 LiveChapterSnapshot {
@@ -567,14 +586,14 @@ impl LiveStreamManager {
                 },
             );
         }
-        let mut map = self.channels.lock().unwrap();
+        let mut map = recover_lock(&self.channels);
         let (tx, _) = broadcast::channel(LIVE_BROADCAST_CAPACITY);
         map.insert(key, tx);
     }
     
     pub fn get_or_create_channel(&self, book_id: &str, chapter_index: usize) -> broadcast::Sender<SentencePayload> {
         let key = format!("{}_{}", book_id, chapter_index);
-        let mut map = self.channels.lock().unwrap();
+        let mut map = recover_lock(&self.channels);
         if let Some(tx) = map.get(&key) {
             return tx.clone();
         }
@@ -607,11 +626,11 @@ impl LiveStreamManager {
             word_alignments,
         };
         {
-            let mut snapshots = self.snapshots.lock().unwrap();
+            let mut snapshots = recover_lock(&self.snapshots);
             let snapshot = snapshots.entry(key.clone()).or_default();
             snapshot.sentences.insert(sentence_index, payload.clone());
         }
-        let map = self.channels.lock().unwrap();
+        let map = recover_lock(&self.channels);
         if let Some(tx) = map.get(&key) {
             let _ = tx.send(payload);
         }
@@ -619,7 +638,7 @@ impl LiveStreamManager {
 
     pub fn snapshot_sentences(&self, book_id: &str, chapter_index: usize) -> Vec<SentencePayload> {
         let key = format!("{}_{}", book_id, chapter_index);
-        let snapshots = self.snapshots.lock().unwrap();
+        let snapshots = recover_lock(&self.snapshots);
         snapshots
             .get(&key)
             .map(|snapshot| snapshot.sentences.values().cloned().collect())
@@ -634,7 +653,7 @@ impl LiveStreamManager {
         chapter_index: usize,
     ) -> Vec<SentencePayload> {
         let key = format!("{}_{}", book_id, chapter_index);
-        let snapshots = self.snapshots.lock().unwrap();
+        let snapshots = recover_lock(&self.snapshots);
         snapshots
             .get(&key)
             .map(|snapshot| {
@@ -662,7 +681,7 @@ impl LiveStreamManager {
 
     pub fn has_sentences(&self, book_id: &str, chapter_index: usize) -> bool {
         let key = format!("{}_{}", book_id, chapter_index);
-        let snapshots = self.snapshots.lock().unwrap();
+        let snapshots = recover_lock(&self.snapshots);
         snapshots
             .get(&key)
             .map(|snapshot| !snapshot.sentences.is_empty())
@@ -678,7 +697,7 @@ impl LiveStreamManager {
         next_expected: &mut usize,
     ) -> Vec<Vec<u8>> {
         let key = format!("{}_{}", book_id, chapter_index);
-        let snapshots = self.snapshots.lock().unwrap();
+        let snapshots = recover_lock(&self.snapshots);
         let Some(snapshot) = snapshots.get(&key) else {
             return flush_ready_live_chunks(pending, next_expected);
         };
@@ -699,7 +718,7 @@ impl LiveStreamManager {
         current_time_seconds: f64,
     ) -> LiveSyncMarker {
         let key = format!("{}_{}", book_id, chapter_index);
-        let snapshots = self.snapshots.lock().unwrap();
+        let snapshots = recover_lock(&self.snapshots);
         let Some(snapshot) = snapshots.get(&key) else {
             return LiveSyncMarker {
                 text_element_id: None,
@@ -772,7 +791,7 @@ impl LiveStreamManager {
 
     pub fn segment_manifest(&self, book_id: &str, chapter_index: usize) -> Vec<LiveSegmentMeta> {
         let key = format!("{}_{}", book_id, chapter_index);
-        let snapshots = self.snapshots.lock().unwrap();
+        let snapshots = recover_lock(&self.snapshots);
         let Some(snapshot) = snapshots.get(&key) else {
             return Vec::new();
         };
@@ -801,7 +820,7 @@ impl LiveStreamManager {
         sentence_index: usize,
     ) -> Option<Vec<u8>> {
         let key = format!("{}_{}", book_id, chapter_index);
-        let snapshots = self.snapshots.lock().unwrap();
+        let snapshots = recover_lock(&self.snapshots);
         snapshots
             .get(&key)
             .and_then(|snapshot| snapshot.sentences.get(&sentence_index))
@@ -810,7 +829,7 @@ impl LiveStreamManager {
     
     pub fn end_stream(&self, book_id: &str, chapter_index: usize) {
         let key = format!("{}_{}", book_id, chapter_index);
-        let mut map = self.channels.lock().unwrap();
+        let mut map = recover_lock(&self.channels);
         map.remove(&key);
     }
 
@@ -1362,7 +1381,7 @@ fn serve_live_mp3_snapshot(
             .header("Cache-Control", "no-cache")
             .header("Access-Control-Allow-Origin", "*")
             .body(axum::body::Body::empty())
-            .unwrap());
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?);
     }
 
     if let Some(range_header) = range_header {
@@ -1374,7 +1393,7 @@ fn serve_live_mp3_snapshot(
                 .header("Content-Type", "audio/mpeg")
                 .header("Access-Control-Allow-Origin", "*")
                 .body(axum::body::Body::empty())
-                .unwrap());
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?);
         };
 
         let chunk = snapshot[start..=end].to_vec();
@@ -1387,7 +1406,7 @@ fn serve_live_mp3_snapshot(
             .header("Cache-Control", "no-cache")
             .header("Access-Control-Allow-Origin", "*")
             .body(axum::body::Body::from(chunk))
-            .unwrap());
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?);
     }
 
     Ok(Response::builder()
@@ -1398,7 +1417,7 @@ fn serve_live_mp3_snapshot(
         .header("Cache-Control", "no-cache")
         .header("Access-Control-Allow-Origin", "*")
         .body(axum::body::Body::from(snapshot))
-        .unwrap())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
 }
 
 /// Handle live audio streaming HTTP requests
@@ -1515,7 +1534,7 @@ async fn handle_audio_live_stream(
             .header("Cache-Control", "no-cache")
             .header("Access-Control-Allow-Origin", "*")
             .body(axum::body::Body::from_stream(stream))
-            .unwrap());
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?);
     }
 
     #[cfg(target_os = "ios")]
@@ -1566,7 +1585,7 @@ async fn handle_audio_stream(
         .header("Cache-Control", "public, max-age=31536000")
         .header("Access-Control-Allow-Origin", "*")
         .body(axum::body::Body::from(audio_data))
-        .unwrap())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
 }
 
 async fn handle_epub_resource(
@@ -1620,7 +1639,7 @@ async fn handle_epub_resource(
         .header("Cache-Control", "public, max-age=86400")
         .header("Access-Control-Allow-Origin", "*")
         .body(axum::body::Body::from(resource_bytes))
-        .unwrap())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
 }
 
 
@@ -1726,7 +1745,7 @@ pub async fn start_audio_server(
     // Store the shutdown sender in global state
     let shutdown_state = get_server_shutdown();
     {
-        let mut guard = shutdown_state.lock().unwrap();
+        let mut guard = recover_lock(&shutdown_state);
         *guard = Some(shutdown_tx);
     }
 
@@ -1778,8 +1797,11 @@ pub async fn start_audio_server(
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
     log::info!("Audio streaming server initialization complete");
 
-    // Store the server handle (we could use this to wait for shutdown, but for now we just let it run)
-    std::mem::forget(server_handle);
+    {
+        let task_slot = get_server_task();
+        let mut guard = recover_lock(&task_slot);
+        *guard = Some(server_handle);
+    }
 
     Ok(())
 }
@@ -1799,7 +1821,7 @@ pub async fn stop_audio_server() -> Result<(), Box<dyn std::error::Error + Send 
 
     // Send shutdown signal
     let shutdown_tx = {
-        let mut guard = shutdown_state.lock().unwrap();
+        let mut guard = recover_lock(&shutdown_state);
         guard.take()
     };
 
@@ -1808,9 +1830,24 @@ pub async fn stop_audio_server() -> Result<(), Box<dyn std::error::Error + Send 
             log::warn!("Failed to send shutdown signal (server may have already stopped)");
         } else {
             log::info!("Shutdown signal sent to audio streaming server");
-            // Give the server a moment to shut down gracefully
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
+    }
+
+    // Await the serve task so the port is released before restart/exit.
+    let server_task = {
+        let task_slot = get_server_task();
+        let mut guard = recover_lock(&task_slot);
+        guard.take()
+    };
+    if let Some(handle) = server_task {
+        match tokio::time::timeout(std::time::Duration::from_secs(2), handle).await {
+            Ok(Ok(())) => log::info!("Audio streaming server task finished"),
+            Ok(Err(e)) => log::warn!("Audio streaming server task join error: {}", e),
+            Err(_) => log::warn!("Timed out waiting for audio streaming server task"),
+        }
+    } else {
+        // Fallback if the JoinHandle was lost
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     }
 
     // Reset server state

@@ -57,9 +57,12 @@ pub async fn init_db_connection(app: &AppHandle) -> Result<(), String> {
     
     log::info!("Database connection options created for path: {:?}", db_path);
     
-    // Create connection pool with minimal connections for memory efficiency
+    // Create connection pool — allow a few concurrent acquires under conversion
+    // + progress saves + live stream (WAL already enabled). Keep small on iOS.
+    let max_connections = if cfg!(target_os = "ios") { 3 } else { 5 };
     let pool = SqlitePoolOptions::new()
-        .max_connections(1) // Single connection for maximum memory efficiency
+        .max_connections(max_connections)
+        .acquire_timeout(std::time::Duration::from_secs(30))
         .connect_with(connect_options)
         .await
         .map_err(|e| {
@@ -730,6 +733,12 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
         .execute(pool)
         .await
         .map_err(|e| format!("Failed to enable WAL mode: {}", e))?;
+
+    // Wait up to 5s when the writer holds the lock (progress + conversion)
+    sqlx::query("PRAGMA busy_timeout=5000")
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to set busy_timeout: {}", e))?;
     
     // Set synchronous mode to NORMAL (faster than FULL, still safe with WAL)
     sqlx::query("PRAGMA synchronous=NORMAL")

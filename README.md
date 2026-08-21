@@ -80,6 +80,16 @@ bun run dev:trace
 
 ## Testing & coverage
 
+### Testing pyramid (Tauri-aware)
+
+| Layer | Command | What it covers |
+| ----- | ------- | -------------- |
+| Frontend unit | `bun run test` | Vitest — lib/hooks/contexts (Tauri mocked) |
+| IPC contracts | included in Vitest + `bun run test:rust` | Shared JSON fixtures under `tests/fixtures/ipc/` |
+| Browser E2E | `bun run test:e2e` | Playwright + Vite with `VITE_E2E_MOCK=1` (real UI, mocked IPC) |
+| Native E2E | `bun run test:e2e:tauri` | WebdriverIO → real Tauri WebView (see `e2e-tauri/`) |
+| Rust unit/integration | `bun run test:rust` | Fast lib + modular harness (incl. IPC wire tests) |
+
 ### Frontend
 
 ```bash
@@ -88,15 +98,29 @@ bun run test
 bun run test:watch
 bun run test:coverage   # → coverage/lcov.info + HTML under coverage/
 
-# Browser smoke (Vite only — not full Tauri IPC)
-bun run test:playwright
+# Browser E2E (Vite + mocked Tauri IPC — CI-friendly)
+bun run test:e2e
+# alias: bun run test:playwright
 
 # Unit + Playwright
 bun run test:all
 ```
 
 Co-locate tests as `src/**/*.{test,spec}.{ts,tsx}`. Tauri APIs are stubbed in
-[`src/test/setup.ts`](src/test/setup.ts).
+[`src/test/setup.ts`](src/test/setup.ts) for Vitest. Playwright uses
+[`src/test/e2e/`](src/test/e2e/) shims when `VITE_E2E_MOCK=1`.
+
+### Native Tauri E2E
+
+True WebView ↔ Rust flows (ingest, SQLite, audio server) require WebdriverIO:
+
+```bash
+# One-time: install WDIO deps and wire the e2e Cargo feature (see README there)
+cd e2e-tauri && bun install
+bun run test:e2e:tauri
+```
+
+Details: [`e2e-tauri/README.md`](e2e-tauri/README.md).
 
 ### Rust
 
@@ -161,9 +185,11 @@ bun run build:ios
 ```
 ├── src/                 # React + TypeScript frontend
 ├── src/test/            # Vitest setup + Tauri mocks
+├── src/test/e2e/        # Playwright mock-Tauri shims (VITE_E2E_MOCK)
 ├── src-tauri/           # Rust backend, Tauri config, icons, resources
 ├── src-tauri/tests/     # Rust integration / modular test suite
-├── tests/               # Playwright browser smoke specs
+├── tests/               # Playwright browser E2E specs + IPC fixtures
+├── e2e-tauri/           # Native WebdriverIO + Tauri E2E scaffold
 ├── scripts/             # Build, coverage, and utility scripts
 └── package.json         # Scripts and frontend dependencies
 ```

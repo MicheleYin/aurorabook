@@ -506,9 +506,18 @@ export function ConversionStateProvider({
 
   const convertBook = useCallback(
     async (bookId: string, language?: string, voiceId?: string) => {
-      // Prevent duplicate conversions
-      if (isConverting && convertingBookId === bookId) {
-        logger.log("Conversion already in progress for this book");
+      // Single conversion pipeline: reject same-book duplicates and other books.
+      const activeBookId = convertingBookIdRef.current ?? convertingBookId;
+      if (isConverting || activeBookId) {
+        if (activeBookId === bookId) {
+          logger.log("Conversion already in progress for this book");
+          return;
+        }
+        toast.error("Another conversion is already in progress");
+        logger.log("Rejected conversion; another book is converting", {
+          activeBookId,
+          requestedBookId: bookId,
+        });
         return;
       }
 

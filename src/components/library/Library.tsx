@@ -439,7 +439,10 @@ export function Library() {
 
   if (isLoading) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div
+        className="flex h-full items-center justify-center"
+        data-testid="library-loading"
+      >
         <div className="text-center space-y-2">
           <LoadingScreen />
           <p className="text-sm text-muted-foreground">Loading library...</p>
@@ -518,6 +521,7 @@ export function Library() {
             {filteredBooks.map((book, index) => (
               <Card
                 key={`${book.id}-${filterKey}`}
+                data-testid={`library-book-${book.id}`}
                 className={cn(
                   "cursor-pointer hover:shadow-lg transition-shadow library-item-enter flex flex-col justify-between 2xl:w-60",
                   staggerDelay(index, 30)
@@ -565,7 +569,10 @@ export function Library() {
                       <LibraryBookDuration book={book} />
                     </div>
                     {convertingBookId === book.id && conversionProgress && (
-                      <div className="space-y-1">
+                      <div
+                        className="space-y-1"
+                        data-testid={`library-conversion-progress-${book.id}`}
+                      >
                         <div className="text-xs text-muted-foreground">
                           {conversionProgress.message}
                         </div>
@@ -662,7 +669,10 @@ export function Library() {
                         </div>
                       )}
                       {convertingBookId === book.id && conversionProgress && (
-                        <div className="space-y-1">
+                        <div
+                          className="space-y-1"
+                          data-testid={`library-conversion-progress-${book.id}`}
+                        >
                           <div className="text-xs text-muted-foreground">
                             Converting: Chapter{" "}
                             {conversionProgress.currentChapter}/
