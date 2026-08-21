@@ -66,6 +66,20 @@ jobs:
       - name: Stage DirectML redistributable
         run: node scripts/bundle-windows-directml.cjs --arch=x64
 
+      - name: Stage Dawn placeholder for tauri_build path validation
+        shell: bash
+        run: |
+          mkdir -p src-tauri/resources/ort-dylibs
+          # Real Dawn is refreshed in beforeBundleCommand after ort builds.
+          if [ ! -f src-tauri/resources/ort-dylibs/webgpu_dawn.dll ] || \
+             grep -q 'placeholder' src-tauri/resources/ort-dylibs/webgpu_dawn.dll 2>/dev/null || \
+             [ "$(wc -c < src-tauri/resources/ort-dylibs/webgpu_dawn.dll)" -lt 64 ]; then
+            printf 'placeholder webgpu_dawn.dll; replaced after ort build\n' \
+              > src-tauri/resources/ort-dylibs/webgpu_dawn.dll
+          fi
+          test -f src-tauri/resources/ort-dylibs/DirectML.dll
+          ls -la src-tauri/resources/ort-dylibs/
+
       - name: Build AuroraBook (NSIS)
         shell: bash
         run: |
