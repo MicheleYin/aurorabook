@@ -148,7 +148,7 @@ fn sync_supertonic_assets_for_bundle() {
     let dest_onnx = dest_root.join("onnx");
     let dest_voices = dest_root.join("voice_styles");
 
-    if let Err(e) = copy_dir_all(&src_onnx, &dest_onnx) {
+    if let Err(e) = sync_dir_all(&src_onnx, &dest_onnx) {
         eprintln!(
             "cargo:warning=failed to sync Supertonic ONNX {} → {}: {}",
             src_onnx.display(),
@@ -163,7 +163,7 @@ fn sync_supertonic_assets_for_bundle() {
     }
 
     if src_voices.is_dir() {
-        if let Err(e) = copy_dir_all(&src_voices, &dest_voices) {
+        if let Err(e) = sync_dir_all(&src_voices, &dest_voices) {
             eprintln!(
                 "cargo:warning=failed to sync Supertonic voice_styles {} → {}: {}",
                 src_voices.display(),
@@ -219,10 +219,10 @@ fn ensure_supertonic_resource_placeholders(manifest_dir: &Path) {
     }
 }
 
-fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
-    if dst.exists() {
-        fs::remove_dir_all(dst)?;
-    }
+/// Sync `src` → `dst` without deleting the destination tree. Avoids touching
+/// unchanged files so `tauri dev` does not rebuild in a loop when bundle
+/// assets are copied into `src-tauri/resources/`.
+fn sync_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
@@ -230,8 +230,8 @@ fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
         let from = entry.path();
         let to = dst.join(entry.file_name());
         if ty.is_dir() {
-            copy_dir_all(&from, &to)?;
-        } else {
+            sync_dir_all(&from, &to)?;
+        } else if file_needs_sync(&from, &to) {
             if let Some(parent) = to.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -239,6 +239,22 @@ fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+fn file_needs_sync(from: &Path, to: &Path) -> bool {
+    let Ok(src_meta) = fs::metadata(from) else {
+        return true;
+    };
+    let Ok(dst_meta) = fs::metadata(to) else {
+        return true;
+    };
+    src_meta.len() != dst_meta.len()
+        || src_meta
+            .modified()
+            .ok()
+            .zip(dst_meta.modified().ok())
+            .map(|(src_m, dst_m)| src_m > dst_m)
+            .unwrap_or(true)
 }
 
 fn main() {

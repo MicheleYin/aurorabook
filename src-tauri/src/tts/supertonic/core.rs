@@ -913,12 +913,12 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
     #[cfg(target_os = "ios")]
     log::debug!("Supertonic TTS: using CPU EP on iOS (CoreML disabled — native abort risk)");
     #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-    log::debug!("Supertonic TTS: using DirectML (ONNX Runtime) for inference");
+    log::debug!("Supertonic TTS: prefer DirectML, CPU fallback");
     #[cfg(any(
         target_os = "macos",
         all(target_os = "windows", target_arch = "x86_64")
     ))]
-    log::debug!("Supertonic TTS: using WebGPU (ONNX Runtime) for inference");
+    log::debug!("Supertonic TTS: prefer WebGPU, CPU fallback");
     #[cfg(all(
         not(target_os = "ios"),
         not(target_os = "macos"),
@@ -964,19 +964,25 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
             .map_err(|e| anyhow!("ORT intra-threads setup failed: {e}"))?
             .with_memory_pattern(true)
             .map_err(|e| anyhow!("ORT memory pattern setup failed: {e}"))?;
-        // Windows ARM64: DirectML (redistributable DirectML.dll next to the exe).
+        // Windows ARM64: prefer DirectML; fall back to CPU when no DML device
+        // (e.g. VM, missing DirectML.dll, or driver filter mismatch).
         #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
         let mut builder = builder
-            .with_execution_providers([ep::DirectML::default().build().error_on_failure()])
+            .with_execution_providers([
+                ep::DirectML::default().build(),
+                ep::CPU::default().build(),
+            ])
             .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
-        // macOS + Windows x86_64: WebGPU (Dawn). Windows x64 also ships DirectML.dll
-        // because pyke ORT binaries link it even when using WebGPU.
+        // macOS + Windows x86_64: prefer WebGPU; fall back to CPU when GPU EP unavailable.
         #[cfg(any(
             target_os = "macos",
             all(target_os = "windows", target_arch = "x86_64")
         ))]
         let mut builder = builder
-            .with_execution_providers([ep::WebGPU::default().build().error_on_failure()])
+            .with_execution_providers([
+                ep::WebGPU::default().build(),
+                ep::CPU::default().build(),
+            ])
             .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
         // Other desktop targets (e.g. Linux): CPU until an EP is wired.
         #[cfg(all(
