@@ -32,6 +32,46 @@ fn with_dedicated_handle(app_handle: &tauri::AppHandle, f: impl FnOnce(&tokio::r
     }
 }
 
+/// Derive the Windows install root (directory containing `AuroraBook.exe`) from
+/// Tauri's `resource_dir`, without `current_exe` (Codacy / security lint).
+#[cfg(target_os = "windows")]
+fn windows_install_root_from_resource_dir(resource_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if resource_dir
+        .file_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("resources"))
+    {
+        if let Some(parent) = resource_dir.parent() {
+            candidates.push(parent.to_path_buf());
+        }
+    }
+    candidates.push(resource_dir.to_path_buf());
+    if let Some(parent) = resource_dir.parent() {
+        candidates.push(parent.to_path_buf());
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|p| seen.insert(p.clone()));
+
+    for dir in &candidates {
+        if dir.join("AuroraBook.exe").is_file() || dir.join("aurorabook.exe").is_file() {
+            return Some(dir.clone());
+        }
+    }
+
+    // Dev / pre-bundle layouts: exe dir is typically the parent of `resources/`.
+    if resource_dir
+        .file_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("resources"))
+    {
+        return resource_dir.parent().map(PathBuf::from);
+    }
+
+    candidates.into_iter().next()
+}
+
 /// Windows ORT/WebGPU DLLs must sit next to `AuroraBook.exe` for load-time resolution.
 /// The ort link step can leave 0-byte placeholders/symlinks beside the exe while the
 /// real redistributables live under bundled `resources/ort-dylibs/`.
@@ -40,10 +80,7 @@ fn promote_windows_ort_dylibs_beside_exe(resource_dir: &std::path::Path) {
     use std::fs;
     use std::path::PathBuf;
 
-    let Some(exe_dir) = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(PathBuf::from))
-    else {
+    let Some(exe_dir) = windows_install_root_from_resource_dir(resource_dir) else {
         return;
     };
 
