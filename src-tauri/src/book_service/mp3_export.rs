@@ -105,9 +105,10 @@ fn signal_ffmpeg_export_process(pid: u32) -> std::io::Result<std::process::ExitS
     }
     #[cfg(windows)]
     {
-        Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status()
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        crate::utils::ffmpeg_audio::configure_hidden_subprocess(&mut cmd);
+        cmd.status()
     }
     #[cfg(not(any(unix, windows)))]
     {

@@ -34,7 +34,6 @@ fn is_supertonic_onnx_dir(p: &Path) -> bool {
         && p.join("duration_predictor.onnx").exists()
 }
 
-/// Directory containing `voice_styles/*.json` (or `*.json` voice presets at the top level).
 fn is_supertonic_voice_bundle_dir(p: &Path) -> bool {
     if !p.is_dir() {
         return false;
@@ -52,6 +51,18 @@ fn is_supertonic_voice_bundle_dir(p: &Path) -> bool {
                 && path.file_stem().and_then(|s| s.to_str()) != Some("voice_map")
         })
     })
+}
+
+/// Strip Windows `\\?\` extended-length prefixes so downstream APIs (ORT) get normal paths.
+fn normalize_local_path(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let raw = path.to_string_lossy();
+        if let Some(stripped) = raw.strip_prefix(r"\\?\") {
+            return PathBuf::from(stripped);
+        }
+    }
+    path
 }
 
 fn check_path(path: &Path) -> PathCheck {
@@ -182,6 +193,8 @@ impl ResourcePathResolver {
 
         match (onnx_dir, voices_dir) {
             (Some(onnx), Some(voices)) => {
+                let onnx = normalize_local_path(onnx);
+                let voices = normalize_local_path(voices);
                 log::info!("✓ Found Supertonic ONNX directory at: {}", onnx.display());
                 log::info!("✓ Found Supertonic voice bundle at: {}", voices.display());
                 Ok((onnx, voices))

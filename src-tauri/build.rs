@@ -881,9 +881,10 @@ fn copy_ort_webgpu_dylib_for_desktop_bundle() {
     let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
     let cargo_target_from_config = manifest_dir
         .join("..")
+        .join("..")
         .join(".cargo-target")
         .canonicalize()
-        .unwrap_or_else(|_| manifest_dir.join("..").join(".cargo-target"));
+        .unwrap_or_else(|_| manifest_dir.join("..").join("..").join(".cargo-target"));
 
     let mut target_roots: Vec<PathBuf> = Vec::new();
     if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {

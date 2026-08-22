@@ -19,6 +19,7 @@
  */
 const fs = require("fs");
 const path = require("path");
+const { resolveCargoTargetDir } = require("./resolve-cargo-target-dir.cjs");
 
 const p = process.env.TAURI_ENV_PLATFORM || "";
 if (p === "ios" || p === "android") {
@@ -29,13 +30,7 @@ const root = path.join(__dirname, "..");
 const tauriDir = path.join(root, "src-tauri");
 const destDir = path.join(tauriDir, "resources", "ort-dylibs");
 
-function resolveCargoTargetDir() {
-  const fromEnv = (process.env.CARGO_TARGET_DIR || "").trim();
-  if (fromEnv) return path.resolve(fromEnv);
-  return path.resolve(tauriDir, "..", ".cargo-target");
-}
-
-const targetRoot = resolveCargoTargetDir();
+const targetRoot = resolveCargoTargetDir(root);
 const triple = (process.env.TAURI_ENV_TARGET_TRIPLE || "").toLowerCase();
 const isWinArm =
   triple.includes("aarch64-pc-windows") ||
@@ -66,6 +61,7 @@ const names = isMac
   : ["webgpu_dawn.dll", "dxil.dll", "dxcompiler.dll"];
 
 const candidatesFor = (name) => [
+  path.join(destDir, name),
   path.join(targetRoot, "release", name),
   path.join(targetRoot, "debug", name),
   path.join(targetRoot, "aarch64-apple-darwin", "release", name),
@@ -97,6 +93,23 @@ function exeSiblingDirs() {
 
 fs.mkdirSync(destDir, { recursive: true });
 
+function shouldReplaceDll(dest, src) {
+  if (!fs.existsSync(dest)) return true;
+  if (path.resolve(dest) === path.resolve(src)) return false;
+  const st = fs.lstatSync(dest);
+  if (st.isSymbolicLink()) return true;
+  return st.size <= 64;
+}
+
+function copyDllBesideExe(src, sibling) {
+  if (path.resolve(src) === path.resolve(sibling)) return;
+  if (!shouldReplaceDll(sibling, src)) return;
+  if (fs.existsSync(sibling)) {
+    fs.unlinkSync(sibling);
+  }
+  fs.copyFileSync(src, sibling);
+}
+
 let copied = 0;
 const siblingDirs = exeSiblingDirs();
 
@@ -123,19 +136,23 @@ for (const name of names) {
   }
 
   const dest = path.join(destDir, name);
-  fs.copyFileSync(src, dest);
+  if (shouldReplaceDll(dest, src)) {
+    if (fs.existsSync(dest)) fs.unlinkSync(dest);
+    fs.copyFileSync(src, dest);
+  }
   console.log("copy-ort-webgpu-dylib:", path.relative(root, src), "->", path.relative(root, dest));
   copied += 1;
 
   for (const dir of siblingDirs) {
     const sibling = path.join(dir, name);
-    if (path.resolve(src) === path.resolve(sibling)) continue;
-    fs.copyFileSync(src, sibling);
-    console.log(
-      "copy-ort-webgpu-dylib: also",
-      path.relative(root, sibling),
-      "(beside exe)"
-    );
+    copyDllBesideExe(src, sibling);
+    if (fs.existsSync(sibling) && fs.statSync(sibling).size > 64) {
+      console.log(
+        "copy-ort-webgpu-dylib: also",
+        path.relative(root, sibling),
+        "(beside exe)"
+      );
+    }
   }
 }
 

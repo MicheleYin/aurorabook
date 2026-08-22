@@ -32,6 +32,79 @@ fn with_dedicated_handle(app_handle: &tauri::AppHandle, f: impl FnOnce(&tokio::r
     }
 }
 
+/// Windows ORT/WebGPU DLLs must sit next to `AuroraBook.exe` for load-time resolution.
+/// The ort link step can leave 0-byte placeholders/symlinks beside the exe while the
+/// real redistributables live under bundled `resources/ort-dylibs/`.
+#[cfg(target_os = "windows")]
+fn promote_windows_ort_dylibs_beside_exe(resource_dir: &std::path::Path) {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(PathBuf::from))
+    else {
+        return;
+    };
+
+    let src_dir = [
+        resource_dir.join("resources").join("ort-dylibs"),
+        resource_dir.join("ort-dylibs"),
+    ]
+    .into_iter()
+    .find(|dir| dir.is_dir());
+
+    let Some(src_dir) = src_dir else {
+        log::warn!(
+            "⚠ No bundled ort-dylibs directory found under {}",
+            resource_dir.display()
+        );
+        return;
+    };
+
+    for name in [
+        "webgpu_dawn.dll",
+        "DirectML.dll",
+        "dxil.dll",
+        "dxcompiler.dll",
+    ] {
+        let src = src_dir.join(name);
+        if !src.is_file() {
+            continue;
+        }
+        let Ok(src_meta) = fs::metadata(&src) else {
+            continue;
+        };
+        if src_meta.len() <= 64 {
+            continue;
+        }
+
+        let dest = exe_dir.join(name);
+        let needs_copy = match fs::symlink_metadata(&dest) {
+            Ok(meta) => meta.len() <= 64,
+            Err(_) => true,
+        };
+
+        if !needs_copy {
+            continue;
+        }
+
+        if dest.exists() {
+            let _ = fs::remove_file(&dest);
+        }
+
+        match fs::copy(&src, &dest) {
+            Ok(_) => log::info!("✓ Promoted {} beside executable for ORT/WebGPU", name),
+            Err(e) => log::warn!(
+                "⚠ Failed to promote {} → {}: {}",
+                src.display(),
+                dest.display(),
+                e
+            ),
+        }
+    }
+}
+
 /// Ensure Windows can resolve `webgpu_dawn.dll` / `DirectML.dll` (and companion DXC DLLs).
 ///
 /// Load-time DLL deps must sit next to `AuroraBook.exe` (NSIS POSTINSTALL hook
@@ -123,7 +196,7 @@ fn greet(name: &str) -> String {
 ///
 /// # Logging
 /// Debug builds: forwards logs to stderr and the webview (`frontend-log`); default `trace`, overridable via `RUST_LOG`.
-/// Release builds: logging is fully disabled (no stderr, no UI forwarding).
+/// Release builds: errors/warnings to stderr only (`RUST_LOG=error` by default).
 ///
 /// # Panics
 /// Panics if the Tauri application fails to run.
@@ -144,7 +217,7 @@ pub fn run() {
                     log::set_max_level(if cfg!(debug_assertions) {
                         log::LevelFilter::Trace
                     } else {
-                        log::LevelFilter::Off
+                        log::LevelFilter::Warn
                     });
                 })
                 .expect("Failed to set logger");
@@ -161,6 +234,7 @@ pub fn run() {
                         // Prepend that directory to PATH so LoadLibrary finds them before system dirs.
                         #[cfg(target_os = "windows")]
                         {
+                            promote_windows_ort_dylibs_beside_exe(&resource_dir);
                             prepend_windows_ort_dylib_dir(&resource_dir);
                         }
 

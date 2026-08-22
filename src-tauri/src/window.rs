@@ -94,7 +94,7 @@ pub fn create_main_window(app: &tauri::App) -> Result<WebviewWindow, String> {
             .min_inner_size(300.0, 300.0);
     }
 
-    // Set transparent title bar only when building for macOS
+    // macOS: content draws under the unified title bar (matches iOS edge-to-edge feel).
     #[cfg(target_os = "macos")]
     {
         win_builder = win_builder.title_bar_style(tauri::TitleBarStyle::Transparent);

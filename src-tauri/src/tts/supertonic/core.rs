@@ -906,7 +906,7 @@ pub fn load_voice_style(voice_style_paths: &[String], verbose: bool) -> Result<S
     })
 }
 
-pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech> {
+pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<TextToSpeech> {
     if use_gpu {
         bail!("GPU mode is not supported yet");
     }
@@ -943,13 +943,14 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
         }
     });
 
+    let onnx_dir = onnx_dir.as_ref();
     let cfgs = load_cfgs(onnx_dir)?;
-    let dp_path = format!("{}/duration_predictor.onnx", onnx_dir);
-    let text_enc_path = format!("{}/text_encoder.onnx", onnx_dir);
-    let vector_est_path = format!("{}/vector_estimator.onnx", onnx_dir);
-    let vocoder_path = format!("{}/vocoder.onnx", onnx_dir);
+    let dp_path = onnx_dir.join("duration_predictor.onnx");
+    let text_enc_path = onnx_dir.join("text_encoder.onnx");
+    let vector_est_path = onnx_dir.join("vector_estimator.onnx");
+    let vocoder_path = onnx_dir.join("vocoder.onnx");
 
-    let build_session = |path: &str| -> Result<Session> {
+    let build_session = |path: &Path| -> Result<Session> {
         let builder =
             Session::builder().map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
         // iOS: CPU only + low memory options. Full graph opts on ~400MB of models can OOM
@@ -994,10 +995,10 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
         let mut builder = builder
             .with_execution_providers([ep::CPU::default().build()])
             .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
-        log::info!("Loading ONNX model: {}", path);
+        log::info!("Loading ONNX model: {}", path.display());
         let session = builder
             .commit_from_file(path)
-            .map_err(|e| anyhow!("ORT failed to load model '{}': {e}", path))?;
+            .map_err(|e| anyhow!("ORT failed to load model '{}': {e}", path.display()))?;
         Ok(session)
     };
 
@@ -1006,7 +1007,7 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
     let vector_est_ort = build_session(&vector_est_path)?;
     let vocoder_ort = build_session(&vocoder_path)?;
 
-    let unicode_indexer_path = format!("{}/unicode_indexer.json", onnx_dir);
+    let unicode_indexer_path = onnx_dir.join("unicode_indexer.json");
     let text_processor = UnicodeProcessor::new(&unicode_indexer_path)?;
 
     Ok(TextToSpeech::new(

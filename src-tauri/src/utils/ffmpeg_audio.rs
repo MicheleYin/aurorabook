@@ -19,6 +19,22 @@ const EXPORT_DECODE_SAMPLE_RATE: u32 = 44_100;
 const EXPORT_DECODE_CHANNELS: u32 = 2;
 static FFMPEG_BIN_PATH: OnceLock<PathBuf> = OnceLock::new();
 
+/// Prevent each FFmpeg invocation from flashing a console window in release GUI builds.
+#[cfg(windows)]
+fn hide_subprocess_console(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_subprocess_console(_cmd: &mut Command) {}
+
+/// Apply [`hide_subprocess_console`] to any child process the app spawns on Windows.
+pub(crate) fn configure_hidden_subprocess(cmd: &mut Command) {
+    hide_subprocess_console(cmd);
+}
+
 fn candidate_if_file(path: PathBuf) -> Option<PathBuf> {
     // Ignore empty placeholders created for Tauri bundle path validation in CI/tests.
     if path.is_file()
@@ -123,7 +139,9 @@ fn detect_ffmpeg_path() -> PathBuf {
 
 pub fn ffmpeg_command() -> Command {
     let bin = FFMPEG_BIN_PATH.get_or_init(detect_ffmpeg_path);
-    Command::new(bin)
+    let mut cmd = Command::new(bin);
+    hide_subprocess_console(&mut cmd);
+    cmd
 }
 
 fn stderr_snippet(stderr: &[u8], max: usize) -> String {

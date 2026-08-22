@@ -16,6 +16,7 @@
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { resolveCargoTargetDir } = require("./resolve-cargo-target-dir.cjs");
 
 const root = path.join(__dirname, "..");
 
@@ -67,8 +68,7 @@ process.env.AURORABOOK_FFMPEG_ARCH = arch === "arm64" ? "arm64" : "x64";
 }
 
 // Also place DirectML.dll beside the built exe when present (NSIS sibling / load-time).
-const targetRoot =
-  (process.env.CARGO_TARGET_DIR || "").trim() || path.resolve(root, ".cargo-target");
+const targetRoot = resolveCargoTargetDir(root);
 const dmlSrc = path.join(root, "src-tauri", "resources", "ort-dylibs", "DirectML.dll");
 const siblingCandidates = [
   path.join(targetRoot, "release"),
@@ -81,8 +81,15 @@ if (fs.existsSync(dmlSrc) && fs.statSync(dmlSrc).size > 64) {
     const exe2 = path.join(dir, "AuroraBook.exe");
     if (fs.existsSync(exe) || fs.existsSync(exe2)) {
       const dest = path.join(dir, "DirectML.dll");
-      fs.copyFileSync(dmlSrc, dest);
-      console.log("ensure-windows-ort-dlls: also", path.relative(root, dest), "(beside exe)");
+      const needsCopy =
+        !fs.existsSync(dest) ||
+        fs.lstatSync(dest).isSymbolicLink() ||
+        fs.statSync(dest).size <= 64;
+      if (needsCopy) {
+        if (fs.existsSync(dest)) fs.unlinkSync(dest);
+        fs.copyFileSync(dmlSrc, dest);
+        console.log("ensure-windows-ort-dlls: also", path.relative(root, dest), "(beside exe)");
+      }
     }
   }
 }
