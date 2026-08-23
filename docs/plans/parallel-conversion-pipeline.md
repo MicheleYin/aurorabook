@@ -2,9 +2,9 @@
 
 Design plan for overlapping EPUB/HTML parse, TTS synthesis, and audio encode so the **one** Supertonic engine stays busy. Stages hand off via bounded queues; they do **not** wait on each other when work is available.
 
-**Status:** Proposal (planning only) — revised after feedback  
+**Status:** Implemented (Phase 1) — single-engine stage overlap in `converter/pipeline.rs`  
 **Scope:** All platforms (including iOS): still one ONNX instance. Desktop gains the most from overlapping encode/parse on other cores.  
-**Related code:** `src-tauri/src/epub/converter/`, `src-tauri/src/tts/`, `src-tauri/src/utils/ffmpeg_audio.rs`, `src-tauri/src/tts_commands.rs`
+**Related code:** `src-tauri/src/epub/converter/pipeline.rs`, `src-tauri/src/epub/converter/processing.rs`, `src-tauri/src/tts/`, `src-tauri/src/utils/ffmpeg_audio.rs`, `src-tauri/src/tts_commands.rs`
 
 ---
 
