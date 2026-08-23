@@ -60,14 +60,8 @@ private final class AudiobookExporter {
 
             let url = URL(fileURLWithPath: path)
             let asset = AVURLAsset(url: url)
-            let audioTracks = asset.tracks(withMediaType: .audio)
-            guard let sourceTrack = audioTracks.first else {
-                throw AuroraExportError.compositionFailed(
-                    "No audio track in file: \(path)"
-                )
-            }
-
-            let duration = sourceTrack.timeRange.duration
+            let sourceTrack = try loadFirstAudioTrack(from: asset, path: path)
+            let duration = try loadDuration(of: asset, fallbackTrack: sourceTrack)
             let timeRange = CMTimeRange(start: .zero, duration: duration)
             chapterStarts.append(CMTimeGetSeconds(cursor))
 
@@ -164,6 +158,54 @@ private final class AudiobookExporter {
         }
 
         rustExportProgress(percent: 100)
+    }
+
+    /// Ensure asset tracks are loaded, then return the first audio track.
+    /// Uses `loadValuesAsynchronously` so we do not rely on deprecated sync accessors
+    /// that can return empty before keys are ready.
+    private func loadFirstAudioTrack(from asset: AVURLAsset, path: String) throws -> AVAssetTrack {
+        try loadAssetKeys(asset, keys: ["tracks"])
+        let audioTracks = asset.tracks(withMediaType: .audio)
+        guard let sourceTrack = audioTracks.first else {
+            throw AuroraExportError.compositionFailed("No audio track in file: \(path)")
+        }
+        return sourceTrack
+    }
+
+    private func loadDuration(of asset: AVURLAsset, fallbackTrack: AVAssetTrack) throws -> CMTime {
+        try? loadAssetKeys(asset, keys: ["duration"])
+        let duration = asset.duration
+        if duration.isValid && !duration.isIndefinite && CMTimeGetSeconds(duration) > 0 {
+            return duration
+        }
+        let trackDuration = fallbackTrack.timeRange.duration
+        if trackDuration.isValid && CMTimeGetSeconds(trackDuration) > 0 {
+            return trackDuration
+        }
+        throw AuroraExportError.compositionFailed("Could not determine track duration")
+    }
+
+    private func loadAssetKeys(_ asset: AVURLAsset, keys: [String]) throws {
+        let group = DispatchGroup()
+        var loadError: Error?
+        group.enter()
+        asset.loadValuesAsynchronously(forKeys: keys) {
+            defer { group.leave() }
+            for key in keys {
+                var statusError: NSError?
+                let status = asset.statusOfValue(forKey: key, error: &statusError)
+                if status == .failed || status == .cancelled {
+                    loadError = statusError
+                    return
+                }
+            }
+        }
+        group.wait()
+        if let loadError {
+            throw AuroraExportError.compositionFailed(
+                "Failed to load asset keys \(keys): \(loadError.localizedDescription)"
+            )
+        }
     }
 
     private func buildMetadata(
