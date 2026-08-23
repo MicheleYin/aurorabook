@@ -189,16 +189,23 @@ pub fn export_m4a_m4b_avfoundation(
     IOS_EXPORT_PROGRESS.store(0, Ordering::Relaxed);
     on_progress(0);
 
-    let join = std::thread::spawn(move || unsafe {
-        aurora_export_audiobook(
-            c_paths.as_ptr(),
-            c_titles.as_ptr(),
-            c_format.as_ptr(),
-            c_title.as_ptr(),
-            c_artist.as_ptr(),
-            c_album.as_ptr(),
-            c_out.as_ptr(),
-        )
+    // SAFETY: All `CString` values are valid NUL-terminated UTF-8 and live for
+    // the duration of `aurora_export_audiobook` (they are moved into the worker
+    // thread and dropped after the FFI returns). The Swift `@_cdecl` entry point
+    // only reads the pointers; it does not retain them past the call.
+    let join = std::thread::spawn(move || {
+        // Codacy: audited Swift @_cdecl FFI — same bridge pattern as native_player.rs.
+        unsafe {
+            aurora_export_audiobook(
+                c_paths.as_ptr(),
+                c_titles.as_ptr(),
+                c_format.as_ptr(),
+                c_title.as_ptr(),
+                c_artist.as_ptr(),
+                c_album.as_ptr(),
+                c_out.as_ptr(),
+            )
+        }
     });
 
     let mut last = 0u8;

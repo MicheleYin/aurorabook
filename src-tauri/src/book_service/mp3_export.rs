@@ -740,6 +740,7 @@ fn ffmpeg_concat_filelist_export(
     Ok(())
 }
 
+#[cfg(not(target_os = "ios"))]
 fn chapter_starts_for_track_inputs(
     tracks: &[PreparedTrackInput],
 ) -> Vec<(std::time::Duration, String)> {
