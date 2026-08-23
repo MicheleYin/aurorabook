@@ -1,103 +1,121 @@
-# Parallel Conversion Pipeline
+# Staged Conversion Pipeline (Single TTS Engine)
 
-Design plan for a staged, multi-worker conversion pipeline in the Rust backend so EPUB/HTML parsing, TTS synthesis, and audio encoding can overlap on separate cores.
+Design plan for overlapping EPUB/HTML parse, TTS synthesis, and audio encode so the **one** Supertonic engine stays busy. Stages hand off via bounded queues; they do **not** wait on each other when work is available.
 
-**Status:** Proposal (planning only)  
-**Scope:** Desktop/desktop-like targets first (`macOS`, `Windows`, Linux). iOS stays single-worker.  
+**Status:** Proposal (planning only) — revised after feedback  
+**Scope:** All platforms (including iOS): still one ONNX instance. Desktop gains the most from overlapping encode/parse on other cores.  
 **Related code:** `src-tauri/src/epub/converter/`, `src-tauri/src/tts/`, `src-tauri/src/utils/ffmpeg_audio.rs`, `src-tauri/src/tts_commands.rs`
 
 ---
 
-## 1. Problem
+## 1. Intent (revised)
 
-Conversion today is effectively serial:
+**Wanted:** Classic producer/consumer pipeline.
 
-1. Chapters run one after another in `convert_epub_core_with_durations`.
-2. Within a chapter, sentence fan-out already exists (`JoinSet` + `Semaphore` in `process_chapter`), but `get_parallelism()` hard-returns `1`, so only one TTS job runs at a time.
-3. Each sentence path does TTS → PCM → LAME MP3 (and live-stream push) on the same async task.
-4. TTS inference is synchronous ONNX work inside Tokio tasks, so raising concurrency without a blocking pool can starve the runtime.
-5. Chapter MP3 encoding uses in-process LAME (`convert_pcm_to_mp3`), not a dedicated FFmpeg worker stage. FFmpeg is mainly used for export/decode (`mp3_export`, checkpoint restore).
+```
+time →
+Parse:   [s0][s1][s2][s3]...
+TTS:         [====s0====][====s1====][====s2====]...
+Encode:              [s0][s1][s2]...
+```
 
-Result: CPU cores sit idle while one stage runs, and wall-clock conversion time is dominated by the sum of parse + TTS + encode rather than the slowest stage.
+While the engine synthesizes sentence *N*, encode can finish *N−1* and parse can already have *N+1* (and a small buffer) ready. The critical path is almost entirely TTS; parse/encode should rarely stall it.
+
+**Not wanted:** Multiple ONNX / TTS engine instances. No raising `get_parallelism()` for multi-model concurrency. One engine, kept fed.
 
 ---
 
-## 2. Goal
+## 2. Problem
 
-Introduce a **bounded, ordered pipeline** with three long-lived worker pools:
+Today each sentence does work **serially on the same task**:
 
-| Stage | Responsibility | Output |
+```
+for sentence:
+  TTS(sentence) → PCM
+  LAME encode → live stream + checkpoint
+```
+
+So after every synthesis, the engine sits idle while encode (and any prep) runs. Parse for the chapter is also done up front as a batch, then the engine starts — fine for one chapter, but chapter finalize (concat, SMIL, EPUB rebuild) still blocks starting the next chapter’s TTS.
+
+Wall-clock ≈ Σ(TTS) + Σ(encode) + Σ(parse/finalize gaps), instead of ≈ Σ(TTS) when the pipeline stays full.
+
+---
+
+## 3. Goal
+
+One **single-engine** pipeline with three stages:
+
+| Stage | Workers | Role |
 | :--- | :--- | :--- |
-| **Parse** | Chapter HTML → sentences + span metadata | `ParsedSentence` jobs |
-| **TTS** | Sentence text → PCM + word alignments | `SynthesizedSentence` jobs |
-| **Encode** | PCM → sentence MP3 (live) and chapter MP3 (final) | Encoded audio + checkpoints |
+| **Parse** | 1 (enough) | HTML → ordered `ParsedSentence` jobs into a bounded queue |
+| **TTS** | **exactly 1** | Pop text → PCM + alignments; never shares the model |
+| **Encode** | 1 (optionally 2 if encode ever catches TTS) | PCM → sentence MP3, checkpoint, live push; later chapter/export encode |
 
-Stages run concurrently: while TTS synthesizes sentence *N*, Encode can finish *N−1* and Parse can prepare *N+1* (or the next chapter’s sentences).
+Success = **TTS busy fraction high** (engine rarely waiting on an empty input queue or blocked behind encode).
 
-Non-goals for v1:
+Non-goals:
 
-- Parallel chapter EPUB rebuild / OPF merge (keep merge sequential for correctness).
-- Multiprocess (separate OS processes) unless memory isolation proves necessary.
-- Changing the FE “single conversion pipeline” product constraint (one book at a time).
-- Replacing SMIL / VTT / words.json semantics.
+- Multi-instance `TtsEnginePool` / restoring multi-core `get_parallelism()` for TTS
+- Multiprocess workers
+- Changing SMIL / VTT / live-stream / checkpoint semantics
+- Parallel EPUB rebuild (merge stays sequential)
 
 ---
 
-## 3. Current architecture (baseline)
+## 4. Current baseline
 
 ```
 convert_epub_to_audiobook_command
-  → TtsEnginePool(num_instances = get_parallelism() == 1)
+  → TtsEnginePool(num_instances = 1)   // keep this
   → for each chapter (sequential):
-        extract_all_sentences(HTML)
-        JoinSet + Semaphore(N):
-          process_sentence → ONNX TTS (sync) → PCM
-          encode sentence MP3 (LAME) → live stream + checkpoint
-        concat PCM → chapter MP3 (LAME)
-        SMIL / spans / VTT / words.json
-        merge + rebuild partial EPUB
-  → build_final_epub
+        extract_all_sentences(HTML)    // all parse before any TTS
+        for each sentence (JoinSet + Semaphore(1)):
+          TTS → PCM → LAME → live/checkpoint   // encode blocks next TTS
+        concat → chapter MP3 → SMIL/VTT → rebuild EPUB
 ```
 
-Useful pieces already present:
+Keep: single engine, cancel token, checkpoints, live stream, ordered `BTreeMap` assemble.  
+Change: decouple stages with queues so TTS does not wait on encode/parse.
 
-- `TtsEnginePool` + `TTSKokoParallel` multi-instance support
-- Sentence-level `JoinSet` / semaphore / round-robin `worker_id`
-- Cancellation via `Arc<AtomicBool>`
-- Checkpoint resume + live audio broadcast
-- `num_cpus` dependency (currently unused by live `get_parallelism`)
+The existing `JoinSet` + multi-instance scaffolding is incidental; this design does **not** depend on scaling that semaphore for more engines.
 
 ---
 
-## 4. Proposed architecture
+## 5. Proposed architecture
 
-### 4.1 Pipeline topology
+### 5.1 Topology
 
 ```
-                    ┌─────────────────┐
-  chapter HTML ───▶ │  Parse workers  │──┐
-                    └─────────────────┘  │
-                                         ▼  bounded channel (ordered by seq)
-                    ┌─────────────────┐
-                    │   TTS workers   │──┐   (N ONNX instances)
-                    └─────────────────┘  │
-                                         ▼  bounded channel
-                    ┌─────────────────┐
-                    │ Encode workers  │──┐   (LAME and/or FFmpeg)
-                    └─────────────────┘  │
-                                         ▼
-                              ordered collector
-                              (chapter assemble,
-                               SMIL/VTT, EPUB merge)
+ chapter HTML
+      │
+      ▼
+ ┌──────────┐   bounded queue    ┌─────────────────────┐   bounded queue    ┌────────────┐
+ │  Parse   │ ─────────────────▶ │  TTS (1× ONNX)      │ ─────────────────▶ │   Encode   │
+ │  (1)     │   ParsedSentence   │  dedicated thread   │  SynthesizedPCM    │  (1–2)     │
+ └──────────┘                    └─────────────────────┘                    └─────┬──────┘
+                                                                                  │
+                                                                                  ▼
+                                                                         ordered collector
+                                                                         (live stream,
+                                                                          chapter concat,
+                                                                          SMIL / EPUB)
 ```
 
-Use **Tokio channels** (`mpsc` / `async_channel`) with backpressure, not unbounded queues. Prefer **threads / `spawn_blocking` pools** for CPU-heavy stages so the async runtime stays responsive for DB, progress events, and cancel.
+- **Backpressure:** If encode is slow, the TTS→encode queue fills and TTS blocks on send — rare if encode ≪ TTS. If parse is slow, TTS blocks on recv — avoid with a small prefill (see below).
+- **TTS thread:** Run the single ONNX instance on a **dedicated blocking thread** (or `spawn_blocking` with concurrency 1) so Tokio stays free for DB/events/cancel. Encode similarly off the async runtime.
 
-### 4.2 Job types (sketch)
+### 5.2 Prefill so the engine never starts cold
+
+Before the TTS loop blocks on an empty queue:
+
+1. Parse starts immediately for the chapter (or next chapter if lookahead is enabled).
+2. Prefer a small **input watermark** (e.g. 2–8 parsed sentences buffered) before considering the pipeline “warm.”
+3. Target: TTS `recv` wait time ≈ 0 after warmup.
+
+### 5.3 Job types (sketch)
 
 ```rust
 struct SentenceKey {
-    book_id: String,
     chapter_index: usize,
     sentence_index: usize,
 }
@@ -106,182 +124,107 @@ struct ParsedSentence {
     key: SentenceKey,
     text: String,
     word_count: usize,
-    // span metadata needed later for SMIL alignment
 }
 
 struct SynthesizedSentence {
     key: SentenceKey,
-    pcm: Vec<f32>,           // or Arc<[f32]> / disk spill for large chapters
+    pcm: Arc<[f32]>,
     alignments: Vec<WordAlignment>,
     duration_sec: f32,
     text: String,
 }
-
-struct EncodedSentence {
-    key: SentenceKey,
-    mp3: Vec<u8>,
-    duration_sec: f32,
-    // optional: retain pcm handle until chapter concat decides strategy
-}
 ```
 
-Chapter completion is driven by an **ordered collector** that waits until all sentence indices for a chapter are encoded (or restored from checkpoint), then:
+Collector still assembles by `sentence_index` (encode may finish out of order only if encode_workers > 1; with one encode worker, completion order matches TTS order).
 
-1. Concatenate PCM (preferred) or MP3 fallback in sentence order  
-2. Write chapter audio + SMIL/VTT/words.json  
-3. Merge into `ConversionContext` and rebuild partial EPUB  
+### 5.4 Worker sizing (fixed policy)
 
-This preserves today’s correctness requirements (ordered audio clock, resume, live stream).
-
-### 4.3 Worker sizing
-
-| Pool | Default (desktop) | Cap / notes |
+| Stage | Count | Notes |
 | :--- | :--- | :--- |
-| Parse | `1..=2` | HTML/sentence split is usually cheaper than TTS; 1 is often enough |
-| TTS | `min(available_cores - reserve, max_onnx_instances)` | Memory-bound: each ONNX instance is large; start with 2, measure RAM |
-| Encode | `1..=2` | LAME is lighter than TTS; FFmpeg subprocesses need PID/cancel tracking |
+| Parse | 1 | Cheap vs TTS |
+| TTS | **1** | Hard requirement — one engine |
+| Encode | 1 | Enough while encode ≪ TTS; raise to 2 only if profiling shows TTS blocked on full encode queue |
 
-Suggested `get_parallelism()` restoration (desktop only):
+Leave `get_parallelism()` at `1` (or repurpose/remove later). Do not load multiple ONNX copies for conversion.
+
+### 5.5 FFmpeg
+
+- **Sentence path:** Keep in-process LAME on the encode stage (low latency for live stream).
+- **Chapter final / export:** Optional later move to an FFmpeg job on the encode side so chapter mux does not stall the TTS thread; still one TTS engine.
+
+Do not spawn FFmpeg per sentence.
+
+---
+
+## 6. What overlaps (and what must not)
+
+| Can overlap with TTS | Must stay ordered / gated |
+| :--- | :--- |
+| Parsing upcoming sentences | Chapter audio concat by sentence index |
+| Encoding previous sentence PCM | SMIL/VTT timing derived from final durations |
+| Checkpoint I/O / live stream push | EPUB partial rebuild after chapter complete |
+| Next-chapter parse (optional lookahead) | Starting next chapter’s TTS only after prior chapter’s audio/SMIL inputs are finalized *or* carefully isolated |
+
+**Chapter lookahead (optional, phase 2):** While encode/collector finishes chapter *i*, parse (and ideally TTS) may already run on chapter *i+1* **if** queues and checkpoints are keyed by chapter. EPUB store write stays serial.
+
+---
+
+## 7. Memory & queues
+
+With one engine, RAM pressure is mostly **PCM sitting between TTS and encode/concat**, not model copies.
+
+- Bound TTS→encode depth tightly (e.g. 2–4 sentences of PCM).
+- Bound parse→TTS deeper if needed for watermark (text is cheap).
+- Drop or spill PCM after chapter concat when only MP3 is retained.
+- Do not parse the entire book into the TTS queue; chapter-scoped feed (+ optional 1-chapter lookahead).
+
+---
+
+## 8. Implementation plan
+
+### Phase 1 — In-chapter stage overlap (core feature)
+
+1. Add `converter/pipeline/` with channels + single TTS consumer + encode consumer + collector.
+2. Refactor `process_chapter` so sentence loop is queue-driven, not “TTS then encode on same task.”
+3. Move ONNX call onto a dedicated blocking thread; encode on another.
+4. Keep `num_instances = 1`, public IPC, progress events, cancel, checkpoints, live stream.
+5. Instrument: `tts_idle_ms`, `tts_busy_ms`, queue depths, encode duration vs TTS duration.
+
+**Exit criteria:** For a multi-sentence chapter, TTS idle between sentences drops toward queue/scheduling noise; encode runs concurrently with the next TTS; fixtures match baseline ordering/SMIL.
+
+### Phase 2 — Hide chapter-boundary gaps (optional)
+
+1. Prefetch parse for chapter `i+1` while chapter `i` finalizes.
+2. Optionally let TTS continue into `i+1` while `i` encode/EPUB merge completes (harder; needs clear checkpoint boundaries).
+
+**Exit criteria:** Less idle TTS at chapter boundaries on long books.
+
+### Phase 3 — Encode/finalize helpers (optional)
+
+1. Chapter-final MP3 / export via FFmpeg worker so heavy mux never shares the TTS thread.
+2. Still one engine.
+
+---
+
+## 9. Module sketch
 
 ```text
-reserve 1–2 cores for UI / Tokio / encode
-tts_instances = clamp(num_cpus.saturating_sub(reserve), 1, MAX)
-ios = always 1
+src-tauri/src/epub/converter/pipeline/
+  mod.rs           // run_chapter_pipeline(config, chapter, engine)
+  jobs.rs
+  parse_stage.rs   // producer
+  tts_stage.rs     // single consumer, dedicated thread
+  encode_stage.rs  // LAME (+ later FFmpeg chapter jobs)
+  collector.rs
 ```
-
-Expose overrides later via settings (`conversion.tts_workers`, `conversion.encode_workers`) once defaults are proven safe.
-
-### 4.4 Where work actually runs
-
-| Stage | Execution | Why |
-| :--- | :--- | :--- |
-| Parse | `spawn_blocking` or small rayon/thread pool | CPU HTML work; avoid blocking Tokio |
-| TTS | dedicated blocking threads, one per ONNX instance (or `spawn_blocking` with concurrency = `num_instances`) | ONNX is sync and heavy; must not occupy Tokio worker threads |
-| Encode (sentence MP3) | blocking pool | LAME encode today; keep API stable |
-| Encode (chapter / export) | optional FFmpeg worker | Align with user intent; reuse `ffmpeg_audio` patterns + cancel PIDs |
-| Collector / EPUB merge | async on Tokio | DB, store, events, ordered merge |
-
-### 4.5 FFmpeg’s role in this feature
-
-Clarify stages so “FFmpeg worker” is intentional, not assumed for everything:
-
-**v1 (recommended):** Keep sentence/chapter chapter-path encode on **in-process LAME** (already fast and used for live stream). Run it on a dedicated encode worker pool so it overlaps with TTS.
-
-**v1.5 / v2:** Move **chapter final encode** and/or **export concat** onto an FFmpeg worker queue (`encode_pcm_to_mp3_bytes`, existing export helpers). Benefits: consistent toolchain, easier bitrate/format knobs, offloads LAME from the app process. Costs: process spawn overhead, bundled binary dependency, iOS unavailability (already true for FFmpeg export).
-
-Do **not** put FFmpeg on the hot per-sentence path unless profiling shows LAME is a bottleneck; process spawn per sentence will hurt more than it helps.
-
----
-
-## 5. Concurrency model (threads vs processes)
-
-**Prefer multithreading inside one process** for v1:
-
-- ONNX Runtime and the existing `TtsEnginePool` are in-process.
-- Shared checkpoints, live stream manager, and Tauri app handle are easier with threads.
-- Channels + `Arc` job payloads are simpler than IPC.
-
-**Consider multiprocessing later** only if:
-
-- ONNX allocator fragmentation / peak RSS from N model copies is unacceptable, or
-- A crashed worker must not take down the UI process.
-
-If multiprocess is ever needed, isolate TTS workers only; keep parse/encode/collector in-process.
-
----
-
-## 6. Ordering, live stream, and resume
-
-These constraints shape the design more than raw throughput:
-
-1. **Sentence order for chapter audio** — Collector must assemble by `sentence_index`, not completion order (today’s `BTreeMap` pattern).
-2. **Live stream** — Push sentence MP3 as soon as Encode finishes that index; do not wait for the whole chapter.
-3. **Checkpoints** — Persist encoded sentence audio + alignments as today; on resume, skip Parse/TTS/Encode for restored indices and seed the collector.
-4. **Cancellation** — Close channel senders, set cancel flag, drain/abort in-flight TTS/encode, save progress, `clear_global` engine pool (existing behavior).
-5. **Progress** — Continue word-based progress; optionally emit stage metrics (`parse_q`, `tts_q`, `encode_q`) for debugging.
-
----
-
-## 7. Memory & backpressure
-
-TTS PCM buffers dominate RAM. Mitigations:
-
-- Bound channel capacities (e.g. parse→tts depth 8–32, tts→encode depth 4–16).
-- Prefer `Arc<[f32]>` and drop PCM after chapter concat when only MP3 is needed long-term.
-- Optional disk spill for PCM when chapter length exceeds a threshold.
-- Cap `num_instances` by detected RAM as well as CPU (heuristic table per platform).
-- Never prefetch-parse an entire book into the TTS queue; feed chapter-by-chapter or with a small chapter lookahead (0–1).
-
----
-
-## 8. Implementation plan (phased)
-
-### Phase 0 — Unblock safe parallelism (small, high leverage)
-
-1. Restore desktop `get_parallelism()` with conservative defaults (e.g. 2 instances, iOS=1).
-2. Wrap TTS inference in `spawn_blocking` (or a dedicated blocking pool sized to `num_instances`).
-3. Keep chapter loop sequential; keep LAME on the sentence task initially.
-4. Add instrumentation: per-stage timings, peak RSS, sentences/sec.
-5. Regression tests: cancel mid-chapter, resume checkpoint, SMIL/audio length alignment.
-
-**Exit criteria:** N=2 is stable on mid-range machines without UI freezes or OOM.
-
-### Phase 1 — Explicit three-stage pipeline inside a chapter
-
-1. Introduce `conversion/pipeline` module: channels, job types, worker supervisors.
-2. Split `process_chapter` into:
-   - parse producer
-   - TTS consumers (pool)
-   - encode consumers
-   - ordered collector (live push + chapter finalize)
-3. Preserve public command APIs and progress event shape.
-4. Keep EPUB merge sequential after each chapter completes.
-
-**Exit criteria:** Profile shows overlap (TTS busy while encode busy); identical audio ordering and SMIL timing vs baseline fixtures.
-
-### Phase 2 — Cross-chapter lookahead (optional)
-
-1. Allow parse (and maybe TTS) for chapter `i+1` while collector finalizes chapter `i`.
-2. Still serialize EPUB rebuild / store writes.
-3. Careful cancel/checkpoint boundaries per chapter.
-
-**Exit criteria:** Measurable wall-clock gain on multi-chapter books without corrupting partial EPUBs.
-
-### Phase 3 — FFmpeg encode worker (optional)
-
-1. Queue chapter-final (and export) jobs to FFmpeg workers with cancel/PID tracking.
-2. Keep LAME for low-latency sentence clips unless proven unnecessary.
-3. Desktop-only; iOS remains LAME / single-worker.
-
----
-
-## 9. API / module sketch
-
-Suggested new layout under `src-tauri/src/epub/converter/`:
-
-```text
-pipeline/
-  mod.rs           // PipelineConfig, run_chapter_pipeline
-  jobs.rs          // ParsedSentence, SynthesizedSentence, EncodedSentence
-  parse_stage.rs
-  tts_stage.rs
-  encode_stage.rs
-  collector.rs     // ordering, live stream, chapter assemble
-```
-
-`process_chapter` becomes a thin wrapper that builds config and calls `run_chapter_pipeline`.
-
-Config knobs (internal first):
 
 ```rust
 struct PipelineConfig {
-    parse_workers: usize,
-    tts_workers: usize,      // == ONNX instances
-    encode_workers: usize,
-    parse_queue_capacity: usize,
-    tts_queue_capacity: usize,
-    encode_queue_capacity: usize,
-    chapter_lookahead: usize, // 0 in phase 1
+    // tts_workers is intentionally absent / always 1
+    encode_workers: usize,          // default 1
+    parse_to_tts_capacity: usize,   // watermark-friendly
+    tts_to_encode_capacity: usize,  // small (PCM-heavy)
+    chapter_lookahead: usize,       // 0 in phase 1
 }
 ```
 
@@ -291,33 +234,31 @@ struct PipelineConfig {
 
 | Risk | Mitigation |
 | :--- | :--- |
-| Multiple ONNX copies blow RAM | Low default N; RAM heuristic; iOS locked to 1 |
-| Tokio starvation from sync ONNX | Mandatory blocking pool for TTS/encode |
-| Non-deterministic SMIL / clocks | Ordered collector; reuse existing PCM duration rules |
-| Live stream gaps | Encode pushes ASAP; collector tolerates out-of-order completion |
-| Harder cancellation | Stage-aware shutdown; don’t accept new jobs after cancel |
-| FFmpeg per-sentence overhead | Keep LAME on sentence path |
-| Historical instability that forced N=1 | Phase 0 soak tests before pipeline refactor |
+| Encode still serializes TTS if left on same task | Hard split: TTS thread never calls LAME |
+| Empty TTS queue (parse too late) | Prefill watermark; measure `tts_idle_ms` |
+| Full encode queue blocks TTS | Keep encode fast (LAME); capacity ≥ 2; optional 2nd encode worker |
+| Chapter finalize stalls next TTS | Phase 2 lookahead |
+| Tokio stalls from sync ONNX | Dedicated blocking thread for the one engine |
+| Over-building multi-engine pool | Do not expand `get_parallelism()` for this feature |
 
 ---
 
-## 11. Testing strategy
+## 11. Testing
 
-- Unit: channel ordering collector (out-of-order encode → ordered concat).
-- Unit: backpressure (slow encode does not unbounded-grow PCM queue).
-- Integration: convert fixture EPUB with N=1 vs N=2; compare sentence count, total duration tolerance, SMIL par counts.
-- Resume: kill after k sentences; resume; no duplicate/missing indices.
-- Cancel: cancel during TTS and during encode; progress persisted; pool cleared.
-- Perf smoke (dev only): log stage utilization; expect encode∩tts overlap > 0 on multi-core hosts.
+- Unit: pipeline with mock slow encode / fast TTS → TTS still progresses while encode runs.
+- Unit: backpressure when encode paused → TTS blocks on full queue, no unbounded PCM growth.
+- Integration: same chapter fixture vs current path — sentence count, duration tolerance, SMIL pars.
+- Resume / cancel unchanged expectations.
+- Perf signal: `tts_busy_ms / (tts_busy_ms + tts_idle_ms)` high after warmup.
 
 ---
 
 ## 12. Success metrics
 
-- Wall-clock chapter conversion time ↓ on ≥4-core machines (target: meaningful overlap, not necessarily 2×).
-- UI remains responsive during conversion (no multi-second event-loop stalls).
-- Peak RSS within accepted budget for default `tts_workers`.
-- Zero regressions in checkpoint resume, live playback, and final EPUB media overlays.
+- Primary: **TTS utilization** high for the bulk of each chapter (engine stays mostly running).
+- Secondary: Wall-clock ↓ by roughly the overlapped encode/parse time (often modest vs TTS, but free).
+- UI stays responsive (ONNX off Tokio worker threads).
+- No multi-engine memory cost; RSS similar to today’s single-instance conversion.
 
 ---
 
@@ -325,22 +266,21 @@ struct PipelineConfig {
 
 | Decision | Choice |
 | :--- | :--- |
-| Parallelism style | In-process pipeline with bounded channels |
-| Granularity | Sentence-level stages; chapters sequential (lookahead later) |
-| TTS concurrency | Multi-instance ONNX pool + blocking threads |
-| Encode v1 | Dedicated LAME workers overlapping TTS |
-| FFmpeg | Chapter/export worker later; not per-sentence |
-| iOS | Remain `get_parallelism() == 1` |
-| Rollout | Phase 0 safe N>1 → Phase 1 staged pipeline → optional lookahead/FFmpeg |
+| TTS engines | **Exactly one** |
+| Parallelism model | Stage overlap via queues, not multi-model fan-out |
+| Encode | Separate stage (LAME first) overlapping TTS |
+| Parse | Producer feeding TTS; small prefill |
+| `get_parallelism()` | Stay at 1; not the lever for this feature |
+| FFmpeg | Optional chapter/export encode later |
+| Rollout | Phase 1 in-chapter pipeline → optional boundary lookahead |
 
 ---
 
-## 14. Open questions for implementation
+## 14. Open questions
 
-1. Default desktop `tts_workers`: fixed `2` vs `num_cpus`-based formula?
-2. Should PCM stay in memory through chapter concat, or spill to temp files earlier?
-3. Is chapter-lookahead worth the complexity before FFmpeg workers?
-4. Do we expose worker counts in Settings in v1, or keep them internal until stable?
+1. Phase 2: only prefetch **parse** for the next chapter, or also let **TTS** cross the chapter boundary before EPUB rebuild finishes?
+2. Encode workers: lock to 1 unless metrics show TTS blocked on a full encode queue?
+3. Keep or delete unused multi-instance pool paths later (cleanup, not required for v1)?
 
 ---
 
@@ -348,13 +288,11 @@ struct PipelineConfig {
 
 | Area | Path |
 | :--- | :--- |
-| Parallelism knob | `src-tauri/src/epub/converter/progress.rs` (`get_parallelism`) |
-| Chapter loop | `src-tauri/src/epub/converter/conversion.rs` |
-| Sentence fan-out / encode today | `src-tauri/src/epub/converter/processing.rs` |
+| Chapter processing | `src-tauri/src/epub/converter/processing.rs` |
+| Chapter loop / finalize | `src-tauri/src/epub/converter/conversion.rs` |
 | Sentence split | `src-tauri/src/epub/converter/chunking.rs` |
-| Engine pool | `src-tauri/src/tts/engine.rs` |
-| LAME encode | `src-tauri/src/tts_commands.rs` (`convert_pcm_to_mp3`) |
-| FFmpeg helpers | `src-tauri/src/utils/ffmpeg_audio.rs` |
-| Export path | `src-tauri/src/book_service/mp3_export.rs` |
-| Live stream | `src-tauri/src/book_service/audio_stream.rs` |
+| Single engine pool | `src-tauri/src/tts/engine.rs` |
+| LAME | `src-tauri/src/tts_commands.rs` |
+| FFmpeg | `src-tauri/src/utils/ffmpeg_audio.rs` |
+| Live stream / checkpoints | `src-tauri/src/book_service/audio_stream.rs`, checkpoint repo |
 | Cancel | `src-tauri/src/epub/cancellation.rs` |
