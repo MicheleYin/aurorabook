@@ -77,11 +77,11 @@ pub struct FrontendLogger {
 
 impl FrontendLogger {
     pub fn new() -> Self {
-        // Debug: trace by default (override with RUST_LOG). Release: logger never emits (global max level is Off).
+        // Debug: trace by default (override with RUST_LOG). Release: warn+ to stderr (override with RUST_LOG).
         let default_filter = if cfg!(debug_assertions) {
             "trace"
         } else {
-            "off"
+            "warn"
         };
         let inner =
             env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter))

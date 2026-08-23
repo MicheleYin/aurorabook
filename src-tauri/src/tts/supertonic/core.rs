@@ -906,14 +906,26 @@ pub fn load_voice_style(voice_style_paths: &[String], verbose: bool) -> Result<S
     })
 }
 
-pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech> {
+pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<TextToSpeech> {
     if use_gpu {
         bail!("GPU mode is not supported yet");
     }
     #[cfg(target_os = "ios")]
     log::debug!("Supertonic TTS: using CPU EP on iOS (CoreML disabled — native abort risk)");
-    #[cfg(not(target_os = "ios"))]
-    log::debug!("Supertonic TTS: using WebGPU (ONNX Runtime) for inference");
+    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+    log::debug!("Supertonic TTS: prefer DirectML, CPU fallback");
+    #[cfg(any(
+        target_os = "macos",
+        all(target_os = "windows", target_arch = "x86_64")
+    ))]
+    log::debug!("Supertonic TTS: prefer WebGPU, CPU fallback");
+    #[cfg(all(
+        not(target_os = "ios"),
+        not(target_os = "macos"),
+        not(all(target_os = "windows", target_arch = "x86_64")),
+        not(all(target_os = "windows", target_arch = "aarch64"))
+    ))]
+    log::debug!("Supertonic TTS: using CPU EP (no GPU EP configured for this platform)");
 
     // Ensure a single ORT environment is committed before session create.
     // On iOS, pin CPU so sessions don't inherit unexpected default EPs.
@@ -931,13 +943,14 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
         }
     });
 
+    let onnx_dir = onnx_dir.as_ref();
     let cfgs = load_cfgs(onnx_dir)?;
-    let dp_path = format!("{}/duration_predictor.onnx", onnx_dir);
-    let text_enc_path = format!("{}/text_encoder.onnx", onnx_dir);
-    let vector_est_path = format!("{}/vector_estimator.onnx", onnx_dir);
-    let vocoder_path = format!("{}/vocoder.onnx", onnx_dir);
+    let dp_path = onnx_dir.join("duration_predictor.onnx");
+    let text_enc_path = onnx_dir.join("text_encoder.onnx");
+    let vector_est_path = onnx_dir.join("vector_estimator.onnx");
+    let vocoder_path = onnx_dir.join("vocoder.onnx");
 
-    let build_session = |path: &str| -> Result<Session> {
+    let build_session = |path: &Path| -> Result<Session> {
         let builder =
             Session::builder().map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
         // iOS: CPU only + low memory options. Full graph opts on ~400MB of models can OOM
@@ -952,14 +965,40 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
             .map_err(|e| anyhow!("ORT intra-threads setup failed: {e}"))?
             .with_memory_pattern(true)
             .map_err(|e| anyhow!("ORT memory pattern setup failed: {e}"))?;
-        #[cfg(not(target_os = "ios"))]
+        // Windows ARM64: prefer DirectML; fall back to CPU when no DML device
+        // (e.g. VM, missing DirectML.dll, or driver filter mismatch).
+        #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
         let mut builder = builder
-            .with_execution_providers([ep::WebGPU::default().build().error_on_failure()])
+            .with_execution_providers([
+                ep::DirectML::default().build(),
+                ep::CPU::default().build(),
+            ])
             .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
-        log::info!("Loading ONNX model: {}", path);
+        // macOS + Windows x86_64: prefer WebGPU; fall back to CPU when GPU EP unavailable.
+        #[cfg(any(
+            target_os = "macos",
+            all(target_os = "windows", target_arch = "x86_64")
+        ))]
+        let mut builder = builder
+            .with_execution_providers([
+                ep::WebGPU::default().build(),
+                ep::CPU::default().build(),
+            ])
+            .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
+        // Other desktop targets (e.g. Linux): CPU until an EP is wired.
+        #[cfg(all(
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(all(target_os = "windows", target_arch = "x86_64")),
+            not(all(target_os = "windows", target_arch = "aarch64"))
+        ))]
+        let mut builder = builder
+            .with_execution_providers([ep::CPU::default().build()])
+            .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
+        log::info!("Loading ONNX model: {}", path.display());
         let session = builder
             .commit_from_file(path)
-            .map_err(|e| anyhow!("ORT failed to load model '{}': {e}", path))?;
+            .map_err(|e| anyhow!("ORT failed to load model '{}': {e}", path.display()))?;
         Ok(session)
     };
 
@@ -968,7 +1007,7 @@ pub fn load_text_to_speech(onnx_dir: &str, use_gpu: bool) -> Result<TextToSpeech
     let vector_est_ort = build_session(&vector_est_path)?;
     let vocoder_ort = build_session(&vocoder_path)?;
 
-    let unicode_indexer_path = format!("{}/unicode_indexer.json", onnx_dir);
+    let unicode_indexer_path = onnx_dir.join("unicode_indexer.json");
     let text_processor = UnicodeProcessor::new(&unicode_indexer_path)?;
 
     Ok(TextToSpeech::new(

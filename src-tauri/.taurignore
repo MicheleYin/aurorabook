@@ -1,0 +1,5 @@
+# Generated/copied bundle assets — build.rs syncs these from repo-root inputs.
+# Without this, `tauri dev` rebuilds in a loop when build.rs touches them.
+resources/supertonic/
+resources/ort-dylibs/
+resources/ffmpeg-bin/

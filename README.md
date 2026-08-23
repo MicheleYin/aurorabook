@@ -23,7 +23,7 @@ AuroraBook is designed for book lovers who want a seamless reading and listening
 - **Offline TTS** — High-quality AI voices running locally on your hardware.
 - **EPUB Support** — Import and read your EPUB library with ease.
 - **Live Sync** — Follow along as the text is highlighted during speech synthesis.
-- **Cross-Platform** — Native experience on macOS and iOS.
+- **Cross-Platform** — Native experience on macOS, iOS, and Windows.
 - **Privacy First** — Your books and data stay on your device.
 
 ---
@@ -169,6 +169,26 @@ signing separately when you have real cert secrets.
 
 TTS weights are cloned from Hugging Face (`Supertone/supertonic-3`) during the
 job; locally, clone that pack into `./supertonic-3` with Git LFS before building.
+
+### Windows
+```bash
+# Stage pinned FFmpeg n8.1 (BtbN static GPL) then build NSIS installer (x86_64)
+bun run build:windows
+
+# ARM64 (DirectML EP; set arch for the FFmpeg download)
+bun run build:windows:arm64
+```
+
+Windows x86_64 uses the **WebGPU** ONNX Runtime EP (`webgpu_dawn.dll` and a
+redistributable `DirectML.dll` are installed **next to** `AuroraBook.exe`).
+Windows ARM64 uses **DirectML** only (`DirectML.dll` beside the exe via
+`tauri.windows-arm64.conf.json`). Export requires the bundled `ffmpeg.exe` with
+`libmp3lame`.
+
+CI builds an NSIS installer for x86_64 via
+[`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml)
+(`pull_request`, pushes to `dev`/`main`, version tags `v*`, published releases,
+or `workflow_dispatch`). Artifacts are uploaded from the Actions run.
 
 ### iOS
 ```bash

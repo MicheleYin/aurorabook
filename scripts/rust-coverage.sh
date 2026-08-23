@@ -22,9 +22,15 @@ if [[ ! -f resources/ffmpeg-bin/ffmpeg ]]; then
   : > resources/ffmpeg-bin/ffmpeg
   chmod +x resources/ffmpeg-bin/ffmpeg
 fi
+if [[ ! -f resources/ffmpeg-bin/ffmpeg.exe ]]; then
+  printf 'placeholder\n' > resources/ffmpeg-bin/ffmpeg.exe
+fi
 if [[ ! -f resources/ort-dylibs/libwebgpu_dawn.dylib ]]; then
   # Placeholder for tauri.macos.conf.json resource path validation.
   printf 'placeholder\n' > resources/ort-dylibs/libwebgpu_dawn.dylib
+fi
+if [[ ! -f resources/ort-dylibs/webgpu_dawn.dll ]]; then
+  printf 'placeholder\n' > resources/ort-dylibs/webgpu_dawn.dll
 fi
 
 if ! command -v cargo-llvm-cov >/dev/null 2>&1; then

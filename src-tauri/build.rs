@@ -148,7 +148,7 @@ fn sync_supertonic_assets_for_bundle() {
     let dest_onnx = dest_root.join("onnx");
     let dest_voices = dest_root.join("voice_styles");
 
-    if let Err(e) = copy_dir_all(&src_onnx, &dest_onnx) {
+    if let Err(e) = sync_dir_all(&src_onnx, &dest_onnx) {
         eprintln!(
             "cargo:warning=failed to sync Supertonic ONNX {} → {}: {}",
             src_onnx.display(),
@@ -163,7 +163,7 @@ fn sync_supertonic_assets_for_bundle() {
     }
 
     if src_voices.is_dir() {
-        if let Err(e) = copy_dir_all(&src_voices, &dest_voices) {
+        if let Err(e) = sync_dir_all(&src_voices, &dest_voices) {
             eprintln!(
                 "cargo:warning=failed to sync Supertonic voice_styles {} → {}: {}",
                 src_voices.display(),
@@ -219,10 +219,10 @@ fn ensure_supertonic_resource_placeholders(manifest_dir: &Path) {
     }
 }
 
-fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
-    if dst.exists() {
-        fs::remove_dir_all(dst)?;
-    }
+/// Sync `src` → `dst` without deleting the destination tree. Avoids touching
+/// unchanged files so `tauri dev` does not rebuild in a loop when bundle
+/// assets are copied into `src-tauri/resources/`.
+fn sync_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
@@ -230,8 +230,8 @@ fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
         let from = entry.path();
         let to = dst.join(entry.file_name());
         if ty.is_dir() {
-            copy_dir_all(&from, &to)?;
-        } else {
+            sync_dir_all(&from, &to)?;
+        } else if file_needs_sync(&from, &to) {
             if let Some(parent) = to.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -239,6 +239,22 @@ fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+fn file_needs_sync(from: &Path, to: &Path) -> bool {
+    let Ok(src_meta) = fs::metadata(from) else {
+        return true;
+    };
+    let Ok(dst_meta) = fs::metadata(to) else {
+        return true;
+    };
+    src_meta.len() != dst_meta.len()
+        || src_meta
+            .modified()
+            .ok()
+            .zip(dst_meta.modified().ok())
+            .map(|(src_m, dst_m)| src_m > dst_m)
+            .unwrap_or(true)
 }
 
 fn main() {
@@ -573,8 +589,9 @@ fn main() {
     }
 
     sync_supertonic_assets_for_bundle();
-    copy_ort_webgpu_dylib_for_macos_bundle();
+    copy_ort_webgpu_dylib_for_desktop_bundle();
     ensure_macos_ffmpeg_resource();
+    ensure_windows_ffmpeg_resource();
     strip_ffmpeg_from_ios_assets();
     tauri_build::build()
 }
@@ -691,6 +708,89 @@ fn which_node_binary() -> PathBuf {
     PathBuf::from("node")
 }
 
+/// `tauri.windows.conf.json` lists `resources/ffmpeg-bin/` as a bundle resource.
+/// Stage `ffmpeg.exe` via the Windows bundler, or write a non-empty placeholder so
+/// `tauri_build` path validation passes when cross-compiling / in CI preflight.
+fn ensure_windows_ffmpeg_resource() {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if !target.contains("windows") {
+        return;
+    }
+
+    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
+        Ok(s) => PathBuf::from(s),
+        Err(_) => return,
+    };
+    let bundle_dir = manifest_dir.join("resources").join("ffmpeg-bin");
+    let dest = bundle_dir.join("ffmpeg.exe");
+
+    if dest.is_file()
+        && fs::metadata(&dest)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
+        return;
+    }
+
+    let repo_root = manifest_dir.parent().unwrap_or(&manifest_dir);
+    let bundle_script = repo_root.join("scripts").join("bundle-windows-ffmpeg.cjs");
+    if bundle_script.is_file() {
+        let node = which_node_binary();
+        let mut cmd = Command::new(&node);
+        cmd.arg(&bundle_script).current_dir(repo_root);
+        if target.contains("aarch64") {
+            cmd.env("AURORABOOK_FFMPEG_ARCH", "arm64");
+        } else {
+            cmd.env("AURORABOOK_FFMPEG_ARCH", "x64");
+        }
+        match cmd.output() {
+            Ok(out) if out.status.success() && dest.is_file() => {
+                println!(
+                    "cargo:warning=Bundled ffmpeg for Windows via {}",
+                    bundle_script.display()
+                );
+                println!("cargo:rerun-if-changed={}", bundle_script.display());
+                return;
+            }
+            Ok(out) => {
+                eprintln!(
+                    "cargo:warning=bundle-windows-ffmpeg.cjs failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "cargo:warning=Could not run bundle-windows-ffmpeg.cjs: {}",
+                    e
+                );
+            }
+        }
+    }
+
+    if let Err(e) = fs::create_dir_all(&bundle_dir) {
+        eprintln!(
+            "cargo:warning=ffmpeg resource: failed to create {}: {}",
+            bundle_dir.display(),
+            e
+        );
+        return;
+    }
+    match fs::write(
+        &dest,
+        b"placeholder ffmpeg.exe; run `bun run bundle:ffmpeg:windows` or set AURORABOOK_FFMPEG\n",
+    ) {
+        Ok(()) => eprintln!(
+            "cargo:warning=Created placeholder {} — run `bun run bundle:ffmpeg:windows` or set AURORABOOK_FFMPEG",
+            dest.display()
+        ),
+        Err(e) => eprintln!(
+            "cargo:warning=ffmpeg resource missing at {} and could not create placeholder: {}",
+            dest.display(),
+            e
+        ),
+    }
+}
+
 /// iOS App Store rejects standalone binaries like `ffmpeg` inside the app bundle.
 /// Stale copies can linger under `gen/apple/assets` after older configs; remove them
 /// before `tauri_build` stages resources for Xcode.
@@ -758,12 +858,19 @@ fn strip_ffmpeg_from_ios_assets() {
     }
 }
 
-/// `ort` + `webgpu` links `libwebgpu_dawn.dylib` via `@rpath`; Tauri validates `bundle.resources`
-/// paths during this build script, so the dylib must exist before `tauri_build::build()`.
-/// (See `.cargo/config.toml` rpath + `tauri.macos.conf.json` resources.)
-fn copy_ort_webgpu_dylib_for_macos_bundle() {
+/// `ort` + `webgpu` links Dawn (`libwebgpu_dawn.dylib` / `webgpu_dawn.dll`) via rpath / DLL
+/// search. Tauri validates `bundle.resources` during this build script, so the file must exist
+/// before `tauri_build::build()`.
+///
+/// - macOS: `libwebgpu_dawn.dylib` (+ LC_RPATH in `.cargo/config.toml`)
+/// - Windows x86_64: `webgpu_dawn.dll` (PATH / exe-dir lookup; see `prepend_ort_dylib_dir_to_path`)
+/// - Windows ARM64 uses DirectML (no Dawn) — still ensure the resources dir exists.
+fn copy_ort_webgpu_dylib_for_desktop_bundle() {
     let target = std::env::var("TARGET").unwrap_or_default();
-    if !target.contains("apple-darwin") {
+    let is_macos = target.contains("apple-darwin");
+    let is_windows_x64 = target.contains("windows") && target.contains("x86_64");
+    let is_windows_arm64 = target.contains("windows") && target.contains("aarch64");
+    if !is_macos && !is_windows_x64 && !is_windows_arm64 {
         return;
     }
 
@@ -772,14 +879,12 @@ fn copy_ort_webgpu_dylib_for_macos_bundle() {
         Err(_) => return,
     };
     let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
-    // Match `src-tauri/.cargo/config.toml` `[build] target-dir = "../../.cargo-target"`
-    // (relative to `src-tauri/.cargo/` → repo-root `.cargo-target`).
-    // Build scripts do not always get `CARGO_TARGET_DIR`, so fall back to the same layout.
     let cargo_target_from_config = manifest_dir
+        .join("..")
         .join("..")
         .join(".cargo-target")
         .canonicalize()
-        .unwrap_or_else(|_| manifest_dir.join("..").join(".cargo-target"));
+        .unwrap_or_else(|_| manifest_dir.join("..").join("..").join(".cargo-target"));
 
     let mut target_roots: Vec<PathBuf> = Vec::new();
     if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
@@ -789,52 +894,6 @@ fn copy_ort_webgpu_dylib_for_macos_bundle() {
     target_roots.push(manifest_dir.join("target"));
 
     let dest_dir = manifest_dir.join("resources").join("ort-dylibs");
-    let dest = dest_dir.join("libwebgpu_dawn.dylib");
-
-    'outer: for target_dir in &target_roots {
-        let candidates = [
-            target_dir.join(&profile).join("libwebgpu_dawn.dylib"),
-            target_dir.join(&target).join(&profile).join("libwebgpu_dawn.dylib"),
-        ];
-        for src in candidates.iter() {
-            if !src.is_file() {
-                continue;
-            }
-            if let Err(e) = fs::create_dir_all(&dest_dir) {
-                eprintln!(
-                    "cargo:warning=ort-dylibs: failed to create {}: {}",
-                    dest_dir.display(),
-                    e
-                );
-                return;
-            }
-            match fs::copy(src, &dest) {
-                Ok(_) => {
-                    println!("cargo:rerun-if-changed={}", src.display());
-                    break 'outer;
-                }
-                Err(e) => eprintln!(
-                    "cargo:warning=ort-dylibs: failed to copy {} → {}: {}",
-                    src.display(),
-                    dest.display(),
-                    e
-                ),
-            }
-        }
-    }
-
-    if dest.is_file() {
-        return;
-    }
-
-    eprintln!(
-        "cargo:warning=libwebgpu_dawn.dylib not found under any of {:?} (profile={}); ort (webgpu) must have been built first",
-        target_roots,
-        profile
-    );
-
-    // Last resort: non-empty placeholder so `tauri_build` path validation passes in
-    // CI / fast tests before ort has produced the real Dawn dylib.
     if let Err(e) = fs::create_dir_all(&dest_dir) {
         eprintln!(
             "cargo:warning=ort-dylibs: failed to create {}: {}",
@@ -843,12 +902,119 @@ fn copy_ort_webgpu_dylib_for_macos_bundle() {
         );
         return;
     }
-    match fs::write(
-        &dest,
-        b"placeholder libwebgpu_dawn.dylib; rebuild after ort (webgpu) links Dawn\n",
-    ) {
+
+    // All Windows ORT builds need DirectML.dll beside the exe (pyke links DML even
+    // for WebGPU). Stage a placeholder so tauri resource validation passes; the
+    // real redistributable is downloaded by `bundle-windows-directml.cjs`.
+    if is_windows_x64 || is_windows_arm64 {
+        let dml = dest_dir.join("DirectML.dll");
+        if !dml.is_file() || fs::metadata(&dml).map(|m| m.len() < 64).unwrap_or(true) {
+            let _ = fs::write(
+                &dml,
+                b"placeholder DirectML.dll; run `bun run bundle:directml:windows`\n",
+            );
+        }
+    }
+
+    // ARM64 Windows: DirectML only — still stage a placeholder webgpu_dawn.dll only
+    // when the shared x64 Windows conf is used; arm64-specific conf omits Dawn.
+    if is_windows_arm64 {
+        let marker = dest_dir.join("README-directml.txt");
+        if !marker.is_file() {
+            let _ = fs::write(
+                &marker,
+                b"Windows ARM64 builds use the DirectML EP. Ship DirectML.dll next to the exe.\n",
+            );
+        }
+        return;
+    }
+
+    let (src_names, dest_name, placeholder): (&[&str], &str, &[u8]) = if is_macos {
+        (
+            &["libwebgpu_dawn.dylib"],
+            "libwebgpu_dawn.dylib",
+            b"placeholder libwebgpu_dawn.dylib; rebuild after ort (webgpu) links Dawn\n",
+        )
+    } else {
+        (
+            &["webgpu_dawn.dll", "dxil.dll", "dxcompiler.dll"],
+            "webgpu_dawn.dll",
+            b"placeholder webgpu_dawn.dll; rebuild after ort (webgpu) links Dawn\n",
+        )
+    };
+
+    let dest = dest_dir.join(dest_name);
+    let mut copied_primary = false;
+
+    'outer: for target_dir in &target_roots {
+        for src_name in src_names {
+            let candidates = [
+                target_dir.join(&profile).join(src_name),
+                target_dir.join(&target).join(&profile).join(src_name),
+            ];
+            for src in candidates.iter() {
+                if !src.is_file() {
+                    continue;
+                }
+                let this_dest = dest_dir.join(src_name);
+                match fs::copy(src, &this_dest) {
+                    Ok(_) => {
+                        println!("cargo:rerun-if-changed={}", src.display());
+                        if *src_name == dest_name {
+                            copied_primary = true;
+                        }
+                        if *src_name == dest_name {
+                            break 'outer;
+                        }
+                    }
+                    Err(e) => eprintln!(
+                        "cargo:warning=ort-dylibs: failed to copy {} → {}: {}",
+                        src.display(),
+                        this_dest.display(),
+                        e
+                    ),
+                }
+            }
+        }
+        if copied_primary {
+            break;
+        }
+    }
+
+    // Also try to pick up companion DXC DLLs after the primary Dawn copy.
+    if is_windows_x64 {
+        for companion in ["dxil.dll", "dxcompiler.dll"] {
+            let companion_dest = dest_dir.join(companion);
+            if companion_dest.is_file() {
+                continue;
+            }
+            for target_dir in &target_roots {
+                for src in [
+                    target_dir.join(&profile).join(companion),
+                    target_dir.join(&target).join(&profile).join(companion),
+                ] {
+                    if src.is_file() {
+                        let _ = fs::copy(&src, &companion_dest);
+                        println!("cargo:rerun-if-changed={}", src.display());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if dest.is_file() && fs::metadata(&dest).map(|m| m.len() > 64).unwrap_or(false) {
+        return;
+    }
+
+    eprintln!(
+        "cargo:warning={} not found under any of {:?} (profile={}); ort (webgpu) must have been built first",
+        dest_name, target_roots, profile
+    );
+
+    match fs::write(&dest, placeholder) {
         Ok(()) => eprintln!(
-            "cargo:warning=Created placeholder {} — real dylib is copied after ort builds",
+            "cargo:warning=Created placeholder {} — real binary is copied after ort builds",
             dest.display()
         ),
         Err(e) => eprintln!(

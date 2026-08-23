@@ -453,7 +453,7 @@ export function Library() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden select-none">
-      <div className="flex-shrink-0 p-6 space-y-4 border-b">
+      <div className="flex-shrink-0 app-page-padding space-y-4 border-b">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Library</h1>
@@ -501,7 +501,7 @@ export function Library() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto app-page-padding">
         {filteredBooks.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
             <BookOpen className="h-12 w-12 text-muted-foreground" />

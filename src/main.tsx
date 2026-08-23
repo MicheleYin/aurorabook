@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { type as osType } from "@tauri-apps/plugin-os";
 
 import App from "./App";
 import { initI18n } from "./lib/i18n";
@@ -24,6 +25,12 @@ document.addEventListener("contextmenu", (e) => {
 
 async function init() {
   try {
+    try {
+      document.documentElement.dataset.platform = osType();
+    } catch {
+      // Non-Tauri preview (e.g. vite dev in browser).
+    }
+
     // Initialize i18n before rendering
     await initI18n();
 

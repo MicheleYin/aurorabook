@@ -1,10 +1,7 @@
 
 extern crate self as kokoros;
 
-// ONNX Runtime with CoreML EP support (macOS/iOS only)
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-
-use tauri::{Manager, Emitter};
+use tauri::{Emitter, Manager};
 
 pub mod book_service;  // Made public for testing
 pub mod resources;  // Made public for testing
@@ -33,6 +30,170 @@ fn with_dedicated_handle(app_handle: &tauri::AppHandle, f: impl FnOnce(&tokio::r
     } else {
         log::warn!("No dedicated Tokio runtime handle available");
     }
+}
+
+/// Derive the Windows install root (directory containing `AuroraBook.exe`) from
+/// Tauri's `resource_dir`, without `current_exe` (Codacy / security lint).
+#[cfg(target_os = "windows")]
+fn windows_install_root_from_resource_dir(resource_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if resource_dir
+        .file_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("resources"))
+    {
+        if let Some(parent) = resource_dir.parent() {
+            candidates.push(parent.to_path_buf());
+        }
+    }
+    candidates.push(resource_dir.to_path_buf());
+    if let Some(parent) = resource_dir.parent() {
+        candidates.push(parent.to_path_buf());
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|p| seen.insert(p.clone()));
+
+    for dir in &candidates {
+        if dir.join("AuroraBook.exe").is_file() || dir.join("aurorabook.exe").is_file() {
+            return Some(dir.clone());
+        }
+    }
+
+    // Dev / pre-bundle layouts: exe dir is typically the parent of `resources/`.
+    if resource_dir
+        .file_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("resources"))
+    {
+        return resource_dir.parent().map(PathBuf::from);
+    }
+
+    candidates.into_iter().next()
+}
+
+/// Windows ORT/WebGPU DLLs must sit next to `AuroraBook.exe` for load-time resolution.
+/// The ort link step can leave 0-byte placeholders/symlinks beside the exe while the
+/// real redistributables live under bundled `resources/ort-dylibs/`.
+#[cfg(target_os = "windows")]
+fn promote_windows_ort_dylibs_beside_exe(resource_dir: &std::path::Path) {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let Some(exe_dir) = windows_install_root_from_resource_dir(resource_dir) else {
+        return;
+    };
+
+    let src_dir = [
+        resource_dir.join("resources").join("ort-dylibs"),
+        resource_dir.join("ort-dylibs"),
+    ]
+    .into_iter()
+    .find(|dir| dir.is_dir());
+
+    let Some(src_dir) = src_dir else {
+        log::warn!(
+            "⚠ No bundled ort-dylibs directory found under {}",
+            resource_dir.display()
+        );
+        return;
+    };
+
+    for name in [
+        "webgpu_dawn.dll",
+        "DirectML.dll",
+        "dxil.dll",
+        "dxcompiler.dll",
+    ] {
+        let src = src_dir.join(name);
+        if !src.is_file() {
+            continue;
+        }
+        let Ok(src_meta) = fs::metadata(&src) else {
+            continue;
+        };
+        if src_meta.len() <= 64 {
+            continue;
+        }
+
+        let dest = exe_dir.join(name);
+        let needs_copy = match fs::symlink_metadata(&dest) {
+            Ok(meta) => meta.len() <= 64,
+            Err(_) => true,
+        };
+
+        if !needs_copy {
+            continue;
+        }
+
+        if dest.exists() {
+            let _ = fs::remove_file(&dest);
+        }
+
+        match fs::copy(&src, &dest) {
+            Ok(_) => log::info!("✓ Promoted {} beside executable for ORT/WebGPU", name),
+            Err(e) => log::warn!(
+                "⚠ Failed to promote {} → {}: {}",
+                src.display(),
+                dest.display(),
+                e
+            ),
+        }
+    }
+}
+
+/// Ensure Windows can resolve `webgpu_dawn.dll` / `DirectML.dll` (and companion DXC DLLs).
+///
+/// Load-time DLL deps must sit next to `AuroraBook.exe` (NSIS POSTINSTALL hook
+/// copies them from `resources/ort-dylibs/`). PATH is still prepended for
+/// delay-loaded helpers under `resources/ort-dylibs` and the install root
+/// derived from Tauri's resource directory.
+#[cfg(target_os = "windows")]
+fn prepend_windows_ort_dylib_dir(resource_dir: &std::path::Path) {
+    let mut extras: Vec<String> = Vec::new();
+
+    // Tauri resource_dir is typically the install root or a `resources` subfolder.
+    // Prefer both so exe-adjacent DLLs and nested ort-dylibs are on PATH.
+    if let Some(s) = resource_dir.to_str() {
+        extras.push(s.to_string());
+    }
+    if let Some(parent) = resource_dir.parent() {
+        if let Some(s) = parent.to_str() {
+            extras.push(s.to_string());
+        }
+    }
+
+    for dir in [
+        resource_dir.join("ort-dylibs"),
+        resource_dir.join("resources").join("ort-dylibs"),
+    ] {
+        if dir.is_dir() {
+            if let Some(s) = dir.to_str() {
+                extras.push(s.to_string());
+            }
+        }
+    }
+
+    if extras.is_empty() {
+        return;
+    }
+
+    // Deduplicate while preserving order.
+    let mut seen = std::collections::HashSet::new();
+    extras.retain(|p| seen.insert(p.clone()));
+
+    let joined = extras.join(";");
+    let new_path = match std::env::var_os("PATH") {
+        Some(existing) => {
+            let mut s = joined;
+            s.push(';');
+            s.push_str(&existing.to_string_lossy());
+            s
+        }
+        None => joined,
+    };
+    std::env::set_var("PATH", new_path);
+    log::info!("✓ Prepended Windows Dawn/DirectML DLL search dirs to PATH");
 }
 
 // In-tree Supertonic wrapper uses ONNX Runtime (CPU/CoreML depending on platform and ORT EP configuration).
@@ -72,7 +233,7 @@ fn greet(name: &str) -> String {
 ///
 /// # Logging
 /// Debug builds: forwards logs to stderr and the webview (`frontend-log`); default `trace`, overridable via `RUST_LOG`.
-/// Release builds: logging is fully disabled (no stderr, no UI forwarding).
+/// Release builds: errors/warnings to stderr only (`RUST_LOG=error` by default).
 ///
 /// # Panics
 /// Panics if the Tauri application fails to run.
@@ -93,7 +254,7 @@ pub fn run() {
                     log::set_max_level(if cfg!(debug_assertions) {
                         log::LevelFilter::Trace
                     } else {
-                        log::LevelFilter::Off
+                        log::LevelFilter::Warn
                     });
                 })
                 .expect("Failed to set logger");
@@ -105,6 +266,14 @@ pub fn run() {
                         let msg = format!("✓ Set TAURI_RESOURCE_DIR to: {}", resource_str);
                         log::info!("{}", msg);
                         logging::log("info", &msg, None);
+
+                        // Windows: Dawn / DirectML helper DLLs live under resources/ort-dylibs.
+                        // Prepend that directory to PATH so LoadLibrary finds them before system dirs.
+                        #[cfg(target_os = "windows")]
+                        {
+                            promote_windows_ort_dylibs_beside_exe(&resource_dir);
+                            prepend_windows_ort_dylib_dir(&resource_dir);
+                        }
 
                         let exists_msg = format!("  Resource directory exists: {}", resource_dir.exists());
                         log::info!("{}", exists_msg);

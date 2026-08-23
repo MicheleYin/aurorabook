@@ -35,6 +35,33 @@ macOS builds bundle a self-contained FFmpeg directory at `src-tauri/resources/ff
 The App Store signing step re-signs the nested ffmpeg binary (and bundled dylibs) with
 `Entitlements.macos-appstore.nested-exec.plist`.
 
+## Bundled FFmpeg for Windows
+
+Windows builds stage a pinned **BtbN FFmpeg n8.1 static GPL** binary at
+`src-tauri/resources/ffmpeg-bin/ffmpeg.exe` (includes `libmp3lame` + AAC/MP4).
+
+- `bun run build:windows` / `build:windows:arm64` run `ensure-windows-ffmpeg-resource.cjs` first.
+- Download/stage: `bun run bundle:ffmpeg:windows` (set `AURORABOOK_FFMPEG_ARCH=arm64` for ARM64).
+- Override with a local binary via `AURORABOOK_FFMPEG` or `bun run sync:ffmpeg -- path\to\ffmpeg.exe`.
+
+## ONNX Runtime execution providers (desktop)
+
+| Platform | EP |
+| -------- | -- |
+| macOS | WebGPU (Dawn dylib in `resources/ort-dylibs/`) |
+| Windows x86_64 | WebGPU (`webgpu_dawn.dll` + `DirectML.dll` next to `AuroraBook.exe`) |
+| Windows ARM64 | DirectML (`DirectML.dll` next to `AuroraBook.exe`; see `tauri.windows-arm64.conf.json`) |
+| iOS | CPU only |
+
+On Windows, helper DLLs are **load-time** dependencies — they must sit beside the `.exe`,
+not only under `resources/`.
+
+- x64: `tauri.windows.conf.json` maps Dawn + DirectML to the install root; `beforeBundleCommand`
+  runs `ensure-windows-ort-dlls.cjs`.
+- ARM64: `tauri.windows-arm64.conf.json` maps DirectML only (no Dawn). DirectML comes from
+  pinned **Microsoft.AI.DirectML 1.15.4** (`bun run bundle:directml:windows`).
+- System `DirectML.dll` is often too old; shipping the redistributable avoids
+  `STATUS_ENTRYPOINT_NOT_FOUND` / EP registration failures.
 ## Regenerating src-tauri/gen/apple/ (Xcode project)
 
 The `src-tauri/gen/apple/` directory is also gitignored because it contains your Team ID.
