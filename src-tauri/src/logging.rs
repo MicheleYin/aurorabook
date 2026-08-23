@@ -43,9 +43,10 @@ fn forward_log(entry: LogEntry) {
     }
 }
 
-/// Create a log entry and forward it
+/// Create a log entry and forward it to the in-app viewer.
+/// Debug builds: all levels. Release: warn + error only (device debugging).
 pub fn log(level: &str, message: &str, data: Option<serde_json::Value>) {
-    if !cfg!(debug_assertions) {
+    if !cfg!(debug_assertions) && level != "error" && level != "warn" {
         return;
     }
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -55,7 +56,7 @@ pub fn log(level: &str, message: &str, data: Option<serde_json::Value>) {
         .map(|d| {
             let secs = d.as_secs();
             let nanos = d.subsec_nanos();
-            format!("{}.{:09}Z", secs, nanos)
+            format!("{secs}.{nanos:09}Z")
         })
         .unwrap_or_else(|_| "unknown".to_string());
 

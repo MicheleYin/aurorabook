@@ -41,11 +41,11 @@ fn compile_native_player_swift_for_ios() {
     let (sdk, swift_target, swift_runtime_dir) = if is_simulator {
         (
             "iphonesimulator",
-            format!("{arch}-apple-ios15.0-simulator"),
+            format!("{arch}-apple-ios16.3-simulator"),
             "iphonesimulator",
         )
     } else {
-        ("iphoneos", format!("{arch}-apple-ios15.0"), "iphoneos")
+        ("iphoneos", format!("{arch}-apple-ios16.3"), "iphoneos")
     };
 
     let sdk_path = String::from_utf8(
@@ -257,6 +257,126 @@ fn file_needs_sync(from: &Path, to: &Path) -> bool {
             .unwrap_or(true)
 }
 
+/// Link WebGPU EP + Dawn/Tint static libs for iOS.
+///
+/// ort-sys looks for Dawn under `_deps/dawn-build/.../Release`, but Xcode iOS builds
+/// place archives in `Release-iphoneos/`. Supplement search paths and link Metal
+/// frameworks Dawn needs. Safe to call when ORT_LIB_LOCATION is already set.
+fn link_ios_webgpu_dawn_deps(ort_lib_dir: &Path) {
+    let webgpu_lib = ort_lib_dir.join("libonnxruntime_providers_webgpu.a");
+    if !webgpu_lib.exists() {
+        println!(
+            "cargo:warning=iOS WebGPU provider missing at {} — build with ./scripts/build-onnxruntime-ios-webgpu.sh",
+            webgpu_lib.display()
+        );
+        return;
+    }
+
+    println!("cargo:rustc-link-search=native={}", ort_lib_dir.display());
+    println!("cargo:rustc-link-lib=static=onnxruntime_providers_webgpu");
+
+    let Some(build_base) = ort_lib_dir.parent() else {
+        return;
+    };
+    let dawn_build = build_base.join("_deps").join("dawn-build");
+    if !dawn_build.exists() {
+        println!(
+            "cargo:warning=Dawn build tree missing at {} — WebGPU link may fail",
+            dawn_build.display()
+        );
+        return;
+    }
+
+    // Prefer Xcode layout (`Release-iphoneos`), fall back to plain `Release`.
+    let sdk_subdir = if ort_lib_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .is_some_and(|n| n.contains("simulator"))
+    {
+        "Release-iphonesimulator"
+    } else {
+        "Release-iphoneos"
+    };
+
+    let dawn_lib_dirs = [
+        dawn_build.join("src").join("dawn").join(sdk_subdir),
+        dawn_build
+            .join("src")
+            .join("dawn")
+            .join("native")
+            .join(sdk_subdir),
+        dawn_build
+            .join("src")
+            .join("dawn")
+            .join("platform")
+            .join(sdk_subdir),
+        dawn_build
+            .join("src")
+            .join("dawn")
+            .join("common")
+            .join(sdk_subdir),
+        dawn_build
+            .join("src")
+            .join("dawn")
+            .join("utils")
+            .join(sdk_subdir),
+        dawn_build.join("src").join("tint").join(sdk_subdir),
+        // Intermediate object archive (Metal backend) from the Xcode build tree
+        build_base
+            .join("build")
+            .join("dawn_native_objects.build")
+            .join(sdk_subdir),
+    ];
+
+    for dir in &dawn_lib_dirs {
+        if dir.exists() {
+            println!("cargo:rustc-link-search=native={}", dir.display());
+        }
+    }
+
+    for lib in [
+        "dawn_proc",
+        "dawn_native",
+        "dawn_platform",
+        "dawn_common",
+        "dawn_system_utils",
+        "dawn_native_objects",
+    ] {
+        let found = dawn_lib_dirs.iter().any(|d| d.join(format!("lib{lib}.a")).exists());
+        if found {
+            println!("cargo:rustc-link-lib=static={lib}");
+        }
+    }
+
+    // Tint is split into many static libs; link every libtint_*.a present.
+    let tint_dir = dawn_build.join("src").join("tint").join(sdk_subdir);
+    if tint_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&tint_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("a") {
+                    continue;
+                }
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if let Some(name) = stem.strip_prefix("lib") {
+                        if name.starts_with("tint_") {
+                            println!("cargo:rustc-link-lib=static={name}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Dawn Metal backend (same frameworks ORT weak-links for Apple WebGPU builds)
+    println!("cargo:rustc-link-lib=framework=Metal");
+    println!("cargo:rustc-link-lib=framework=QuartzCore");
+    println!("cargo:rustc-link-lib=framework=IOSurface");
+    println!("cargo:rustc-link-lib=framework=CoreFoundation");
+    println!("cargo:rustc-link-lib=framework=Foundation");
+    println!("cargo:warning=Linked iOS WebGPU EP + Dawn/Tint from {}", dawn_build.display());
+}
+
 fn main() {
     // Build kai_* stub library for iOS (ARM SME symbols)
     let target = std::env::var("TARGET").unwrap_or_default();
@@ -273,59 +393,59 @@ fn main() {
 
     compile_native_player_swift_for_ios();
 
-    // Supertonic (kokoros) uses ONNX Runtime; CoreML EP linking is handled below for iOS when ORT libs are present.
-
-    // Handle ONNX Runtime linking for iOS
-    // According to ort documentation: https://ort.pyke.io/setup/linking#static-linking
-    // Use ORT_LIB_LOCATION to point ort-sys to the libraries
-    // For iOS, also set ORT_LIB_PROFILE to specify the profile
+    // Supertonic uses ONNX Runtime; iOS uses `ort` `alternative-backend` so we link
+    // static ORT ourselves (pyke has no iOS WebGPU prebuilts; Xcode often omits ORT_* env).
     let target = std::env::var("TARGET").unwrap_or_default();
     if target.contains("apple-ios") {
-        // If ORT_LIB_LOCATION is not set, try to find and set it automatically
-        if std::env::var("ORT_LIB_LOCATION").is_err() {
-            // Get project root (parent of src-tauri)
+        let env_ort_lib = std::env::var("ORT_LIB_LOCATION").ok().map(PathBuf::from);
+
+        // Prefer WebGPU build tree; fall back to legacy CoreML/CPU iOS build.
+        let discovered = if env_ort_lib.is_none() {
             let manifest_dir =
                 std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-            let project_root = std::path::Path::new(&manifest_dir)
+            let project_root = Path::new(&manifest_dir)
                 .parent()
-                .unwrap_or_else(|| std::path::Path::new("."));
-
+                .unwrap_or_else(|| Path::new("."));
+            let workspace_root = project_root.parent().unwrap_or(project_root);
             let profile = std::env::var("PROFILE").unwrap_or_else(|_| "release".to_string());
 
-            // Try to find ONNX Runtime libraries in common locations
-            // Based on ONNX Runtime build structure: build/iOS/Release/Release-iphoneos/
-            let possible_paths: Vec<std::path::PathBuf> = vec![
-                // Relative to project root (most common) - Release build
+            let possible_paths: Vec<PathBuf> = vec![
+                workspace_root
+                    .join("onnxruntime")
+                    .join("build")
+                    .join("iOS-webgpu")
+                    .join("Release")
+                    .join("Release-iphoneos"),
+                project_root
+                    .join("onnxruntime")
+                    .join("build")
+                    .join("iOS-webgpu")
+                    .join("Release")
+                    .join("Release-iphoneos"),
+                workspace_root
+                    .join("onnxruntime")
+                    .join("build")
+                    .join("iOS")
+                    .join("Release")
+                    .join("Release-iphoneos"),
                 project_root
                     .join("onnxruntime")
                     .join("build")
                     .join("iOS")
                     .join("Release")
                     .join("Release-iphoneos"),
-                // Workspace layout where ONNX Runtime sits beside tts-tauri/
-                project_root
-                    .parent()
-                    .unwrap_or(project_root)
-                    .join("onnxruntime")
-                    .join("build")
-                    .join("iOS")
-                    .join("Release")
-                    .join("Release-iphoneos"),
-                // Alternative: build/iOS/Release/Release-iphoneos (if built in different location)
                 project_root
                     .join("onnxruntime")
                     .join("build")
                     .join("iOS")
                     .join(&profile)
                     .join("Release-iphoneos"),
-                // Debug build location
                 project_root
                     .join("onnxruntime")
                     .join("build")
                     .join("iOS")
                     .join("Debug")
                     .join("Debug-iphoneos"),
-                // Check if Release-iphoneos exists directly under build/iOS
                 project_root
                     .join("onnxruntime")
                     .join("build")
@@ -333,261 +453,34 @@ fn main() {
                     .join("Release-iphoneos"),
             ];
 
-            // Find ONNX Runtime libraries for iOS
-            // iOS build structure: onnxruntime/build/iOS/Release/Release-iphoneos/
-            let mut found_libs = false;
-            for ort_lib_dir in &possible_paths {
-                if ort_lib_dir.exists() && ort_lib_dir.join("libonnxruntime_common.a").exists() {
-                    // Set ORT_LIB_LOCATION to the directory containing the libraries
-                    // ort-sys will handle linking automatically
-                    println!(
-                        "cargo:warning=Found ONNX Runtime libraries at {}, setting ORT_LIB_LOCATION",
-                        ort_lib_dir.display()
-                    );
-                    // Note: We can't set environment variables in build.rs that affect ort-sys's build.rs
-                    // So we'll set it via cargo:rustc-env and also link manually as fallback
-                    println!("cargo:rustc-env=ORT_LIB_LOCATION={}", ort_lib_dir.display());
-                    println!("cargo:rustc-env=ORT_LIB_PROFILE=Release");
+            possible_paths
+                .into_iter()
+                .find(|p| p.exists() && p.join("libonnxruntime_common.a").exists())
+        } else {
+            None
+        };
 
-                    // Also set link search path and link libraries manually as ort-sys might not handle iOS structure
-                    println!("cargo:rustc-link-search=native={}", ort_lib_dir.display());
+        let ort_lib_dir = env_ort_lib.or(discovered);
 
-                    // Find and link ONNX and protobuf dependencies
-                    // These are in _deps subdirectories of the build directory
-                    // Calculate build_dir once and reuse it for all dependency linking
-                    // Path structure: onnxruntime/build/iOS/Release/Release-iphoneos
-                    // We need: onnxruntime/build/iOS/Release (where _deps is located)
-                    let build_dir = ort_lib_dir
-                        .parent(); // Release-iphoneos -> Release (this is where _deps is)
-
-                    if let Some(build_base) = &build_dir {
-                        // Link ONNX libraries
-                        let onnx_build_dir = build_base
-                            .join("_deps")
-                            .join("onnx-build")
-                            .join("Release-iphoneos");
-                        if onnx_build_dir.exists() {
-                            println!(
-                                "cargo:rustc-link-search=native={}",
-                                onnx_build_dir.display()
-                            );
-                            if onnx_build_dir.join("libonnx.a").exists() {
-                                println!("cargo:rustc-link-lib=static=onnx");
-                            }
-                            if onnx_build_dir.join("libonnx_proto.a").exists() {
-                                println!("cargo:rustc-link-lib=static=onnx_proto");
-                            }
-                        }
-
-                        // Link protobuf libraries
-                        let protobuf_build_dir = build_base
-                            .join("_deps")
-                            .join("protobuf-build")
-                            .join("Release-iphoneos");
-                        if protobuf_build_dir.exists() {
-                            println!(
-                                "cargo:rustc-link-search=native={}",
-                                protobuf_build_dir.display()
-                            );
-                            // Try protobuf-lite first (lighter), then protobuf
-                            if protobuf_build_dir.join("libprotobuf-lite.a").exists() {
-                                println!("cargo:rustc-link-lib=static=protobuf-lite");
-                            } else if protobuf_build_dir.join("libprotobuf.a").exists() {
-                                println!("cargo:rustc-link-lib=static=protobuf");
-                            }
-                        }
-                    }
-
-                    // Link individual static libraries (iOS builds don't create unified libonnxruntime.a)
-                    // Order matters: link dependencies first, then libraries that depend on them
-                    let core_libs = vec![
-                        "onnxruntime_util",
-                        "onnxruntime_common",
-                        "onnxruntime_flatbuffers",
-                        "onnxruntime_mlas",
-                        "onnxruntime_graph",
-                        "onnxruntime_optimizer",
-                        "onnxruntime_framework",
-                        "onnxruntime_providers",
-                        "onnxruntime_lora", // LoRA adapters support
-                        "onnxruntime_session", // Session should be last as it depends on others
-                    ];
-
-                    for lib in &core_libs {
-                        let lib_path = ort_lib_dir.join(format!("lib{}.a", lib));
-                        if lib_path.exists() {
-                            println!("cargo:rustc-link-lib=static={}", lib);
-                        }
-                    }
-                    
-                    // Link RE2 regex library (required by ONNX Runtime)
-                    if let Some(build_base) = &build_dir {
-                        let re2_build_dir = build_base
-                            .join("_deps")
-                            .join("re2-build")
-                            .join("Release-iphoneos");
-                        if re2_build_dir.exists() {
-                            println!(
-                                "cargo:rustc-link-search=native={}",
-                                re2_build_dir.display()
-                            );
-                            if re2_build_dir.join("libre2.a").exists() {
-                                println!("cargo:rustc-link-lib=static=re2");
-                            }
-                        }
-                        
-                        // Link Abseil libraries (required by ONNX Runtime and RE2)
-                        // Abseil libraries are in subdirectories: absl/<module>/Release-iphoneos/
-                        let abseil_build_dir = build_base.join("_deps").join("abseil_cpp-build");
-                        if abseil_build_dir.exists() {
-                            // Recursively find all Release-iphoneos directories
-                            use std::fs;
-                            fn find_release_dirs(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-                                let mut result = Vec::new();
-                                if let Ok(entries) = fs::read_dir(dir) {
-                                    for entry in entries.flatten() {
-                                        let path = entry.path();
-                                        if path.is_dir() {
-                                            let release_path = path.join("Release-iphoneos");
-                                            if release_path.exists() {
-                                                result.push(release_path);
-                                            } else {
-                                                // Recurse into subdirectories
-                                                result.extend(find_release_dirs(&path));
-                                            }
-                                        }
-                                    }
-                                }
-                                result
-                            }
-                            
-                            let abseil_search_paths = find_release_dirs(&abseil_build_dir);
-                            
-                            // Add all search paths first
-                            for search_path in &abseil_search_paths {
-                                println!(
-                                    "cargo:rustc-link-search=native={}",
-                                    search_path.display()
-                                );
-                            }
-                            
-                            // Find and link all Abseil libraries
-                            // This ensures all dependencies are satisfied
-                            use std::collections::HashSet;
-                            let mut linked_libs = HashSet::new();
-                            
-                            for search_path in &abseil_search_paths {
-                                if let Ok(entries) = fs::read_dir(search_path) {
-                                    for entry in entries.flatten() {
-                                        let path = entry.path();
-                                        if let Some(ext) = path.extension() {
-                                            if ext == "a" {
-                                                if let Some(file_name) = path.file_stem() {
-                                                    if let Some(lib_name) = file_name.to_str() {
-                                                        // Extract library name (remove lib prefix)
-                                                        if let Some(name) = lib_name.strip_prefix("lib") {
-                                                            if name.starts_with("absl_") && linked_libs.insert(name.to_string()) {
-                                                                println!("cargo:rustc-link-lib=static={}", name);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Link XNNPACK provider if available (we built with --use_xnnpack)
-                    // IMPORTANT: XNNPACK library must be linked AFTER the provider that uses it
-                    let xnnpack_lib = ort_lib_dir.join("libonnxruntime_providers_xnnpack.a");
-                    if xnnpack_lib.exists() {
-                        // Link the provider first
-                        println!("cargo:rustc-link-lib=static=onnxruntime_providers_xnnpack");
-                        
-                        // Then link XNNPACK library AFTER the provider (order matters!)
-                        if let Some(build_base) = &build_dir {
-                            let xnnpack_build_dir = build_base
-                                .join("_deps")
-                                .join("googlexnnpack-build")
-                                .join("Release-iphoneos");
-                            if xnnpack_build_dir.exists() {
-                                // Set search path for XNNPACK
-                                println!(
-                                    "cargo:rustc-link-search=native={}",
-                                    xnnpack_build_dir.display()
-                                );
-                                // Link XNNPACK (case-sensitive: libXNNPACK.a -> XNNPACK)
-                                if xnnpack_build_dir.join("libXNNPACK.a").exists() {
-                                    println!("cargo:rustc-link-lib=static=XNNPACK");
-                                }
-                                // Also link microkernels if available (link both variants)
-                                if xnnpack_build_dir.join("libxnnpack-microkernels-prod.a").exists() {
-                                    println!("cargo:rustc-link-lib=static=xnnpack-microkernels-prod");
-                                }
-                                if xnnpack_build_dir.join("libmicrokernels-prod.a").exists() {
-                                    println!("cargo:rustc-link-lib=static=microkernels-prod");
-                                }
-                            }
-                            
-                            // Link cpuinfo library (required by XNNPACK)
-                            let cpuinfo_build_dir = build_base
-                                .join("_deps")
-                                .join("pytorch_cpuinfo-build")
-                                .join("Release-iphoneos");
-                            if cpuinfo_build_dir.exists() {
-                                println!(
-                                    "cargo:rustc-link-search=native={}",
-                                    cpuinfo_build_dir.display()
-                                );
-                                if cpuinfo_build_dir.join("libcpuinfo.a").exists() {
-                                    println!("cargo:rustc-link-lib=static=cpuinfo");
-                                }
-                            }
-                            
-                            // Link pthreadpool library (required by XNNPACK provider)
-                            let pthreadpool_build_dir = build_base
-                                .join("_deps")
-                                .join("pthreadpool-build")
-                                .join("Release-iphoneos");
-                            if pthreadpool_build_dir.exists() {
-                                println!(
-                                    "cargo:rustc-link-search=native={}",
-                                    pthreadpool_build_dir.display()
-                                );
-                                if pthreadpool_build_dir.join("libpthreadpool.a").exists() {
-                                    println!("cargo:rustc-link-lib=static=pthreadpool");
-                                }
-                            }
-                        }
-                    }
-
-                    // Link CoreML provider if available (needs coreml_proto for MIL Spec RTTI)
-                    let coreml_lib = ort_lib_dir.join("libonnxruntime_providers_coreml.a");
-                    if coreml_lib.exists() {
-                        println!("cargo:rustc-link-lib=static=onnxruntime_providers_coreml");
-                        if ort_lib_dir.join("libcoreml_proto.a").exists() {
-                            println!("cargo:rustc-link-lib=static=coreml_proto");
-                        }
-                        println!("cargo:rustc-link-lib=framework=CoreML");
-                    }
-
-                    // Link required system frameworks
-                    println!("cargo:rustc-link-lib=framework=Foundation");
-                    println!("cargo:rustc-link-lib=c++");
-
-                    found_libs = true;
-                    break;
-                }
+        if let Some(ref ort_lib_dir) = ort_lib_dir {
+            if !ort_lib_dir.join("libonnxruntime_common.a").exists() {
+                eprintln!(
+                    "cargo:warning=ORT_LIB_LOCATION missing libonnxruntime_common.a: {}",
+                    ort_lib_dir.display()
+                );
+            } else {
+                println!(
+                    "cargo:warning=Linking iOS ONNX Runtime static libs from {}",
+                    ort_lib_dir.display()
+                );
+                link_ios_ort_static_tree(ort_lib_dir);
+                link_ios_webgpu_dawn_deps(ort_lib_dir);
             }
-
-            if !found_libs {
-                eprintln!("cargo:warning=ONNX Runtime libraries not found for iOS");
-                eprintln!("cargo:warning=Set ORT_LIB_LOCATION environment variable or build ONNX Runtime first");
-                eprintln!("cargo:warning=Run: ./scripts/build-onnxruntime-ios.sh");
-            }
+        } else {
+            eprintln!("cargo:warning=ONNX Runtime libraries not found for iOS");
+            eprintln!(
+                "cargo:warning=Set ORT_LIB_LOCATION or run: ./scripts/build-onnxruntime-ios-webgpu.sh"
+            );
         }
     }
 
@@ -597,6 +490,219 @@ fn main() {
     ensure_windows_ffmpeg_resource();
     strip_ffmpeg_from_ios_assets();
     tauri_build::build()
+}
+
+/// Link the full ORT static library tree for iOS (Xcode `Release-iphoneos` layout).
+/// Used with ort `alternative-backend` so ort-sys does not download/link.
+fn link_ios_ort_static_tree(ort_lib_dir: &Path) {
+    println!("cargo:rustc-link-search=native={}", ort_lib_dir.display());
+
+    let build_dir = ort_lib_dir.parent();
+    let sdk_subdir = if ort_lib_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .is_some_and(|n| n.contains("simulator"))
+    {
+        "Release-iphonesimulator"
+    } else {
+        "Release-iphoneos"
+    };
+
+    if let Some(build_base) = build_dir {
+        let onnx_build_dir = build_base
+            .join("_deps")
+            .join("onnx-build")
+            .join(sdk_subdir);
+        if onnx_build_dir.exists() {
+            println!(
+                "cargo:rustc-link-search=native={}",
+                onnx_build_dir.display()
+            );
+            if onnx_build_dir.join("libonnx.a").exists() {
+                println!("cargo:rustc-link-lib=static=onnx");
+            }
+            if onnx_build_dir.join("libonnx_proto.a").exists() {
+                println!("cargo:rustc-link-lib=static=onnx_proto");
+            }
+        }
+
+        let protobuf_build_dir = build_base
+            .join("_deps")
+            .join("protobuf-build")
+            .join(sdk_subdir);
+        if protobuf_build_dir.exists() {
+            println!(
+                "cargo:rustc-link-search=native={}",
+                protobuf_build_dir.display()
+            );
+            if protobuf_build_dir.join("libprotobuf-lite.a").exists() {
+                println!("cargo:rustc-link-lib=static=protobuf-lite");
+            } else if protobuf_build_dir.join("libprotobuf.a").exists() {
+                println!("cargo:rustc-link-lib=static=protobuf");
+            }
+        }
+
+        // Model package (required by onnxruntime_session on recent ORT)
+        let model_package_dir = build_base.join("model_package").join(sdk_subdir);
+        if model_package_dir.join("libmodel_package.a").exists() {
+            println!(
+                "cargo:rustc-link-search=native={}",
+                model_package_dir.display()
+            );
+            println!("cargo:rustc-link-lib=static=model_package");
+        }
+
+        // cpuinfo is required by onnxruntime_common (not only XNNPACK builds)
+        let cpuinfo_build_dir = build_base
+            .join("_deps")
+            .join("pytorch_cpuinfo-build")
+            .join(sdk_subdir);
+        if cpuinfo_build_dir.join("libcpuinfo.a").exists() {
+            println!(
+                "cargo:rustc-link-search=native={}",
+                cpuinfo_build_dir.display()
+            );
+            println!("cargo:rustc-link-lib=static=cpuinfo");
+        }
+    }
+
+    let core_libs = [
+        "onnxruntime_util",
+        "onnxruntime_common",
+        "onnxruntime_flatbuffers",
+        "onnxruntime_mlas",
+        "onnxruntime_graph",
+        "onnxruntime_optimizer",
+        "onnxruntime_framework",
+        "onnxruntime_providers",
+        "onnxruntime_lora",
+        "onnxruntime_session",
+    ];
+
+    for lib in &core_libs {
+        let lib_path = ort_lib_dir.join(format!("lib{lib}.a"));
+        if lib_path.exists() {
+            println!("cargo:rustc-link-lib=static={lib}");
+        }
+    }
+
+    if let Some(build_base) = build_dir {
+        let re2_build_dir = build_base.join("_deps").join("re2-build").join(sdk_subdir);
+        if re2_build_dir.exists() {
+            println!(
+                "cargo:rustc-link-search=native={}",
+                re2_build_dir.display()
+            );
+            if re2_build_dir.join("libre2.a").exists() {
+                println!("cargo:rustc-link-lib=static=re2");
+            }
+        }
+
+        let abseil_build_dir = build_base.join("_deps").join("abseil_cpp-build");
+        if abseil_build_dir.exists() {
+            fn find_release_dirs(dir: &Path, sdk_subdir: &str) -> Vec<PathBuf> {
+                let mut result = Vec::new();
+                if let Ok(entries) = fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            let release_path = path.join(sdk_subdir);
+                            if release_path.exists() {
+                                result.push(release_path);
+                            } else {
+                                result.extend(find_release_dirs(&path, sdk_subdir));
+                            }
+                        }
+                    }
+                }
+                result
+            }
+
+            let abseil_search_paths = find_release_dirs(&abseil_build_dir, sdk_subdir);
+            for search_path in &abseil_search_paths {
+                println!(
+                    "cargo:rustc-link-search=native={}",
+                    search_path.display()
+                );
+            }
+
+            use std::collections::HashSet;
+            let mut linked_libs = HashSet::new();
+            for search_path in &abseil_search_paths {
+                if let Ok(entries) = fs::read_dir(search_path) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().and_then(|e| e.to_str()) != Some("a") {
+                            continue;
+                        }
+                        if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
+                            if let Some(name) = file_name.strip_prefix("lib") {
+                                if name.starts_with("absl_") && linked_libs.insert(name.to_string())
+                                {
+                                    println!("cargo:rustc-link-lib=static={name}");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Optional XNNPACK (legacy iOS CPU builds)
+        let xnnpack_lib = ort_lib_dir.join("libonnxruntime_providers_xnnpack.a");
+        if xnnpack_lib.exists() {
+            println!("cargo:rustc-link-lib=static=onnxruntime_providers_xnnpack");
+            let xnnpack_build_dir = build_base
+                .join("_deps")
+                .join("googlexnnpack-build")
+                .join(sdk_subdir);
+            if xnnpack_build_dir.exists() {
+                println!(
+                    "cargo:rustc-link-search=native={}",
+                    xnnpack_build_dir.display()
+                );
+                if xnnpack_build_dir.join("libXNNPACK.a").exists() {
+                    println!("cargo:rustc-link-lib=static=XNNPACK");
+                }
+                if xnnpack_build_dir
+                    .join("libxnnpack-microkernels-prod.a")
+                    .exists()
+                {
+                    println!("cargo:rustc-link-lib=static=xnnpack-microkernels-prod");
+                }
+                if xnnpack_build_dir.join("libmicrokernels-prod.a").exists() {
+                    println!("cargo:rustc-link-lib=static=microkernels-prod");
+                }
+            }
+
+            let pthreadpool_build_dir = build_base
+                .join("_deps")
+                .join("pthreadpool-build")
+                .join(sdk_subdir);
+            if pthreadpool_build_dir.exists() {
+                println!(
+                    "cargo:rustc-link-search=native={}",
+                    pthreadpool_build_dir.display()
+                );
+                if pthreadpool_build_dir.join("libpthreadpool.a").exists() {
+                    println!("cargo:rustc-link-lib=static=pthreadpool");
+                }
+            }
+        }
+    }
+
+    // Legacy CoreML provider (only if present in older builds)
+    let coreml_lib = ort_lib_dir.join("libonnxruntime_providers_coreml.a");
+    if coreml_lib.exists() {
+        println!("cargo:rustc-link-lib=static=onnxruntime_providers_coreml");
+        if ort_lib_dir.join("libcoreml_proto.a").exists() {
+            println!("cargo:rustc-link-lib=static=coreml_proto");
+        }
+        println!("cargo:rustc-link-lib=framework=CoreML");
+    }
+
+    println!("cargo:rustc-link-lib=framework=Foundation");
+    println!("cargo:rustc-link-lib=c++");
 }
 
 /// `tauri.macos.conf.json` lists `resources/ffmpeg-bin/` as a bundle resource, so the path must

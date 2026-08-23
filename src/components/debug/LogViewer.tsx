@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 
-import { getLogs, subscribeToLogs } from "../../lib/logger";
+import {
+  clearLogs as clearLogStore,
+  getLogs,
+  startBackendLogBridge,
+  subscribeToLogs,
+  type LogEntry,
+} from "../../lib/logger";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -13,13 +18,7 @@ import {
 } from "../ui/dialog";
 import { ScrollArea } from "../ui/scroll-area";
 
-export interface LogEntry {
-  timestamp: string;
-  level: "log" | "info" | "warn" | "error" | "debug";
-  source: "frontend" | "backend";
-  message: string;
-  data?: unknown;
-}
+export type { LogEntry };
 
 interface LogViewerProps {
   isOpen: boolean;
@@ -31,14 +30,18 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
   const [filter, setFilter] = useState<"all" | "frontend" | "backend">("all");
   const [levelFilter, setLevelFilter] = useState<
     "all" | "log" | "info" | "warn" | "error" | "debug"
-  >("all");
+  >("error");
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
-  // Subscribe to new logs
+  useEffect(() => {
+    startBackendLogBridge();
+  }, []);
+
   useEffect(() => {
     if (!isOpen) return;
 
+    setLogs(getLogs());
     const unsubscribe = subscribeToLogs((newLogs) => {
       setLogs([...newLogs]);
     });
@@ -46,41 +49,6 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
     return unsubscribe;
   }, [isOpen]);
 
-  // Listen for backend logs
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const setupBackendListener = async () => {
-      try {
-        const unlisten = await listen<LogEntry>("backend-log", (event) => {
-          const logEntry = event.payload;
-          setLogs((prev) => {
-            const newLogs = [...prev, logEntry];
-            // Keep only last 1000 logs to prevent memory issues
-            return newLogs.slice(-1000);
-          });
-        });
-
-        return unlisten;
-      } catch (error) {
-        console.error("Failed to set up backend log listener:", error);
-      }
-    };
-
-    let unlistenFn: (() => void) | undefined;
-
-    setupBackendListener().then((unlisten) => {
-      unlistenFn = unlisten;
-    });
-
-    return () => {
-      if (unlistenFn) {
-        unlistenFn();
-      }
-    };
-  }, [isOpen]);
-
-  // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
     if (autoScroll && scrollAreaRef.current) {
       const scrollContainer = scrollAreaRef.current.querySelector(
@@ -113,7 +81,8 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
     }
   };
 
-  const clearLogs = () => {
+  const handleClear = () => {
+    clearLogStore();
     setLogs([]);
   };
 
@@ -142,7 +111,8 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
         <DialogHeader>
           <DialogTitle>Log Viewer</DialogTitle>
           <DialogDescription>
-            View logs from frontend and backend. Logs are captured in real-time.
+            Frontend and backend logs captured on this device. Defaults to
+            errors so conversion failures are easy to spot.
           </DialogDescription>
         </DialogHeader>
 
@@ -195,10 +165,17 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
             >
               Warnings
             </Button>
+            <Button
+              variant={levelFilter === "info" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setLevelFilter("info")}
+            >
+              Info
+            </Button>
           </div>
 
           <div className="flex gap-2 ml-auto">
-            <Button variant="outline" size="sm" onClick={clearLogs}>
+            <Button variant="outline" size="sm" onClick={handleClear}>
               Clear
             </Button>
             <Button variant="outline" size="sm" onClick={exportLogs}>
@@ -222,11 +199,12 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
           Showing {filteredLogs.length} of {logs.length} logs
         </div>
 
-        <ScrollArea className="flex-1 border rounded-md p-4 bg-black/50 font-mono text-sm">
+        <ScrollArea className="flex-1 min-h-[40vh] border rounded-md p-4 bg-black/50 font-mono text-sm">
           <div ref={scrollAreaRef} className="space-y-1">
             {filteredLogs.length === 0 ? (
               <div className="text-muted-foreground text-center py-8">
-                No logs to display. Logs will appear here as they are generated.
+                No logs to display. Reproduce the issue, then open this viewer
+                again (or switch to All Levels).
               </div>
             ) : (
               filteredLogs.map((log, index) => (

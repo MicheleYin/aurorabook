@@ -63,6 +63,30 @@ describe("logger", () => {
     expect(logs[logs.length - 1]?.message).toBe("entry-1001");
   });
 
+  it("clears the shared log store", async () => {
+    const { clearLogs, getLogs, logger } = await loadLogger();
+    logger.error("keep me");
+    expect(getLogs()).toHaveLength(1);
+    clearLogs();
+    expect(getLogs()).toHaveLength(0);
+  });
+
+  it("appends backend entries into the shared store", async () => {
+    const { appendLogEntry, getLogs } = await loadLogger();
+    appendLogEntry({
+      level: "error",
+      source: "backend",
+      message: "WebGPU session failed",
+    });
+    const logs = getLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      level: "error",
+      source: "backend",
+      message: "WebGPU session failed",
+    });
+  });
+
   it("swallows listener failures and routes each level to the matching console method", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});

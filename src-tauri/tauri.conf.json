@@ -45,7 +45,7 @@
     "iOS": {
       "developmentTeam": "YOUR_TEAM_ID",
       "frameworks": [],
-      "minimumSystemVersion": "15.1"
+      "minimumSystemVersion": "16.3"
     }
   }
 }

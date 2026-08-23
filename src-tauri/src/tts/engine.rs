@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 /// TTS Engine type selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TtsEngineType {
-    /// ONNX Runtime engine (default, uses CoreML/CUDA/CPU)
+    /// ONNX Runtime engine (default; WebGPU/DirectML/CPU by platform)
     Onnx,
     /// Candle engine (uses Metal/CUDA/Accelerate/CPU)
     Candle,

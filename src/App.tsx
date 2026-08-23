@@ -25,12 +25,16 @@ import { AudioExportStateProvider } from "./context/AudioExportStateContext";
 import { ConversionStateProvider } from "./context/ConversionStateContext";
 import { SettingsProvider } from "./context/SettingsContext";
 import { useBookConversion } from "./hooks/useBookConversion";
-import { logger } from "./lib/logger";
+import { logger, startBackendLogBridge } from "./lib/logger";
 import { normalizeBook } from "./lib/normalize-book";
 
 function AppContent() {
   const { currentTab, setCurrentTab, currentBook } = useAppContext();
   const { t } = useTranslation();
+
+  useEffect(() => {
+    startBackendLogBridge();
+  }, []);
 
   return (
     <div className="flex h-full flex-col relative">

@@ -1,16 +1,31 @@
 /**
- * Logger utility that captures logs for the log viewer
- * Always enabled to capture logs for debugging
+ * Logger utility that captures logs for the in-app log viewer.
+ * Frontend + backend entries share one store so device debugging works offline.
  */
 
-import type { LogEntry } from "../components/debug/LogViewer";
+import { listen } from "@tauri-apps/api/event";
 
-// Global log store for the log viewer
+export interface LogEntry {
+  timestamp: string;
+  level: "log" | "info" | "warn" | "error" | "debug";
+  source: "frontend" | "backend";
+  message: string;
+  data?: unknown;
+}
+
+const MAX_LOGS = 1000;
+
 let logStore: LogEntry[] = [];
 const logStoreListeners: Set<(logs: LogEntry[]) => void> = new Set();
+let backendListenerStarted = false;
 
 export function getLogs(): LogEntry[] {
   return [...logStore];
+}
+
+export function clearLogs(): void {
+  logStore = [];
+  notifyListeners();
 }
 
 export function subscribeToLogs(
@@ -22,8 +37,77 @@ export function subscribeToLogs(
   };
 }
 
+function notifyListeners(): void {
+  const snapshot = [...logStore];
+  logStoreListeners.forEach((listener) => {
+    try {
+      listener(snapshot);
+    } catch (error) {
+      console.error("Error in log listener:", error);
+    }
+  });
+}
+
+function pushLog(entry: LogEntry): void {
+  logStore.push(entry);
+  if (logStore.length > MAX_LOGS) {
+    logStore = logStore.slice(-MAX_LOGS);
+  }
+  notifyListeners();
+}
+
+function normalizeLevel(level: string): LogEntry["level"] {
+  switch (level) {
+    case "error":
+    case "warn":
+    case "info":
+    case "debug":
+    case "log":
+      return level;
+    case "warning":
+      return "warn";
+    case "trace":
+      return "debug";
+    default:
+      return "log";
+  }
+}
+
+/** Append a backend (or other) log entry into the shared store. */
+export function appendLogEntry(entry: Omit<LogEntry, "timestamp"> & { timestamp?: string }): void {
+  pushLog({
+    timestamp: entry.timestamp ?? new Date().toISOString(),
+    level: normalizeLevel(entry.level),
+    source: entry.source,
+    message: entry.message,
+    data: entry.data,
+  });
+}
+
+/**
+ * Start listening for `backend-log` events once (app lifetime).
+ * Safe to call multiple times; only the first call attaches.
+ */
+export function startBackendLogBridge(): void {
+  if (backendListenerStarted) return;
+  backendListenerStarted = true;
+
+  void listen<LogEntry>("backend-log", (event) => {
+    const payload = event.payload;
+    appendLogEntry({
+      timestamp: payload.timestamp,
+      level: normalizeLevel(payload.level),
+      source: "backend",
+      message: payload.message,
+      data: payload.data,
+    });
+  }).catch((error) => {
+    backendListenerStarted = false;
+    console.error("Failed to set up backend log listener:", error);
+  });
+}
+
 function addLog(level: LogEntry["level"], ...args: unknown[]): void {
-  const timestamp = new Date().toISOString();
   const message = args
     .map((arg) => {
       if (typeof arg === "string") return arg;
@@ -36,31 +120,14 @@ function addLog(level: LogEntry["level"], ...args: unknown[]): void {
     })
     .join(" ");
 
-  const logEntry: LogEntry = {
-    timestamp,
+  pushLog({
+    timestamp: new Date().toISOString(),
     level,
     source: "frontend",
     message,
     data: args.length > 1 ? args.slice(1) : undefined,
-  };
-
-  // Add to store
-  logStore.push(logEntry);
-  // Keep only last 1000 logs
-  if (logStore.length > 1000) {
-    logStore = logStore.slice(-1000);
-  }
-
-  // Notify listeners
-  logStoreListeners.forEach((listener) => {
-    try {
-      listener([...logStore]);
-    } catch (error) {
-      console.error("Error in log listener:", error);
-    }
   });
 
-  // Also log to console
   const consoleMethod =
     level === "error"
       ? console.error

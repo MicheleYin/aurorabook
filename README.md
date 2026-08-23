@@ -192,10 +192,10 @@ or `workflow_dispatch`). Artifacts are uploaded from the Actions run.
 
 ### iOS
 ```bash
-# Build ONNX Runtime for iOS (Required for first-time iOS builds)
-./scripts/build-onnxruntime-ios.sh
+# Build ONNX Runtime for iOS with WebGPU EP (Required for first-time iOS builds)
+./scripts/build-onnxruntime-ios-webgpu.sh
 
-# Build the iOS app
+# Build the iOS app (min iOS 16.3)
 bun run build:ios
 ```
 

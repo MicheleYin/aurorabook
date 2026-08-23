@@ -906,15 +906,43 @@ pub fn load_voice_style(voice_style_paths: &[String], verbose: bool) -> Result<S
     })
 }
 
+/// With `alternative-backend`, ort does not call `OrtGetApiBase` itself.
+/// iOS links a local static ORT in `build.rs`, so we must register that API first.
+#[cfg(target_os = "ios")]
+fn ensure_ios_ort_api() {
+    static ORT_API_INIT: Once = Once::new();
+    ORT_API_INIT.call_once(|| {
+        unsafe {
+            let base = ort::sys::OrtGetApiBase();
+            assert!(
+                !base.is_null(),
+                "OrtGetApiBase returned null; static ONNX Runtime may not be linked"
+            );
+            let api = ((*base).GetApi)(ort::sys::ORT_API_VERSION);
+            assert!(
+                !api.is_null(),
+                "linked ONNX Runtime does not support OrtApi version {}",
+                ort::sys::ORT_API_VERSION
+            );
+            let registered = ort::set_api(std::ptr::read(api));
+            if registered {
+                log::info!(
+                    "Registered OrtApi from static ONNX Runtime (version {})",
+                    ort::sys::ORT_API_VERSION
+                );
+            }
+        }
+    });
+}
+
 pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<TextToSpeech> {
     if use_gpu {
         bail!("GPU mode is not supported yet");
     }
-    #[cfg(target_os = "ios")]
-    log::debug!("Supertonic TTS: prefer CoreML, CPU fallback");
     #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
     log::debug!("Supertonic TTS: prefer DirectML, CPU fallback");
     #[cfg(any(
+        target_os = "ios",
         target_os = "macos",
         all(target_os = "windows", target_arch = "x86_64")
     ))]
@@ -927,8 +955,11 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
     ))]
     log::debug!("Supertonic TTS: using CPU EP (no GPU EP configured for this platform)");
 
+    #[cfg(target_os = "ios")]
+    ensure_ios_ort_api();
+
     // Ensure a single ORT environment is committed before session create.
-    // EPs are set per-session (not on the env) so iOS can retry CPU-only if CoreML fails.
+    // EPs are set per-session (not on the env) so iOS can retry CPU-only if WebGPU fails.
     static ORT_ENV_INIT: Once = Once::new();
     ORT_ENV_INIT.call_once(|| {
         let _ = ort::init().commit();
@@ -944,19 +975,17 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
     let build_session = |path: &Path| -> Result<Session> {
         log::info!("Loading ONNX model: {}", path.display());
 
-        // iOS: try CoreML+CPU first (same pattern as macOS WebGPU+CPU / Windows DML+CPU).
-        // If session create fails (CoreML compile/OOM/register), rebuild CPU-only.
+        // iOS: try WebGPU (Dawn→Metal) + CPU first. If session create fails
+        // (EP register/OOM), rebuild CPU-only. Keep Level1 + 1 thread for memory.
         #[cfg(target_os = "ios")]
         {
-            let build_ios = |use_coreml: bool| -> Result<Session> {
+            let build_ios = |use_webgpu: bool| -> Result<Session> {
                 let builder = Session::builder()
                     .map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
-                let builder = if use_coreml {
+                let builder = if use_webgpu {
                     builder
                         .with_execution_providers([
-                            ep::CoreML::default()
-                                .with_compute_units(ep::coreml::ComputeUnits::CPUAndNeuralEngine)
-                                .build(),
+                            ep::WebGPU::default().build(),
                             ep::CPU::default().build(),
                         ])
                         .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?
@@ -965,7 +994,6 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
                         .with_execution_providers([ep::CPU::default().build()])
                         .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?
                 };
-                // Keep Level1 + single thread — full graph opts on ~400MB models can OOM.
                 builder
                     .with_optimization_level(GraphOptimizationLevel::Level1)
                     .map_err(|e| anyhow!("ORT optimization level setup failed: {e}"))?
@@ -979,9 +1007,9 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
 
             return match build_ios(true) {
                 Ok(session) => Ok(session),
-                Err(coreml_err) => {
+                Err(webgpu_err) => {
                     log::warn!(
-                        "CoreML session failed for '{}': {coreml_err}; falling back to CPU-only",
+                        "WebGPU session failed for '{}': {webgpu_err}; falling back to CPU-only",
                         path.display()
                     );
                     build_ios(false)

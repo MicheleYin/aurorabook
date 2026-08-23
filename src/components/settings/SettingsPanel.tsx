@@ -10,6 +10,7 @@ import type { TtsSynthesisQuality } from "../../types/settings";
 import { voiceMatchesTtsLanguage } from "../../constants/languages";
 import { KOKORO_VOICE_GROUPS, voiceSamplePathsToTry } from "../../constants/kokoro";
 import { logger } from "../../lib/logger";
+import { LogViewer } from "../debug/LogViewer";
 import { ThemeSwitcher } from "../ThemeSwitcher";
 import { LanguageSelect } from "./LanguageSelect";
 import { TtsLanguageSelect } from "./TtsLanguageSelect";
@@ -50,6 +51,7 @@ export function Settings() {
   const { t } = useTranslation();
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string>(t("common.loading"));
+  const [logViewerOpen, setLogViewerOpen] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
 
@@ -395,6 +397,20 @@ export function Settings() {
                   {t("app.version")} {appVersion}
                 </p>
               </div>
+              <div className="flex flex-col gap-2">
+                <p className="font-medium">{t("settings.logs")}</p>
+                <p className="text-sm text-muted-foreground">
+                  {t("settings.logs_description")}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-fit"
+                  onClick={() => setLogViewerOpen(true)}
+                >
+                  {t("settings.open_logs")}
+                </Button>
+              </div>
               {isSaving && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
@@ -403,6 +419,8 @@ export function Settings() {
               )}
             </CardContent>
           </Card>
+
+          <LogViewer isOpen={logViewerOpen} onOpenChange={setLogViewerOpen} />
 
           {/* FAQ Section */}
           <Card>
