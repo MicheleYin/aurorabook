@@ -283,6 +283,8 @@ export async function invoke<T = unknown>(
       return null as T;
     case "get_audio_export_status":
       return { active: false } as T;
+    case "get_supported_audio_export_formats":
+      return ["mp3", "m4a", "m4b"] as T;
     case "convert_epub_to_audiobook_command": {
       const bookId = String(a.bookId ?? "");
       if (convertHangMs > 0) {

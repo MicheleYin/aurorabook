@@ -439,6 +439,7 @@ export function BookDetailDialog({
     activeExportFormat,
     exportProgress,
     derivedExportEtaMs,
+    supportedExportFormats,
     syncAudioExportStatus,
     cancelAudioExport,
     runAudioExport,
@@ -669,9 +670,15 @@ export function BookDetailDialog({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="epub">{t("book.export_epub")}</SelectItem>
-                  <SelectItem value="mp3">{t("book.export_mp3")}</SelectItem>
-                  <SelectItem value="m4a">{t("book.export_m4a")}</SelectItem>
-                  <SelectItem value="m4b">{t("book.export_m4b")}</SelectItem>
+                  {supportedExportFormats.includes("mp3") && (
+                    <SelectItem value="mp3">{t("book.export_mp3")}</SelectItem>
+                  )}
+                  {supportedExportFormats.includes("m4a") && (
+                    <SelectItem value="m4a">{t("book.export_m4a")}</SelectItem>
+                  )}
+                  {supportedExportFormats.includes("m4b") && (
+                    <SelectItem value="m4b">{t("book.export_m4b")}</SelectItem>
+                  )}
                 </SelectContent>
               </Select>
               {isExportingAudio && (
@@ -793,15 +800,21 @@ export function BookDetailDialog({
                   <SelectItem className="w-full" value="epub">
                     {t("book.export_epub")}
                   </SelectItem>
-                  <SelectItem className="w-full" value="mp3">
-                    {t("book.export_mp3")}
-                  </SelectItem>
-                  <SelectItem className="w-full" value="m4a">
-                    {t("book.export_m4a")}
-                  </SelectItem>
-                  <SelectItem className="w-full" value="m4b">
-                    {t("book.export_m4b")}
-                  </SelectItem>
+                  {supportedExportFormats.includes("mp3") && (
+                    <SelectItem className="w-full" value="mp3">
+                      {t("book.export_mp3")}
+                    </SelectItem>
+                  )}
+                  {supportedExportFormats.includes("m4a") && (
+                    <SelectItem className="w-full" value="m4a">
+                      {t("book.export_m4a")}
+                    </SelectItem>
+                  )}
+                  {supportedExportFormats.includes("m4b") && (
+                    <SelectItem className="w-full" value="m4b">
+                      {t("book.export_m4b")}
+                    </SelectItem>
+                  )}
                 </SelectContent>
               </Select>
               {isExportingAudio && (

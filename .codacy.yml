@@ -1,0 +1,7 @@
+---
+# Codacy's "unsafe usage" rule cannot distinguish audited Swift @_cdecl FFI
+# from undocumented unsoundness. iOS audiobook export must call
+# `aurora_export_audiobook` the same way `native_player.rs` calls AVPlayer.
+# SAFETY comments in that file document pointer lifetimes.
+exclude_paths:
+  - "src-tauri/src/book_service/ios_export.rs"
