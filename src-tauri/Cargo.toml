@@ -102,11 +102,11 @@ ort = { version = "2.0.0-rc.12", features = ["webgpu"] }
 [target.'cfg(all(target_os = "windows", target_arch = "aarch64"))'.dependencies]
 ort = { version = "2.0.0-rc.12", features = ["directml"] }
 
-# iOS: CPU EP only (CoreML EP previously aborted / spiked memory). ORT_DIRECT_LINK +
-# locally built static libs (see LOCAL_IOS_BUILD.md).
+# iOS: CoreML EP (+ CPU fallback) via ORT_DIRECT_LINK + locally built static libs
+# (see LOCAL_IOS_BUILD.md / scripts/build-onnxruntime-ios.sh --use_coreml).
 # waterkit-background: BGContinuedProcessingTaskRequest (iOS 26+) via Swift bridge.
 [target.'cfg(target_os = "ios")'.dependencies]
-ort = { version = "2.0.0-rc.12" }
+ort = { version = "2.0.0-rc.12", features = ["coreml"] }
 waterkit-background = { path = "../patches/waterkit-background" }
 
 

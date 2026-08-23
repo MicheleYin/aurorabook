@@ -911,7 +911,7 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
         bail!("GPU mode is not supported yet");
     }
     #[cfg(target_os = "ios")]
-    log::debug!("Supertonic TTS: using CPU EP on iOS (CoreML disabled — native abort risk)");
+    log::debug!("Supertonic TTS: prefer CoreML, CPU fallback");
     #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
     log::debug!("Supertonic TTS: prefer DirectML, CPU fallback");
     #[cfg(any(
@@ -928,19 +928,10 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
     log::debug!("Supertonic TTS: using CPU EP (no GPU EP configured for this platform)");
 
     // Ensure a single ORT environment is committed before session create.
-    // On iOS, pin CPU so sessions don't inherit unexpected default EPs.
+    // EPs are set per-session (not on the env) so iOS can retry CPU-only if CoreML fails.
     static ORT_ENV_INIT: Once = Once::new();
     ORT_ENV_INIT.call_once(|| {
-        #[cfg(target_os = "ios")]
-        {
-            let _ = ort::init()
-                .with_execution_providers([ep::CPU::default().build()])
-                .commit();
-        }
-        #[cfg(not(target_os = "ios"))]
-        {
-            let _ = ort::init().commit();
-        }
+        let _ = ort::init().commit();
     });
 
     let onnx_dir = onnx_dir.as_ref();
@@ -951,20 +942,55 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
     let vocoder_path = onnx_dir.join("vocoder.onnx");
 
     let build_session = |path: &Path| -> Result<Session> {
+        log::info!("Loading ONNX model: {}", path.display());
+
+        // iOS: try CoreML+CPU first (same pattern as macOS WebGPU+CPU / Windows DML+CPU).
+        // If session create fails (CoreML compile/OOM/register), rebuild CPU-only.
+        #[cfg(target_os = "ios")]
+        {
+            let build_ios = |use_coreml: bool| -> Result<Session> {
+                let builder = Session::builder()
+                    .map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
+                let builder = if use_coreml {
+                    builder
+                        .with_execution_providers([
+                            ep::CoreML::default()
+                                .with_compute_units(ep::coreml::ComputeUnits::CPUAndNeuralEngine)
+                                .build(),
+                            ep::CPU::default().build(),
+                        ])
+                        .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?
+                } else {
+                    builder
+                        .with_execution_providers([ep::CPU::default().build()])
+                        .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?
+                };
+                // Keep Level1 + single thread — full graph opts on ~400MB models can OOM.
+                builder
+                    .with_optimization_level(GraphOptimizationLevel::Level1)
+                    .map_err(|e| anyhow!("ORT optimization level setup failed: {e}"))?
+                    .with_intra_threads(1)
+                    .map_err(|e| anyhow!("ORT intra-threads setup failed: {e}"))?
+                    .with_memory_pattern(true)
+                    .map_err(|e| anyhow!("ORT memory pattern setup failed: {e}"))?
+                    .commit_from_file(path)
+                    .map_err(|e| anyhow!("ORT failed to load model '{}': {e}", path.display()))
+            };
+
+            return match build_ios(true) {
+                Ok(session) => Ok(session),
+                Err(coreml_err) => {
+                    log::warn!(
+                        "CoreML session failed for '{}': {coreml_err}; falling back to CPU-only",
+                        path.display()
+                    );
+                    build_ios(false)
+                }
+            };
+        }
+
         let builder =
             Session::builder().map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
-        // iOS: CPU only + low memory options. Full graph opts on ~400MB of models can OOM
-        // (___rg_oom → SIGABRT). Prefer Level1 and a single intra-op thread.
-        #[cfg(target_os = "ios")]
-        let mut builder = builder
-            .with_execution_providers([ep::CPU::default().build()])
-            .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?
-            .with_optimization_level(GraphOptimizationLevel::Level1)
-            .map_err(|e| anyhow!("ORT optimization level setup failed: {e}"))?
-            .with_intra_threads(1)
-            .map_err(|e| anyhow!("ORT intra-threads setup failed: {e}"))?
-            .with_memory_pattern(true)
-            .map_err(|e| anyhow!("ORT memory pattern setup failed: {e}"))?;
         // Windows ARM64: prefer DirectML; fall back to CPU when no DML device
         // (e.g. VM, missing DirectML.dll, or driver filter mismatch).
         #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
@@ -995,7 +1021,6 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
         let mut builder = builder
             .with_execution_providers([ep::CPU::default().build()])
             .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
-        log::info!("Loading ONNX model: {}", path.display());
         let session = builder
             .commit_from_file(path)
             .map_err(|e| anyhow!("ORT failed to load model '{}': {e}", path.display()))?;

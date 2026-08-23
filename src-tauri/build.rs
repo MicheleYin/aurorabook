@@ -564,10 +564,13 @@ fn main() {
                         }
                     }
 
-                    // Link CoreML provider if available
+                    // Link CoreML provider if available (needs coreml_proto for MIL Spec RTTI)
                     let coreml_lib = ort_lib_dir.join("libonnxruntime_providers_coreml.a");
                     if coreml_lib.exists() {
                         println!("cargo:rustc-link-lib=static=onnxruntime_providers_coreml");
+                        if ort_lib_dir.join("libcoreml_proto.a").exists() {
+                            println!("cargo:rustc-link-lib=static=coreml_proto");
+                        }
                         println!("cargo:rustc-link-lib=framework=CoreML");
                     }
 

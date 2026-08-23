@@ -53,7 +53,7 @@ pub fn get_parallelism() -> usize {
     // iOS: single model instance to limit memory (Supertonic ONNX is large).
     #[cfg(target_os = "ios")]
     {
-        return 1;
+        return 4;
     }
 
     #[cfg(not(target_os = "ios"))]
@@ -61,4 +61,3 @@ pub fn get_parallelism() -> usize {
         1
     }
 }
-
