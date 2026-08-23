@@ -160,8 +160,8 @@ where
         return Ok(PipelineStats::default());
     }
 
-    let (parse_tx, mut parse_rx) = mpsc::channel::<ParsedJob>(parse_cap);
-    let (synth_tx, mut synth_rx) = mpsc::channel::<SynthesizedJob>(encode_cap);
+    let (parse_tx, parse_rx) = mpsc::channel::<ParsedJob>(parse_cap);
+    let (synth_tx, synth_rx) = mpsc::channel::<SynthesizedJob>(encode_cap);
 
     let tts_busy_ms = Arc::new(AtomicU64::new(0));
     let tts_idle_ms = Arc::new(AtomicU64::new(0));
@@ -169,9 +169,6 @@ where
     let max_depth = Arc::new(AtomicUsize::new(0));
     let encode_queue_depth = Arc::new(AtomicUsize::new(0));
     let completed = Arc::new(AtomicUsize::new(0));
-
-    let synthesize = Arc::new(synthesize);
-    let encode = Arc::new(encode);
 
     let feeder_cancel = cancel_token.clone();
     let feeder = tokio::spawn(async move {
@@ -186,129 +183,146 @@ where
         Ok::<(), anyhow::Error>(())
     });
 
+    // Dedicated OS threads so TTS and encode can overlap even when the Tokio
+    // blocking pool is contended (e.g. llvm-cov CI).
     let tts_cancel = cancel_token.clone();
     let tts_busy = Arc::clone(&tts_busy_ms);
     let tts_idle = Arc::clone(&tts_idle_ms);
     let depth_counter = Arc::clone(&encode_queue_depth);
     let max_depth_tts = Arc::clone(&max_depth);
-    let tts_worker = tokio::spawn(async move {
-        loop {
-            if cancelled(&tts_cancel) {
-                return Err(cancel_err());
+    let tts_worker = std::thread::Builder::new()
+        .name("aurorabook-tts".into())
+        .spawn(move || -> anyhow::Result<()> {
+            let mut parse_rx = parse_rx;
+            loop {
+                if cancelled(&tts_cancel) {
+                    return Err(cancel_err());
+                }
+
+                let idle_start = Instant::now();
+                let job = parse_rx.blocking_recv();
+                tts_idle.fetch_add(
+                    idle_start.elapsed().as_millis() as u64,
+                    Ordering::Relaxed,
+                );
+
+                let Some(job) = job else {
+                    break;
+                };
+
+                if cancelled(&tts_cancel) {
+                    return Err(cancel_err());
+                }
+
+                let busy_start = Instant::now();
+                let result = synthesize(job.index, job.text);
+                tts_busy.fetch_add(busy_start.elapsed().as_millis() as u64, Ordering::Relaxed);
+
+                let (pcm, alignments, text) = result?;
+                let duration_sec =
+                    crate::tts::word_timing::pcm_duration_seconds(pcm.len(), SAMPLE_RATE);
+
+                if synth_tx
+                    .blocking_send(SynthesizedJob {
+                        index: job.index,
+                        text,
+                        pcm,
+                        alignments,
+                        duration_sec,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+
+                let depth = depth_counter.fetch_add(1, Ordering::Relaxed) + 1;
+                max_depth_tts.fetch_max(depth, Ordering::Relaxed);
             }
-
-            let idle_start = Instant::now();
-            let job = parse_rx.recv().await;
-            tts_idle.fetch_add(
-                idle_start.elapsed().as_millis() as u64,
-                Ordering::Relaxed,
-            );
-
-            let Some(job) = job else {
-                break;
-            };
-
-            if cancelled(&tts_cancel) {
-                return Err(cancel_err());
-            }
-
-            let synthesize = Arc::clone(&synthesize);
-            let index = job.index;
-            let text = job.text;
-            let busy_start = Instant::now();
-            let result = tokio::task::spawn_blocking(move || synthesize(index, text))
-                .await
-                .map_err(|e| anyhow::anyhow!("TTS worker join error: {:?}", e))?;
-            tts_busy.fetch_add(busy_start.elapsed().as_millis() as u64, Ordering::Relaxed);
-
-            let (pcm, alignments, text) = result?;
-            let duration_sec =
-                crate::tts::word_timing::pcm_duration_seconds(pcm.len(), SAMPLE_RATE);
-
-            if synth_tx
-                .send(SynthesizedJob {
-                    index,
-                    text,
-                    pcm,
-                    alignments,
-                    duration_sec,
-                })
-                .await
-                .is_err()
-            {
-                break;
-            }
-
-            let depth = depth_counter.fetch_add(1, Ordering::Relaxed) + 1;
-            max_depth_tts.fetch_max(depth, Ordering::Relaxed);
-        }
-        Ok::<(), anyhow::Error>(())
-    });
+            Ok(())
+        })
+        .map_err(|e| anyhow::anyhow!("Failed to spawn TTS thread: {}", e))?;
 
     let encode_cancel = cancel_token.clone();
     let encode_busy = Arc::clone(&encode_busy_ms);
     let depth_counter_enc = Arc::clone(&encode_queue_depth);
     let completed_counter = Arc::clone(&completed);
-    let encode_worker = tokio::spawn(async move {
-        loop {
-            if cancelled(&encode_cancel) {
-                return Err(cancel_err());
+    let encode_worker = std::thread::Builder::new()
+        .name("aurorabook-encode".into())
+        .spawn(move || -> anyhow::Result<()> {
+            let mut synth_rx = synth_rx;
+            loop {
+                if cancelled(&encode_cancel) {
+                    return Err(cancel_err());
+                }
+
+                let Some(job) = synth_rx.blocking_recv() else {
+                    break;
+                };
+                let _ = depth_counter_enc.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |d| {
+                    Some(d.saturating_sub(1))
+                });
+
+                if cancelled(&encode_cancel) {
+                    return Err(cancel_err());
+                }
+
+                let busy_start = Instant::now();
+                let (pcm, mp3) = encode(job.pcm)?;
+                encode_busy.fetch_add(busy_start.elapsed().as_millis() as u64, Ordering::Relaxed);
+
+                if out_tx
+                    .blocking_send(EncodedJob {
+                        index: job.index,
+                        text: job.text,
+                        pcm,
+                        alignments: job.alignments,
+                        duration_sec: job.duration_sec,
+                        mp3,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+                completed_counter.fetch_add(1, Ordering::Relaxed);
             }
-
-            let Some(job) = synth_rx.recv().await else {
-                break;
-            };
-            let _ = depth_counter_enc.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |d| {
-                Some(d.saturating_sub(1))
-            });
-
-            if cancelled(&encode_cancel) {
-                return Err(cancel_err());
-            }
-
-            let encode = Arc::clone(&encode);
-            let pcm_for_encode = job.pcm;
-            let busy_start = Instant::now();
-            let (pcm, mp3) = tokio::task::spawn_blocking(move || encode(pcm_for_encode))
-                .await
-                .map_err(|e| anyhow::anyhow!("Encode worker join error: {:?}", e))??;
-            encode_busy.fetch_add(busy_start.elapsed().as_millis() as u64, Ordering::Relaxed);
-
-            if out_tx
-                .send(EncodedJob {
-                    index: job.index,
-                    text: job.text,
-                    pcm,
-                    alignments: job.alignments,
-                    duration_sec: job.duration_sec,
-                    mp3,
-                })
-                .await
-                .is_err()
-            {
-                break;
-            }
-            completed_counter.fetch_add(1, Ordering::Relaxed);
-        }
-        Ok::<(), anyhow::Error>(())
-    });
+            Ok(())
+        })
+        .map_err(|e| anyhow::anyhow!("Failed to spawn encode thread: {}", e))?;
 
     let feeder_result = feeder.await;
-    let tts_result = tts_worker.await;
-    let encode_result = encode_worker.await;
+    let tts_result = tokio::task::spawn_blocking(move || tts_worker.join())
+        .await
+        .map_err(|e| anyhow::anyhow!("TTS join task error: {:?}", e))?;
+    let encode_result = tokio::task::spawn_blocking(move || encode_worker.join())
+        .await
+        .map_err(|e| anyhow::anyhow!("Encode join task error: {:?}", e))?;
 
     if cancelled(&cancel_token) {
         return Err(cancel_err());
     }
 
-    for result in [feeder_result, tts_result, encode_result] {
-        match result {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(e),
-            Err(e) if e.is_cancelled() => {}
-            Err(e) => {
-                return Err(anyhow::anyhow!("Pipeline worker join error: {:?}", e));
-            }
+    match feeder_result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err(e),
+        Err(e) if e.is_cancelled() => {}
+        Err(e) => {
+            return Err(anyhow::anyhow!("Pipeline feeder join error: {:?}", e));
+        }
+    }
+
+    match tts_result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err(e),
+        Err(e) => {
+            return Err(anyhow::anyhow!("TTS thread panicked: {:?}", e));
+        }
+    }
+
+    match encode_result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err(e),
+        Err(e) => {
+            return Err(anyhow::anyhow!("Encode thread panicked: {:?}", e));
         }
     }
 
@@ -406,9 +420,19 @@ mod tests {
             })
             .collect();
 
-        let tts_ms = 40u64;
-        let enc_ms = 40u64;
-        let wall_start = Instant::now();
+        // Detect true stage overlap without relying on wall-clock (llvm-cov / small
+        // blocking pools make timing assertions flaky on CI).
+        let tts_active = Arc::new(AtomicUsize::new(0));
+        let encode_active = Arc::new(AtomicUsize::new(0));
+        let saw_overlap = Arc::new(AtomicBool::new(false));
+
+        let tts_active_s = Arc::clone(&tts_active);
+        let encode_active_s = Arc::clone(&encode_active);
+        let saw_overlap_s = Arc::clone(&saw_overlap);
+
+        let encode_active_e = Arc::clone(&encode_active);
+        let tts_active_e = Arc::clone(&tts_active);
+        let saw_overlap_e = Arc::clone(&saw_overlap);
 
         let (_outputs, stats) = run_sentence_pipeline_collect(
             jobs,
@@ -418,32 +442,46 @@ mod tests {
             },
             None,
             move |_idx, text| {
-                std::thread::sleep(Duration::from_millis(tts_ms));
+                tts_active_s.fetch_add(1, Ordering::SeqCst);
+                if encode_active_s.load(Ordering::SeqCst) > 0 {
+                    saw_overlap_s.store(true, Ordering::SeqCst);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+                if encode_active_s.load(Ordering::SeqCst) > 0 {
+                    saw_overlap_s.store(true, Ordering::SeqCst);
+                }
+                tts_active_s.fetch_sub(1, Ordering::SeqCst);
                 Ok((silent_pcm(5), Vec::new(), text))
             },
             move |pcm| {
-                std::thread::sleep(Duration::from_millis(enc_ms));
+                encode_active_e.fetch_add(1, Ordering::SeqCst);
+                if tts_active_e.load(Ordering::SeqCst) > 0 {
+                    saw_overlap_e.store(true, Ordering::SeqCst);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+                if tts_active_e.load(Ordering::SeqCst) > 0 {
+                    saw_overlap_e.store(true, Ordering::SeqCst);
+                }
+                encode_active_e.fetch_sub(1, Ordering::SeqCst);
                 Ok((pcm, vec![1, 2, 3]))
             },
         )
         .await
         .expect("pipeline should succeed");
 
-        let wall_ms = wall_start.elapsed().as_millis() as u64;
-        let serial_ms = 4 * (tts_ms + enc_ms);
-
         assert!(
-            wall_ms < serial_ms.saturating_sub(30),
-            "expected overlap: wall={wall_ms}ms serial={serial_ms}ms stats={stats:?}"
+            saw_overlap.load(Ordering::SeqCst),
+            "expected TTS and encode to run concurrently at least once; stats={stats:?}"
         );
         assert!(
-            stats.encode_busy_ms >= enc_ms * 3,
+            stats.encode_busy_ms >= 100,
             "encode should have run: {stats:?}"
         );
         assert!(
-            stats.tts_busy_ms >= tts_ms * 3,
+            stats.tts_busy_ms >= 100,
             "tts should have run: {stats:?}"
         );
+        assert_eq!(stats.sentences_completed, 4);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
