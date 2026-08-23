@@ -2,9 +2,15 @@
 
 Plan for App Store–safe MP3 / M4A / M4B export on iOS: **no bundled FFmpeg binary, no subprocesses**.
 
-**Status:** Proposal (planning only)  
+**Status:** Implemented (AVFoundation bridge + MP3 byte-concat)  
 **Constraint:** App Store rejects standalone binaries like `ffmpeg`; iOS cannot spawn subprocesses the way desktop export does today.  
 **Parity goal:** Same user-facing formats as desktop — **MP3**, **M4A**, **M4B** (with chapter markers where applicable).
+
+**Implementation (branch `cursor/ios-avfoundation-export-5107`):**
+- `src-tauri/swift/AudiobookExporter.swift` — `@_cdecl("aurora_export_audiobook")` via AVFoundation composition + `AVAssetExportPresetAppleM4A`
+- `src-tauri/src/book_service/ios_export.rs` — MP3 byte-concat, cancel/progress FFI, `get_supported_audio_export_formats`
+- `src-tauri/build.rs` — compiles AudiobookExporter alongside NativePlayer for iOS targets
+- FE gates export menu items via `get_supported_audio_export_formats`
 
 **Related code:**  
 `src-tauri/src/book_service/mp3_export.rs`, `src-tauri/src/utils/ffmpeg_audio.rs`, `src-tauri/src/tts_commands.rs` (in-process LAME), `src/context/AudioExportStateContext.tsx`, `src/components/library/BookDetailDialog.tsx`, `src-tauri/build.rs` (`strip_ffmpeg_from_ios_assets`)

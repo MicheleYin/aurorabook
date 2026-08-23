@@ -3,12 +3,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Compile `swift/NativePlayer.swift` into a static lib and link it for iOS.
+/// Compile `swift/NativePlayer.swift` and `swift/AudiobookExporter.swift` into static
+/// libs and link them for iOS.
 ///
-/// Rust (`native_player.rs`) declares `extern "C"` for the `@_cdecl` exports in that
-/// file. Cargo builds `cdylib` before Xcode compiles Sources/, so those symbols must
-/// be provided here — not only by dropping the file under `gen/apple/`.
-fn compile_native_player_swift_for_ios() {
+/// Rust declares `extern "C"` for the `@_cdecl` exports. Cargo builds `cdylib` before
+/// Xcode compiles Sources/, so those symbols must be provided here.
+fn compile_ios_swift_bridges() {
     let target = std::env::var("TARGET").unwrap_or_default();
     if !target.contains("apple-ios") {
         return;
@@ -22,15 +22,6 @@ fn compile_native_player_swift_for_ios() {
         Ok(s) => PathBuf::from(s),
         Err(_) => return,
     };
-
-    let swift_src = manifest_dir.join("swift").join("NativePlayer.swift");
-    println!("cargo:rerun-if-changed={}", swift_src.display());
-    if !swift_src.is_file() {
-        panic!(
-            "NativePlayer.swift missing at {} — required for iOS aurora_player_* symbols",
-            swift_src.display()
-        );
-    }
 
     let is_simulator = target.contains("ios-sim") || target.contains("apple-ios-sim");
     let arch = if target.contains("x86_64") {
@@ -59,42 +50,59 @@ fn compile_native_player_swift_for_ios() {
     .trim()
     .to_string();
 
-    let lib_name = "NativePlayer";
-    let obj_file = out_dir.join(format!("{lib_name}.o"));
-    let lib_file = out_dir.join(format!("lib{lib_name}.a"));
+    let sources = [
+        ("NativePlayer", "NativePlayer.swift"),
+        ("AudiobookExporter", "AudiobookExporter.swift"),
+    ];
 
-    let output = Command::new("swiftc")
-        .arg("-emit-object")
-        .arg("-o")
-        .arg(&obj_file)
-        .arg("-sdk")
-        .arg(&sdk_path)
-        .arg("-parse-as-library")
-        .arg("-module-name")
-        .arg(lib_name)
-        .arg("-target")
-        .arg(&swift_target)
-        .arg(&swift_src)
-        .output()
-        .expect("failed to run swiftc for NativePlayer.swift");
+    for (lib_name, file_name) in sources {
+        let swift_src = manifest_dir.join("swift").join(file_name);
+        println!("cargo:rerun-if-changed={}", swift_src.display());
+        if !swift_src.is_file() {
+            panic!(
+                "{} missing at {} — required for iOS native symbols",
+                file_name,
+                swift_src.display()
+            );
+        }
 
-    if !output.status.success() {
-        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-        panic!("swiftc failed compiling NativePlayer.swift");
+        let obj_file = out_dir.join(format!("{lib_name}.o"));
+        let lib_file = out_dir.join(format!("lib{lib_name}.a"));
+
+        let output = Command::new("swiftc")
+            .arg("-emit-object")
+            .arg("-o")
+            .arg(&obj_file)
+            .arg("-sdk")
+            .arg(&sdk_path)
+            .arg("-parse-as-library")
+            .arg("-module-name")
+            .arg(lib_name)
+            .arg("-target")
+            .arg(&swift_target)
+            .arg(&swift_src)
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run swiftc for {file_name}: {e}"));
+
+        if !output.status.success() {
+            eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+            panic!("swiftc failed compiling {file_name}");
+        }
+
+        let ar_status = Command::new("ar")
+            .args([
+                "rcs",
+                lib_file.to_str().expect("lib path"),
+                obj_file.to_str().expect("obj path"),
+            ])
+            .status()
+            .expect("failed to run ar");
+        assert!(ar_status.success(), "ar failed for lib{lib_name}.a");
+
+        println!("cargo:rustc-link-lib=static={lib_name}");
     }
 
-    let ar_status = Command::new("ar")
-        .args([
-            "rcs",
-            lib_file.to_str().expect("lib path"),
-            obj_file.to_str().expect("obj path"),
-        ])
-        .status()
-        .expect("failed to run ar");
-    assert!(ar_status.success(), "ar failed for libNativePlayer.a");
-
     println!("cargo:rustc-link-search=native={}", out_dir.display());
-    println!("cargo:rustc-link-lib=static={lib_name}");
 
     let toolchain_dir = String::from_utf8(
         Command::new("xcrun")
@@ -271,7 +279,7 @@ fn main() {
         }
     }
 
-    compile_native_player_swift_for_ios();
+    compile_ios_swift_bridges();
 
     // Supertonic (kokoros) uses ONNX Runtime; CoreML EP linking is handled below for iOS when ORT libs are present.
 

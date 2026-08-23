@@ -39,6 +39,9 @@ describe("AudioExportStateProvider", () => {
       if (cmd === "get_audio_export_status") {
         return { inProgress: false, bookId: null, format: null };
       }
+      if (cmd === "get_supported_audio_export_formats") {
+        return ["mp3", "m4a", "m4b"];
+      }
       if (cmd === "cancel_audio_export") {
         return true;
       }

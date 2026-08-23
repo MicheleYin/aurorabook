@@ -5,6 +5,7 @@ pub mod repositories;
 pub mod audio_stream;
 pub mod epub_file_storage;
 pub mod mp3_export;
+pub mod ios_export;
 
 pub use models::*;
 use filters::*;

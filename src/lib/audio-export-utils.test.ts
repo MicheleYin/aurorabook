@@ -4,6 +4,7 @@ import {
   isTerminalExportStep,
   linearAudioExportEtaMs,
   normalizeFormat,
+  parseSupportedAudioExportFormats,
 } from "./audio-export-utils";
 
 describe("normalizeFormat", () => {
@@ -17,6 +18,28 @@ describe("normalizeFormat", () => {
     expect(normalizeFormat(null)).toBeNull();
     expect(normalizeFormat("wav")).toBeNull();
     expect(normalizeFormat("MP3")).toBeNull();
+  });
+});
+
+describe("parseSupportedAudioExportFormats", () => {
+  it("parses known formats in order", () => {
+    expect(parseSupportedAudioExportFormats(["m4b", "mp3", "wav"])).toEqual([
+      "m4b",
+      "mp3",
+    ]);
+  });
+
+  it("falls back to all formats when empty or invalid", () => {
+    expect(parseSupportedAudioExportFormats([])).toEqual([
+      "mp3",
+      "m4a",
+      "m4b",
+    ]);
+    expect(parseSupportedAudioExportFormats(null)).toEqual([
+      "mp3",
+      "m4a",
+      "m4b",
+    ]);
   });
 });
 

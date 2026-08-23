@@ -417,6 +417,7 @@ pub fn run() {
             book_service::mp3_export::export_as_m4a,
             book_service::mp3_export::export_as_m4b,
             book_service::mp3_export::cancel_audio_export,
+            book_service::ios_export::get_supported_audio_export_formats,
             book_service::update_book_progress,
             book_service::update_book_audio_state,
             book_service::ingest_epub,
