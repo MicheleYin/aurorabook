@@ -664,91 +664,15 @@ export function AudioProgressProvider({
         bookId: book.id,
       });
       const loadedBook = loadedBookRaw ? normalizeBook(loadedBookRaw) : null;
-      
-      // First priority: use centralized converting chapter state for live chapters.
-      if (loadedBook) {
-        let currentConvertingChapter = getCurrentConvertingChapter(loadedBook.id);
-        if (currentConvertingChapter === null) {
-          currentConvertingChapter =
-            await refreshCurrentConvertingChapter(loadedBook.id);
-        }
 
-        if (
-          currentConvertingChapter !== null &&
-          currentConvertingChapter >= 0 &&
-          currentConvertingChapter < loadedBook.chapters.length
-        ) {
-          const chapter = loadedBook.chapters[currentConvertingChapter];
-          audioTrackToLoad = {
-            id: `live-${loadedBook.id}-${currentConvertingChapter}`,
-            bookId: loadedBook.id,
-            chapterHref: chapter.href,
-            filePath: chapter.href,
-            href: chapter.href,
-            title: chapter.title || `Chapter ${currentConvertingChapter + 1}`,
-            order: currentConvertingChapter,
-          };
-        }
-
-        // Paused mid-chapter with no active pointer yet: synthesize from the first
-        // chapter that does not already have a completed audio track.
-        if (
-          !audioTrackToLoad &&
-          loadedBook.conversionStatus === "started" &&
-          loadedBook.chapters.length > 0
-        ) {
-          const completedHrefs = new Set(
-            (loadedBook.completedChapters ?? []).map((href) => href)
-          );
-          const trackHrefs = new Set(
-            (loadedBook.audioTracks ?? []).map(
-              (track) => track.href || track.filePath
-            )
-          );
-          const incompleteIndex = loadedBook.chapters.findIndex((chapter) => {
-            if (completedHrefs.has(chapter.href)) return false;
-            if (trackHrefs.has(chapter.href)) return false;
-            return true;
-          });
-          if (incompleteIndex >= 0) {
-            const chapter = loadedBook.chapters[incompleteIndex];
-            audioTrackToLoad = {
-              id: `live-${loadedBook.id}-${incompleteIndex}`,
-              bookId: loadedBook.id,
-              chapterHref: chapter.href,
-              filePath: chapter.href,
-              href: chapter.href,
-              title: chapter.title || `Chapter ${incompleteIndex + 1}`,
-              order: incompleteIndex,
-            };
-          }
-        }
-      }
-
-      // Second priority: Try saved track references (for completed chapters)
+      // Prefer saved completed-track progress, then the first completed track.
+      // Do not auto-select the live/converting chapter on open — users can pick
+      // it explicitly from the track list.
       if (!audioTrackToLoad && loadedBook?.audioState?.currentTrackId) {
         const savedTrackId = loadedBook.audioState.currentTrackId;
-        // Handle live track IDs directly (no need to search)
-        if (savedTrackId.startsWith('live-')) {
-          const parts = savedTrackId.split('-');
-          if (parts.length >= 3) {
-            const chapterIndex = parseInt(parts[parts.length - 1], 10);
-            if (!isNaN(chapterIndex) && chapterIndex >= 0 && chapterIndex < loadedBook.chapters.length) {
-              const chapter = loadedBook.chapters[chapterIndex];
-              audioTrackToLoad = {
-                id: savedTrackId,
-                bookId: loadedBook.id,
-                chapterHref: chapter.href,
-                filePath: chapter.href,
-                href: chapter.href,
-                title: chapter.title || `Chapter ${chapterIndex + 1}`,
-                order: chapterIndex,
-              };
-            }
-          }
-        }
-        else {
-          // Regular track - find in audioTracks
+        // Skip live-* saves so opening a converting book never jumps to the
+        // in-progress chapter; fall through to first completed track instead.
+        if (!savedTrackId.startsWith("live-")) {
           audioTrackToLoad =
             loadedBook.audioTracks.find(
               (track) => track.id === savedTrackId
@@ -828,13 +752,7 @@ export function AudioProgressProvider({
       setIsLoadingAudio(false);
     },
 
-    [
-      getCurrentConvertingChapter,
-      loadAudioTrack,
-      queueLivePlaybackRequest,
-      refreshCurrentConvertingChapter,
-      restoreAudioProgress,
-    ]
+    [loadAudioTrack, queueLivePlaybackRequest, restoreAudioProgress]
   );
 
   const closeAudioPlayer = useCallback(
