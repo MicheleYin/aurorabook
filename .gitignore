@@ -42,6 +42,15 @@ src-tauri/check_output_final.txt
 src-tauri/test_output/
 src-tauri/watermark_test.mp3
 
+# Windows Store / MSIX — never commit (see src-tauri/signing/README.md)
+# Package.appxmanifest is committed once configured for Partner Center.
+msix-layout/
+Assets/
+*.msix
+*.msixbundle
+.winapp/
+appxmanifest.xml
+
 # Apple signing & certificates — never commit (see src-tauri/signing/README.md)
 # Entitlements.macos-appstore.plist is generated from the .template; do not commit it
 src-tauri/Entitlements.macos-appstore.plist

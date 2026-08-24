@@ -11,3 +11,9 @@
 
 # Generated Xcode project — contains developer Team ID (regenerate with: cargo tauri ios init)
 /gen/apple/
+
+# Windows Store / MSIX — local only (see signing/README.md; repo-root outputs in ../.gitignore)
+/signing/devcert.pfx
+/signing/LOCAL_WINDOWS_STORE_BUILD.md
+/signing/Package.appxmanifest
+/signing/appxmanifest.xml
