@@ -8,6 +8,7 @@ use super::repositories::{AudioRepository, BookRepository};
 use super::get_db_connection;
 use crate::utils::constants::DEFAULT_MP3_BITRATE;
 use crate::utils::errors::{AppError, AppResult};
+use crate::utils::path_resolver::ResourcePathResolver;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -879,8 +880,18 @@ fn create_mp4_export_file(
             .collect();
         let total = ios_tracks.len();
         let format_label = format.as_str().to_uppercase();
+        let ext = format.as_str();
+        let temp = tempfile::Builder::new()
+            .suffix(&format!(".{ext}"))
+            .tempfile()
+            .map_err(|e| AppError::Store(format!("Failed to create {format_label} temp file: {e}")))?;
+        let temp_path = temp.path().to_path_buf();
+        let temp_str = temp_path
+            .to_str()
+            .ok_or_else(|| AppError::Store("Temp export path is not valid UTF-8".into()))?;
+
         crate::book_service::ios_export::export_m4a_m4b_avfoundation(
-            output_path,
+            temp_str,
             &ios_tracks,
             format.as_str(),
             &book.title,
@@ -901,6 +912,29 @@ fn create_mp4_export_file(
                 });
             },
         )?;
+        // `output_path` is already a sandbox Documents/Exports path on iOS.
+        if output_path.trim().to_ascii_lowercase().starts_with("file:") {
+            crate::book_service::ios_export::place_export_file(&temp_path, output_path)?;
+        } else {
+            let dest = PathBuf::from(output_path);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    AppError::Store(format!(
+                        "Failed to create export directory {}: {}",
+                        parent.display(),
+                        e
+                    ))
+                })?;
+            }
+            std::fs::copy(&temp_path, &dest).map_err(|e| {
+                AppError::Store(format!(
+                    "Failed to write {} export to {}: {}",
+                    format_label,
+                    dest.display(),
+                    e
+                ))
+            })?;
+        }
         return Ok(());
     }
 
@@ -1085,11 +1119,20 @@ async fn export_as_mp4(
     #[cfg(target_os = "ios")]
     let filelist_path = PathBuf::new();
 
-    let final_output = PathBuf::from(&output_path);
+    // Desktop: normalize file:// / percent-encoding.
+    // iOS: Documents/Exports + Share (avoid File Provider save URLs).
+    #[cfg(not(target_os = "ios"))]
+    let final_output = ResourcePathResolver::prepare_writable_output_path(&output_path)?;
+    #[cfg(target_os = "ios")]
+    let final_output = crate::book_service::ios_export::resolve_ios_sandbox_export_path(
+        &app,
+        &output_path,
+        &book.title,
+        format.as_str(),
+    )?;
     if final_output.exists() {
         let _ = std::fs::remove_file(&final_output);
     }
-
     let final_output_str = final_output
         .to_str()
         .ok_or_else(|| AppError::Store("Output path is not valid UTF-8".to_string()))?;
@@ -1146,6 +1189,8 @@ async fn export_as_mp4(
         100,
         Some(0),
     );
+    #[cfg(target_os = "ios")]
+    crate::book_service::ios_export::share_exported_file(&final_output)?;
     Ok(())
 }
 
@@ -1285,11 +1330,20 @@ pub async fn export_as_mp3(
     #[cfg(target_os = "ios")]
     let filelist_path = PathBuf::new();
 
-    let final_output = PathBuf::from(&output_path);
+    // Desktop: normalize file:// / percent-encoding into a real filesystem path.
+    // iOS: never write into File Provider save URLs — use Documents/Exports + Share.
+    #[cfg(not(target_os = "ios"))]
+    let final_output = ResourcePathResolver::prepare_writable_output_path(&output_path)?;
+    #[cfg(target_os = "ios")]
+    let final_output = crate::book_service::ios_export::resolve_ios_sandbox_export_path(
+        &app,
+        &output_path,
+        &book.title,
+        "mp3",
+    )?;
     if final_output.exists() {
         let _ = std::fs::remove_file(&final_output);
     }
-
     let final_output_str = final_output
         .to_str()
         .ok_or_else(|| AppError::Store("Output path is not valid UTF-8".to_string()))?;
@@ -1341,7 +1395,9 @@ pub async fn export_as_mp3(
         Some(0),
     );
 
-    log::info!("MP3 export completed: {}", output_path);
+    log::info!("MP3 export completed: {}", final_output.display());
+    #[cfg(target_os = "ios")]
+    crate::book_service::ios_export::share_exported_file(&final_output)?;
     Ok(())
 }
 

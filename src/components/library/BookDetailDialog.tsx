@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
+import { type as osType } from "@tauri-apps/plugin-os";
 import { filesize } from "filesize";
 import humanizeDuration from "humanize-duration";
 import {
@@ -485,26 +486,30 @@ export function BookDetailDialog({
     if (!book) return;
 
     try {
-      // Open save dialog
-      const filePath = await save({
-        defaultPath: `${book.title}.epub`,
-        filters: [
-          {
-            name: "EPUB Files",
-            extensions: ["epub"],
-          },
-        ],
-      });
-
-      if (!filePath) {
-        // User cancelled
-        return;
+      const suggestedName = `${book.title}.epub`;
+      let outputPath = suggestedName;
+      // iOS: skip Files save dialog (File Provider URLs are not writable via
+      // path strings). Backend writes to Documents/Exports and opens Share.
+      const onIos = (await osType()) === "ios";
+      if (!onIos) {
+        const filePath = await save({
+          defaultPath: suggestedName,
+          filters: [
+            {
+              name: "EPUB Files",
+              extensions: ["epub"],
+            },
+          ],
+        });
+        if (!filePath) {
+          return;
+        }
+        outputPath = filePath;
       }
 
-      // Call backend to export EPUB
       await invoke("export_epub_to_file", {
         bookId: book.id,
-        outputPath: filePath,
+        outputPath,
       });
 
       toast.success(t("book.export_epub_success"));
@@ -541,18 +546,25 @@ export function BookDetailDialog({
         }
 
         const extension = format;
-        const filePath = await save({
-          defaultPath: `${book.title}.${extension}`,
-          filters: [
-            {
-              name: `${formatLabel(format)} Audio`,
-              extensions: [extension],
-            },
-          ],
-        });
-
-        if (!filePath) {
-          return;
+        const suggestedName = `${book.title}.${extension}`;
+        let filePath = suggestedName;
+        // iOS: skip Files save dialog — backend writes to Documents/Exports and
+        // presents the system share sheet (Save to Files / AirDrop / etc.).
+        const onIos = (await osType()) === "ios";
+        if (!onIos) {
+          const chosen = await save({
+            defaultPath: suggestedName,
+            filters: [
+              {
+                name: `${formatLabel(format)} Audio`,
+                extensions: [extension],
+              },
+            ],
+          });
+          if (!chosen) {
+            return;
+          }
+          filePath = chosen;
         }
 
         await runAudioExport(book.id, format, filePath);

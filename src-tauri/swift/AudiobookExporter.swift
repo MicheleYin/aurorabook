@@ -23,6 +23,22 @@ private enum AuroraExportError: Error {
 
 private final class AudiobookExporter {
     static let shared = AudiobookExporter()
+    static var lastErrorMessage: String = ""
+
+    /// iOS save dialogs often return `file:///…/Name%20Here.m4a`. Convert to a
+    /// filesystem path AVFoundation / FileManager can use.
+    private func filesystemPath(from raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.lowercased().hasPrefix("file:"),
+           let url = URL(string: trimmed)
+        {
+            return url.path
+        }
+        if let decoded = trimmed.removingPercentEncoding {
+            return decoded
+        }
+        return trimmed
+    }
 
     func export(
         trackPaths: [String],
@@ -33,6 +49,7 @@ private final class AudiobookExporter {
         album: String,
         outputPath: String
     ) throws {
+        Self.lastErrorMessage = ""
         if rustExportIsCancelled() { throw AuroraExportError.cancelled }
         guard !trackPaths.isEmpty else { throw AuroraExportError.noTracks }
 
@@ -58,9 +75,15 @@ private final class AudiobookExporter {
         for (index, path) in trackPaths.enumerated() {
             if rustExportIsCancelled() { throw AuroraExportError.cancelled }
 
-            let url = URL(fileURLWithPath: path)
+            let resolved = filesystemPath(from: path)
+            let url = URL(fileURLWithPath: resolved)
+            guard FileManager.default.fileExists(atPath: resolved) else {
+                throw AuroraExportError.compositionFailed(
+                    "Track file missing: \(resolved)"
+                )
+            }
             let asset = AVURLAsset(url: url)
-            let sourceTrack = try loadFirstAudioTrack(from: asset, path: path)
+            let sourceTrack = try loadFirstAudioTrack(from: asset, path: resolved)
             let duration = try loadDuration(of: asset, fallbackTrack: sourceTrack)
             let timeRange = CMTimeRange(start: .zero, duration: duration)
             chapterStarts.append(CMTimeGetSeconds(cursor))
@@ -80,9 +103,17 @@ private final class AudiobookExporter {
 
         if rustExportIsCancelled() { throw AuroraExportError.cancelled }
 
-        let outputURL = URL(fileURLWithPath: outputPath)
-        if FileManager.default.fileExists(atPath: outputPath) {
-            try? FileManager.default.removeItem(at: outputURL)
+        // Caller (Rust) always passes a sandbox temp path. Placement into the
+        // user-chosen File Provider URL happens via ExportFileWriter afterward.
+        let finalPath = filesystemPath(from: outputPath)
+        let finalURL = URL(fileURLWithPath: finalPath)
+        let parent = finalURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(
+            at: parent,
+            withIntermediateDirectories: true
+        )
+        if FileManager.default.fileExists(atPath: finalPath) {
+            try? FileManager.default.removeItem(at: finalURL)
         }
 
         // Prefer Apple M4A preset (AAC). Output extension may be .m4a or .m4b.
@@ -93,7 +124,7 @@ private final class AudiobookExporter {
             throw AuroraExportError.exportFailed("AVAssetExportSession unavailable")
         }
 
-        session.outputURL = outputURL
+        session.outputURL = finalURL
         session.outputFileType = .m4a
         session.metadata = buildMetadata(
             title: title,
@@ -150,10 +181,11 @@ private final class AudiobookExporter {
         group.wait()
 
         if let exportError {
+            try? FileManager.default.removeItem(at: finalURL)
             throw exportError
         }
         if rustExportIsCancelled() {
-            try? FileManager.default.removeItem(at: outputURL)
+            try? FileManager.default.removeItem(at: finalURL)
             throw AuroraExportError.cancelled
         }
 
@@ -230,7 +262,18 @@ private final class AudiobookExporter {
         items.append(item(.commonIdentifierTitle, title))
         items.append(item(.commonIdentifierArtist, artist))
         items.append(item(.commonIdentifierAlbumName, album))
-        items.append(item(.iTunesMetadataMediaType, format.lowercased() == "m4b" ? "Audiobook" : "Audio"))
+
+        // iTunes `stik` (media kind). AVMetadataIdentifier has no MediaType member;
+        // value 2 = Audiobook, 1 = Normal/Music-style audio.
+        if format.lowercased() == "m4b" {
+            let mediaKind = AVMutableMetadataItem()
+            mediaKind.keySpace = .iTunes
+            mediaKind.key = "stik" as NSString
+            mediaKind.value = NSNumber(value: Int8(2))
+            mediaKind.dataType = kCMMetadataBaseDataType_SInt8 as String
+            mediaKind.extendedLanguageTag = "und"
+            items.append(mediaKind)
+        }
 
         // Embed chapter list as readable description for players that ignore QT chapter tracks.
         if format.lowercased() == "m4b", !chapterTitles.isEmpty {
@@ -299,6 +342,7 @@ public func auroraExportAudiobook(
         let paths = try? JSONDecoder().decode([String].self, from: pathsData),
         let titles = try? JSONDecoder().decode([String].self, from: titlesData)
     else {
+        AudiobookExporter.lastErrorMessage = "invalid JSON payloads"
         NSLog("[AudiobookExporter] invalid JSON payloads")
         return 1
     }
@@ -315,10 +359,27 @@ public func auroraExportAudiobook(
         )
         return 0
     } catch AuroraExportError.cancelled {
+        AudiobookExporter.lastErrorMessage = "cancelled"
         NSLog("[AudiobookExporter] cancelled")
         return 2
     } catch {
+        AudiobookExporter.lastErrorMessage = error.localizedDescription
         NSLog("[AudiobookExporter] error: %@", error.localizedDescription)
         return 3
+    }
+}
+
+/// UTF-8 C string of the last export failure; caller must free with `aurora_export_free_string`.
+@_cdecl("aurora_export_last_error")
+public func auroraExportLastError() -> UnsafeMutablePointer<CChar>? {
+    let msg = AudiobookExporter.lastErrorMessage
+    guard !msg.isEmpty else { return nil }
+    return strdup(msg)
+}
+
+@_cdecl("aurora_export_free_string")
+public func auroraExportFreeString(_ ptr: UnsafeMutablePointer<CChar>?) {
+    if let ptr {
+        free(ptr)
     }
 }

@@ -53,6 +53,8 @@ fn compile_ios_swift_bridges() {
     let sources = [
         ("NativePlayer", "NativePlayer.swift"),
         ("AudiobookExporter", "AudiobookExporter.swift"),
+        ("ExportFileWriter", "ExportFileWriter.swift"),
+        ("ShareExport", "ShareExport.swift"),
     ];
 
     for (lib_name, file_name) in sources {
