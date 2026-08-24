@@ -99,7 +99,8 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
       if (levelFilter !== "all" && log.level !== levelFilter) return false;
       return true;
     })
-    .toReversed();
+    .slice()
+    .reverse();
 
   const handleClear = () => {
     clearLogStore();

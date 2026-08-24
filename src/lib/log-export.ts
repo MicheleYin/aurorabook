@@ -16,7 +16,7 @@ export function formatLogsForExport(logs: LogEntry[] = getLogs()): string {
 }
 
 export function defaultLogFilename(): string {
-  return `aurorabook-logs-${new Date().toISOString().replaceAll(":", "-")}.txt`;
+  return `aurorabook-logs-${new Date().toISOString().replace(/:/g, "-")}.txt`;
 }
 
 /**
