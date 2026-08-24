@@ -2,8 +2,9 @@
 //!
 //! * **macOS** — write to a user-chosen path (save dialog on the frontend); email
 //!   opens a `.eml` draft in Mail with the full log file attached (no Swift link).
-//! * **iOS** — write under Documents/Exports; email uses MessageUI (or the share
-//!   sheet if Mail is not configured). Export presents the share sheet.
+//! * **iOS** — write under Documents/Exports; email uses MessageUI when Apple
+//!   Mail is configured, otherwise a `.eml` draft via the share sheet. Export
+//!   presents the share sheet for the raw log file.
 
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::path_resolver::ResourcePathResolver;

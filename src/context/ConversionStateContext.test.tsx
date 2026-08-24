@@ -70,8 +70,10 @@ describe("ConversionStateProvider", () => {
           "conversion-progress",
           "chapter-completed",
           "conversion-cancelled",
+          "conversion-paused-background",
           "background-task-expired",
           "background-task-completed",
+          "tauri://suspended",
         ])
       );
     });

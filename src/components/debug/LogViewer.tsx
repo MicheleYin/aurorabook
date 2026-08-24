@@ -19,7 +19,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
-import { ScrollArea } from "../ui/scroll-area";
 
 export type { LogEntry };
 
@@ -115,17 +114,23 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
-        <DialogHeader className="px-6 pt-6 pb-4 border-b shrink-0">
+      <DialogContent
+        scrollableBody={false}
+        className={cn(
+          "flex w-[calc(100%-1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0",
+          "h-[min(90dvh,100%)] max-h-[90dvh] sm:h-auto sm:max-h-[85vh]"
+        )}
+      >
+        <DialogHeader className="shrink-0 border-b px-4 pb-3 pt-5 pr-12 sm:px-6 sm:pt-6 sm:pb-4">
           <DialogTitle>Log Viewer</DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-left text-balance">
             Frontend and backend logs captured on this device. Defaults to
             errors so conversion failures are easy to spot.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="px-6 py-3 border-b space-y-3 shrink-0 bg-muted/30">
-          <div className="flex gap-2 flex-wrap items-center">
+        <div className="shrink-0 space-y-3 border-b bg-muted/30 px-4 py-3 sm:px-6">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <FilterGroup
               value={filter}
               onChange={setFilter}
@@ -145,11 +150,21 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
                 { value: "info", label: "Info" },
               ]}
             />
-            <div className="flex gap-2 ml-auto">
-              <Button variant="outline" size="sm" onClick={handleClear}>
+            <div className="flex w-full gap-2 sm:ml-auto sm:w-auto">
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1 sm:flex-none"
+                onClick={handleClear}
+              >
                 Clear
               </Button>
-              <Button variant="outline" size="sm" onClick={exportLogs}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1 sm:flex-none"
+                onClick={exportLogs}
+              >
                 Export
               </Button>
             </div>
@@ -160,10 +175,10 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
           </p>
         </div>
 
-        <ScrollArea className="flex-1 min-h-[45vh] max-h-[55vh]">
-          <div className="p-4 space-y-2 font-mono text-[13px] leading-snug">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]">
+          <div className="space-y-2 p-3 font-mono text-[13px] leading-snug sm:p-4">
             {filteredLogs.length === 0 ? (
-              <div className="text-muted-foreground text-center py-12 text-sm font-sans">
+              <div className="py-12 text-center font-sans text-sm text-muted-foreground">
                 No logs to display. Reproduce the issue, then open this viewer
                 again (or switch to All levels).
               </div>
@@ -172,38 +187,38 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
                 <article
                   key={`${log.timestamp}-${log.level}-${index}`}
                   className={cn(
-                    "rounded-md border border-border/40 border-l-4 px-3 py-2",
+                    "min-w-0 max-w-full overflow-hidden rounded-md border border-border/40 border-l-4 px-2.5 py-2 sm:px-3",
                     levelStyles(log.level)
                   )}
                 >
-                  <header className="flex items-center gap-2 flex-wrap mb-1.5">
+                  <header className="mb-1.5 flex flex-wrap items-center gap-1.5 sm:gap-2">
                     <time
                       dateTime={log.timestamp}
-                      className="text-[11px] tabular-nums text-muted-foreground font-sans"
+                      className="font-sans text-[11px] tabular-nums text-muted-foreground"
                     >
                       {formatTimestamp(log.timestamp)}
                     </time>
                     <Badge
                       variant="outline"
-                      className="text-[10px] h-5 px-1.5 font-sans uppercase tracking-wide"
+                      className="h-5 px-1.5 font-sans text-[10px] uppercase tracking-wide"
                     >
                       {log.source}
                     </Badge>
                     <Badge
                       variant="outline"
                       className={cn(
-                        "text-[10px] h-5 px-1.5 font-sans uppercase tracking-wide",
+                        "h-5 px-1.5 font-sans text-[10px] uppercase tracking-wide",
                         levelBadgeStyles(log.level)
                       )}
                     >
                       {log.level}
                     </Badge>
                   </header>
-                  <p className="whitespace-pre-wrap break-words text-[13px]">
+                  <p className="min-w-0 whitespace-pre-wrap break-all text-[12px] sm:text-[13px]">
                     {log.message}
                   </p>
                   {log.data != null && (
-                    <pre className="mt-2 rounded bg-black/40 px-2 py-1.5 text-[11px] opacity-90 overflow-x-auto">
+                    <pre className="mt-2 max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded bg-black/40 px-2 py-1.5 text-[11px] opacity-90">
                       {JSON.stringify(log.data, null, 2) || ""}
                     </pre>
                   )}
@@ -211,7 +226,7 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
               ))
             )}
           </div>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -227,13 +242,13 @@ function FilterGroup<T extends string>({
   options: ReadonlyArray<{ value: T; label: string; className?: string }>;
 }>) {
   return (
-    <div className="flex gap-1.5 flex-wrap">
+    <div className="flex min-w-0 flex-wrap gap-1.5">
       {options.map((option) => (
         <Button
           key={option.value}
           variant={value === option.value ? "default" : "outline"}
           size="sm"
-          className={cn("h-7 text-xs", option.className)}
+          className={cn("h-7 shrink-0 text-xs", option.className)}
           onClick={() => onChange(option.value)}
         >
           {option.label}

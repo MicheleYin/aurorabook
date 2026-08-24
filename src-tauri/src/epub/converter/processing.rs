@@ -636,6 +636,9 @@ async fn process_single_chunk(
         return Ok((Vec::new(), Vec::new(), String::new()));
     }
 
+    // Stop before ONNX/WebGPU when the app left the foreground (or user cancelled).
+    check_cancellation!(cancel_token);
+
     // Try processing the chunk
     let result = process_chunk_direct(&text, engine, worker_id, voice_id, language).await;
 

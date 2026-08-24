@@ -65,6 +65,10 @@ interface ConversionCancelledEvent {
   sourcePath: string;
 }
 
+interface ConversionPausedBackgroundEvent {
+  bookIds: string[];
+}
+
 export interface ConversionStateCallbacks {
   onConversionComplete?: (
     book: Book | null,
@@ -117,6 +121,8 @@ export function ConversionStateProvider({
   const estimationRef = useRef<Estimation | null>(null);
   /** Ensures ETA estimator is seeded once per run with session-relative totals. */
   const etaSessionSeededRef = useRef(false);
+  /** True when the latest cancel was triggered by leaving the iOS foreground. */
+  const pausedByBackgroundRef = useRef(false);
 
   // Store registered callbacks
   const callbacksRef = useRef<Set<ConversionStateCallbacks>>(new Set());
@@ -407,9 +413,24 @@ export function ConversionStateProvider({
             if (disposed) return;
             const { bookId } = event.payload;
             const toastId = progressToastIdRef.current;
+            const pausedByBackground = pausedByBackgroundRef.current;
+            pausedByBackgroundRef.current = false;
+
             if (toastId) {
-              toast.error("Conversion cancelled", { id: toastId });
+              if (pausedByBackground) {
+                toast.info(
+                  "Conversion paused — keep AuroraBook open while converting. Resume when you return.",
+                  { id: toastId, duration: 5000 }
+                );
+              } else {
+                toast.error("Conversion cancelled", { id: toastId });
+              }
               dismissLoadingToast(toastId);
+            } else if (pausedByBackground) {
+              toast.info(
+                "Conversion paused — keep AuroraBook open while converting. Resume when you return.",
+                { duration: 5000 }
+              );
             } else {
               toast.error("Conversion cancelled");
             }
@@ -451,6 +472,20 @@ export function ConversionStateProvider({
         );
         unlisteners.push(unCancelled);
 
+        const unPausedBackground = await listen<ConversionPausedBackgroundEvent>(
+          "conversion-paused-background",
+          (event) => {
+            if (disposed) return;
+            if (!event.payload.bookIds?.length) return;
+            pausedByBackgroundRef.current = true;
+            logger.log(
+              "Conversion paused because the app left the foreground:",
+              event.payload.bookIds
+            );
+          }
+        );
+        unlisteners.push(unPausedBackground);
+
         const unBgExpired = await listen<BackgroundJobLifecycle>(
           "background-task-expired",
           (event) => {
@@ -472,6 +507,48 @@ export function ConversionStateProvider({
           }
         );
         unlisteners.push(unBgCompleted);
+
+        // Backup pause paths for iOS: Tauri emits tauri://suspended on
+        // applicationWillResignActive; WKWebView also flips document.hidden.
+        const requestPauseForBackground = () => {
+          if (disposed) return;
+          void invoke("pause_conversions_for_background_command").catch(
+            (err) => {
+              logger.warn(
+                "Failed to pause conversions for background:",
+                err
+              );
+            }
+          );
+        };
+
+        const unSuspended = await listen("tauri://suspended", () => {
+          logger.log("tauri://suspended received; pausing conversions");
+          requestPauseForBackground();
+        });
+        unlisteners.push(unSuspended);
+
+        const onVisibilityChange = () => {
+          if (document.hidden) {
+            logger.log(
+              "document hidden; pausing conversions for background"
+            );
+            requestPauseForBackground();
+          }
+        };
+        const onPageHide = () => {
+          logger.log("pagehide; pausing conversions for background");
+          requestPauseForBackground();
+        };
+        document.addEventListener("visibilitychange", onVisibilityChange);
+        window.addEventListener("pagehide", onPageHide);
+        unlisteners.push(() => {
+          document.removeEventListener(
+            "visibilitychange",
+            onVisibilityChange
+          );
+          window.removeEventListener("pagehide", onPageHide);
+        });
       } catch (error) {
         logger.error("Failed to register conversion Tauri event listeners:", error);
       }

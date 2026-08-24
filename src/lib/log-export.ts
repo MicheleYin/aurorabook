@@ -50,7 +50,7 @@ export async function exportLogsToFile(
   return true;
 }
 
-/** Open Mail with the full log file attached (iOS MessageUI / macOS .eml draft). */
+/** Open Mail with the full log file attached (iOS MessageUI / .eml share; macOS .eml draft). */
 export async function emailLogsReport(options: {
   to: string;
   subject: string;
