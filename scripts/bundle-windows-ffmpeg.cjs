@@ -172,14 +172,22 @@ function stageBinary(sourceExe) {
   fs.copyFileSync(sourceExe, destFfmpeg);
 }
 
-function probeOrThrow(ffmpegPath, label) {
+function isCrossArchStage(stagedArch) {
+  if (process.platform !== "win32") return true;
+  const hostArm64 = process.arch === "arm64";
+  const stagingArm64 = stagedArch === "winarm64";
+  return hostArm64 !== stagingArm64;
+}
+
+function probeOrThrow(ffmpegPath, label, stagedArch) {
   // On non-Windows hosts we can still stage the .exe; probing may fail under Wine/qemu.
-  if (process.platform !== "win32") {
+  // On Windows, an x64 host cannot execute a staged ARM64 ffmpeg.exe (and vice versa).
+  if (process.platform !== "win32" || isCrossArchStage(stagedArch)) {
     if (!fs.existsSync(ffmpegPath) || fs.statSync(ffmpegPath).size === 0) {
       throw new Error(`${label}: staged binary missing or empty at ${ffmpegPath}`);
     }
     console.log(
-      `bundle-windows-ffmpeg: skipped -version probe on ${process.platform}; staged ${ffmpegPath}`
+      `bundle-windows-ffmpeg: skipped -version probe (${process.platform}/${process.arch}, staged ${stagedArch}); wrote ${path.relative(root, ffmpegPath)}`
     );
     return;
   }
@@ -217,14 +225,15 @@ async function downloadAndStage(arch) {
     throw new Error(`No ffmpeg.exe found inside ${zipName}`);
   }
   stageBinary(exe);
-  probeOrThrow(destFfmpeg, "downloaded build");
+  probeOrThrow(destFfmpeg, "downloaded build", arch);
 }
 
 async function main() {
+  const arch = resolveArch();
   const local = resolveLocalFfmpeg();
   if (local) {
     stageBinary(local);
-    probeOrThrow(destFfmpeg, "local ffmpeg");
+    probeOrThrow(destFfmpeg, "local ffmpeg", arch);
     console.log(
       "bundle-windows-ffmpeg: wrote",
       path.relative(root, destFfmpeg),
@@ -233,7 +242,6 @@ async function main() {
     return;
   }
 
-  const arch = resolveArch();
   await downloadAndStage(arch);
   console.log(
     "bundle-windows-ffmpeg: wrote",

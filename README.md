@@ -179,6 +179,15 @@ bun run build:windows
 bun run build:windows:arm64
 ```
 
+**Microsoft Store (local MSIX, Windows 11):** see [`src-tauri/signing/README.md`](src-tauri/signing/README.md).
+One-time `winapp init`, then:
+
+```powershell
+bun run build:windows:store:x64      # single-arch MSIX
+bun run build:windows:store:arm64
+# or both → bun run pack:windows:msix:bundle after staging each arch
+```
+
 Windows x86_64 uses the **WebGPU** ONNX Runtime EP (`webgpu_dawn.dll` and a
 redistributable `DirectML.dll` are installed **next to** `AuroraBook.exe`).
 Windows ARM64 uses **DirectML** only (`DirectML.dll` beside the exe via
