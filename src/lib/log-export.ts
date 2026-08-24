@@ -21,7 +21,7 @@ export function defaultLogFilename(): string {
 
 /**
  * Save the full log file using the same platform rules as book export:
- * - macOS: native save dialog, then write to the chosen path
+ * - macOS / Windows: native save dialog, then write to the chosen path
  * - iOS: write under Documents/Exports and present the share sheet
  */
 export async function exportLogsToFile(
@@ -50,7 +50,7 @@ export async function exportLogsToFile(
   return true;
 }
 
-/** Open Mail with the full log file attached (iOS MessageUI / .eml share; macOS .eml draft). */
+/** Open Mail with the full log file attached (iOS MessageUI / .eml share; desktop .eml draft). */
 export async function emailLogsReport(options: {
   to: string;
   subject: string;

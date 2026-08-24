@@ -1,7 +1,8 @@
 //! Export captured logs to a file and email them with a full attachment.
 //!
-//! * **macOS** — write to a user-chosen path (save dialog on the frontend); email
-//!   opens a `.eml` draft in Mail with the full log file attached (no Swift link).
+//! * **macOS / Windows** — export uses a native save dialog on the frontend, then
+//!   writes the chosen path. Email writes a `.eml` draft (to/subject/body + log
+//!   attachment) and opens it with the system default handler (Mail / Outlook).
 //! * **iOS** — write under Documents/Exports; email uses MessageUI when Apple
 //!   Mail is configured, otherwise a `.eml` draft via the share sheet. Export
 //!   presents the share sheet for the raw log file.
@@ -126,7 +127,7 @@ pub async fn email_logs_report(
         write_log_file(&log_path, &log_contents)?;
         let eml_path = temp_dir.join("aurorabook-bug-report.eml");
         write_eml_with_attachment(&eml_path, &to, &subject, &body, &file_name, &log_contents)?;
-        open_path_macos(&eml_path)?;
+        open_email_draft(&eml_path)?;
     }
 
     Ok(())
@@ -248,18 +249,13 @@ Content-Transfer-Encoding: base64\r\n\
     Ok(())
 }
 
+/// Open a `.eml` draft with the OS default mail / `.eml` handler (macOS Mail, Outlook, etc.).
 #[cfg(not(target_os = "ios"))]
-fn open_path_macos(path: &Path) -> AppResult<()> {
-    let status = std::process::Command::new("open")
-        .arg(path)
-        .status()
-        .map_err(|e| AppError::Store(format!("Failed to open email draft: {e}")))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(AppError::Store(format!(
-            "Failed to open email draft {} (status {status})",
+fn open_email_draft(path: &Path) -> AppResult<()> {
+    tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| {
+        AppError::Store(format!(
+            "Failed to open email draft {}: {e}",
             path.display()
-        )))
-    }
+        ))
+    })
 }
