@@ -76,7 +76,17 @@ describe("ChapterProgressProvider", () => {
   });
 
   it("toasts when chapter content is missing", async () => {
-    invoke.mockResolvedValueOnce(null);
+    // mockResolvedValueOnce is unsafe here: logger.info may invoke append_app_log first
+    // and consume the once-mock before load_chapter_content runs.
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_chapter_content") {
+        return null;
+      }
+      if (cmd === "update_book_progress" || cmd === "append_app_log") {
+        return undefined;
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
     const { result } = renderHook(() => useChapterProgressContext(), {
       wrapper,
     });
