@@ -350,9 +350,6 @@ pub fn run() {
                     e
                 })?;
 
-            // iOS 26+ continued processing (BGContinuedProcessingTaskRequest)
-            background::init_background_runtime(app.handle());
-
             // Native AVPlayer bridge — enables lock-screen controls on iOS
             native_player::init(app.handle());
 
@@ -393,9 +390,6 @@ pub fn run() {
             tts_commands::convert_pcm_to_mp3,
             epub::conversion_command::convert_epub_to_audiobook_command,
             epub::cancellation::cancel_conversion_command,
-            background::commands::background_capabilities,
-            background::commands::start_continued_conversion,
-            background::commands::cancel_continued_task,
             resources::read_resource_file,
             book_service::read_all_books,
             book_service::read_one_book,

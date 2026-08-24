@@ -50,13 +50,6 @@ pub async fn cancel_conversion_command(
         }
     }
 
-    // Cancel matching iOS continued-processing task if present.
-    if let Some(coord) = app.try_state::<crate::background::BackgroundCoordinator>() {
-        if let Some(task_id) = coord.task_id_for_book(&book_id) {
-            let _ = crate::background::cancel_continued_task(task_id, app.clone()).await;
-        }
-    }
-
     // Drop cached engines immediately on cancellation request.
     // In-flight tasks keep their own Arc references and can unwind safely.
     if let Err(e) = TtsEnginePool::clear_global() {

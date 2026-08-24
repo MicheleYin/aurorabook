@@ -189,6 +189,8 @@
   "faq.why_slow.a": "Text-to-speech conversion is computationally expensive. Generating high-quality audio from text requires significant processing power, especially for longer books. The app processes each chapter sequentially to ensure quality and manage system resources efficiently.",
   "faq.wait_completion.q": "Do I have to wait until everything is done?",
   "faq.wait_completion.a": "No! You can start listening as soon as the first chapter completes. The app allows you to begin playback while conversion continues in the background. You'll be able to listen to completed chapters while others are still being processed.",
+  "faq.foreground.q": "Does processing continue if I switch apps or lock the screen?",
+  "faq.foreground.a": "On iOS, the app must stay open in the foreground for conversion to continue reliably. If you switch to another app or lock the screen, iOS may suspend the app and pause or stop ongoing work. Keep AuroraBook visible on screen during long runs, and restart the conversion if it appears stalled after returning to the app.",
   "faq.can_stop.q": "Can I stop the conversion?",
   "faq.can_stop.a": "Yes, you can stop the conversion at any time and resume later. The app saves your progress, so when you restart, it will continue from where you left off. Any chapters that were already converted will remain available for playback.",
   "faq.audio_sync.q": "What is audio-text synchronization?",

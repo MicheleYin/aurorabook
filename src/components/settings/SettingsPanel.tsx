@@ -461,6 +461,17 @@ export function Settings() {
                   </AccordionContent>
                 </AccordionItem>
 
+                <AccordionItem value="foreground">
+                  <AccordionTrigger>
+                    {t("faq.foreground.q")}
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <p className="text-sm text-muted-foreground">
+                      {t("faq.foreground.a")}
+                    </p>
+                  </AccordionContent>
+                </AccordionItem>
+
                 <AccordionItem value="can-stop">
                   <AccordionTrigger>
                     {t("faq.can_stop.q")}

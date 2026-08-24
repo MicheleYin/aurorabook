@@ -11,7 +11,6 @@ import {
   emitTauriEvent,
   invoke,
   listen,
-  osType,
 } from "../test/tauri-mocks";
 
 vi.mock("../lib/i18n", () => ({
@@ -29,7 +28,6 @@ function wrapper({ children }: { children: ReactNode }) {
 
 describe("ConversionStateProvider", () => {
   beforeEach(() => {
-    osType.mockReturnValue("macos");
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "get_app_settings") {
         return { ttsVoiceId: "F1", ttsLanguage: "en" };
@@ -236,42 +234,6 @@ describe("ConversionStateProvider", () => {
     expect(toast.success).toHaveBeenCalled();
   });
 
-  it("starts continued processing on iOS when supported", async () => {
-    osType.mockReturnValue("ios");
-    invoke.mockImplementation(async (cmd: string) => {
-      if (cmd === "get_app_settings") {
-        return { ttsVoiceId: "F1", ttsLanguage: "en" };
-      }
-      if (cmd === "background_capabilities") {
-        return { supportsContinuedProcessing: true, isIos: true };
-      }
-      if (cmd === "start_continued_conversion") {
-        return {
-          jobId: "j1",
-          taskId: "t1",
-          bookId: "book-1",
-          continuedProcessing: true,
-        };
-      }
-      if (cmd === "convert_epub_to_audiobook_command") {
-        return null;
-      }
-      throw new Error(`Unexpected invoke: ${cmd}`);
-    });
-
-    const { result } = renderHook(() => useConversionState(), { wrapper });
-
-    await act(async () => {
-      await result.current.convertBook("book-1");
-    });
-
-    expect(invoke).toHaveBeenCalledWith(
-      "start_continued_conversion",
-      expect.objectContaining({ bookId: "book-1" })
-    );
-    expect(toast.message).toHaveBeenCalled();
-  });
-
   it("ignores duplicate convert requests for the same book", async () => {
     let resolveConvert: (value: null) => void = () => undefined;
     invoke.mockImplementation(async (cmd: string) => {
@@ -354,64 +316,6 @@ describe("ConversionStateProvider", () => {
       resolveConvert(null);
       await first;
     });
-  });
-
-  it("falls through when iOS continued processing is unsupported", async () => {
-    osType.mockReturnValue("ios");
-    invoke.mockImplementation(async (cmd: string) => {
-      if (cmd === "get_app_settings") {
-        return { ttsVoiceId: "F1", ttsLanguage: "en" };
-      }
-      if (cmd === "background_capabilities") {
-        return { supportsContinuedProcessing: false, isIos: true };
-      }
-      if (cmd === "convert_epub_to_audiobook_command") {
-        return null;
-      }
-      throw new Error(`Unexpected invoke: ${cmd}`);
-    });
-
-    const { result } = renderHook(() => useConversionState(), { wrapper });
-
-    await act(async () => {
-      await result.current.convertBook("book-1");
-    });
-
-    expect(invoke).not.toHaveBeenCalledWith(
-      "start_continued_conversion",
-      expect.anything()
-    );
-    expect(invoke).toHaveBeenCalledWith(
-      "convert_epub_to_audiobook_command",
-      expect.objectContaining({ bookId: "book-1" })
-    );
-  });
-
-  it("continues in-process when iOS background setup throws", async () => {
-    osType.mockReturnValue("ios");
-    invoke.mockImplementation(async (cmd: string) => {
-      if (cmd === "get_app_settings") {
-        return { ttsVoiceId: "F1", ttsLanguage: "en" };
-      }
-      if (cmd === "background_capabilities") {
-        throw new Error("bg unavailable");
-      }
-      if (cmd === "convert_epub_to_audiobook_command") {
-        return null;
-      }
-      throw new Error(`Unexpected invoke: ${cmd}`);
-    });
-
-    const { result } = renderHook(() => useConversionState(), { wrapper });
-
-    await act(async () => {
-      await result.current.convertBook("book-1");
-    });
-
-    expect(invoke).toHaveBeenCalledWith(
-      "convert_epub_to_audiobook_command",
-      expect.objectContaining({ bookId: "book-1" })
-    );
   });
 
   it("surfaces convert failures and clears converting state", async () => {
