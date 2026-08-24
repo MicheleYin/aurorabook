@@ -75,6 +75,15 @@ pub async fn init_db_connection(app: &AppHandle) -> Result<(), String> {
     
     // Initialize schema
     init_database_schema(&pool).await?;
+
+    // Drop logs older than 24h on every startup.
+    match crate::book_service::repositories::AppLogsRepository::cleanup(&pool).await {
+        Ok(removed) if removed > 0 => {
+            log::info!("Cleaned up {removed} expired app log row(s)");
+        }
+        Ok(_) => {}
+        Err(e) => log::warn!("Failed to cleanup app logs on startup: {e}"),
+    }
     
     // Store pool globally (wrap in Arc)
     let pool_arc = Arc::new(pool);
@@ -98,6 +107,11 @@ pub async fn get_db_connection(_app: &AppHandle) -> Result<Arc<SqlitePool>, Stri
     
     // Return the Arc directly to ensure all code uses the same shared connection pool
     Ok(pool_arc.clone())
+}
+
+/// Non-async access for log persistence from the `log` crate hook.
+pub fn try_get_db_pool() -> Option<Arc<SqlitePool>> {
+    DB_POOL.get().cloned()
 }
 
 
@@ -646,6 +660,24 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to create reader_preferences table: {}", e))?;
+
+    // In-app log viewer persistence (frontend + backend), auto-cleaned after 24h.
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS app_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            created_at_ms INTEGER NOT NULL,
+            level TEXT NOT NULL,
+            source TEXT NOT NULL,
+            message TEXT NOT NULL,
+            data TEXT
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create app_logs table: {}", e))?;
     
     // Create live_conversion_checkpoint table for persistence during conversion
     // Tracks state of live conversions so they can be resumed if cancelled
@@ -720,6 +752,8 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
         // Live sentence alignment indexes
         "CREATE INDEX IF NOT EXISTS idx_live_alignment_book_chapter ON live_sentence_alignment(book_id, chapter_index)",
         "CREATE INDEX IF NOT EXISTS idx_live_alignment_book_chapter_sentence ON live_sentence_alignment(book_id, chapter_index, sentence_index)",
+        // App logs
+        "CREATE INDEX IF NOT EXISTS idx_app_logs_created_at_ms ON app_logs(created_at_ms)",
     ];
     
     for index_sql in indexes {

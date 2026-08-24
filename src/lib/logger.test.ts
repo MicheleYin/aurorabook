@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { invoke } from "../test/tauri-mocks";
+
 type LoggerModule = typeof import("./logger");
 
 async function loadLogger(): Promise<LoggerModule> {
@@ -10,6 +12,10 @@ async function loadLogger(): Promise<LoggerModule> {
 describe("logger", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_app_logs") return [];
+      return undefined;
+    });
   });
 
   it("captures log entries and notifies subscribers", async () => {

@@ -9,6 +9,8 @@ import type { UITheme } from "../../types/ui";
 import type { TtsSynthesisQuality } from "../../types/settings";
 import { voiceMatchesTtsLanguage } from "../../constants/languages";
 import { KOKORO_VOICE_GROUPS, voiceSamplePathsToTry } from "../../constants/kokoro";
+import { SHOW_LOGS, SUPPORT_EMAIL } from "../../constants/support";
+import { emailLogsReport, exportLogsToFile } from "../../lib/log-export";
 import { logger } from "../../lib/logger";
 import { LogViewer } from "../debug/LogViewer";
 import { ThemeSwitcher } from "../ThemeSwitcher";
@@ -153,6 +155,24 @@ export function Settings() {
     },
     [saveSettings]
   );
+
+  const handleExportLogs = useCallback(() => {
+    void exportLogsToFile().catch((err) => {
+      logger.error("Failed to export logs:", err);
+    });
+  }, []);
+
+  const handleEmailSupport = useCallback(async () => {
+    try {
+      await emailLogsReport({
+        to: SUPPORT_EMAIL,
+        subject: t("faq.bug_report.email_subject"),
+        body: t("faq.bug_report.email_body", { version: appVersion }),
+      });
+    } catch (err) {
+      logger.error("Failed to open mail with logs:", err);
+    }
+  }, [appVersion, t]);
 
   const handleTtsQualityChange = useCallback(
     async (value: string) => {
@@ -397,20 +417,22 @@ export function Settings() {
                   {t("app.version")} {appVersion}
                 </p>
               </div>
-              <div className="flex flex-col gap-2">
-                <p className="font-medium">{t("settings.logs")}</p>
-                <p className="text-sm text-muted-foreground">
-                  {t("settings.logs_description")}
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-fit"
-                  onClick={() => setLogViewerOpen(true)}
-                >
-                  {t("settings.open_logs")}
-                </Button>
-              </div>
+              {SHOW_LOGS && (
+                <div className="flex flex-col gap-2">
+                  <p className="font-medium">{t("settings.logs")}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {t("settings.logs_description")}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-fit"
+                    onClick={() => setLogViewerOpen(true)}
+                  >
+                    {t("settings.open_logs")}
+                  </Button>
+                </div>
+              )}
               {isSaving && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
@@ -513,6 +535,40 @@ export function Settings() {
                     <p className="text-sm text-muted-foreground">
                       {t("faq.voice_selection.a")}
                     </p>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="bug-report">
+                  <AccordionTrigger>{t("faq.bug_report.q")}</AccordionTrigger>
+                  <AccordionContent className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      {t("faq.bug_report.a", { email: SUPPORT_EMAIL })}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleExportLogs}
+                      >
+                        {t("faq.bug_report.export_logs")}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setLogViewerOpen(true)}
+                      >
+                        {t("faq.bug_report.view_logs")}
+                      </Button>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => {
+                          void handleEmailSupport();
+                        }}
+                      >
+                        {t("faq.bug_report.email")}
+                      </Button>
+                    </div>
                   </AccordionContent>
                 </AccordionItem>
               </Accordion>

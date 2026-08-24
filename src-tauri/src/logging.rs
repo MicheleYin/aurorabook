@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::book_service::database::try_get_db_pool;
+use crate::book_service::models::AppLogEntry;
+use crate::book_service::repositories::AppLogsRepository;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
     pub timestamp: String,
@@ -26,8 +30,44 @@ pub fn init_log_forwarding(app: &AppHandle) {
         .ok();
 }
 
-/// Forward a log entry to the frontend
+fn iso_timestamp_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = duration.as_secs();
+    let millis = duration.subsec_millis();
+    let (year, month, day, hour, min, sec) = civil_utc_from_unix(secs);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}.{millis:03}Z")
+}
+
+/// Convert Unix seconds to UTC civil date/time without an external chrono crate.
+fn civil_utc_from_unix(secs: u64) -> (i32, u32, u32, u32, u32, u32) {
+    let day_secs = 86_400u64;
+    let days = (secs / day_secs) as i64;
+    let rem = (secs % day_secs) as u32;
+    let hour = rem / 3600;
+    let min = (rem % 3600) / 60;
+    let sec = rem % 60;
+
+    // Days from civil algorithm (Howard Hinnant).
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as i32, m as u32, d as u32, hour, min, sec)
+}
+
+/// Forward a log entry to the frontend and persist it in SQLite.
 fn forward_log(entry: LogEntry) {
+    persist_backend_log(&entry);
+
     if let Some(handle_arc) = APP_HANDLE.get() {
         if let Ok(handle_guard) = handle_arc.lock() {
             if let Some(app) = handle_guard.as_ref() {
@@ -43,25 +83,34 @@ fn forward_log(entry: LogEntry) {
     }
 }
 
+fn persist_backend_log(entry: &LogEntry) {
+    let Some(pool) = try_get_db_pool() else {
+        return;
+    };
+    let model = AppLogEntry {
+        timestamp: entry.timestamp.clone(),
+        level: entry.level.clone(),
+        source: entry.source.clone(),
+        message: entry.message.clone(),
+        data: entry.data.clone(),
+    };
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = AppLogsRepository::append(pool.as_ref(), &model).await {
+            // Avoid re-entering FrontendLogger via log:: macros.
+            eprintln!("[app_logs] failed to persist backend log: {e}");
+        }
+    });
+}
+
 /// Create a log entry and forward it to the in-app viewer.
 /// Debug builds: all levels. Release: warn + error only (device debugging).
 pub fn log(level: &str, message: &str, data: Option<serde_json::Value>) {
     if !cfg!(debug_assertions) && level != "error" && level != "warn" {
         return;
     }
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| {
-            let secs = d.as_secs();
-            let nanos = d.subsec_nanos();
-            format!("{secs}.{nanos:09}Z")
-        })
-        .unwrap_or_else(|_| "unknown".to_string());
 
     let entry = LogEntry {
-        timestamp,
+        timestamp: iso_timestamp_now(),
         level: level.to_string(),
         source: "backend".to_string(),
         message: message.to_string(),

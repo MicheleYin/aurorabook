@@ -201,7 +201,18 @@ fn default_tts_synthesis_quality() -> String {
     "balanced".to_string()
 }
 
-/// Reader preferences
+/// Persisted log row for the in-app log viewer (frontend + backend).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppLogEntry {
+    pub timestamp: String,
+    pub level: String,
+    pub source: String,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReaderPreferences {

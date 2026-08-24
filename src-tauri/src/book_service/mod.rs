@@ -6,6 +6,7 @@ pub mod audio_stream;
 pub mod epub_file_storage;
 pub mod mp3_export;
 pub mod ios_export;
+pub mod logs_export;
 
 pub use models::*;
 use filters::*;
@@ -1762,6 +1763,43 @@ pub async fn update_app_settings(
     SettingsRepository::save(db.as_ref(), &settings).await
         .map_err(|e| AppError::Store(e))?;
     Ok(settings)
+}
+
+/// Append one log entry to SQLite (frontend source).
+#[tauri::command]
+pub async fn append_app_log(
+    entry: AppLogEntry,
+    app: tauri::AppHandle,
+) -> AppResult<()> {
+    let db = get_db_connection(&app)
+        .await
+        .map_err(AppError::Store)?;
+    AppLogsRepository::append(db.as_ref(), &entry)
+        .await
+        .map_err(AppError::Store)
+}
+
+/// List persisted logs (after cleaning entries older than 24h).
+#[tauri::command]
+pub async fn list_app_logs(app: tauri::AppHandle) -> AppResult<Vec<AppLogEntry>> {
+    let db = get_db_connection(&app)
+        .await
+        .map_err(AppError::Store)?;
+    let _ = AppLogsRepository::cleanup(db.as_ref()).await;
+    AppLogsRepository::list(db.as_ref())
+        .await
+        .map_err(AppError::Store)
+}
+
+/// Clear all persisted logs.
+#[tauri::command]
+pub async fn clear_app_logs(app: tauri::AppHandle) -> AppResult<()> {
+    let db = get_db_connection(&app)
+        .await
+        .map_err(AppError::Store)?;
+    AppLogsRepository::clear(db.as_ref())
+        .await
+        .map_err(AppError::Store)
 }
 
 /// Get reader preferences
