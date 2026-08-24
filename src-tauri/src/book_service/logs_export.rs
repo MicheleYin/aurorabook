@@ -3,9 +3,8 @@
 //! * **macOS / Windows** — export uses a native save dialog on the frontend, then
 //!   writes the chosen path. Email writes a `.eml` draft (to/subject/body + log
 //!   attachment) and opens it with the system default handler (Mail / Outlook).
-//! * **iOS** — write under Documents/Exports; email uses MessageUI when Apple
-//!   Mail is configured, otherwise a `.eml` draft via the share sheet. Export
-//!   presents the share sheet for the raw log file.
+//! * **iOS** — export writes under Documents/Exports and presents the share sheet.
+//!   Email opens the default mail app via `mailto:` (no attachment).
 
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::path_resolver::ResourcePathResolver;
@@ -89,7 +88,7 @@ pub async fn export_logs_to_file(
     Ok(())
 }
 
-/// Open a bug-report email with the full log file attached.
+/// Open a bug-report email. Desktop attaches the full log file; iOS opens mailto only.
 #[tauri::command]
 pub async fn email_logs_report(
     app: tauri::AppHandle,
@@ -98,27 +97,20 @@ pub async fn email_logs_report(
     subject: String,
     body: String,
 ) -> AppResult<()> {
-    let file_name = default_log_filename();
-    let log_contents = if contents.is_empty() {
-        "(no logs captured)\n".to_string()
-    } else {
-        contents
-    };
-
     #[cfg(target_os = "ios")]
     {
-        let dest = crate::book_service::ios_export::resolve_ios_sandbox_export_path(
-            &app,
-            &file_name,
-            "aurorabook-logs",
-            "txt",
-        )?;
-        write_log_file(&dest, &log_contents)?;
-        compose_mail_ios(&to, &subject, &body, &dest)?;
+        let _ = contents;
+        open_mailto_ios(&app, &to, &subject, &body)?;
     }
 
     #[cfg(not(target_os = "ios"))]
     {
+        let file_name = default_log_filename();
+        let log_contents = if contents.is_empty() {
+            "(no logs captured)\n".to_string()
+        } else {
+            contents
+        };
         let temp_dir = app
             .path()
             .temp_dir()
@@ -133,68 +125,29 @@ pub async fn email_logs_report(
     Ok(())
 }
 
+/// Open the system default mail app with a prefilled draft (no attachment).
 #[cfg(target_os = "ios")]
-extern "C" {
-    fn aurora_compose_mail_with_attachment(
-        to: *const std::ffi::c_char,
-        subject: *const std::ffi::c_char,
-        body: *const std::ffi::c_char,
-        attachment_path: *const std::ffi::c_char,
-    ) -> i32;
-    fn aurora_compose_mail_last_error() -> *mut std::ffi::c_char;
-    fn aurora_compose_mail_free_string(ptr: *mut std::ffi::c_char);
-}
+fn open_mailto_ios(
+    app: &tauri::AppHandle,
+    to: &str,
+    subject: &str,
+    body: &str,
+) -> AppResult<()> {
+    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+    use tauri_plugin_opener::OpenerExt;
 
-#[cfg(target_os = "ios")]
-fn take_mail_last_error() -> Option<String> {
-    // SAFETY: Swift returns a strdup'd C string or null; we free with the paired helper.
-    // Codacy: audited Swift @_cdecl FFI — same bridge pattern as ios_export / native_player.
-    unsafe {
-        let ptr = aurora_compose_mail_last_error();
-        if ptr.is_null() {
-            return None;
-        }
-        let msg = std::ffi::CStr::from_ptr(ptr)
-            .to_string_lossy()
-            .into_owned();
-        aurora_compose_mail_free_string(ptr);
-        if msg.is_empty() {
-            None
-        } else {
-            Some(msg)
-        }
+    let safe_to = to.trim().replace(['\r', '\n'], "");
+    if safe_to.is_empty() {
+        return Err(AppError::Store("Support email address is empty".into()));
     }
-}
 
-#[cfg(target_os = "ios")]
-fn compose_mail_ios(to: &str, subject: &str, body: &str, attachment: &Path) -> AppResult<()> {
-    let c_to = std::ffi::CString::new(to)
-        .map_err(|_| AppError::Encoding("Mail 'to' contains NUL".into()))?;
-    let c_subject = std::ffi::CString::new(subject)
-        .map_err(|_| AppError::Encoding("Mail subject contains NUL".into()))?;
-    let c_body = std::ffi::CString::new(body)
-        .map_err(|_| AppError::Encoding("Mail body contains NUL".into()))?;
-    let c_path = std::ffi::CString::new(attachment.to_string_lossy().as_ref())
-        .map_err(|_| AppError::Encoding("Attachment path contains NUL".into()))?;
+    let subject_enc = utf8_percent_encode(subject, NON_ALPHANUMERIC).to_string();
+    let body_enc = utf8_percent_encode(body, NON_ALPHANUMERIC).to_string();
+    let mailto = format!("mailto:{safe_to}?subject={subject_enc}&body={body_enc}");
 
-    // SAFETY: CStrings live for the duration of the call; Swift only reads them.
-    // Codacy: audited Swift @_cdecl FFI — same bridge pattern as ios_export / native_player.
-    let code = unsafe {
-        aurora_compose_mail_with_attachment(
-            c_to.as_ptr(),
-            c_subject.as_ptr(),
-            c_body.as_ptr(),
-            c_path.as_ptr(),
-        )
-    };
-    if code == 0 {
-        return Ok(());
-    }
-    let detail =
-        take_mail_last_error().unwrap_or_else(|| format!("mail compose failed (code {code})"));
-    Err(AppError::Store(format!(
-        "Failed to compose bug-report email: {detail}"
-    )))
+    app.opener()
+        .open_url(&mailto, None::<&str>)
+        .map_err(|e| AppError::Store(format!("Failed to open default mail app: {e}")))
 }
 
 #[cfg(not(target_os = "ios"))]

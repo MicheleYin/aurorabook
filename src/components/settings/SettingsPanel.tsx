@@ -170,7 +170,7 @@ export function Settings() {
         body: t("faq.bug_report.email_body", { version: appVersion }),
       });
     } catch (err) {
-      logger.error("Failed to open mail with logs:", err);
+      logger.error("Failed to open mail:", err);
     }
   }, [appVersion, t]);
 

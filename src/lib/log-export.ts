@@ -50,16 +50,23 @@ export async function exportLogsToFile(
   return true;
 }
 
-/** Open Mail with the full log file attached (iOS MessageUI / .eml share; desktop .eml draft). */
+/**
+ * Open a bug-report email:
+ * - desktop: `.eml` draft with full logs attached
+ * - iOS: default mail app via `mailto:` (no attachment)
+ */
 export async function emailLogsReport(options: {
   to: string;
   subject: string;
   body: string;
   logs?: LogEntry[];
 }): Promise<void> {
-  const contents = formatLogsForExport(options.logs ?? getLogs());
+  const onIos = (await osType()) === "ios";
+  const contents = onIos
+    ? ""
+    : formatLogsForExport(options.logs ?? getLogs()) || "(no logs captured)\n";
   await invoke("email_logs_report", {
-    contents: contents || "(no logs captured)\n",
+    contents,
     to: options.to,
     subject: options.subject,
     body: options.body,

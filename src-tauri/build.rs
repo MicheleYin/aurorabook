@@ -55,7 +55,6 @@ fn compile_ios_swift_bridges() {
         ("AudiobookExporter", "AudiobookExporter.swift"),
         ("ExportFileWriter", "ExportFileWriter.swift"),
         ("ShareExport", "ShareExport.swift"),
-        ("MailCompose", "MailCompose.swift"),
     ];
 
     for (lib_name, file_name) in sources {
@@ -122,7 +121,7 @@ fn compile_ios_swift_bridges() {
         .expect("swift toolchain lib path");
     println!("cargo:rustc-link-search=native={}", toolchain_lib.display());
 
-    for framework in ["Foundation", "AVFoundation", "MediaPlayer", "UIKit", "MessageUI"] {
+    for framework in ["Foundation", "AVFoundation", "MediaPlayer", "UIKit"] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
 }
