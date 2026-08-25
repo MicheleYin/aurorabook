@@ -30,6 +30,7 @@ import {
   mimeTypeFromTrackHref,
   trackDisplayTitle,
 } from "../lib/audio-progress-utils";
+import { resolveUnfinishedChapterIndex } from "../lib/book-audio-duration";
 import { logger } from "../lib/logger";
 import { normalizeBook } from "../lib/normalize-book";
 import { useConversionState } from "./ConversionStateContext";
@@ -664,14 +665,18 @@ export function AudioProgressProvider({
         bookId: book.id,
       });
       const loadedBook = loadedBookRaw ? normalizeBook(loadedBookRaw) : null;
+      const bookForLoad = loadedBook || book;
 
       // Prefer saved completed-track progress, then the first completed track.
-      // Do not auto-select the live/converting chapter on open — users can pick
-      // it explicitly from the track list.
+      // When conversion is underway and no completed tracks exist yet (typical for
+      // the first text chapter), open the live converting chapter so playback is
+      // available before that chapter finishes. Once completed tracks exist, keep
+      // preferring those so opening a book does not jump to Live.
       if (!audioTrackToLoad && loadedBook?.audioState?.currentTrackId) {
         const savedTrackId = loadedBook.audioState.currentTrackId;
-        // Skip live-* saves so opening a converting book never jumps to the
-        // in-progress chapter; fall through to first completed track instead.
+        // Skip live-* saves so opening a converting book with completed tracks
+        // never jumps to the in-progress chapter; fall through to first completed
+        // track instead (or live below when nothing is completed yet).
         if (!savedTrackId.startsWith("live-")) {
           audioTrackToLoad =
             loadedBook.audioTracks.find(
@@ -707,6 +712,38 @@ export function AudioProgressProvider({
         audioTrackToLoad = loadedBook.audioTracks[0];
       }
 
+      if (!audioTrackToLoad && !(bookForLoad.audioTracks?.length > 0)) {
+        let convertingChapter = getCurrentConvertingChapter(bookForLoad.id);
+        if (convertingChapter === null) {
+          convertingChapter =
+            await refreshCurrentConvertingChapter(bookForLoad.id);
+        }
+        const unfinishedChapterIndex = resolveUnfinishedChapterIndex(
+          bookForLoad,
+          convertingChapter
+        );
+        const canOpenLive =
+          unfinishedChapterIndex !== null &&
+          (bookForLoad.conversionStatus === "started" ||
+            convertingChapter !== null ||
+            (bookForLoad.completedChapters?.length ?? 0) > 0);
+
+        if (canOpenLive && unfinishedChapterIndex !== null) {
+          const chapter = bookForLoad.chapters[unfinishedChapterIndex];
+          if (chapter) {
+            audioTrackToLoad = {
+              id: `live-${bookForLoad.id}-${unfinishedChapterIndex}`,
+              bookId: bookForLoad.id,
+              chapterHref: chapter.href,
+              filePath: chapter.href,
+              href: chapter.href,
+              title: chapter.title || `Chapter ${unfinishedChapterIndex + 1}`,
+              order: unfinishedChapterIndex,
+            };
+          }
+        }
+      }
+
       if (audioTrackToLoad) {
         logger.info("[audio-load-last] resolved track to load", {
           requestedBookId: book.id,
@@ -721,13 +758,13 @@ export function AudioProgressProvider({
           // Queue the desired resume time and auto-play intent for the live stream
           // effect before switching the current track.
           queueLivePlaybackRequest(
-            (loadedBook || book).audioState?.currentTimeSeconds ?? 0,
+            bookForLoad.audioState?.currentTimeSeconds ?? 0,
             autoPlayAudio
           );
         }
-        await loadAudioTrack(book.id, audioTrackToLoad, loadedBook || book);
+        await loadAudioTrack(book.id, audioTrackToLoad, bookForLoad);
         if (!isLiveTrack) {
-          restoreAudioProgress(loadedBook || book, audioTrackToLoad, autoPlayAudio);
+          restoreAudioProgress(bookForLoad, audioTrackToLoad, autoPlayAudio);
         }
         logger.log("loaded last opened audio track", audioTrackToLoad, book);
       } else {
@@ -752,7 +789,13 @@ export function AudioProgressProvider({
       setIsLoadingAudio(false);
     },
 
-    [loadAudioTrack, queueLivePlaybackRequest, restoreAudioProgress]
+    [
+      getCurrentConvertingChapter,
+      loadAudioTrack,
+      queueLivePlaybackRequest,
+      refreshCurrentConvertingChapter,
+      restoreAudioProgress,
+    ]
   );
 
   const closeAudioPlayer = useCallback(

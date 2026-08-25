@@ -929,7 +929,7 @@ describe("AudioProgressProvider", () => {
       expect(convertingChapterCalls).toBeGreaterThanOrEqual(2);
     });
 
-    it("does not auto-load the live chapter when opening a converting book with no completed tracks", async () => {
+    it("auto-loads the live chapter when opening a converting book with no completed tracks", async () => {
       const book = createBook({
         conversionStatus: "started",
         chapters: [
@@ -954,6 +954,9 @@ describe("AudioProgressProvider", () => {
         if (cmd === "read_one_book") {
           return book;
         }
+        if (cmd === "append_app_log") {
+          return undefined;
+        }
         throw new Error(`Unexpected invoke: ${cmd}`);
       });
 
@@ -963,7 +966,65 @@ describe("AudioProgressProvider", () => {
         await result.current.loadLastOpenedAudioTrack(book, false);
       });
 
-      expect(result.current.currentAudioTrack).toBeNull();
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "live-book-1-0",
+        isLiveStream: true,
+        liveChapterIndex: 0,
+        title: "Live Chapter",
+      });
+    });
+
+    it("auto-loads live for the first text chapter after empty completed chapters", async () => {
+      const book = createBook({
+        conversionStatus: "started",
+        completedChapters: ["cover.xhtml"],
+        chapters: [
+          {
+            id: "ch-cover",
+            bookId: "book-1",
+            title: "Cover",
+            href: "cover.xhtml",
+            chapterOrder: 0,
+          },
+          {
+            id: "ch-1",
+            bookId: "book-1",
+            title: "First Text",
+            href: "ch1.xhtml",
+            chapterOrder: 1,
+          },
+        ],
+        audioTracks: [],
+      });
+
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { audioPlaybackSpeed: 1 };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          return 1;
+        }
+        if (cmd === "read_one_book") {
+          return book;
+        }
+        if (cmd === "append_app_log") {
+          return undefined;
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+
+      await act(async () => {
+        await result.current.loadLastOpenedAudioTrack(book, false);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "live-book-1-1",
+        isLiveStream: true,
+        liveChapterIndex: 1,
+        title: "First Text",
+      });
     });
 
     it("loads saved completed-track progress while conversion is started", async () => {
