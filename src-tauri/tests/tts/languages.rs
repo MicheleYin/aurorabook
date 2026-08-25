@@ -1,16 +1,31 @@
 //! Smoke-test Supertonic TTS for every supported language code.
 //!
+//! Writes one WAV per language under `src-tauri/test_output/tts_all_languages/`.
+//!
 //! Run (with model assets present):
 //! ```text
 //! cargo test --test mod tts::languages::test_tts_works_for_all_supported_languages -- --ignored --nocapture
 //! ```
+
+use std::fs;
+use std::path::PathBuf;
 
 use aurorabook_lib::tts::supertonic::core::{is_valid_lang, AVAILABLE_LANGS};
 use aurorabook_lib::tts::supertonic::koko::{InitConfig, TTSKokoParallel};
 
 #[path = "../helpers.rs"]
 mod helpers;
-use helpers::{find_supertonic_onnx_dir, find_supertonic_voices_dir};
+use helpers::{find_supertonic_onnx_dir, find_supertonic_voices_dir, save_audio_as_wav};
+
+fn language_wav_output_dir() -> PathBuf {
+    // Prefer cwd (usually src-tauri when running cargo test); fall back to CARGO_MANIFEST_DIR.
+    let base = std::env::current_dir()
+        .ok()
+        .filter(|p| p.join("resources").exists() || p.ends_with("src-tauri"))
+        .or_else(|| std::env::var("CARGO_MANIFEST_DIR").ok().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("test_output").join("tts_all_languages")
+}
 
 /// Short native-script phrase per Supertonic language (aligned with `AVAILABLE_LANGS`).
 fn sample_text_for_lang(lang: &str) -> &'static str {
@@ -95,8 +110,12 @@ async fn test_tts_works_for_all_supported_languages() {
         }
     };
 
+    let out_dir = language_wav_output_dir();
+    fs::create_dir_all(&out_dir).expect("create WAV output directory");
+
     println!("📁 ONNX:   {}", onnx_dir.display());
     println!("📁 Voices: {}", voices_dir.display());
+    println!("💾 WAVs:   {}", out_dir.display());
     println!(
         "🎤 Synthesizing {} languages with voice F1 (fastest quality)…",
         AVAILABLE_LANGS.len()
@@ -115,7 +134,9 @@ async fn test_tts_works_for_all_supported_languages() {
     .expect("Supertonic TTS init");
 
     let voice_id = "F1";
+    let sample_rate = engine.sample_rate();
     let mut failures: Vec<String> = Vec::new();
+    let mut saved = 0usize;
 
     for (i, lang) in AVAILABLE_LANGS.iter().enumerate() {
         let text = sample_text_for_lang(lang);
@@ -138,8 +159,19 @@ async fn test_tts_works_for_all_supported_languages() {
                     println!("FAIL (silence)");
                     failures.push(format!("{lang}: audio is silence"));
                 } else {
-                    let secs = samples.len() as f32 / engine.sample_rate() as f32;
-                    println!("OK ({:.2}s, {} samples)", secs, samples.len());
+                    let wav_path = out_dir.join(format!("{lang}.wav"));
+                    let wav_str = wav_path.to_str().expect("utf-8 wav path");
+                    match save_audio_as_wav(&samples, sample_rate, wav_str) {
+                        Ok(()) => {
+                            let secs = samples.len() as f32 / sample_rate as f32;
+                            println!("OK ({:.2}s) → {}", secs, wav_path.display());
+                            saved += 1;
+                        }
+                        Err(e) => {
+                            println!("FAIL (write wav: {e})");
+                            failures.push(format!("{lang}: write wav: {e}"));
+                        }
+                    }
                 }
             }
             Err(e) => {
@@ -155,5 +187,10 @@ async fn test_tts_works_for_all_supported_languages() {
         failures.len(),
         failures.join("\n  - ")
     );
-    println!("✅ TTS works for all {} supported languages", AVAILABLE_LANGS.len());
+    println!(
+        "✅ TTS works for all {} supported languages; wrote {} WAVs to {}",
+        AVAILABLE_LANGS.len(),
+        saved,
+        out_dir.display()
+    );
 }

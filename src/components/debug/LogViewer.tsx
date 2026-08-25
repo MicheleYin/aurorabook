@@ -45,30 +45,30 @@ function formatTimestamp(iso: string): string {
 function levelStyles(level: LogEntry["level"]): string {
   switch (level) {
     case "error":
-      return "border-l-red-500 bg-red-500/10 text-red-100";
+      return "border-l-red-600 bg-red-50 text-red-950 dark:border-l-red-400 dark:bg-red-950/55 dark:text-red-50";
     case "warn":
-      return "border-l-amber-500 bg-amber-500/10 text-amber-100";
+      return "border-l-amber-600 bg-amber-50 text-amber-950 dark:border-l-amber-400 dark:bg-amber-950/55 dark:text-amber-50";
     case "info":
-      return "border-l-sky-500 bg-sky-500/10 text-sky-100";
+      return "border-l-sky-600 bg-sky-50 text-sky-950 dark:border-l-sky-400 dark:bg-sky-950/55 dark:text-sky-50";
     case "debug":
-      return "border-l-zinc-500 bg-zinc-500/10 text-zinc-300";
+      return "border-l-zinc-500 bg-zinc-100 text-zinc-900 dark:border-l-zinc-400 dark:bg-zinc-900/70 dark:text-zinc-100";
     default:
-      return "border-l-zinc-400 bg-zinc-500/5 text-zinc-200";
+      return "border-l-zinc-500 bg-zinc-50 text-zinc-900 dark:border-l-zinc-400 dark:bg-zinc-900/50 dark:text-zinc-100";
   }
 }
 
 function levelBadgeStyles(level: LogEntry["level"]): string {
   switch (level) {
     case "error":
-      return "border-red-500/40 text-red-300";
+      return "border-red-700/50 bg-red-100 text-red-800 dark:border-red-400/50 dark:bg-red-950/80 dark:text-red-200";
     case "warn":
-      return "border-amber-500/40 text-amber-300";
+      return "border-amber-700/50 bg-amber-100 text-amber-900 dark:border-amber-400/50 dark:bg-amber-950/80 dark:text-amber-200";
     case "info":
-      return "border-sky-500/40 text-sky-300";
+      return "border-sky-700/50 bg-sky-100 text-sky-900 dark:border-sky-400/50 dark:bg-sky-950/80 dark:text-sky-200";
     case "debug":
-      return "border-zinc-500/40 text-zinc-400";
+      return "border-zinc-600/50 bg-zinc-200 text-zinc-800 dark:border-zinc-400/50 dark:bg-zinc-800 dark:text-zinc-200";
     default:
-      return "border-zinc-500/30 text-zinc-300";
+      return "border-zinc-600/40 bg-zinc-100 text-zinc-800 dark:border-zinc-400/40 dark:bg-zinc-800 dark:text-zinc-200";
   }
 }
 
@@ -145,8 +145,16 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
               onChange={setLevelFilter}
               options={[
                 { value: "all", label: "All levels" },
-                { value: "error", label: "Errors", className: "text-red-400" },
-                { value: "warn", label: "Warnings", className: "text-amber-400" },
+                {
+                  value: "error",
+                  label: "Errors",
+                  className: "text-red-700 dark:text-red-300",
+                },
+                {
+                  value: "warn",
+                  label: "Warnings",
+                  className: "text-amber-800 dark:text-amber-300",
+                },
                 { value: "info", label: "Info" },
               ]}
             />
@@ -170,15 +178,15 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-foreground/70">
             Showing {filteredLogs.length} of {logs.length} · newest first
           </p>
         </div>
 
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-background [-webkit-overflow-scrolling:touch]">
           <div className="space-y-2 p-3 font-mono text-[13px] leading-snug sm:p-4">
             {filteredLogs.length === 0 ? (
-              <div className="py-12 text-center font-sans text-sm text-muted-foreground">
+              <div className="py-12 text-center font-sans text-sm text-foreground/70">
                 No logs to display. Reproduce the issue, then open this viewer
                 again (or switch to All levels).
               </div>
@@ -187,38 +195,38 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
                 <article
                   key={`${log.timestamp}-${log.level}-${index}`}
                   className={cn(
-                    "min-w-0 max-w-full overflow-hidden rounded-md border border-border/40 border-l-4 px-2.5 py-2 sm:px-3",
+                    "min-w-0 max-w-full overflow-hidden rounded-md border border-black/10 border-l-4 px-2.5 py-2 shadow-sm dark:border-white/15 sm:px-3",
                     levelStyles(log.level)
                   )}
                 >
                   <header className="mb-1.5 flex flex-wrap items-center gap-1.5 sm:gap-2">
                     <time
                       dateTime={log.timestamp}
-                      className="font-sans text-[11px] tabular-nums text-muted-foreground"
+                      className="font-sans text-[11px] font-medium tabular-nums text-current/70"
                     >
                       {formatTimestamp(log.timestamp)}
                     </time>
                     <Badge
                       variant="outline"
-                      className="h-5 px-1.5 font-sans text-[10px] uppercase tracking-wide"
+                      className="h-5 border-current/25 bg-white/60 px-1.5 font-sans text-[10px] uppercase tracking-wide text-current dark:bg-black/30"
                     >
                       {log.source}
                     </Badge>
                     <Badge
                       variant="outline"
                       className={cn(
-                        "h-5 px-1.5 font-sans text-[10px] uppercase tracking-wide",
+                        "h-5 px-1.5 font-sans text-[10px] font-semibold uppercase tracking-wide",
                         levelBadgeStyles(log.level)
                       )}
                     >
                       {log.level}
                     </Badge>
                   </header>
-                  <p className="min-w-0 whitespace-pre-wrap break-all text-[12px] sm:text-[13px]">
+                  <p className="min-w-0 whitespace-pre-wrap break-all text-[12px] font-medium sm:text-[13px]">
                     {log.message}
                   </p>
                   {log.data != null && (
-                    <pre className="mt-2 max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded bg-black/40 px-2 py-1.5 text-[11px] opacity-90">
+                    <pre className="mt-2 max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded border border-black/10 bg-white/80 px-2 py-1.5 text-[11px] text-current dark:border-white/15 dark:bg-black/40">
                       {JSON.stringify(log.data, null, 2) || ""}
                     </pre>
                   )}
