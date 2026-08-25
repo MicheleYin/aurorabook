@@ -64,6 +64,35 @@ When prompted, align identity with Partner Center:
 
 Copy Store logo assets from `src-tauri/icons/` into `Assets/` if `winapp init` did not populate them (see `scripts/generate-icons.sh` for Windows Store sizes).
 
+**Automated sync (recommended):** before every MSIX pack, run:
+
+```powershell
+node scripts/generate-wide-tile.cjs   # once, or after icon changes
+node scripts/sync-windows-store-assets.cjs
+```
+
+Store build scripts (`build:windows:store:*`) and `pack:windows:msix*` call the sync script automatically. It copies:
+
+| `Assets/` (manifest) | Source |
+|----------------------|--------|
+| `StoreLogo.png` | `src-tauri/icons/StoreLogo.png` (50×50) |
+| `AppList.png` | `src-tauri/icons/Square44x44Logo.png` (44×44) |
+| `MedTile.png` | `src-tauri/icons/Square150x150Logo.png` (150×150) |
+| `WideTile.png` | `src-tauri/icons/Wide310x150Logo.png` (**310×150**, not Square310x310) |
+
+If `Wide310x150Logo.png` is missing, run `node scripts/generate-wide-tile.cjs` first.
+
+### Pre-submission checklist (tile icons / policy 10.1.1.11)
+
+Before uploading to Partner Center:
+
+1. **Generate wide tile** (if icons changed): `node scripts/generate-wide-tile.cjs`
+2. **Sync assets**: `node scripts/sync-windows-store-assets.cjs` (must pass with no errors)
+3. **Build MSIX**: `bun run build:windows:store:x64` (and arm64 / bundle if needed)
+4. **Verify package contents**: rename `.msix` → `.zip`, extract, confirm `Assets/` has all four PNGs with correct sizes (50, 44, 150, 310×150)
+5. **Local smoke test** (optional): install signed MSIX, pin to Start, confirm AuroraBook branding appears (not the gray default placeholder)
+6. **Bump version** in `Package.appxmanifest` above any previously submitted package (keep in sync with `src-tauri/tauri.conf.json`)
+
 Optional: keep a personal copy of env-specific values in `LOCAL_WINDOWS_STORE_BUILD.md` (gitignored).
 
 ### Local dev certificate (testing only)
@@ -118,7 +147,7 @@ bun run build:windows:store:arm64
 bun run pack:windows:msix:bundle
 ```
 
-Each arch script: stages FFmpeg/DirectML → `tauri build --no-bundle` → stages `msix-layout/` → runs `winapp pack`.
+Each arch script: stages FFmpeg/DirectML → `tauri build --no-bundle` → stages `msix-layout/` → syncs Store tile assets → runs `winapp pack`.
 
 ### What gets staged
 
