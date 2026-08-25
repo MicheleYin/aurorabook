@@ -1046,7 +1046,7 @@ async fn export_as_mp4(
         if crate::book_service::ios_export::ios_export_cancel_requested() {
             return Err(AppError::Encoding("Audio export cancelled".to_string()));
         }
-        match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &book_id, &track.id).await {
+        match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &app, &book_id, &track.id).await {
             Ok(Some((audio_bytes, href))) => {
                 emit_progress(
                     &app,
@@ -1259,7 +1259,7 @@ pub async fn export_as_mp3(
         if crate::book_service::ios_export::ios_export_cancel_requested() {
             return Err(AppError::Encoding("Audio export cancelled".to_string()));
         }
-        match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &book_id, &track.id).await {
+        match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &app, &book_id, &track.id).await {
             Ok(Some((audio_bytes, href))) => {
                 emit_progress(
                     &app,

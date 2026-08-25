@@ -3,6 +3,9 @@
 //! App Sandbox (signed Mac App Store) grants read/write inside the container without extra
 //! file entitlements. Using `document_dir` here caused sandbox denials for playback of EPUBs
 //! copied at ingest when the webview loads `http://localhost:…` audio URLs.
+//!
+//! DB rows store a **relative** key (`Library/{book_id}/book.epub`) so container UUID / path
+//! changes across TestFlight updates do not break opens. Absolute legacy paths are remapped.
 
 use std::fs::File;
 use std::io::Read;
@@ -10,6 +13,11 @@ use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 use tauri::Manager;
 use zip::ZipArchive;
+
+/// Relative path stored in `epub_data.file_path` (resolved against `app_data_dir`).
+pub fn relative_library_epub_key(book_id: &str) -> String {
+    format!("Library/{}/book.epub", book_id)
+}
 
 /// `Application Support/<bundle-id>/Library` (same root family as `library.db`).
 pub fn resolve_library_root(app: &AppHandle) -> Result<PathBuf, String> {
@@ -20,6 +28,12 @@ pub fn resolve_library_root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(base.join("Library"))
 }
 
+fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data directory: {}", e))
+}
+
 /// Per-book directory containing `book.epub`.
 pub fn library_epub_path(app: &AppHandle, book_id: &str) -> Result<PathBuf, String> {
     Ok(resolve_library_root(app)?.join(book_id).join("book.epub"))
@@ -28,6 +42,96 @@ pub fn library_epub_path(app: &AppHandle, book_id: &str) -> Result<PathBuf, Stri
 /// Per-book directory under the app Library root (`Library/<book_id>/`).
 pub fn library_book_dir(app: &AppHandle, book_id: &str) -> Result<PathBuf, String> {
     Ok(resolve_library_root(app)?.join(book_id))
+}
+
+/// Legacy location used before the sandbox path fix (`Documents/AuroraBook/Library/...`).
+pub fn legacy_documents_epub_path(app: &AppHandle, book_id: &str) -> Result<PathBuf, String> {
+    let docs = app
+        .path()
+        .document_dir()
+        .map_err(|e| format!("Failed to resolve document directory: {}", e))?;
+    Ok(docs
+        .join("AuroraBook")
+        .join("Library")
+        .join(book_id)
+        .join("book.epub"))
+}
+
+/// If `stored` embeds `Library/{book_id}/book.epub`, remap onto the current `app_data_dir`
+/// (handles iOS container UUID changes across updates without matching macOS's
+/// `.../Library/Application Support/...` segment).
+fn remap_library_suffix_to_app_data(
+    app: &AppHandle,
+    stored: &str,
+    book_id: &str,
+) -> Option<PathBuf> {
+    let relative = relative_library_epub_key(book_id);
+    let normalized = stored.replace('\\', "/");
+    let marker = format!("/{}", relative);
+    if normalized.ends_with(&relative) || normalized.contains(&marker) {
+        return app_data_dir(app).ok().map(|base| base.join(relative));
+    }
+    None
+}
+
+/// Resolve an on-disk EPUB for `book_id`, trying stored path (relative or absolute), remapped
+/// container paths, the canonical library location, then the legacy Documents location.
+pub fn resolve_epub_file(
+    app: &AppHandle,
+    book_id: &str,
+    stored: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(raw) = stored.map(str::trim).filter(|s| !s.is_empty()) {
+        let path = Path::new(raw);
+        if path.is_absolute() {
+            candidates.push(path.to_path_buf());
+            if let Some(remapped) = remap_library_suffix_to_app_data(app, raw, book_id) {
+                candidates.push(remapped);
+            }
+        } else {
+            candidates.push(app_data_dir(app)?.join(raw));
+        }
+    }
+
+    candidates.push(library_epub_path(app, book_id)?);
+    if let Ok(legacy) = legacy_documents_epub_path(app, book_id) {
+        candidates.push(legacy);
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    for candidate in candidates {
+        let key = candidate.to_string_lossy().to_string();
+        if !seen.insert(key) {
+            continue;
+        }
+        if candidate.is_file() {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(None)
+}
+
+/// Copy a legacy Documents EPUB into the canonical library location when needed.
+pub fn ensure_canonical_epub_copy(app: &AppHandle, book_id: &str, source: &Path) -> Result<PathBuf, String> {
+    let dest = library_epub_path(app, book_id)?;
+    if source == dest.as_path() {
+        return Ok(dest);
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create library dir {:?}: {}", parent, e))?;
+    }
+    if !dest.is_file() {
+        std::fs::copy(source, &dest).map_err(|e| {
+            format!(
+                "Failed to copy EPUB from {:?} to {:?}: {}",
+                source, dest, e
+            )
+        })?;
+    }
+    Ok(dest)
 }
 
 /// Per-chapter temporary sentence audio directory under `Library/<book_id>/live-audio/`.

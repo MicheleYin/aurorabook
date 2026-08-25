@@ -116,7 +116,7 @@ async fn cache_track_file(
 
     let db = get_db_connection(app).await.map_err(AppError::Store)?;
     let Some((bytes, href)) =
-        AudioRepository::resolve_track_audio_bytes(db.as_ref(), book_id, track_id)
+        AudioRepository::resolve_track_audio_bytes(db.as_ref(), app, book_id, track_id)
             .await
             .map_err(AppError::Store)?
     else {

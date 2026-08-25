@@ -155,14 +155,20 @@ impl AudioRepository {
         }
     }
 
-    pub async fn can_stream_track(pool: &SqlitePool, book_id: &str, track_id: &str) -> Result<bool, String> {
+    pub async fn can_stream_track(
+        pool: &SqlitePool,
+        app: &tauri::AppHandle,
+        book_id: &str,
+        track_id: &str,
+    ) -> Result<bool, String> {
         match Self::find_data_by_id(pool, book_id, track_id).await? {
             None => Ok(false),
             Some((Some(_), _)) => Ok(true),
             Some((None, _)) => {
-                let fp =
-                    crate::book_service::repositories::EpubRepository::file_path_for_book_id(pool, book_id)
-                        .await?;
+                let fp = crate::book_service::repositories::EpubRepository::file_path_for_book_id(
+                    pool, app, book_id,
+                )
+                .await?;
                 Ok(fp
                     .map(|p| std::path::Path::new(&p).is_file())
                     .unwrap_or(false))
@@ -173,6 +179,7 @@ impl AudioRepository {
     /// Load full audio bytes: SQLite blob if present, else read from canonical EPUB on disk.
     pub async fn resolve_track_audio_bytes(
         pool: &SqlitePool,
+        app: &tauri::AppHandle,
         book_id: &str,
         track_id: &str,
     ) -> Result<Option<(Vec<u8>, String)>, String> {
@@ -182,8 +189,10 @@ impl AudioRepository {
         if let Some(b) = blob {
             return Ok(Some((b, href)));
         }
-        let Some(fp) =
-            crate::book_service::repositories::EpubRepository::file_path_for_book_id(pool, book_id).await?
+        let Some(fp) = crate::book_service::repositories::EpubRepository::file_path_for_book_id(
+            pool, app, book_id,
+        )
+        .await?
         else {
             return Ok(None);
         };
