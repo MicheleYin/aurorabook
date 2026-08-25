@@ -84,6 +84,16 @@ pub async fn init_db_connection(app: &AppHandle) -> Result<(), String> {
         Ok(_) => {}
         Err(e) => log::warn!("Failed to cleanup app logs on startup: {e}"),
     }
+
+    // Re-link absolute/stale EPUB paths and recover legacy Documents copies.
+    match crate::book_service::repositories::EpubRepository::repair_epub_file_links(&pool, app).await
+    {
+        Ok(repaired) if repaired > 0 => {
+            log::info!("Repaired {repaired} EPUB library link(s) on startup");
+        }
+        Ok(_) => {}
+        Err(e) => log::warn!("Failed to repair EPUB library links on startup: {e}"),
+    }
     
     // Store pool globally (wrap in Arc)
     let pool_arc = Arc::new(pool);

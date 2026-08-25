@@ -352,7 +352,7 @@ pub async fn load_chapter_content(
     };
 
     // Load chapter HTML directly from canonical EPUB.
-    let epub_data = EpubRepository::find_by_book_id(db.as_ref(), &book_id)
+    let epub_data = EpubRepository::find_by_book_id(db.as_ref(), &app, &book_id)
         .await
         .map_err(AppError::Store)?
         .ok_or_else(|| AppError::Store(format!("No EPUB data found for book {}", book_id)))?;
@@ -1026,7 +1026,7 @@ pub async fn load_epub_audio(
     
     log::debug!("Trying to load audio track '{}' for book '{}'", track_id, book_id);
     
-    match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &book_id, &track_id).await {
+    match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &app, &book_id, &track_id).await {
         Ok(Some((audio_data, href))) => {
             let mime_type = detect_audio_mime_type(&href, &href);
             let data_url = create_data_url(&mime_type, &audio_data);
@@ -1058,7 +1058,7 @@ pub async fn load_epub_audio_bytes(
     
     log::debug!("Trying to load audio track bytes '{}' for book '{}'", track_id, book_id);
     
-    match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &book_id, &track_id).await {
+    match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &app, &book_id, &track_id).await {
         Ok(Some((audio_data, href))) => {
             let mime_type = detect_audio_mime_type(&href, &href);
             log::info!("✓ Found audio track bytes '{}' (href: '{}', {} bytes, type: {})", 
@@ -1092,7 +1092,7 @@ pub async fn load_epub_chapter_bytes(
         chapter_href, book_id, unique_variations.len());
     
     // Resolve chapter metadata, then load chapter HTML from EPUB bytes.
-    let epub_data = EpubRepository::find_by_book_id(db.as_ref(), &book_id)
+    let epub_data = EpubRepository::find_by_book_id(db.as_ref(), &app, &book_id)
         .await
         .map_err(AppError::Store)?
         .ok_or_else(|| AppError::Store(format!("No EPUB data found for book {}", book_id)))?;
@@ -1265,8 +1265,9 @@ pub async fn get_epub_buffer(
     use repositories::EpubRepository;
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
-    EpubRepository::find_by_source_path(db.as_ref(), &source_path).await
-        .map_err(|e| AppError::Store(e))
+    EpubRepository::find_by_source_path(db.as_ref(), &app, &source_path)
+        .await
+        .map_err(AppError::Store)
 }
 
 /// Export EPUB file directly to disk (optimized for large files)
@@ -1287,7 +1288,7 @@ pub async fn export_epub_to_file(
         .map_err(AppError::Store)?;
 
     // Get EPUB data from database by book_id
-    let epub_data = EpubRepository::find_by_book_id(db.as_ref(), &book_id)
+    let epub_data = EpubRepository::find_by_book_id(db.as_ref(), &app, &book_id)
         .await
         .map_err(AppError::Store)?
         .ok_or_else(|| AppError::Store("EPUB not found in store".to_string()))?;
@@ -1630,9 +1631,14 @@ pub async fn ingest_epub(
     if src_pb != library_epub.as_path() {
         fs::copy(src_pb, &library_epub).map_err(|e| AppError::Io(e))?;
     }
-    let library_epub_str = library_epub.to_str().ok_or_else(|| {
-        AppError::Store("Library EPUB path is not valid UTF-8".to_string())
-    })?;
+    if !library_epub.is_file() {
+        return Err(AppError::Store(format!(
+            "Canonical EPUB missing after ingest copy: {}",
+            library_epub.display()
+        )));
+    }
+    let relative_library_key =
+        crate::book_service::epub_file_storage::relative_library_epub_key(&book_id);
 
     // Derive title from path if not available
     let title = metadata.title
@@ -1711,18 +1717,27 @@ pub async fn ingest_epub(
     BookRepository::save(db.as_ref(), &book).await
         .map_err(|e| AppError::Store(e))?;
     
-    // Store EPUB reference (file in app container Library/; no BLOB duplicate)
+    // Store EPUB reference as a relative library key (survives container path changes).
     use repositories::EpubRepository;
     log::info!(
-        "Registering canonical EPUB at {} ({} bytes)",
-        library_epub_str,
+        "Registering canonical EPUB at {} -> {} ({} bytes)",
+        library_epub.display(),
+        relative_library_key,
         epub_data_arc.len()
     );
-    if let Err(e) = EpubRepository::save_file_backed(db.as_ref(), &source_path, &book_id, library_epub_str).await {
-        log::error!("Failed to register canonical EPUB: {}", e);
-    } else {
-        log::debug!("Canonical EPUB registered successfully");
+    if let Err(e) =
+        EpubRepository::save_file_backed(db.as_ref(), &source_path, &book_id, &relative_library_key)
+            .await
+    {
+        log::error!("Failed to register canonical EPUB for {}: {}", book_id, e);
+        let _ = BookRepository::delete(db.as_ref(), &book_id).await;
+        let _ = crate::book_service::epub_file_storage::remove_book_library_dir(&app, &book_id);
+        return Err(AppError::Store(format!(
+            "Failed to register canonical EPUB for book {}: {}",
+            book_id, e
+        )));
     }
+    log::debug!("Canonical EPUB registered successfully");
     
     log::info!("Skipping chapter HTML/image persistence during ingest (EPUB-backed lazy loading enabled)");
     

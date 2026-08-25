@@ -1259,7 +1259,7 @@ pub async fn get_audio_stream_url(
         .await
         .map_err(|e| AppError::Store(e))?;
 
-    let can = AudioRepository::can_stream_track(db.as_ref(), &book_id, &track_id)
+    let can = AudioRepository::can_stream_track(db.as_ref(), &app, &book_id, &track_id)
         .await
         .map_err(|e| AppError::Store(e))?;
 
@@ -1561,7 +1561,8 @@ async fn handle_audio_stream(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let (audio_data, href) = AudioRepository::resolve_track_audio_bytes(db.as_ref(), &book_id, &track_id)
+    let (audio_data, href) =
+        AudioRepository::resolve_track_audio_bytes(db.as_ref(), &*app, &book_id, &track_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -1596,7 +1597,8 @@ async fn handle_epub_resource(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let Some(epub_file_path) = EpubRepository::file_path_for_book_id(db.as_ref(), &query.book_id)
+    let Some(epub_file_path) =
+        EpubRepository::file_path_for_book_id(db.as_ref(), &*app, &query.book_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     else {

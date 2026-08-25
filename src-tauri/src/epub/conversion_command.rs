@@ -176,8 +176,9 @@ async fn load_epub_with_fallback(app: &AppHandle, source_path: &str) -> AppResul
         .await
         .map_err(|e| AppError::Store(format!("Failed to connect to database: {}", e)))?;
 
-    // Try to load from database first
-    if let Ok(Some(epub_data)) = EpubRepository::find_by_source_path(db.as_ref(), source_path).await
+    // Try to load from database / canonical library first
+    if let Ok(Some(epub_data)) =
+        EpubRepository::find_by_source_path(db.as_ref(), app, source_path).await
     {
         log::info!("Loaded EPUB from database: {} bytes", epub_data.len());
 
