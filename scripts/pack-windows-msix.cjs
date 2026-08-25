@@ -18,6 +18,15 @@ const { spawnSync } = require("child_process");
 
 const root = path.join(__dirname, "..");
 
+function syncStoreAssets() {
+  const syncScript = path.join(__dirname, "sync-windows-store-assets.cjs");
+  const result = spawnSync(process.execPath, [syncScript], {
+    stdio: "inherit",
+    cwd: root,
+  });
+  if (result.status !== 0) process.exit(result.status ?? 1);
+}
+
 function hasArg(name) {
   return process.argv.includes(name);
 }
@@ -110,4 +119,5 @@ if (cert) {
   console.log("pack-windows-msix: unsigned (OK for Microsoft Store submission)");
 }
 
+syncStoreAssets();
 runWinapp(args);

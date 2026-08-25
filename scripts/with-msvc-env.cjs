@@ -14,8 +14,12 @@ const {
   findVsInstallRoot,
   vcvarsallPath,
   resolveVcvarsProfile,
+  resolveVcvarsBatchProfile,
   clPathForProfile,
   clOnPath,
+  needsVcvarsForTarget,
+  arm64CrossCompileLibPaths,
+  arm64CrossLinkPath,
   parseRustTargetFromArgs,
   msvcPrereqMessage,
 } = require("./resolve-msvc-env.cjs");
@@ -61,8 +65,23 @@ function main() {
 
   const { rustTarget, cmd } = parseArgs(process.argv.slice(2));
   const profile = resolveVcvarsProfile(rustTarget);
+  const batchProfile = resolveVcvarsBatchProfile(rustTarget);
+  const installRoot = findVsInstallRoot();
+  const vcvars = installRoot ? vcvarsallPath(installRoot) : null;
+  const cl = installRoot ? clPathForProfile(installRoot, profile) : null;
+  const arm64Linker =
+    installRoot && profile === "x64_arm64"
+      ? arm64CrossLinkPath(installRoot)
+      : null;
+  const arm64LibPaths =
+    installRoot && profile === "x64_arm64"
+      ? arm64CrossCompileLibPaths(installRoot)
+      : [];
 
-  if (clOnPath()) {
+  // Cross-compiling to ARM64 needs vcvarsall so LIB includes arm64 libs for the final link.
+  const skipVcvars = clOnPath() && !needsVcvarsForTarget(rustTarget);
+
+  if (skipVcvars) {
     const result = spawnSync(cmd[0], cmd.slice(1), {
       stdio: "inherit",
       cwd: path.join(__dirname, ".."),
@@ -70,10 +89,6 @@ function main() {
     });
     process.exit(result.status === null ? 1 : result.status);
   }
-
-  const installRoot = findVsInstallRoot();
-  const vcvars = installRoot ? vcvarsallPath(installRoot) : null;
-  const cl = installRoot ? clPathForProfile(installRoot, profile) : null;
 
   if (!vcvars || !cl) {
     console.error(msvcPrereqMessage(rustTarget));
@@ -83,17 +98,34 @@ function main() {
   const root = path.join(__dirname, "..");
   const commandLine = cmd.map(quoteCmd).join(" ");
   const tmpBat = path.join(os.tmpdir(), `aurorabook-msvc-${process.pid}.cmd`);
-  const batContents = [
+  let arm64LinkWrapper = null;
+  if (arm64Linker && arm64LibPaths.length > 0) {
+    arm64LinkWrapper = path.join(os.tmpdir(), `aurorabook-arm64-link-${process.pid}.cmd`);
+    const wrapperContents = [
+      "@echo off",
+      `set "LIB=${arm64LibPaths.join(";")};%LIB%"`,
+      `"${arm64Linker}" %*`,
+    ].join("\r\n");
+    fs.writeFileSync(arm64LinkWrapper, wrapperContents, "utf8");
+  }
+
+  const batLines = [
     "@echo off",
-    `call "${vcvars}" ${profile}`,
+    `call "${vcvars}" ${batchProfile}`,
     "if errorlevel 1 exit /b 1",
-    `cd /d "${root}"`,
-    commandLine,
-  ].join("\r\n");
+  ];
+  if (arm64LinkWrapper) {
+    batLines.push(`set "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER=${arm64LinkWrapper}"`);
+  }
+  batLines.push(`cd /d "${root}"`, commandLine);
+  const batContents = batLines.join("\r\n");
 
   fs.writeFileSync(tmpBat, batContents, "utf8");
 
-  console.log(`with-msvc-env: vcvarsall ${profile} → ${cmd.join(" ")}`);
+  const profileLabel = arm64LinkWrapper
+    ? `${batchProfile} + arm64 link wrapper`
+    : batchProfile;
+  console.log(`with-msvc-env: vcvarsall ${profileLabel} → ${cmd.join(" ")}`);
   const result = spawnSync("cmd.exe", ["/d", "/c", tmpBat], {
     stdio: "inherit",
     cwd: root,
@@ -103,6 +135,13 @@ function main() {
     fs.unlinkSync(tmpBat);
   } catch {
     // ignore
+  }
+  if (arm64LinkWrapper) {
+    try {
+      fs.unlinkSync(arm64LinkWrapper);
+    } catch {
+      // ignore
+    }
   }
 
   process.exit(result.status === null ? 1 : result.status);

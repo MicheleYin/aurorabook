@@ -53,26 +53,116 @@ function resolveVcvarsProfile(rustTarget) {
   return targetArm64 ? "x64_arm64" : "x64";
 }
 
-function clPathForProfile(installRoot, profile) {
+function msvcVersions(installRoot) {
   const msvcRoot = path.join(installRoot, "VC", "Tools", "MSVC");
-  if (!fs.existsSync(msvcRoot)) return null;
-  const versions = fs
+  if (!fs.existsSync(msvcRoot)) return [];
+  return fs
     .readdirSync(msvcRoot, { withFileTypes: true })
     .filter((d) => d.isDirectory())
     .map((d) => d.name)
     .sort()
     .reverse();
+}
+
+function hasArm64Toolchain(installRoot, version) {
+  const base = path.join(installRoot, "VC", "Tools", "MSVC", version);
+  const lib = path.join(base, "lib", "arm64", "legacy_stdio_definitions.lib");
+  const link = path.join(base, "bin", "Hostx64", "arm64", "link.exe");
+  const hostArmLink = path.join(base, "bin", "HostArm64", "arm64", "link.exe");
+  return (
+    fs.existsSync(lib) && (fs.existsSync(link) || fs.existsSync(hostArmLink))
+  );
+}
+
+function findMsvcVersionWithArm64Tools(installRoot) {
+  for (const ver of msvcVersions(installRoot)) {
+    if (hasArm64Toolchain(installRoot, ver)) return ver;
+  }
+  return null;
+}
+
+/** vcvarsall profile for the host shell (not always equal to resolveVcvarsProfile). */
+function resolveVcvarsBatchProfile(rustTarget) {
+  const profile = resolveVcvarsProfile(rustTarget);
+  // Cross-compiling ARM64 from x64: keep x64 host tools on PATH/LIB first so
+  // build scripts link with x64 link.exe + x64 libs; ARM64 lib dirs are appended separately.
+  return profile === "x64_arm64" ? "x64" : profile;
+}
+
+function windowsSdkVersions() {
+  const pf86 = process.env["ProgramFiles(x86)"];
+  if (!pf86) return [];
+  const kitsRoot = path.join(pf86, "Windows Kits", "10", "lib");
+  if (!fs.existsSync(kitsRoot)) return [];
+  return fs
+    .readdirSync(kitsRoot, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && /^10\./.test(d.name))
+    .map((d) => d.name)
+    .sort()
+    .reverse();
+}
+
+/** Extra LIB entries required to link aarch64-pc-windows-msvc with an x64 host vcvars env. */
+function arm64CrossCompileLibPaths(installRoot) {
+  const arm64Ver = findMsvcVersionWithArm64Tools(installRoot);
+  if (!arm64Ver) return [];
+  const paths = [
+    path.join(installRoot, "VC", "Tools", "MSVC", arm64Ver, "lib", "arm64"),
+  ];
+  for (const sdkVer of windowsSdkVersions()) {
+    const pf86 = process.env["ProgramFiles(x86)"];
+    const ucrt = path.join(pf86, "Windows Kits", "10", "lib", sdkVer, "ucrt", "arm64");
+    const um = path.join(pf86, "Windows Kits", "10", "lib", sdkVer, "um", "arm64");
+    if (fs.existsSync(ucrt)) paths.push(ucrt);
+    if (fs.existsSync(um)) paths.push(um);
+    if (paths.length > 1) break;
+  }
+  return paths.filter((p) => fs.existsSync(p));
+}
+
+function arm64CrossLinkPath(installRoot) {
+  const arm64Ver = findMsvcVersionWithArm64Tools(installRoot);
+  if (!arm64Ver) return null;
+  const candidate = path.join(
+    installRoot,
+    "VC",
+    "Tools",
+    "MSVC",
+    arm64Ver,
+    "bin",
+    "Hostx64",
+    "arm64",
+    "link.exe"
+  );
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+function clPathForProfile(installRoot, profile) {
+  const msvcRoot = path.join(installRoot, "VC", "Tools", "MSVC");
+  if (!fs.existsSync(msvcRoot)) return null;
   const rel =
     profile === "arm64"
       ? path.join("bin", "HostArm64", "arm64", "cl.exe")
       : profile === "x64_arm64"
         ? path.join("bin", "Hostx64", "arm64", "cl.exe")
         : path.join("bin", "Hostx64", "x64", "cl.exe");
+
+  const needsArm64 = profile === "x64_arm64" || profile === "arm64";
+  const preferred = needsArm64 ? findMsvcVersionWithArm64Tools(installRoot) : null;
+  const versions = preferred
+    ? [preferred, ...msvcVersions(installRoot).filter((v) => v !== preferred)]
+    : msvcVersions(installRoot);
+
   for (const ver of versions) {
     const candidate = path.join(msvcRoot, ver, rel);
     if (fs.existsSync(candidate)) return candidate;
   }
   return null;
+}
+
+function needsVcvarsForTarget(rustTarget) {
+  const profile = resolveVcvarsProfile(rustTarget);
+  return profile === "x64_arm64" || profile === "arm64";
 }
 
 function clOnPath() {
@@ -127,6 +217,15 @@ function msvcPrereqMessage(rustTarget) {
       );
       return lines.join("\n");
     }
+    const latest = msvcVersions(installRoot)[0];
+    const arm64Ver = findMsvcVersionWithArm64Tools(installRoot);
+    if (latest && arm64Ver && latest !== arm64Ver) {
+      lines.push(
+        "",
+        `Note: newest MSVC toolset (${latest}) lacks ARM64 libs; builds will use ${arm64Ver} for ARM64 linking.`,
+        "To avoid the mismatch, install ARM64 build tools for the latest MSVC version in Visual Studio Installer."
+      );
+    }
   }
 
   lines.push(
@@ -142,8 +241,15 @@ module.exports = {
   findVsInstallRoot,
   vcvarsallPath,
   resolveVcvarsProfile,
+  resolveVcvarsBatchProfile,
+  msvcVersions,
+  hasArm64Toolchain,
+  findMsvcVersionWithArm64Tools,
+  arm64CrossCompileLibPaths,
+  arm64CrossLinkPath,
   clPathForProfile,
   clOnPath,
+  needsVcvarsForTarget,
   parseRustTargetFromArgs,
   msvcPrereqMessage,
 };
