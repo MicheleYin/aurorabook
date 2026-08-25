@@ -67,11 +67,29 @@ fn test_validate_path_outside_allowed_base() {
 }
 
 #[test]
-fn test_find_model_and_voices() {
-    // Test finding model and voices files
-    // This requires actual model files or mocking
-    // For now, we'll test error cases
-    let result = ResourcePathResolver::find_model_and_voices(None);
-    // Should either find files or return ResourceNotFound error
-    assert!(result.is_ok() || matches!(result, Err(AppError::ResourceNotFound(_))));
+fn test_normalize_file_path_decodes_ios_save_urls() {
+    let normalized = ResourcePathResolver::normalize_file_path(
+        "file:///private/var/mobile/Containers/Shared/AppGroup/abc/File%20Provider%20Storage/A%20novel.mp3",
+    );
+    assert_eq!(
+        normalized,
+        "/private/var/mobile/Containers/Shared/AppGroup/abc/File Provider Storage/A novel.mp3"
+    );
+}
+
+#[test]
+fn test_prepare_writable_output_path_creates_parent() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let parent = temp_dir.path().join("File Provider Storage").join("dest");
+    let encoded = format!(
+        "file://{}/A%20novel.mp3",
+        parent.to_str().unwrap().replace(' ', "%20")
+    );
+
+    let prepared = ResourcePathResolver::prepare_writable_output_path(&encoded).unwrap();
+    assert!(prepared.parent().unwrap().exists());
+    assert_eq!(
+        prepared.file_name().and_then(|s| s.to_str()),
+        Some("A novel.mp3")
+    );
 }

@@ -1,12 +1,14 @@
-//! Export audiobook tracks to a single file (MP3, M4A, or M4B) by decoding with **FFmpeg** and
-//! encoding/muxing with **FFmpeg** on `PATH`. Metadata and M4B chapter markers are applied with
-//! **FFmpeg** (`ffmetadata`) after mux. iOS builds do not ship FFmpeg for export; those commands
-//! return a clear error.
+//! Export audiobook tracks to a single file (MP3, M4A, or M4B).
+//!
+//! * **Desktop:** FFmpeg concat + encode/mux (metadata/chapters via ffmetadata).
+//! * **iOS:** no FFmpeg — MP3 via in-process byte-concat; M4A/M4B via AVFoundation
+//!   (`swift/AudiobookExporter.swift`).
 
 use super::repositories::{AudioRepository, BookRepository};
 use super::get_db_connection;
 use crate::utils::constants::DEFAULT_MP3_BITRATE;
 use crate::utils::errors::{AppError, AppResult};
+use crate::utils::path_resolver::ResourcePathResolver;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -189,13 +191,29 @@ pub async fn get_mp3_export_status() -> AppResult<Mp3ExportStatus> {
     })
 }
 
-/// Cancel an in-progress audio export that uses FFmpeg by sending SIGTERM to the child process.
+/// Cancel an in-progress audio export.
 #[tauri::command]
 pub async fn cancel_audio_export(app: tauri::AppHandle) -> AppResult<bool> {
     #[cfg(target_os = "ios")]
     {
-        let _ = app;
-        return Ok(false);
+        if !AUDIO_EXPORT_IN_PROGRESS.load(Ordering::Acquire) {
+            return Ok(false);
+        }
+        crate::book_service::ios_export::request_ios_export_cancel();
+        if let Some(ref a) = active_audio_export() {
+            emit_progress(
+                &app,
+                a.format,
+                &a.book_id,
+                "cancelled",
+                "Audio export cancelled".to_string(),
+                0,
+                0,
+                0,
+                Some(0),
+            );
+        }
+        return Ok(true);
     }
 
     #[cfg(not(target_os = "ios"))]
@@ -203,6 +221,9 @@ pub async fn cancel_audio_export(app: tauri::AppHandle) -> AppResult<bool> {
         if !AUDIO_EXPORT_IN_PROGRESS.load(Ordering::Acquire) {
             return Ok(false);
         }
+
+        // Abort track-prep loops (same cooperative flag iOS uses for AVFoundation).
+        crate::book_service::ios_export::request_ios_export_cancel();
 
         let active = active_audio_export();
         let pids: Vec<u32> = active_ffmpeg_audio_export_pids()
@@ -248,9 +269,24 @@ pub async fn cancel_audio_export(app: tauri::AppHandle) -> AppResult<bool> {
                     Some(0),
                 );
             }
+            return Ok(true);
         }
 
-        Ok(killed_any)
+        // No FFmpeg PID yet (still preparing tracks) — cooperative cancel is enough.
+        if let Some(ref a) = active {
+            emit_progress(
+                &app,
+                a.format,
+                &a.book_id,
+                "cancelled",
+                "Audio export cancelled".to_string(),
+                0,
+                0,
+                0,
+                Some(0),
+            );
+        }
+        Ok(true)
     }
 }
 
@@ -406,7 +442,6 @@ struct PreparedTrackInput {
     duration_seconds: Option<f64>,
 }
 
-#[cfg(not(target_os = "ios"))]
 fn write_track_blob_to_temp(
     temp_dir: &std::path::Path,
     index: usize,
@@ -706,6 +741,7 @@ fn ffmpeg_concat_filelist_export(
     Ok(())
 }
 
+#[cfg(not(target_os = "ios"))]
 fn chapter_starts_for_track_inputs(
     tracks: &[PreparedTrackInput],
 ) -> Vec<(std::time::Duration, String)> {
@@ -761,11 +797,38 @@ fn create_mp3_export_file(
     tracks: &[PreparedTrackInput],
     filelist_path: &std::path::Path,
     encode_started: Instant,
-    on_progress: impl FnMut(FfmpegEncodeProgress) + Send,
+    mut on_progress: impl FnMut(FfmpegEncodeProgress) + Send,
 ) -> AppResult<()> {
-    require_ffmpeg_for_export()?;
+    #[cfg(target_os = "ios")]
+    {
+        let _ = (filelist_path, encode_started);
+        let ios_tracks: Vec<crate::book_service::ios_export::IosPreparedTrack> = tracks
+            .iter()
+            .map(|t| crate::book_service::ios_export::IosPreparedTrack {
+                path: t.path.clone(),
+                title: t.title.clone(),
+                duration_seconds: t.duration_seconds,
+            })
+            .collect();
+        crate::book_service::ios_export::export_mp3_byte_concat(
+            output_path,
+            &ios_tracks,
+            |percent, processed, total, message| {
+                on_progress(FfmpegEncodeProgress {
+                    processed_tracks: processed,
+                    total_tracks: total,
+                    percent,
+                    eta_ms: None,
+                    message,
+                });
+            },
+        )?;
+        return Ok(());
+    }
+
     #[cfg(not(target_os = "ios"))]
     {
+        require_ffmpeg_for_export()?;
         let bitrate_arg = format!("{}k", DEFAULT_MP3_BITRATE);
         // `-f mp3` is required when the output path uses a non-standard suffix (e.g. `.mp3.part`
         // from atomic rename) so FFmpeg can still pick the MP3 muxer.
@@ -788,11 +851,6 @@ fn create_mp3_export_file(
         )?;
         Ok(())
     }
-    #[cfg(target_os = "ios")]
-    {
-        let _ = (output_path, tracks, filelist_path, encode_started, on_progress);
-        Ok(())
-    }
 }
 
 fn create_mp4_export_file(
@@ -802,11 +860,87 @@ fn create_mp4_export_file(
     filelist_path: &std::path::Path,
     format: AudioExportFormat,
     encode_started: Instant,
-    on_progress: impl FnMut(FfmpegEncodeProgress) + Send,
+    mut on_progress: impl FnMut(FfmpegEncodeProgress) + Send,
 ) -> AppResult<()> {
-    require_ffmpeg_for_export()?;
+    #[cfg(target_os = "ios")]
+    {
+        let _ = (filelist_path, encode_started);
+        if tracks.is_empty() {
+            return Err(AppError::Store(
+                "No exportable audio tracks found for MP4 export".to_string(),
+            ));
+        }
+        let ios_tracks: Vec<crate::book_service::ios_export::IosPreparedTrack> = tracks
+            .iter()
+            .map(|t| crate::book_service::ios_export::IosPreparedTrack {
+                path: t.path.clone(),
+                title: t.title.clone(),
+                duration_seconds: t.duration_seconds,
+            })
+            .collect();
+        let total = ios_tracks.len();
+        let format_label = format.as_str().to_uppercase();
+        let ext = format.as_str();
+        let temp = tempfile::Builder::new()
+            .suffix(&format!(".{ext}"))
+            .tempfile()
+            .map_err(|e| AppError::Store(format!("Failed to create {format_label} temp file: {e}")))?;
+        let temp_path = temp.path().to_path_buf();
+        let temp_str = temp_path
+            .to_str()
+            .ok_or_else(|| AppError::Store("Temp export path is not valid UTF-8".into()))?;
+
+        crate::book_service::ios_export::export_m4a_m4b_avfoundation(
+            temp_str,
+            &ios_tracks,
+            format.as_str(),
+            &book.title,
+            &book.author,
+            &book.title,
+            |percent| {
+                let processed = if percent >= 100 {
+                    total
+                } else {
+                    ((percent as usize) * total / 100).min(total.saturating_sub(1))
+                };
+                on_progress(FfmpegEncodeProgress {
+                    processed_tracks: processed,
+                    total_tracks: total,
+                    percent,
+                    eta_ms: None,
+                    message: format!("Encoding {format_label} via AVFoundation ({percent}%)"),
+                });
+            },
+        )?;
+        // `output_path` is already a sandbox Documents/Exports path on iOS.
+        if output_path.trim().to_ascii_lowercase().starts_with("file:") {
+            crate::book_service::ios_export::place_export_file(&temp_path, output_path)?;
+        } else {
+            let dest = PathBuf::from(output_path);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    AppError::Store(format!(
+                        "Failed to create export directory {}: {}",
+                        parent.display(),
+                        e
+                    ))
+                })?;
+            }
+            std::fs::copy(&temp_path, &dest).map_err(|e| {
+                AppError::Store(format!(
+                    "Failed to write {} export to {}: {}",
+                    format_label,
+                    dest.display(),
+                    e
+                ))
+            })?;
+        }
+        return Ok(());
+    }
+
     #[cfg(not(target_os = "ios"))]
     {
+        require_ffmpeg_for_export()?;
         if tracks.is_empty() {
             return Err(AppError::Store(
                 "No exportable audio tracks found for MP4 export".to_string(),
@@ -845,19 +979,6 @@ fn create_mp4_export_file(
                 e
             );
         }
-        Ok(())
-    }
-    #[cfg(target_os = "ios")]
-    {
-        let _ = (
-            output_path,
-            book,
-            tracks,
-            filelist_path,
-            format,
-            encode_started,
-            on_progress,
-        );
         Ok(())
     }
 }
@@ -915,12 +1036,16 @@ async fn export_as_mp4(
         None,
     );
 
-    #[cfg(not(target_os = "ios"))]
     let temp_tracks_dir = tempfile::tempdir()
         .map_err(|e| AppError::Store(format!("Failed to create export temp directory: {}", e)))?;
     let mut prepared_tracks: Vec<PreparedTrackInput> = Vec::new();
 
+    crate::book_service::ios_export::reset_ios_export_cancel();
+
     for (index, track) in sorted_tracks.iter().enumerate() {
+        if crate::book_service::ios_export::ios_export_cancel_requested() {
+            return Err(AppError::Encoding("Audio export cancelled".to_string()));
+        }
         match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &book_id, &track.id).await {
             Ok(Some((audio_bytes, href))) => {
                 emit_progress(
@@ -939,25 +1064,22 @@ async fn export_as_mp4(
                     None,
                 );
 
-                #[cfg(not(target_os = "ios"))]
-                {
-                    let temp_path = write_track_blob_to_temp(
-                        temp_tracks_dir.path(),
-                        prepared_tracks.len(),
-                        &href,
-                        &audio_bytes,
-                        format,
-                    )?;
-                    prepared_tracks.push(PreparedTrackInput {
-                        path: temp_path,
-                        title: if track.title.trim().is_empty() {
-                            format!("Track {}", track.order + 1)
-                        } else {
-                            track.title.clone()
-                        },
-                        duration_seconds: track.duration,
-                    });
-                }
+                let temp_path = write_track_blob_to_temp(
+                    temp_tracks_dir.path(),
+                    prepared_tracks.len(),
+                    &href,
+                    &audio_bytes,
+                    format,
+                )?;
+                prepared_tracks.push(PreparedTrackInput {
+                    path: temp_path,
+                    title: if track.title.trim().is_empty() {
+                        format!("Track {}", track.order + 1)
+                    } else {
+                        track.title.clone()
+                    },
+                    duration_seconds: track.duration,
+                });
             }
             Ok(None) => {
                 log::warn!("Missing audio track id='{}'", track.id);
@@ -997,11 +1119,20 @@ async fn export_as_mp4(
     #[cfg(target_os = "ios")]
     let filelist_path = PathBuf::new();
 
-    let final_output = PathBuf::from(&output_path);
+    // Desktop: normalize file:// / percent-encoding.
+    // iOS: Documents/Exports + Share (avoid File Provider save URLs).
+    #[cfg(not(target_os = "ios"))]
+    let final_output = ResourcePathResolver::prepare_writable_output_path(&output_path)?;
+    #[cfg(target_os = "ios")]
+    let final_output = crate::book_service::ios_export::resolve_ios_sandbox_export_path(
+        &app,
+        &output_path,
+        &book.title,
+        format.as_str(),
+    )?;
     if final_output.exists() {
         let _ = std::fs::remove_file(&final_output);
     }
-
     let final_output_str = final_output
         .to_str()
         .ok_or_else(|| AppError::Store("Output path is not valid UTF-8".to_string()))?;
@@ -1058,6 +1189,8 @@ async fn export_as_mp4(
         100,
         Some(0),
     );
+    #[cfg(target_os = "ios")]
+    crate::book_service::ios_export::share_exported_file(&final_output)?;
     Ok(())
 }
 
@@ -1116,12 +1249,16 @@ pub async fn export_as_mp3(
         None,
     );
 
-    #[cfg(not(target_os = "ios"))]
     let temp_tracks_dir = tempfile::tempdir()
         .map_err(|e| AppError::Store(format!("Failed to create export temp directory: {}", e)))?;
     let mut prepared_tracks: Vec<PreparedTrackInput> = Vec::new();
 
+    crate::book_service::ios_export::reset_ios_export_cancel();
+
     for (index, track) in sorted_tracks.iter().enumerate() {
+        if crate::book_service::ios_export::ios_export_cancel_requested() {
+            return Err(AppError::Encoding("Audio export cancelled".to_string()));
+        }
         match AudioRepository::resolve_track_audio_bytes(db.as_ref(), &book_id, &track.id).await {
             Ok(Some((audio_bytes, href))) => {
                 emit_progress(
@@ -1140,25 +1277,22 @@ pub async fn export_as_mp3(
                     None,
                 );
 
-                #[cfg(not(target_os = "ios"))]
-                {
-                    let temp_path = write_track_blob_to_temp(
-                        temp_tracks_dir.path(),
-                        prepared_tracks.len(),
-                        &href,
-                        &audio_bytes,
-                        AudioExportFormat::Mp3,
-                    )?;
-                    prepared_tracks.push(PreparedTrackInput {
-                        path: temp_path,
-                        title: if track.title.trim().is_empty() {
-                            format!("Track {}", track.order + 1)
-                        } else {
-                            track.title.clone()
-                        },
-                        duration_seconds: track.duration,
-                    });
-                }
+                let temp_path = write_track_blob_to_temp(
+                    temp_tracks_dir.path(),
+                    prepared_tracks.len(),
+                    &href,
+                    &audio_bytes,
+                    AudioExportFormat::Mp3,
+                )?;
+                prepared_tracks.push(PreparedTrackInput {
+                    path: temp_path,
+                    title: if track.title.trim().is_empty() {
+                        format!("Track {}", track.order + 1)
+                    } else {
+                        track.title.clone()
+                    },
+                    duration_seconds: track.duration,
+                });
             }
             Ok(None) => {
                 log::warn!("Missing audio track id='{}'", track.id);
@@ -1196,11 +1330,20 @@ pub async fn export_as_mp3(
     #[cfg(target_os = "ios")]
     let filelist_path = PathBuf::new();
 
-    let final_output = PathBuf::from(&output_path);
+    // Desktop: normalize file:// / percent-encoding into a real filesystem path.
+    // iOS: never write into File Provider save URLs — use Documents/Exports + Share.
+    #[cfg(not(target_os = "ios"))]
+    let final_output = ResourcePathResolver::prepare_writable_output_path(&output_path)?;
+    #[cfg(target_os = "ios")]
+    let final_output = crate::book_service::ios_export::resolve_ios_sandbox_export_path(
+        &app,
+        &output_path,
+        &book.title,
+        "mp3",
+    )?;
     if final_output.exists() {
         let _ = std::fs::remove_file(&final_output);
     }
-
     let final_output_str = final_output
         .to_str()
         .ok_or_else(|| AppError::Store("Output path is not valid UTF-8".to_string()))?;
@@ -1252,7 +1395,9 @@ pub async fn export_as_mp3(
         Some(0),
     );
 
-    log::info!("MP3 export completed: {}", output_path);
+    log::info!("MP3 export completed: {}", final_output.display());
+    #[cfg(target_os = "ios")]
+    crate::book_service::ios_export::share_exported_file(&final_output)?;
     Ok(())
 }
 

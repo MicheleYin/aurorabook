@@ -5,6 +5,7 @@ mod conversion;
 mod epub_builder;
 mod extraction;
 pub mod opf;
+pub(crate) mod pipeline;
 mod processing;
 mod progress;
 pub mod smil;

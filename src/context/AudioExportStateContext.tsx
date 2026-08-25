@@ -16,9 +16,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import {
+  ALL_AUDIO_EXPORT_FORMATS,
   isTerminalExportStep,
   linearAudioExportEtaMs,
   normalizeFormat,
+  parseSupportedAudioExportFormats,
   type AudioExportFormat,
 } from "../lib/audio-export-utils";
 import { logger } from "../lib/logger";
@@ -51,6 +53,8 @@ interface AudioExportStateContextValue {
   exportProgress: AudioExportProgressPayload | null;
   exportStartedAtMs: number | null;
   derivedExportEtaMs: number | null;
+  /** Formats the current backend can export (platform-gated). */
+  supportedExportFormats: AudioExportFormat[];
   syncAudioExportStatus: () => Promise<void>;
   cancelAudioExport: () => Promise<boolean>;
   /**
@@ -99,6 +103,9 @@ export function AudioExportStateProvider({
     null
   );
   const [exportEtaTick, setExportEtaTick] = useState(0);
+  const [supportedExportFormats, setSupportedExportFormats] = useState<
+    AudioExportFormat[]
+  >([...ALL_AUDIO_EXPORT_FORMATS]);
 
   const applyProgressPayload = useCallback(
     (progress: AudioExportProgressPayload) => {
@@ -131,6 +138,20 @@ export function AudioExportStateProvider({
     } catch (err) {
       logger.warn("Failed to sync audio export status:", err);
     }
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const formats = await invoke<string[]>(
+          "get_supported_audio_export_formats"
+        );
+        setSupportedExportFormats(parseSupportedAudioExportFormats(formats));
+      } catch (err) {
+        logger.warn("Failed to load supported audio export formats:", err);
+        setSupportedExportFormats([...ALL_AUDIO_EXPORT_FORMATS]);
+      }
+    })();
   }, []);
 
   const resetExportUi = useCallback(() => {
@@ -296,6 +317,7 @@ export function AudioExportStateProvider({
       exportProgress,
       exportStartedAtMs,
       derivedExportEtaMs,
+      supportedExportFormats,
       syncAudioExportStatus,
       cancelAudioExport,
       runAudioExport,
@@ -308,6 +330,7 @@ export function AudioExportStateProvider({
       exportProgress,
       exportStartedAtMs,
       derivedExportEtaMs,
+      supportedExportFormats,
       syncAudioExportStatus,
       cancelAudioExport,
       runAudioExport,

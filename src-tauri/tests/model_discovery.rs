@@ -22,7 +22,10 @@ fn test_find_voices_file() {
         if let Some(path) = voices_path {
             println!("✅ Found voices file: {}", path.display());
             assert!(path.exists(), "Voices file should exist");
-            assert!(path.is_file(), "Voices path should be a file");
+            assert!(
+                path.is_file() || path.is_dir(),
+                "Voices path should be a file or voice_styles directory"
+            );
         } else {
             println!("⚠️ Voices file not found - this is OK if voices-v1.0.bin is not present");
         }
@@ -40,14 +43,24 @@ async fn test_onnx_model_and_voices_file() {
     match &onnx_model {
         Some(path) => {
             println!("✅ Found ONNX model: {}", path.display());
-            assert!(path.exists(), "ONNX model file should exist");
-            assert!(path.is_file(), "ONNX model should be a file");
+            assert!(path.exists(), "ONNX model path should exist");
+            assert!(
+                path.is_dir() || path.is_file(),
+                "ONNX model should be a Supertonic directory or legacy file"
+            );
             
             // Check file size (should be non-zero)
-            if let Ok(metadata) = std::fs::metadata(path) {
-                let size = metadata.len();
-                println!("   File size: {} bytes ({:.2} MB)", size, size as f64 / 1_000_000.0);
-                assert!(size > 0, "ONNX model file should not be empty");
+            if path.is_file() {
+                if let Ok(metadata) = std::fs::metadata(path) {
+                    let size = metadata.len();
+                    println!("   File size: {} bytes ({:.2} MB)", size, size as f64 / 1_000_000.0);
+                    assert!(size > 0, "ONNX model file should not be empty");
+                }
+            } else {
+                assert!(
+                    path.join("tts.json").exists(),
+                    "Supertonic ONNX dir should contain tts.json"
+                );
             }
         }
         None => {
@@ -72,14 +85,19 @@ async fn test_onnx_model_and_voices_file() {
     match &voices_path {
         Some(path) => {
             println!("✅ Found voices file: {}", path.display());
-            assert!(path.exists(), "Voices file should exist");
-            assert!(path.is_file(), "Voices should be a file");
+            assert!(path.exists(), "Voices path should exist");
+            assert!(
+                path.is_dir() || path.is_file(),
+                "Voices should be a Supertonic voice_styles directory or legacy file"
+            );
             
             // Check file size (should be non-zero)
-            if let Ok(metadata) = std::fs::metadata(path) {
-                let size = metadata.len();
-                println!("   File size: {} bytes ({:.2} MB)", size, size as f64 / 1_000_000.0);
-                assert!(size > 0, "Voices file should not be empty");
+            if path.is_file() {
+                if let Ok(metadata) = std::fs::metadata(path) {
+                    let size = metadata.len();
+                    println!("   File size: {} bytes ({:.2} MB)", size, size as f64 / 1_000_000.0);
+                    assert!(size > 0, "Voices file should not be empty");
+                }
             }
         }
         None => {

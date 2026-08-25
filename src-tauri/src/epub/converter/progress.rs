@@ -61,4 +61,3 @@ pub fn get_parallelism() -> usize {
         1
     }
 }
-

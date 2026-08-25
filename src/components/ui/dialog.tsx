@@ -43,45 +43,59 @@ type DialogContentProps = React.ComponentPropsWithoutRef<
   typeof DialogPrimitive.Content
 > & {
   backdropBlur?: boolean;
+  /**
+   * When false, children are rendered without the default scrollable body
+   * wrapper so the dialog can own its own scroll region (e.g. sticky headers).
+   */
+  scrollableBody?: boolean;
 };
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, backdropBlur, ...props }, ref) => (
-  <DialogPortal>
-    <DialogOverlay backdropBlur={backdropBlur} />
-    <DialogPrimitive.Content
-      ref={ref}
-      className={cn(
-        "fixed left-[50%] top-[50%] z-50 flex max-h-[90vh] w-full max-w-lg translate-x-[-50%] translate-y-[-50%] flex-col gap-4 overflow-hidden rounded-3xl border bg-card p-6 shadow-lg",
-        "data-[state=open]:animate-in data-[state=closed]:animate-out",
-        "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-        "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
-        "data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%]",
-        "data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]",
-        "data-[state=open]:dialog-content-enter data-[state=closed]:dialog-content-exit",
-        className
-      )}
-      {...props}
-    >
-      <div className="flex-1 overflow-y-auto -mx-6 px-6">
-        <div className="flex flex-col gap-4">{children}</div>
-      </div>
-      <DialogPrimitive.Close
-        className={anim(
-          "normal",
-          "opacity",
-          "absolute right-4 top-4 z-10 rounded-sm opacity-70 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none"
+>(
+  (
+    { className, children, backdropBlur, scrollableBody = true, ...props },
+    ref
+  ) => (
+    <DialogPortal>
+      <DialogOverlay backdropBlur={backdropBlur} />
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(
+          "fixed left-[50%] top-[50%] z-50 flex max-h-[90vh] w-full max-w-lg translate-x-[-50%] translate-y-[-50%] flex-col gap-4 overflow-hidden rounded-3xl border bg-card p-6 shadow-lg",
+          "data-[state=open]:animate-in data-[state=closed]:animate-out",
+          "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+          "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+          "data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%]",
+          "data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]",
+          "data-[state=open]:dialog-content-enter data-[state=closed]:dialog-content-exit",
+          className
         )}
-        aria-label="Close dialog"
+        {...props}
       >
-        <X className="h-4 w-4" aria-hidden="true" />
-        <span className="sr-only">Close</span>
-      </DialogPrimitive.Close>
-    </DialogPrimitive.Content>
-  </DialogPortal>
-));
+        {scrollableBody ? (
+          <div className="flex-1 overflow-y-auto -mx-6 px-6 min-h-0 min-w-0">
+            <div className="flex flex-col gap-4 min-w-0">{children}</div>
+          </div>
+        ) : (
+          children
+        )}
+        <DialogPrimitive.Close
+          className={anim(
+            "normal",
+            "opacity",
+            "absolute right-4 top-4 z-10 rounded-sm opacity-70 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none"
+          )}
+          aria-label="Close dialog"
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+          <span className="sr-only">Close</span>
+        </DialogPrimitive.Close>
+      </DialogPrimitive.Content>
+    </DialogPortal>
+  )
+);
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 const DialogHeader = ({

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { invoke } from "../test/tauri-mocks";
+
 type LoggerModule = typeof import("./logger");
 
 async function loadLogger(): Promise<LoggerModule> {
@@ -10,6 +12,10 @@ async function loadLogger(): Promise<LoggerModule> {
 describe("logger", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_app_logs") return [];
+      return undefined;
+    });
   });
 
   it("captures log entries and notifies subscribers", async () => {
@@ -61,6 +67,30 @@ describe("logger", () => {
     expect(logs).toHaveLength(1000);
     expect(logs[0].message).toBe("entry-2");
     expect(logs[logs.length - 1]?.message).toBe("entry-1001");
+  });
+
+  it("clears the shared log store", async () => {
+    const { clearLogs, getLogs, logger } = await loadLogger();
+    logger.error("keep me");
+    expect(getLogs()).toHaveLength(1);
+    clearLogs();
+    expect(getLogs()).toHaveLength(0);
+  });
+
+  it("appends backend entries into the shared store", async () => {
+    const { appendLogEntry, getLogs } = await loadLogger();
+    appendLogEntry({
+      level: "error",
+      source: "backend",
+      message: "WebGPU session failed",
+    });
+    const logs = getLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      level: "error",
+      source: "backend",
+      message: "WebGPU session failed",
+    });
   });
 
   it("swallows listener failures and routes each level to the matching console method", async () => {

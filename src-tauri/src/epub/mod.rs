@@ -27,6 +27,7 @@ pub use converter::{
 pub use cancellation::{
     CancellationTokens,
     cancel_conversion_command,
+    pause_conversions_for_background_command,
 };
 
 // Re-export conversion command

@@ -301,6 +301,33 @@ impl ResourcePathResolver {
         PathBuf::from(normalized)
     }
 
+    /// Prepare a save-dialog destination for writing.
+    ///
+    /// iOS (and some desktop pickers) return `file://` URLs with percent-encoding
+    /// (e.g. `file:///…/A%20novel.mp3`). Using that string as a filesystem path
+    /// fails with ENOENT. This strips the scheme, decodes encoding, and creates
+    /// the parent directory when possible.
+    pub fn prepare_writable_output_path(path: &str) -> AppResult<PathBuf> {
+        let path_buf = Self::normalize_to_pathbuf(path);
+        if path_buf.as_os_str().is_empty() {
+            return Err(AppError::InvalidPath(
+                "Export output path is empty after normalization".into(),
+            ));
+        }
+        if let Some(parent) = path_buf.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    AppError::Store(format!(
+                        "Failed to create export directory {}: {}",
+                        parent.display(),
+                        e
+                    ))
+                })?;
+            }
+        }
+        Ok(path_buf)
+    }
+
     /// Validate and canonicalize a file path.
     ///
     /// This function validates that a path exists, resolves symlinks and

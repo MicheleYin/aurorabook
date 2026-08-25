@@ -156,6 +156,19 @@ resize_image 284 "Square284x284Logo.png" "$SOURCE_IMAGE"
 resize_image 310 "Square310x310Logo.png" "$SOURCE_IMAGE"
 resize_image 50 "StoreLogo.png" "$SOURCE_IMAGE"  # Store logo is typically 50x50
 
+# Wide Start menu tile (310x150) — center the 150x150 logo on a white canvas
+echo -e "${GREEN}Generating Windows Store wide tile (310x150)...${NC}"
+if command -v convert &> /dev/null; then
+    echo "  Creating Wide310x150Logo.png (310x150)..."
+    convert -size 310x150 xc:white "$ICONS_DIR/Square150x150Logo.png" -gravity center -composite "$ICONS_DIR/Wide310x150Logo.png"
+elif command -v magick &> /dev/null; then
+    echo "  Creating Wide310x150Logo.png (310x150)..."
+    magick -size 310x150 xc:white "$ICONS_DIR/Square150x150Logo.png" -gravity center -composite "$ICONS_DIR/Wide310x150Logo.png"
+else
+    echo -e "${YELLOW}  Warning: ImageMagick not found; skipping Wide310x150Logo.png${NC}"
+    echo -e "${YELLOW}  On Windows run: node scripts/generate-wide-tile.cjs${NC}"
+fi
+
 # Clean up temporary file
 if [ -f "$TEMP_IMAGE_WITH_BG" ] && [ "$TEMP_IMAGE_WITH_BG" != "$SOURCE_IMAGE" ]; then
     rm -f "$TEMP_IMAGE_WITH_BG"

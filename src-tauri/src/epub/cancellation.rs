@@ -3,7 +3,7 @@
 //! This module provides functionality for managing cancellation tokens
 //! that allow conversions to be cancelled gracefully.
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use crate::utils::errors::{AppError, AppResult};
 use crate::tts::engine::TtsEnginePool;
 use std::sync::{Arc, Mutex};
@@ -50,13 +50,6 @@ pub async fn cancel_conversion_command(
         }
     }
 
-    // Cancel matching iOS continued-processing task if present.
-    if let Some(coord) = app.try_state::<crate::background::BackgroundCoordinator>() {
-        if let Some(task_id) = coord.task_id_for_book(&book_id) {
-            let _ = crate::background::cancel_continued_task(task_id, app.clone()).await;
-        }
-    }
-
     // Drop cached engines immediately on cancellation request.
     // In-flight tasks keep their own Arc references and can unwind safely.
     if let Err(e) = TtsEnginePool::clear_global() {
@@ -66,6 +59,16 @@ pub async fn cancel_conversion_command(
         );
     }
     
+    Ok(())
+}
+
+/// Pause all active conversions because the app left the foreground (iOS).
+///
+/// Invoked from Rust lifecycle handlers and from the frontend (`tauri://suspended` /
+/// `visibilitychange`) so pause still works if one path misses the event.
+#[tauri::command]
+pub async fn pause_conversions_for_background_command(app: AppHandle) -> AppResult<()> {
+    pause_conversions_for_background(&app);
     Ok(())
 }
 
@@ -123,6 +126,71 @@ pub fn cleanup_cancellation_token(app: &AppHandle, book_id: &str) {
                 log::warn!("Failed to lock cancellation tokens for cleanup");
             }
         }
+    }
+}
+
+/// Payload emitted when iOS leaves the foreground and active conversions are paused.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionPausedBackgroundEvent {
+    pub book_ids: Vec<String>,
+}
+
+/// Pause every in-flight conversion because the app left the foreground (iOS).
+///
+/// Sets all cancel tokens (same checkpoint-preserving path as a user pause), clears the
+/// cached TTS/ONNX pool so WebGPU/Metal sessions are not used after suspend, and notifies
+/// the frontend. Progress already written to disk remains resumable.
+pub fn pause_conversions_for_background(app: &AppHandle) {
+    let paused_book_ids = {
+        let Some(tokens_state) = app.try_state::<CancellationTokens>() else {
+            return;
+        };
+        let tokens_map = tokens_state.inner().get();
+        let Ok(tokens_guard) = tokens_map.lock() else {
+            log::warn!("Failed to lock cancellation tokens while pausing for background");
+            return;
+        };
+
+        let mut book_ids = Vec::new();
+        for (book_id, token) in tokens_guard.iter() {
+            if !token.load(Ordering::Relaxed) {
+                token.store(true, Ordering::Relaxed);
+                book_ids.push(book_id.clone());
+                log::info!(
+                    "Paused conversion for background: book_id={}",
+                    book_id
+                );
+            }
+        }
+        book_ids
+    };
+
+    if paused_book_ids.is_empty() {
+        return;
+    }
+
+    if let Err(e) = TtsEnginePool::clear_global() {
+        log::warn!(
+            "Failed to clear global TTS engine pool after background pause: {}",
+            e
+        );
+    }
+
+    if let Some(coord) = app.try_state::<crate::background::BackgroundCoordinator>() {
+        coord.cancel_all_for_background(app);
+    }
+
+    let event = ConversionPausedBackgroundEvent {
+        book_ids: paused_book_ids.clone(),
+    };
+    if let Err(e) = app.emit("conversion-paused-background", &event) {
+        log::warn!("Failed to emit conversion-paused-background: {}", e);
+    } else {
+        log::info!(
+            "Paused {} conversion(s) because the app left the foreground",
+            paused_book_ids.len()
+        );
     }
 }
 

@@ -30,6 +30,7 @@ import {
   mimeTypeFromTrackHref,
   trackDisplayTitle,
 } from "../lib/audio-progress-utils";
+import { resolveUnfinishedChapterIndex } from "../lib/book-audio-duration";
 import { logger } from "../lib/logger";
 import { normalizeBook } from "../lib/normalize-book";
 import { useConversionState } from "./ConversionStateContext";
@@ -664,91 +665,19 @@ export function AudioProgressProvider({
         bookId: book.id,
       });
       const loadedBook = loadedBookRaw ? normalizeBook(loadedBookRaw) : null;
-      
-      // First priority: use centralized converting chapter state for live chapters.
-      if (loadedBook) {
-        let currentConvertingChapter = getCurrentConvertingChapter(loadedBook.id);
-        if (currentConvertingChapter === null) {
-          currentConvertingChapter =
-            await refreshCurrentConvertingChapter(loadedBook.id);
-        }
+      const bookForLoad = loadedBook || book;
 
-        if (
-          currentConvertingChapter !== null &&
-          currentConvertingChapter >= 0 &&
-          currentConvertingChapter < loadedBook.chapters.length
-        ) {
-          const chapter = loadedBook.chapters[currentConvertingChapter];
-          audioTrackToLoad = {
-            id: `live-${loadedBook.id}-${currentConvertingChapter}`,
-            bookId: loadedBook.id,
-            chapterHref: chapter.href,
-            filePath: chapter.href,
-            href: chapter.href,
-            title: chapter.title || `Chapter ${currentConvertingChapter + 1}`,
-            order: currentConvertingChapter,
-          };
-        }
-
-        // Paused mid-chapter with no active pointer yet: synthesize from the first
-        // chapter that does not already have a completed audio track.
-        if (
-          !audioTrackToLoad &&
-          loadedBook.conversionStatus === "started" &&
-          loadedBook.chapters.length > 0
-        ) {
-          const completedHrefs = new Set(
-            (loadedBook.completedChapters ?? []).map((href) => href)
-          );
-          const trackHrefs = new Set(
-            (loadedBook.audioTracks ?? []).map(
-              (track) => track.href || track.filePath
-            )
-          );
-          const incompleteIndex = loadedBook.chapters.findIndex((chapter) => {
-            if (completedHrefs.has(chapter.href)) return false;
-            if (trackHrefs.has(chapter.href)) return false;
-            return true;
-          });
-          if (incompleteIndex >= 0) {
-            const chapter = loadedBook.chapters[incompleteIndex];
-            audioTrackToLoad = {
-              id: `live-${loadedBook.id}-${incompleteIndex}`,
-              bookId: loadedBook.id,
-              chapterHref: chapter.href,
-              filePath: chapter.href,
-              href: chapter.href,
-              title: chapter.title || `Chapter ${incompleteIndex + 1}`,
-              order: incompleteIndex,
-            };
-          }
-        }
-      }
-
-      // Second priority: Try saved track references (for completed chapters)
+      // Prefer saved completed-track progress, then the first completed track.
+      // When conversion is underway and no completed tracks exist yet (typical for
+      // the first text chapter), open the live converting chapter so playback is
+      // available before that chapter finishes. Once completed tracks exist, keep
+      // preferring those so opening a book does not jump to Live.
       if (!audioTrackToLoad && loadedBook?.audioState?.currentTrackId) {
         const savedTrackId = loadedBook.audioState.currentTrackId;
-        // Handle live track IDs directly (no need to search)
-        if (savedTrackId.startsWith('live-')) {
-          const parts = savedTrackId.split('-');
-          if (parts.length >= 3) {
-            const chapterIndex = parseInt(parts[parts.length - 1], 10);
-            if (!isNaN(chapterIndex) && chapterIndex >= 0 && chapterIndex < loadedBook.chapters.length) {
-              const chapter = loadedBook.chapters[chapterIndex];
-              audioTrackToLoad = {
-                id: savedTrackId,
-                bookId: loadedBook.id,
-                chapterHref: chapter.href,
-                filePath: chapter.href,
-                href: chapter.href,
-                title: chapter.title || `Chapter ${chapterIndex + 1}`,
-                order: chapterIndex,
-              };
-            }
-          }
-        }
-        else {
-          // Regular track - find in audioTracks
+        // Skip live-* saves so opening a converting book with completed tracks
+        // never jumps to the in-progress chapter; fall through to first completed
+        // track instead (or live below when nothing is completed yet).
+        if (!savedTrackId.startsWith("live-")) {
           audioTrackToLoad =
             loadedBook.audioTracks.find(
               (track) => track.id === savedTrackId
@@ -783,6 +712,38 @@ export function AudioProgressProvider({
         audioTrackToLoad = loadedBook.audioTracks[0];
       }
 
+      if (!audioTrackToLoad && !(bookForLoad.audioTracks?.length > 0)) {
+        let convertingChapter = getCurrentConvertingChapter(bookForLoad.id);
+        if (convertingChapter === null) {
+          convertingChapter =
+            await refreshCurrentConvertingChapter(bookForLoad.id);
+        }
+        const unfinishedChapterIndex = resolveUnfinishedChapterIndex(
+          bookForLoad,
+          convertingChapter
+        );
+        const canOpenLive =
+          unfinishedChapterIndex !== null &&
+          (bookForLoad.conversionStatus === "started" ||
+            convertingChapter !== null ||
+            (bookForLoad.completedChapters?.length ?? 0) > 0);
+
+        if (canOpenLive && unfinishedChapterIndex !== null) {
+          const chapter = bookForLoad.chapters[unfinishedChapterIndex];
+          if (chapter) {
+            audioTrackToLoad = {
+              id: `live-${bookForLoad.id}-${unfinishedChapterIndex}`,
+              bookId: bookForLoad.id,
+              chapterHref: chapter.href,
+              filePath: chapter.href,
+              href: chapter.href,
+              title: chapter.title || `Chapter ${unfinishedChapterIndex + 1}`,
+              order: unfinishedChapterIndex,
+            };
+          }
+        }
+      }
+
       if (audioTrackToLoad) {
         logger.info("[audio-load-last] resolved track to load", {
           requestedBookId: book.id,
@@ -797,13 +758,13 @@ export function AudioProgressProvider({
           // Queue the desired resume time and auto-play intent for the live stream
           // effect before switching the current track.
           queueLivePlaybackRequest(
-            (loadedBook || book).audioState?.currentTimeSeconds ?? 0,
+            bookForLoad.audioState?.currentTimeSeconds ?? 0,
             autoPlayAudio
           );
         }
-        await loadAudioTrack(book.id, audioTrackToLoad, loadedBook || book);
+        await loadAudioTrack(book.id, audioTrackToLoad, bookForLoad);
         if (!isLiveTrack) {
-          restoreAudioProgress(loadedBook || book, audioTrackToLoad, autoPlayAudio);
+          restoreAudioProgress(bookForLoad, audioTrackToLoad, autoPlayAudio);
         }
         logger.log("loaded last opened audio track", audioTrackToLoad, book);
       } else {

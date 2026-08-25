@@ -350,9 +350,6 @@ pub fn run() {
                     e
                 })?;
 
-            // iOS 26+ continued processing (BGContinuedProcessingTaskRequest)
-            background::init_background_runtime(app.handle());
-
             // Native AVPlayer bridge — enables lock-screen controls on iOS
             native_player::init(app.handle());
 
@@ -393,9 +390,7 @@ pub fn run() {
             tts_commands::convert_pcm_to_mp3,
             epub::conversion_command::convert_epub_to_audiobook_command,
             epub::cancellation::cancel_conversion_command,
-            background::commands::background_capabilities,
-            background::commands::start_continued_conversion,
-            background::commands::cancel_continued_task,
+            epub::cancellation::pause_conversions_for_background_command,
             resources::read_resource_file,
             book_service::read_all_books,
             book_service::read_one_book,
@@ -411,17 +406,23 @@ pub fn run() {
             book_service::add_book,
             book_service::get_epub_buffer,
             book_service::export_epub_to_file,
+            book_service::logs_export::export_logs_to_file,
+            book_service::logs_export::email_logs_report,
             book_service::mp3_export::export_as_mp3,
             book_service::mp3_export::get_mp3_export_status,
             book_service::mp3_export::get_audio_export_status,
             book_service::mp3_export::export_as_m4a,
             book_service::mp3_export::export_as_m4b,
             book_service::mp3_export::cancel_audio_export,
+            book_service::ios_export::get_supported_audio_export_formats,
             book_service::update_book_progress,
             book_service::update_book_audio_state,
             book_service::ingest_epub,
             book_service::get_app_settings,
             book_service::update_app_settings,
+            book_service::append_app_log,
+            book_service::list_app_logs,
+            book_service::clear_app_logs,
             book_service::get_reader_preferences,
             book_service::update_reader_preferences,
             book_service::update_book_last_opened_time,
@@ -539,6 +540,17 @@ pub fn run() {
                             }
                         });
                     });
+                }
+
+                // iOS: applicationWillResignActive → pause conversion immediately so ONNX/WebGPU
+                // is not used after Metal is suspended (avoids Invalid input shape / silent failures).
+                #[cfg(target_os = "ios")]
+                tauri::RunEvent::WindowEvent {
+                    event: tauri::WindowEvent::Suspended,
+                    ..
+                } => {
+                    log::info!("App leaving foreground; pausing active conversions");
+                    epub::cancellation::pause_conversions_for_background(app_handle);
                 }
                 
                 // Handle file open events (when app is opened with a file)

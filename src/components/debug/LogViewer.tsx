@@ -1,7 +1,15 @@
-import { useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { useEffect, useState } from "react";
 
-import { getLogs, subscribeToLogs } from "../../lib/logger";
+import { exportLogsToFile } from "../../lib/log-export";
+import {
+  clearLogs as clearLogStore,
+  getLogs,
+  logger,
+  startBackendLogBridge,
+  subscribeToLogs,
+  type LogEntry,
+} from "../../lib/logger";
+import { cn } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -11,34 +19,72 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
-import { ScrollArea } from "../ui/scroll-area";
 
-export interface LogEntry {
-  timestamp: string;
-  level: "log" | "info" | "warn" | "error" | "debug";
-  source: "frontend" | "backend";
-  message: string;
-  data?: unknown;
-}
+export type { LogEntry };
 
 interface LogViewerProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
+type SourceFilter = "all" | "frontend" | "backend";
+type LevelFilter = "all" | "log" | "info" | "warn" | "error" | "debug";
+
+function formatTimestamp(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function levelStyles(level: LogEntry["level"]): string {
+  switch (level) {
+    case "error":
+      return "border-l-red-600 bg-red-50 text-red-950 dark:border-l-red-400 dark:bg-red-950/55 dark:text-red-50";
+    case "warn":
+      return "border-l-amber-600 bg-amber-50 text-amber-950 dark:border-l-amber-400 dark:bg-amber-950/55 dark:text-amber-50";
+    case "info":
+      return "border-l-sky-600 bg-sky-50 text-sky-950 dark:border-l-sky-400 dark:bg-sky-950/55 dark:text-sky-50";
+    case "debug":
+      return "border-l-zinc-500 bg-zinc-100 text-zinc-900 dark:border-l-zinc-400 dark:bg-zinc-900/70 dark:text-zinc-100";
+    default:
+      return "border-l-zinc-500 bg-zinc-50 text-zinc-900 dark:border-l-zinc-400 dark:bg-zinc-900/50 dark:text-zinc-100";
+  }
+}
+
+function levelBadgeStyles(level: LogEntry["level"]): string {
+  switch (level) {
+    case "error":
+      return "border-red-700/50 bg-red-100 text-red-800 dark:border-red-400/50 dark:bg-red-950/80 dark:text-red-200";
+    case "warn":
+      return "border-amber-700/50 bg-amber-100 text-amber-900 dark:border-amber-400/50 dark:bg-amber-950/80 dark:text-amber-200";
+    case "info":
+      return "border-sky-700/50 bg-sky-100 text-sky-900 dark:border-sky-400/50 dark:bg-sky-950/80 dark:text-sky-200";
+    case "debug":
+      return "border-zinc-600/50 bg-zinc-200 text-zinc-800 dark:border-zinc-400/50 dark:bg-zinc-800 dark:text-zinc-200";
+    default:
+      return "border-zinc-600/40 bg-zinc-100 text-zinc-800 dark:border-zinc-400/40 dark:bg-zinc-800 dark:text-zinc-200";
+  }
+}
+
 export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
   const [logs, setLogs] = useState<LogEntry[]>(() => getLogs());
-  const [filter, setFilter] = useState<"all" | "frontend" | "backend">("all");
-  const [levelFilter, setLevelFilter] = useState<
-    "all" | "log" | "info" | "warn" | "error" | "debug"
-  >("all");
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
-  const [autoScroll, setAutoScroll] = useState(true);
+  const [filter, setFilter] = useState<SourceFilter>("all");
+  const [levelFilter, setLevelFilter] = useState<LevelFilter>("error");
 
-  // Subscribe to new logs
+  useEffect(() => {
+    startBackendLogBridge();
+  }, []);
+
   useEffect(() => {
     if (!isOpen) return;
 
+    setLogs(getLogs());
     const unsubscribe = subscribeToLogs((newLogs) => {
       setLogs([...newLogs]);
     });
@@ -46,215 +92,176 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
     return unsubscribe;
   }, [isOpen]);
 
-  // Listen for backend logs
-  useEffect(() => {
-    if (!isOpen) return;
+  const filteredLogs = logs
+    .filter((log) => {
+      if (filter !== "all" && log.source !== filter) return false;
+      if (levelFilter !== "all" && log.level !== levelFilter) return false;
+      return true;
+    })
+    .slice()
+    .reverse();
 
-    const setupBackendListener = async () => {
-      try {
-        const unlisten = await listen<LogEntry>("backend-log", (event) => {
-          const logEntry = event.payload;
-          setLogs((prev) => {
-            const newLogs = [...prev, logEntry];
-            // Keep only last 1000 logs to prevent memory issues
-            return newLogs.slice(-1000);
-          });
-        });
-
-        return unlisten;
-      } catch (error) {
-        console.error("Failed to set up backend log listener:", error);
-      }
-    };
-
-    let unlistenFn: (() => void) | undefined;
-
-    setupBackendListener().then((unlisten) => {
-      unlistenFn = unlisten;
-    });
-
-    return () => {
-      if (unlistenFn) {
-        unlistenFn();
-      }
-    };
-  }, [isOpen]);
-
-  // Auto-scroll to bottom when new logs arrive
-  useEffect(() => {
-    if (autoScroll && scrollAreaRef.current) {
-      const scrollContainer = scrollAreaRef.current.querySelector(
-        "[data-radix-scroll-area-viewport]"
-      );
-      if (scrollContainer) {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight;
-      }
-    }
-  }, [logs, autoScroll]);
-
-  const filteredLogs = logs.filter((log) => {
-    if (filter !== "all" && log.source !== filter) return false;
-    if (levelFilter !== "all" && log.level !== levelFilter) return false;
-    return true;
-  });
-
-  const getLevelColor = (level: LogEntry["level"]) => {
-    switch (level) {
-      case "error":
-        return "bg-red-500/20 text-red-400 border-red-500/50";
-      case "warn":
-        return "bg-yellow-500/20 text-yellow-400 border-yellow-500/50";
-      case "info":
-        return "bg-blue-500/20 text-blue-400 border-blue-500/50";
-      case "debug":
-        return "bg-gray-500/20 text-gray-400 border-gray-500/50";
-      default:
-        return "bg-gray-500/10 text-gray-300 border-gray-500/30";
-    }
-  };
-
-  const clearLogs = () => {
+  const handleClear = () => {
+    clearLogStore();
     setLogs([]);
   };
 
   const exportLogs = () => {
-    const logText = filteredLogs
-      .map(
-        (log) =>
-          `[${log.timestamp}] [${log.source.toUpperCase()}] [${log.level.toUpperCase()}] ${log.message}${
-            log.data ? ` ${JSON.stringify(log.data, null, 2)}` : ""
-          }`
-      )
-      .join("\n");
-
-    const blob = new Blob([logText], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `aurorabook-logs-${new Date().toISOString()}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+    void exportLogsToFile().catch((err) => {
+      logger.error("Failed to export logs:", err);
+    });
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent
+        scrollableBody={false}
+        className={cn(
+          "flex w-[calc(100%-1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0",
+          "h-[min(90dvh,100%)] max-h-[90dvh] sm:h-auto sm:max-h-[85vh]"
+        )}
+      >
+        <DialogHeader className="shrink-0 border-b px-4 pb-3 pt-5 pr-12 sm:px-6 sm:pt-6 sm:pb-4">
           <DialogTitle>Log Viewer</DialogTitle>
-          <DialogDescription>
-            View logs from frontend and backend. Logs are captured in real-time.
+          <DialogDescription className="text-left text-balance">
+            Frontend and backend logs captured on this device. Defaults to
+            errors so conversion failures are easy to spot.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex gap-2 flex-wrap items-center mb-4">
-          <div className="flex gap-2">
-            <Button
-              variant={filter === "all" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setFilter("all")}
-            >
-              All
-            </Button>
-            <Button
-              variant={filter === "frontend" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setFilter("frontend")}
-            >
-              Frontend
-            </Button>
-            <Button
-              variant={filter === "backend" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setFilter("backend")}
-            >
-              Backend
-            </Button>
+        <div className="shrink-0 space-y-3 border-b bg-muted/30 px-4 py-3 sm:px-6">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <FilterGroup
+              value={filter}
+              onChange={setFilter}
+              options={[
+                { value: "all", label: "All" },
+                { value: "frontend", label: "Frontend" },
+                { value: "backend", label: "Backend" },
+              ]}
+            />
+            <FilterGroup
+              value={levelFilter}
+              onChange={setLevelFilter}
+              options={[
+                { value: "all", label: "All levels" },
+                {
+                  value: "error",
+                  label: "Errors",
+                  className: "text-red-700 dark:text-red-300",
+                },
+                {
+                  value: "warn",
+                  label: "Warnings",
+                  className: "text-amber-800 dark:text-amber-300",
+                },
+                { value: "info", label: "Info" },
+              ]}
+            />
+            <div className="flex w-full gap-2 sm:ml-auto sm:w-auto">
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1 sm:flex-none"
+                onClick={handleClear}
+              >
+                Clear
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1 sm:flex-none"
+                onClick={exportLogs}
+              >
+                Export
+              </Button>
+            </div>
           </div>
 
-          <div className="flex gap-2">
-            <Button
-              variant={levelFilter === "all" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setLevelFilter("all")}
-            >
-              All Levels
-            </Button>
-            <Button
-              variant={levelFilter === "error" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setLevelFilter("error")}
-              className="text-red-400"
-            >
-              Errors
-            </Button>
-            <Button
-              variant={levelFilter === "warn" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setLevelFilter("warn")}
-              className="text-yellow-400"
-            >
-              Warnings
-            </Button>
-          </div>
-
-          <div className="flex gap-2 ml-auto">
-            <Button variant="outline" size="sm" onClick={clearLogs}>
-              Clear
-            </Button>
-            <Button variant="outline" size="sm" onClick={exportLogs}>
-              Export
-            </Button>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={autoScroll}
-                onChange={(e) => {
-                  setAutoScroll(e.target.checked);
-                }}
-                className="rounded"
-              />
-              Auto-scroll
-            </label>
-          </div>
+          <p className="text-xs text-foreground/70">
+            Showing {filteredLogs.length} of {logs.length} · newest first
+          </p>
         </div>
 
-        <div className="text-sm text-muted-foreground mb-2">
-          Showing {filteredLogs.length} of {logs.length} logs
-        </div>
-
-        <ScrollArea className="flex-1 border rounded-md p-4 bg-black/50 font-mono text-sm">
-          <div ref={scrollAreaRef} className="space-y-1">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-background [-webkit-overflow-scrolling:touch]">
+          <div className="space-y-2 p-3 font-mono text-[13px] leading-snug sm:p-4">
             {filteredLogs.length === 0 ? (
-              <div className="text-muted-foreground text-center py-8">
-                No logs to display. Logs will appear here as they are generated.
+              <div className="py-12 text-center font-sans text-sm text-foreground/70">
+                No logs to display. Reproduce the issue, then open this viewer
+                again (or switch to All levels).
               </div>
             ) : (
               filteredLogs.map((log, index) => (
-                <div
-                  key={`${log.timestamp}-${index}`}
-                  className={`border-l-2 pl-3 py-1 rounded ${getLevelColor(log.level)}`}
+                <article
+                  key={`${log.timestamp}-${log.level}-${index}`}
+                  className={cn(
+                    "min-w-0 max-w-full overflow-hidden rounded-md border border-black/10 border-l-4 px-2.5 py-2 shadow-sm dark:border-white/15 sm:px-3",
+                    levelStyles(log.level)
+                  )}
                 >
-                  <div className="flex items-start gap-2 flex-wrap">
-                    <span className="text-xs opacity-70">{log.timestamp}</span>
-                    <Badge variant="outline" className="text-xs">
+                  <header className="mb-1.5 flex flex-wrap items-center gap-1.5 sm:gap-2">
+                    <time
+                      dateTime={log.timestamp}
+                      className="font-sans text-[11px] font-medium tabular-nums text-current/70"
+                    >
+                      {formatTimestamp(log.timestamp)}
+                    </time>
+                    <Badge
+                      variant="outline"
+                      className="h-5 border-current/25 bg-white/60 px-1.5 font-sans text-[10px] uppercase tracking-wide text-current dark:bg-black/30"
+                    >
                       {log.source}
                     </Badge>
-                    <Badge variant="outline" className="text-xs">
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "h-5 px-1.5 font-sans text-[10px] font-semibold uppercase tracking-wide",
+                        levelBadgeStyles(log.level)
+                      )}
+                    >
                       {log.level}
                     </Badge>
-                    <span className="flex-1 break-words">{log.message}</span>
-                  </div>
+                  </header>
+                  <p className="min-w-0 whitespace-pre-wrap break-all text-[12px] font-medium sm:text-[13px]">
+                    {log.message}
+                  </p>
                   {log.data != null && (
-                    <pre className="mt-2 text-xs opacity-80 overflow-x-auto">
+                    <pre className="mt-2 max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded border border-black/10 bg-white/80 px-2 py-1.5 text-[11px] text-current dark:border-white/15 dark:bg-black/40">
                       {JSON.stringify(log.data, null, 2) || ""}
                     </pre>
                   )}
-                </div>
+                </article>
               ))
             )}
           </div>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function FilterGroup<T extends string>({
+  value,
+  onChange,
+  options,
+}: Readonly<{
+  value: T;
+  onChange: (value: T) => void;
+  options: ReadonlyArray<{ value: T; label: string; className?: string }>;
+}>) {
+  return (
+    <div className="flex min-w-0 flex-wrap gap-1.5">
+      {options.map((option) => (
+        <Button
+          key={option.value}
+          variant={value === option.value ? "default" : "outline"}
+          size="sm"
+          className={cn("h-7 shrink-0 text-xs", option.className)}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </Button>
+      ))}
+    </div>
   );
 }

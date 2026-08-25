@@ -1,7 +1,7 @@
 # Ignored Tests Summary
 
 ## Overview
-There are **10 tests** currently marked with `#[ignore]` that require Tauri `AppHandle` context. These tests are excluded from the default test run but can be executed with `cargo test -- --ignored`.
+There are **11 tests** currently marked with `#[ignore]` — ten that require Tauri `AppHandle` context, plus one optional Supertonic all-languages TTS smoke test. These tests are excluded from the default test run but can be executed with `cargo test -- --ignored`.
 
 ## Why These Tests Are Ignored
 
@@ -40,6 +40,15 @@ These tests require a Tauri `AppHandle` to:
 - `test_convert_epub_to_audiobook_command` - Tests the full conversion command
 
 **Required:** `AppHandle` and TTS model files
+
+### 5. `tts::languages` (1 test)
+- `test_tts_works_for_all_supported_languages` - Synthesizes a short phrase for every `AVAILABLE_LANGS` code
+
+**Required:** Supertonic ONNX + voice_styles under `resources/supertonic/` (or parent `supertonic-3/`)
+
+```bash
+cargo test --test mod tts::languages::test_tts_works_for_all_supported_languages -- --ignored --nocapture
+```
 
 ## Current Status
 

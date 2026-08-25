@@ -102,11 +102,18 @@ ort = { version = "2.0.0-rc.12", features = ["webgpu"] }
 [target.'cfg(all(target_os = "windows", target_arch = "aarch64"))'.dependencies]
 ort = { version = "2.0.0-rc.12", features = ["directml"] }
 
-# iOS: CPU EP only (CoreML EP previously aborted / spiked memory). ORT_DIRECT_LINK +
-# locally built static libs (see LOCAL_IOS_BUILD.md).
+# iOS: WebGPU EP (Dawn → Metal) + CPU fallback. `alternative-backend` disables
+# ort-sys prebuilt download/link (pyke has no iOS `webgpu` dist); build.rs links
+# local static ORT from ORT_LIB_LOCATION / auto-discovered iOS-webgpu tree.
 # waterkit-background: BGContinuedProcessingTaskRequest (iOS 26+) via Swift bridge.
 [target.'cfg(target_os = "ios")'.dependencies]
-ort = { version = "2.0.0-rc.12" }
+ort = { version = "2.0.0-rc.12", default-features = false, features = [
+  "std",
+  "ndarray",
+  "api-24",
+  "webgpu",
+  "alternative-backend",
+] }
 waterkit-background = { path = "../patches/waterkit-background" }
 
 

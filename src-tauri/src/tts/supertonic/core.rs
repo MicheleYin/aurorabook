@@ -906,15 +906,43 @@ pub fn load_voice_style(voice_style_paths: &[String], verbose: bool) -> Result<S
     })
 }
 
+/// With `alternative-backend`, ort does not call `OrtGetApiBase` itself.
+/// iOS links a local static ORT in `build.rs`, so we must register that API first.
+#[cfg(target_os = "ios")]
+fn ensure_ios_ort_api() {
+    static ORT_API_INIT: Once = Once::new();
+    ORT_API_INIT.call_once(|| {
+        unsafe {
+            let base = ort::sys::OrtGetApiBase();
+            assert!(
+                !base.is_null(),
+                "OrtGetApiBase returned null; static ONNX Runtime may not be linked"
+            );
+            let api = ((*base).GetApi)(ort::sys::ORT_API_VERSION);
+            assert!(
+                !api.is_null(),
+                "linked ONNX Runtime does not support OrtApi version {}",
+                ort::sys::ORT_API_VERSION
+            );
+            let registered = ort::set_api(std::ptr::read(api));
+            if registered {
+                log::info!(
+                    "Registered OrtApi from static ONNX Runtime (version {})",
+                    ort::sys::ORT_API_VERSION
+                );
+            }
+        }
+    });
+}
+
 pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<TextToSpeech> {
     if use_gpu {
         bail!("GPU mode is not supported yet");
     }
-    #[cfg(target_os = "ios")]
-    log::debug!("Supertonic TTS: using CPU EP on iOS (CoreML disabled — native abort risk)");
     #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
     log::debug!("Supertonic TTS: prefer DirectML, CPU fallback");
     #[cfg(any(
+        target_os = "ios",
         target_os = "macos",
         all(target_os = "windows", target_arch = "x86_64")
     ))]
@@ -927,20 +955,14 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
     ))]
     log::debug!("Supertonic TTS: using CPU EP (no GPU EP configured for this platform)");
 
+    #[cfg(target_os = "ios")]
+    ensure_ios_ort_api();
+
     // Ensure a single ORT environment is committed before session create.
-    // On iOS, pin CPU so sessions don't inherit unexpected default EPs.
+    // EPs are set per-session (not on the env) so iOS can retry CPU-only if WebGPU fails.
     static ORT_ENV_INIT: Once = Once::new();
     ORT_ENV_INIT.call_once(|| {
-        #[cfg(target_os = "ios")]
-        {
-            let _ = ort::init()
-                .with_execution_providers([ep::CPU::default().build()])
-                .commit();
-        }
-        #[cfg(not(target_os = "ios"))]
-        {
-            let _ = ort::init().commit();
-        }
+        let _ = ort::init().commit();
     });
 
     let onnx_dir = onnx_dir.as_ref();
@@ -951,20 +973,52 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
     let vocoder_path = onnx_dir.join("vocoder.onnx");
 
     let build_session = |path: &Path| -> Result<Session> {
+        log::info!("Loading ONNX model: {}", path.display());
+
+        // iOS: try WebGPU (Dawn→Metal) + CPU first. If session create fails
+        // (EP register/OOM), rebuild CPU-only. Keep Level1 + 1 thread for memory.
+        #[cfg(target_os = "ios")]
+        {
+            let build_ios = |use_webgpu: bool| -> Result<Session> {
+                let builder = Session::builder()
+                    .map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
+                let builder = if use_webgpu {
+                    builder
+                        .with_execution_providers([
+                            ep::WebGPU::default().build(),
+                            ep::CPU::default().build(),
+                        ])
+                        .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?
+                } else {
+                    builder
+                        .with_execution_providers([ep::CPU::default().build()])
+                        .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?
+                };
+                builder
+                    .with_optimization_level(GraphOptimizationLevel::Level1)
+                    .map_err(|e| anyhow!("ORT optimization level setup failed: {e}"))?
+                    .with_intra_threads(1)
+                    .map_err(|e| anyhow!("ORT intra-threads setup failed: {e}"))?
+                    .with_memory_pattern(true)
+                    .map_err(|e| anyhow!("ORT memory pattern setup failed: {e}"))?
+                    .commit_from_file(path)
+                    .map_err(|e| anyhow!("ORT failed to load model '{}': {e}", path.display()))
+            };
+
+            return match build_ios(true) {
+                Ok(session) => Ok(session),
+                Err(webgpu_err) => {
+                    log::warn!(
+                        "WebGPU session failed for '{}': {webgpu_err}; falling back to CPU-only",
+                        path.display()
+                    );
+                    build_ios(false)
+                }
+            };
+        }
+
         let builder =
             Session::builder().map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
-        // iOS: CPU only + low memory options. Full graph opts on ~400MB of models can OOM
-        // (___rg_oom → SIGABRT). Prefer Level1 and a single intra-op thread.
-        #[cfg(target_os = "ios")]
-        let mut builder = builder
-            .with_execution_providers([ep::CPU::default().build()])
-            .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?
-            .with_optimization_level(GraphOptimizationLevel::Level1)
-            .map_err(|e| anyhow!("ORT optimization level setup failed: {e}"))?
-            .with_intra_threads(1)
-            .map_err(|e| anyhow!("ORT intra-threads setup failed: {e}"))?
-            .with_memory_pattern(true)
-            .map_err(|e| anyhow!("ORT memory pattern setup failed: {e}"))?;
         // Windows ARM64: prefer DirectML; fall back to CPU when no DML device
         // (e.g. VM, missing DirectML.dll, or driver filter mismatch).
         #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
@@ -995,7 +1049,6 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
         let mut builder = builder
             .with_execution_providers([ep::CPU::default().build()])
             .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
-        log::info!("Loading ONNX model: {}", path.display());
         let session = builder
             .commit_from_file(path)
             .map_err(|e| anyhow!("ORT failed to load model '{}': {e}", path.display()))?;

@@ -20,9 +20,10 @@ rustflags = [
 # Generate `resources/voice-samples/{lang}/{F1..M5}.mp3` previews used by settings playback.
 gen-voice-samples = "run --release --features gen-voice-samples --bin gen_voice_samples"
 
-# Do not set ORT_DIRECT_LINK globally: it makes ort-sys skip ONNX prebuilt download and
-# breaks macOS desktop builds (missing static `libonnx`). iOS builds set ORT_DIRECT_LINK=1
-# in package.json (`build:ios`, `build:ios:appstore`) alongside ORT_LIB_LOCATION.
+# Do not set ORT_DIRECT_LINK / ORT_LIB_LOCATION globally here — they break macOS
+# desktop (ort-sys skips pyke download). iOS uses ort `alternative-backend` and
+# `build.rs` links local static libs (auto-discovers iOS-webgpu, or ORT_LIB_LOCATION).
+# Optional shell exports for choosing the tree: see signing/LOCAL_IOS_BUILD.md.
 
 [target.aarch64-apple-ios-sim]
 # Keep default Apple toolchain behavior for Swift and SDK linker paths.

@@ -42,6 +42,16 @@ src-tauri/check_output_final.txt
 src-tauri/test_output/
 src-tauri/watermark_test.mp3
 
+# Windows Store / winapp — never commit (see src-tauri/signing/README.md)
+Package.appxmanifest
+appxmanifest.xml
+Assets/
+msix-layout/
+*.msix
+*.msixbundle
+.winapp/
+devcert.pfx
+
 # Apple signing & certificates — never commit (see src-tauri/signing/README.md)
 # Entitlements.macos-appstore.plist is generated from the .template; do not commit it
 src-tauri/Entitlements.macos-appstore.plist
@@ -82,3 +92,6 @@ supertonic-3/
 
 # App Store Connect screenshot dumps (filenames contain `|`, invalid on Windows)
 AuroraBook/
+
+# Windows SDK packages and generated files
+.winapp

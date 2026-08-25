@@ -356,6 +356,62 @@ impl BackgroundCoordinator {
         Ok(())
     }
 
+    /// Cancel every active continued-processing job because the app left the foreground.
+    ///
+    /// Flips cancel tokens and completes any iOS BG tasks as unsuccessful so Live Activities
+    /// dismiss. Conversion unwind still emits `conversion-cancelled` for UI/checkpoint state.
+    pub fn cancel_all_for_background(&self, app: &AppHandle) {
+        let lifecycles: Vec<JobLifecycleEvent> = {
+            let mut guard = match self.inner.lock() {
+                Ok(g) => g,
+                Err(e) => {
+                    log::error!("background coordinator poisoned on background cancel: {e}");
+                    return;
+                }
+            };
+
+            let task_ids: Vec<String> = guard
+                .by_task_id
+                .iter()
+                .filter(|(_, job)| !job.finished)
+                .map(|(task_id, _)| task_id.clone())
+                .collect();
+
+            let mut events = Vec::with_capacity(task_ids.len());
+            for task_id in task_ids {
+                let Some(job) = guard.by_task_id.get_mut(&task_id) else {
+                    continue;
+                };
+                job.cancel_token.store(true, Ordering::Relaxed);
+                job.finished = true;
+
+                #[cfg(target_os = "ios")]
+                if let Some(task) = job.bg_task.take() {
+                    if let Err(e) = task.complete(false) {
+                        log::warn!(
+                            "Failed to complete background task {} after foreground exit: {e}",
+                            task_id
+                        );
+                    }
+                }
+
+                let event = JobLifecycleEvent {
+                    job_id: job.job_id.clone(),
+                    task_id: job.task_id.clone(),
+                    book_id: job.book_id.clone(),
+                    success: Some(false),
+                };
+                Self::drop_job_locked(&mut guard, &task_id);
+                events.push(event);
+            }
+            events
+        };
+
+        for lifecycle in lifecycles {
+            let _ = app.emit("background-task-completed", &lifecycle);
+        }
+    }
+
     fn drop_job_locked(guard: &mut CoordinatorInner, task_id: &str) {
         if let Some(job) = guard.by_task_id.remove(task_id) {
             guard.task_by_book_id.remove(&job.book_id);

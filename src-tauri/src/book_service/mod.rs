@@ -5,6 +5,8 @@ pub mod repositories;
 pub mod audio_stream;
 pub mod epub_file_storage;
 pub mod mp3_export;
+pub mod ios_export;
+pub mod logs_export;
 
 pub use models::*;
 use filters::*;
@@ -1275,34 +1277,81 @@ pub async fn export_epub_to_file(
     output_path: String,
     app: tauri::AppHandle,
 ) -> AppResult<()> {
-    use repositories::EpubRepository;
+    use crate::utils::path_resolver::ResourcePathResolver;
+    use repositories::{BookRepository, EpubRepository};
     use std::fs::File;
     use std::io::Write;
-    
-    let db = get_db_connection(&app).await
-        .map_err(|e| AppError::Store(e))?;
-    
+
+    let db = get_db_connection(&app)
+        .await
+        .map_err(AppError::Store)?;
+
     // Get EPUB data from database by book_id
-    let epub_data = EpubRepository::find_by_book_id(db.as_ref(), &book_id).await
-        .map_err(|e| AppError::Store(e))?
+    let epub_data = EpubRepository::find_by_book_id(db.as_ref(), &book_id)
+        .await
+        .map_err(AppError::Store)?
         .ok_or_else(|| AppError::Store("EPUB not found in store".to_string()))?;
-    
-    // Write directly to file in chunks to avoid loading entire file into memory
-    // For very large files, we still need to load from DB, but we can write in chunks
+
+    // Write to a sandbox temp file first. On iOS the save dialog returns a
+    // security-scoped File Provider URL that Rust `std::fs` cannot create.
+    let temp = tempfile::Builder::new()
+        .suffix(".epub")
+        .tempfile()
+        .map_err(|e| AppError::Store(format!("Failed to create EPUB export temp file: {e}")))?;
+
     const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
-    
-    let mut file = File::create(&output_path)
-        .map_err(|e| AppError::Store(format!("Failed to create output file: {}", e)))?;
-    
-    // Write in chunks to avoid blocking
-    for chunk in epub_data.chunks(CHUNK_SIZE) {
-        file.write_all(chunk)
-            .map_err(|e| AppError::Store(format!("Failed to write to file: {}", e)))?;
+    {
+        let mut file = File::create(temp.path()).map_err(|e| {
+            AppError::Store(format!(
+                "Failed to create EPUB temp {}: {}",
+                temp.path().display(),
+                e
+            ))
+        })?;
+        for chunk in epub_data.chunks(CHUNK_SIZE) {
+            file.write_all(chunk)
+                .map_err(|e| AppError::Store(format!("Failed to write EPUB temp: {}", e)))?;
+        }
+        file.sync_all()
+            .map_err(|e| AppError::Store(format!("Failed to sync EPUB temp: {}", e)))?;
     }
-    
-    file.sync_all()
-        .map_err(|e| AppError::Store(format!("Failed to sync file: {}", e)))?;
-    
+
+    #[cfg(target_os = "ios")]
+    {
+        let book = BookRepository::find_by_id(db.as_ref(), &book_id)
+            .await
+            .map_err(AppError::Store)?;
+        let stem = book
+            .as_ref()
+            .map(|b| b.title.as_str())
+            .unwrap_or("export");
+        let dest = crate::book_service::ios_export::resolve_ios_sandbox_export_path(
+            &app,
+            &output_path,
+            stem,
+            "epub",
+        )?;
+        std::fs::copy(temp.path(), &dest).map_err(|e| {
+            AppError::Store(format!(
+                "Failed to create output file {}: {}",
+                dest.display(),
+                e
+            ))
+        })?;
+        crate::book_service::ios_export::share_exported_file(&dest)?;
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let dest = ResourcePathResolver::prepare_writable_output_path(&output_path)?;
+        std::fs::copy(temp.path(), &dest).map_err(|e| {
+            AppError::Store(format!(
+                "Failed to create output file {}: {}",
+                dest.display(),
+                e
+            ))
+        })?;
+    }
+
     Ok(())
 }
 
@@ -1714,6 +1763,43 @@ pub async fn update_app_settings(
     SettingsRepository::save(db.as_ref(), &settings).await
         .map_err(|e| AppError::Store(e))?;
     Ok(settings)
+}
+
+/// Append one log entry to SQLite (frontend source).
+#[tauri::command]
+pub async fn append_app_log(
+    entry: AppLogEntry,
+    app: tauri::AppHandle,
+) -> AppResult<()> {
+    let db = get_db_connection(&app)
+        .await
+        .map_err(AppError::Store)?;
+    AppLogsRepository::append(db.as_ref(), &entry)
+        .await
+        .map_err(AppError::Store)
+}
+
+/// List persisted logs (after cleaning entries older than 24h).
+#[tauri::command]
+pub async fn list_app_logs(app: tauri::AppHandle) -> AppResult<Vec<AppLogEntry>> {
+    let db = get_db_connection(&app)
+        .await
+        .map_err(AppError::Store)?;
+    let _ = AppLogsRepository::cleanup(db.as_ref()).await;
+    AppLogsRepository::list(db.as_ref())
+        .await
+        .map_err(AppError::Store)
+}
+
+/// Clear all persisted logs.
+#[tauri::command]
+pub async fn clear_app_logs(app: tauri::AppHandle) -> AppResult<()> {
+    let db = get_db_connection(&app)
+        .await
+        .map_err(AppError::Store)?;
+    AppLogsRepository::clear(db.as_ref())
+        .await
+        .map_err(AppError::Store)
 }
 
 /// Get reader preferences

@@ -12,9 +12,9 @@ echo "📋 Step 1/3: Building ONNX Runtime for iOS..."
 echo "   This may take 30-60 minutes..."
 echo ""
 
-if ./scripts/build-onnxruntime-ios.sh; then
+if ./scripts/build-onnxruntime-ios-webgpu.sh; then
     echo ""
-    echo "✅ ONNX Runtime build completed successfully!"
+    echo "✅ ONNX Runtime (WebGPU) build completed successfully!"
 else
     echo ""
     echo "❌ ONNX Runtime build failed!"
@@ -25,15 +25,16 @@ fi
 # Step 2: Verify ONNX Runtime libraries exist
 echo ""
 echo "📋 Step 2/3: Verifying ONNX Runtime libraries..."
-LIB_DIR="onnxruntime/build/iOS/Release/Release-iphoneos"
+LIB_DIR="../onnxruntime/build/iOS-webgpu/Release/Release-iphoneos"
 
-if [ -d "$LIB_DIR" ] && [ -f "$LIB_DIR/libonnxruntime_common.a" ]; then
-    echo "✅ ONNX Runtime libraries found:"
-    ls -lh "$LIB_DIR"/libonnxruntime_*.a | head -5
+if [ -d "$LIB_DIR" ] && [ -f "$LIB_DIR/libonnxruntime_common.a" ] \
+   && [ -f "$LIB_DIR/libonnxruntime_providers_webgpu.a" ]; then
+    echo "✅ ONNX Runtime WebGPU libraries found:"
+    ls -lh "$LIB_DIR"/libonnxruntime_*.a | head -8
     echo ""
 else
-    echo "❌ ONNX Runtime libraries not found in $LIB_DIR"
-    echo "   Expected location: $LIB_DIR/libonnxruntime_*.a"
+    echo "❌ ONNX Runtime WebGPU libraries not found in $LIB_DIR"
+    echo "   Expected: libonnxruntime_common.a + libonnxruntime_providers_webgpu.a"
     exit 1
 fi
 
