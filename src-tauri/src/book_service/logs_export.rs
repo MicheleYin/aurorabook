@@ -1,7 +1,7 @@
-//! Export captured logs to a file and email them with a full attachment.
+//! Export captured logs to a zip archive and email them with a full attachment.
 //!
 //! * **macOS / Windows** — export uses a native save dialog on the frontend, then
-//!   writes the chosen path. Email writes a `.eml` draft (to/subject/body + log
+//!   writes the chosen path. Email writes a `.eml` draft (to/subject/body + zip
 //!   attachment) and opens it with the system default handler (Mail / Outlook).
 //! * **iOS** — export writes under Documents/Exports and presents the share sheet.
 //!   Email opens the default mail app via `mailto:` (no attachment).
@@ -10,11 +10,13 @@ use crate::utils::errors::{AppError, AppResult};
 use crate::utils::path_resolver::ResourcePathResolver;
 #[cfg(not(target_os = "ios"))]
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use tauri::Manager;
+use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
 fn default_log_filename() -> String {
-    format!("aurorabook-logs-{}.txt", chrono_like_stamp())
+    format!("aurorabook-logs-{}.zip", chrono_like_stamp())
 }
 
 fn chrono_like_stamp() -> String {
@@ -26,7 +28,31 @@ fn chrono_like_stamp() -> String {
     format!("{secs}")
 }
 
-fn write_log_file(path: &Path, contents: &str) -> AppResult<()> {
+fn inner_log_txt_name(zip_path: &Path) -> String {
+    let stem = zip_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("aurorabook-logs");
+    format!("{stem}.txt")
+}
+
+fn build_log_zip(inner_txt_name: &str, contents: &str) -> AppResult<Vec<u8>> {
+    let mut zip_writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+    zip_writer
+        .start_file(inner_txt_name, options)
+        .map_err(|e| AppError::ZipArchive(format!("Failed to start log zip entry: {e}")))?;
+    zip_writer
+        .write_all(contents.as_bytes())
+        .map_err(|e| AppError::ZipArchive(format!("Failed to write log zip entry: {e}")))?;
+    let cursor = zip_writer
+        .finish()
+        .map_err(|e| AppError::ZipArchive(format!("Failed to finalize log zip: {e}")))?;
+    Ok(cursor.into_inner())
+}
+
+fn ensure_parent_dir(path: &Path) -> AppResult<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -38,9 +64,15 @@ fn write_log_file(path: &Path, contents: &str) -> AppResult<()> {
             })?;
         }
     }
-    std::fs::write(path, contents.as_bytes()).map_err(|e| {
+    Ok(())
+}
+
+fn write_log_zip_file(path: &Path, contents: &str) -> AppResult<()> {
+    ensure_parent_dir(path)?;
+    let zip_bytes = build_log_zip(&inner_log_txt_name(path), contents)?;
+    std::fs::write(path, zip_bytes).map_err(|e| {
         AppError::Store(format!(
-            "Failed to write log file {}: {}",
+            "Failed to write log zip {}: {}",
             path.display(),
             e
         ))
@@ -55,7 +87,7 @@ fn resolve_export_path(app: &tauri::AppHandle, output_path: &str) -> AppResult<P
             app,
             output_path,
             "aurorabook-logs",
-            "txt",
+            "zip",
         )
     }
     #[cfg(not(target_os = "ios"))]
@@ -65,7 +97,7 @@ fn resolve_export_path(app: &tauri::AppHandle, output_path: &str) -> AppResult<P
     }
 }
 
-/// Save log text to a file. On iOS, also presents the share sheet.
+/// Save log text as a zip archive. On iOS, also presents the share sheet.
 #[tauri::command]
 pub async fn export_logs_to_file(
     app: tauri::AppHandle,
@@ -78,7 +110,7 @@ pub async fn export_logs_to_file(
         output_path
     };
     let dest = resolve_export_path(&app, &path)?;
-    write_log_file(&dest, &contents)?;
+    write_log_zip_file(&dest, &contents)?;
 
     #[cfg(target_os = "ios")]
     {
@@ -88,7 +120,7 @@ pub async fn export_logs_to_file(
     Ok(())
 }
 
-/// Open a bug-report email. Desktop attaches the full log file; iOS opens mailto only.
+/// Open a bug-report email. Desktop attaches the zipped log file; iOS opens mailto only.
 #[tauri::command]
 pub async fn email_logs_report(
     app: tauri::AppHandle,
@@ -115,10 +147,18 @@ pub async fn email_logs_report(
             .path()
             .temp_dir()
             .map_err(|e| AppError::Store(format!("temp_dir unavailable: {e}")))?;
-        let log_path = temp_dir.join(&file_name);
-        write_log_file(&log_path, &log_contents)?;
+        let zip_path = temp_dir.join(&file_name);
+        let zip_bytes = build_log_zip(&inner_log_txt_name(&zip_path), &log_contents)?;
+        ensure_parent_dir(&zip_path)?;
+        std::fs::write(&zip_path, &zip_bytes).map_err(|e| {
+            AppError::Store(format!(
+                "Failed to write log zip {}: {}",
+                zip_path.display(),
+                e
+            ))
+        })?;
         let eml_path = temp_dir.join("aurorabook-bug-report.eml");
-        write_eml_with_attachment(&eml_path, &to, &subject, &body, &file_name, &log_contents)?;
+        write_eml_with_attachment(&eml_path, &to, &subject, &body, &file_name, &zip_bytes)?;
         open_email_draft(&eml_path)?;
     }
 
@@ -157,10 +197,10 @@ fn write_eml_with_attachment(
     subject: &str,
     body: &str,
     attachment_name: &str,
-    attachment_contents: &str,
+    attachment_bytes: &[u8],
 ) -> AppResult<()> {
     let boundary = format!("AuroraBookBoundary{}", chrono_like_stamp());
-    let encoded = BASE64.encode(attachment_contents.as_bytes());
+    let encoded = BASE64.encode(attachment_bytes);
     let mut folded = String::with_capacity(encoded.len() + encoded.len() / 76);
     for (i, chunk) in encoded.as_bytes().chunks(76).enumerate() {
         if i > 0 {
@@ -184,7 +224,7 @@ Content-Transfer-Encoding: 8bit\r\n\
 {body}\r\n\
 \r\n\
 --{boundary}\r\n\
-Content-Type: text/plain; charset=utf-8; name=\"{attachment_name}\"\r\n\
+Content-Type: application/zip; name=\"{attachment_name}\"\r\n\
 Content-Disposition: attachment; filename=\"{attachment_name}\"\r\n\
 Content-Transfer-Encoding: base64\r\n\
 \r\n\
