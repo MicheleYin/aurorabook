@@ -4,8 +4,17 @@ import { type as osType } from "@tauri-apps/plugin-os";
 
 import { getLogs, type LogEntry } from "./logger";
 
+/** Only the most recent entries are included in file/email export. */
+export const MAX_EXPORT_LOGS = 100;
+
+export function logsForExport(logs: LogEntry[] = getLogs()): LogEntry[] {
+  return logs.length > MAX_EXPORT_LOGS
+    ? logs.slice(-MAX_EXPORT_LOGS)
+    : logs;
+}
+
 export function formatLogsForExport(logs: LogEntry[] = getLogs()): string {
-  return logs
+  return logsForExport(logs)
     .map(
       (log) =>
         `[${log.timestamp}] [${log.source.toUpperCase()}] [${log.level.toUpperCase()}] ${log.message}${
@@ -16,13 +25,15 @@ export function formatLogsForExport(logs: LogEntry[] = getLogs()): string {
 }
 
 export function defaultLogFilename(): string {
-  return `aurorabook-logs-${new Date().toISOString().replace(/:/g, "-")}.txt`;
+  return `aurorabook-logs-${new Date().toISOString().replace(/:/g, "-")}.zip`;
 }
 
 /**
- * Save the full log file using the same platform rules as book export:
+ * Save the log archive using the same platform rules as book export:
  * - macOS / Windows: native save dialog, then write to the chosen path
  * - iOS: write under Documents/Exports and present the share sheet
+ *
+ * The backend zips a `.txt` of the last {@link MAX_EXPORT_LOGS} entries.
  */
 export async function exportLogsToFile(
   logs: LogEntry[] = getLogs()
@@ -35,7 +46,7 @@ export async function exportLogsToFile(
   if (!onIos) {
     const chosen = await save({
       defaultPath: suggestedName,
-      filters: [{ name: "Log files", extensions: ["txt"] }],
+      filters: [{ name: "Zip archives", extensions: ["zip"] }],
     });
     if (!chosen) {
       return false;
@@ -52,7 +63,7 @@ export async function exportLogsToFile(
 
 /**
  * Open a bug-report email:
- * - desktop: `.eml` draft with full logs attached
+ * - desktop: `.eml` draft with zipped logs attached
  * - iOS: default mail app via `mailto:` (no attachment)
  */
 export async function emailLogsReport(options: {

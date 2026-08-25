@@ -167,6 +167,8 @@ cargo test -- --nocapture
 - ✅ PCM audio generation
 - ✅ Multiple instances
 - ✅ Different voices
+- ✅ Supported-language set (`AVAILABLE_LANGS`)
+- ✅ TTS for all supported languages (`tts::languages`, run with `--ignored`)
 
 ### tts_commands Module
 - ✅ Engine initialization

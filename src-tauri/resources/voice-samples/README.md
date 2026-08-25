@@ -4,7 +4,7 @@ Preview clips for **Settings → Default voice** (play button) are loaded from:
 
 `voice-samples/{language}/{voiceId}.mp3`
 
-where `language` is a Supertonic 3 TTS code (30 languages; see `AVAILABLE_LANGS`), and `voiceId` is `F1`–`F5` or `M1`–`M5`. If a language-specific clip is missing, the UI falls back to `en`.
+where `language` is the current **TTS language** setting (Supertonic 3 code; 30 languages in `AVAILABLE_LANGS`), and `voiceId` is `F1`–`F5` or `M1`–`M5`. Changing TTS language switches which folder is read so each voice can be previewed in that language. If a language-specific clip is missing, the UI falls back to `en`.
 
 The UI shows human-readable names (Sora, Luna, …) via translations; file names stay as engine ids.
 
@@ -16,31 +16,29 @@ From `tts-tauri/src-tauri` (recommended):
 cargo gen-voice-samples
 ```
 
-From the **repository root**:
+From the **repository root** / `tts-tauri`:
 
 ```bash
-chmod +x tts-tauri/scripts/generate_supertonic_voice_samples.sh
-./tts-tauri/scripts/generate_supertonic_voice_samples.sh
+chmod +x scripts/generate_supertonic_voice_samples.sh
+./scripts/generate_supertonic_voice_samples.sh
 ```
 
-This runs `gen_voice_samples` in `tts-tauri/src-tauri`, using the same in-tree Supertonic + ONNX Runtime stack as the app.
+This runs `gen_voice_samples`, writing **all** supported languages × 10 voices (300 MP3s) under this directory.
 
 Requires:
 
-- Supertonic bundle: `resources/supertonic/onnx/` (with `tts.json`) and `resources/supertonic/voice_styles/` (usually present after syncing or building the app), **or** a full tree pointed to with env vars below
+- Supertonic bundle: `resources/supertonic/onnx/` (with `tts.json`) and `resources/supertonic/voice_styles/`
 - `ffmpeg` on `PATH`
 - Rust toolchain (first run compiles the binary)
 
 Override paths if needed:
 
 ```bash
-export SUPERONIC_ROOT=/path/to/supertonic-3   # sets ONNX + voices unless overridden
+export SUPERONIC_ROOT=/path/to/supertonic-3
 export OUT_DIR=/path/to/tts-tauri/src-tauri/resources/voice-samples
-./tts-tauri/scripts/generate_supertonic_voice_samples.sh
+./scripts/generate_supertonic_voice_samples.sh
 ```
 
-Or set `SUPERTONIC_ONNX_DIR`, `SUPERTONIC_VOICES_ROOT`, and `VOICE_SAMPLES_OUT` directly. To run a pre-built binary: `export GEN_VOICE_SAMPLES_BIN=/path/to/gen_voice_samples` then run the script.
+Or set `SUPERTONIC_ONNX_DIR`, `SUPERTONIC_VOICES_ROOT`, and `VOICE_SAMPLES_OUT` directly.
 
-If a language-specific file is missing, the app falls back to `voice-samples/en/{voiceId}.mp3`.
-
-See also `tts-tauri/scripts/README-voice-samples.md` for legacy notes.
+See also `scripts/README-voice-samples.md`.

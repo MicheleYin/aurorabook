@@ -52,10 +52,24 @@ export function Settings() {
   } = useSettingsContext();
   const { t } = useTranslation();
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+  const [playingSampleLang, setPlayingSampleLang] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string>(t("common.loading"));
   const [logViewerOpen, setLogViewerOpen] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
+
+  const stopVoicePreview = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
+    }
+    setPlayingVoiceId(null);
+    setPlayingSampleLang(null);
+  }, []);
 
   // Load app version from Tauri
   useEffect(() => {
@@ -67,6 +81,11 @@ export function Settings() {
       });
   }, [t]);
 
+  // Stop preview when TTS language changes so the next play loads that language's clip.
+  useEffect(() => {
+    stopVoicePreview();
+  }, [settings?.ttsLanguage, stopVoicePreview]);
+
   const handleThemeChange = useCallback(
     async (newTheme: UITheme) => {
       applyTheme(newTheme);
@@ -77,21 +96,17 @@ export function Settings() {
 
   const handlePlaySample = useCallback(
     async (voiceId: string, ttsLanguage: string) => {
-      if (playingVoiceId === voiceId && audioRef.current) {
-        audioRef.current.pause();
-        setPlayingVoiceId(null);
+      const isSamePreview =
+        playingVoiceId === voiceId &&
+        playingSampleLang === ttsLanguage &&
+        !!audioRef.current;
+
+      if (isSamePreview) {
+        stopVoicePreview();
         return;
       }
 
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
-      }
+      stopVoicePreview();
 
       try {
         const { invoke } = await import("@tauri-apps/api/core");
@@ -120,9 +135,11 @@ export function Settings() {
         const audio = new Audio(blobUrl);
         audioRef.current = audio;
         setPlayingVoiceId(voiceId);
+        setPlayingSampleLang(ttsLanguage);
 
         audio.onended = () => {
           setPlayingVoiceId(null);
+          setPlayingSampleLang(null);
           audioRef.current = null;
           if (blobUrlRef.current) {
             URL.revokeObjectURL(blobUrlRef.current);
@@ -133,6 +150,7 @@ export function Settings() {
         audio.onerror = () => {
           logger.error("Failed to play audio sample");
           setPlayingVoiceId(null);
+          setPlayingSampleLang(null);
           audioRef.current = null;
           if (blobUrlRef.current) {
             URL.revokeObjectURL(blobUrlRef.current);
@@ -144,9 +162,10 @@ export function Settings() {
       } catch (err) {
         logger.error("Failed to load voice sample:", err);
         setPlayingVoiceId(null);
+        setPlayingSampleLang(null);
       }
     },
-    [playingVoiceId]
+    [playingVoiceId, playingSampleLang, stopVoicePreview]
   );
 
   const handleVoiceChange = useCallback(
@@ -185,16 +204,9 @@ export function Settings() {
 
   useEffect(() => {
     return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
-      }
+      stopVoicePreview();
     };
-  }, []);
+  }, [stopVoicePreview]);
 
   const filteredVoiceGroups = useMemo(() => {
     const ttsLanguage = settings?.ttsLanguage || "en";
