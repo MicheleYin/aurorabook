@@ -1,10 +1,144 @@
 // Test helper functions for finding model files and resources
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+fn is_supertonic_onnx_dir(p: &Path) -> bool {
+    p.is_dir()
+        && p.join("tts.json").exists()
+        && p.join("duration_predictor.onnx").exists()
+}
+
+fn is_supertonic_voice_bundle_dir(p: &Path) -> bool {
+    if !p.is_dir() {
+        return false;
+    }
+    let nested = p.join("voice_styles");
+    if nested.is_dir() {
+        return std::fs::read_dir(&nested).map_or(false, |d| {
+            d.flatten()
+                .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        });
+    }
+    std::fs::read_dir(p).map_or(false, |d| {
+        d.flatten().any(|e| {
+            let path = e.path();
+            path.extension().and_then(|x| x.to_str()) == Some("json")
+                && path.file_stem().and_then(|s| s.to_str()) != Some("voice_map")
+        })
+    })
+}
+
+/// Find Supertonic 3 ONNX directory (`tts.json` + graphs).
+///
+/// Checks `SUPERTONIC_ONNX_DIR` / `KOKORO_MODEL_DIR`, then
+/// `resources/supertonic/onnx` under common cargo/test working directories.
+#[allow(dead_code)] // Used by TTS language / engine tests
+pub fn find_supertonic_onnx_dir() -> Option<PathBuf> {
+    let mut possible_paths = Vec::new();
+
+    if let Ok(p) = env::var("SUPERTONIC_ONNX_DIR") {
+        if !p.is_empty() {
+            possible_paths.push(PathBuf::from(p));
+        }
+    }
+    if let Ok(p) = env::var("KOKORO_MODEL_DIR") {
+        if !p.is_empty() {
+            possible_paths.push(PathBuf::from(p));
+        }
+    }
+
+    possible_paths.push(PathBuf::from("resources").join("supertonic").join("onnx"));
+    possible_paths.push(PathBuf::from("../resources").join("supertonic").join("onnx"));
+    possible_paths.push(PathBuf::from("src-tauri/resources").join("supertonic").join("onnx"));
+
+    if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+        let m = PathBuf::from(manifest_dir);
+        possible_paths.push(m.join("resources").join("supertonic").join("onnx"));
+        // CARGO_MANIFEST_DIR = …/tts-tauri/src-tauri → sibling …/aurorabook/supertonic-3
+        if let Some(repo) = m.parent() {
+            if let Some(aurorabook) = repo.parent() {
+                possible_paths.push(aurorabook.join("supertonic-3").join("onnx"));
+            }
+        }
+    }
+
+    // Sibling checkout of Hugging Face assets (parent of tts-tauri)
+    if let Ok(cwd) = env::current_dir() {
+        // cwd = …/src-tauri
+        if cwd.ends_with("src-tauri") {
+            if let Some(repo) = cwd.parent() {
+                if let Some(aurorabook) = repo.parent() {
+                    possible_paths.push(aurorabook.join("supertonic-3").join("onnx"));
+                }
+            }
+        }
+        // cwd = …/tts-tauri
+        if let Some(aurorabook) = cwd.parent() {
+            possible_paths.push(aurorabook.join("supertonic-3").join("onnx"));
+        }
+    }
+
+    possible_paths.into_iter().find(|p| is_supertonic_onnx_dir(p))
+}
+
+/// Find Supertonic 3 voice bundle (`voice_styles/*.json` or a directory of style JSON).
+#[allow(dead_code)] // Used by TTS language / engine tests
+pub fn find_supertonic_voices_dir() -> Option<PathBuf> {
+    let mut possible_paths = Vec::new();
+
+    if let Ok(p) = env::var("SUPERTONIC_VOICES_DIR") {
+        if !p.is_empty() {
+            possible_paths.push(PathBuf::from(p));
+        }
+    }
+    if let Ok(p) = env::var("KOKORO_VOICES_PATH") {
+        if !p.is_empty() {
+            possible_paths.push(PathBuf::from(p));
+        }
+    }
+
+    possible_paths.push(PathBuf::from("resources").join("supertonic").join("voice_styles"));
+    possible_paths.push(PathBuf::from("resources").join("supertonic"));
+    possible_paths.push(PathBuf::from("../resources").join("supertonic").join("voice_styles"));
+    possible_paths.push(PathBuf::from("src-tauri/resources").join("supertonic").join("voice_styles"));
+
+    if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+        let m = PathBuf::from(manifest_dir);
+        possible_paths.push(m.join("resources").join("supertonic").join("voice_styles"));
+        possible_paths.push(m.join("resources").join("supertonic"));
+        if let Some(repo) = m.parent() {
+            if let Some(aurorabook) = repo.parent() {
+                possible_paths.push(aurorabook.join("supertonic-3").join("voice_styles"));
+                possible_paths.push(aurorabook.join("supertonic-3"));
+            }
+        }
+    }
+
+    if let Ok(cwd) = env::current_dir() {
+        if cwd.ends_with("src-tauri") {
+            if let Some(repo) = cwd.parent() {
+                if let Some(aurorabook) = repo.parent() {
+                    possible_paths.push(aurorabook.join("supertonic-3").join("voice_styles"));
+                }
+            }
+        }
+        if let Some(aurorabook) = cwd.parent() {
+            possible_paths.push(aurorabook.join("supertonic-3").join("voice_styles"));
+        }
+    }
+
+    possible_paths
+        .into_iter()
+        .find(|p| is_supertonic_voice_bundle_dir(p))
+}
 
 /// Helper function to find the ONNX model file
 pub fn find_onnx_model() -> Option<PathBuf> {
+    // Prefer Supertonic 3 ONNX directory (current engine)
+    if let Some(dir) = find_supertonic_onnx_dir() {
+        return Some(dir);
+    }
     // Try multiple possible locations
     let mut possible_paths = Vec::new();
     
@@ -88,34 +222,51 @@ pub fn find_resources_dir() -> Option<PathBuf> {
     ];
 
     for path in possible_paths {
-        if path.exists() {
-            // Check if it has model files (look for .onnx files)
-            let has_models = path.read_dir()
-                .ok()
-                .map(|entries| {
-                    entries.filter_map(|e| e.ok())
-                        .any(|e| {
-                            let file_name = e.file_name();
-                            let name = file_name.to_string_lossy();
-                            name.ends_with(".onnx")
-                        })
+        if !path.exists() {
+            continue;
+        }
+        // Supertonic 3 layout: resources/supertonic/onnx
+        if is_supertonic_onnx_dir(&path.join("supertonic").join("onnx")) {
+            return Some(path);
+        }
+        // Legacy: top-level .onnx files
+        let has_models = path
+            .read_dir()
+            .ok()
+            .map(|entries| {
+                entries.filter_map(|e| e.ok()).any(|e| {
+                    let file_name = e.file_name();
+                    let name = file_name.to_string_lossy();
+                    name.ends_with(".onnx")
                 })
-                .unwrap_or(false);
-            
-            if has_models {
-                return Some(path);
-            }
+            })
+            .unwrap_or(false);
+
+        if has_models {
+            return Some(path);
         }
     }
     None
 }
 
-/// Helper function to find the voices file
+/// Helper function to find voices (Supertonic voice_styles dir, or legacy voices-v1.0.bin).
 pub fn find_voices_file(resources_dir: &PathBuf) -> Option<PathBuf> {
-    let mut possible_paths = vec![
-        resources_dir.join("voices-v1.0.bin"),
-    ];
-    
+    // Prefer Supertonic voice bundle
+    if let Some(dir) = find_supertonic_voices_dir() {
+        return Some(dir);
+    }
+
+    let nested = resources_dir.join("supertonic").join("voice_styles");
+    if is_supertonic_voice_bundle_dir(&nested) {
+        return Some(nested);
+    }
+    let bundle = resources_dir.join("supertonic");
+    if is_supertonic_voice_bundle_dir(&bundle) {
+        return Some(bundle);
+    }
+
+    let mut possible_paths = vec![resources_dir.join("voices-v1.0.bin")];
+
     // Check parent directories
     if let Some(parent) = resources_dir.parent() {
         possible_paths.push(parent.join("voices-v1.0.bin"));
@@ -123,14 +274,14 @@ pub fn find_voices_file(resources_dir: &PathBuf) -> Option<PathBuf> {
             possible_paths.push(grandparent.join("voices-v1.0.bin"));
         }
     }
-    
+
     // Check env var
     if let Ok(env_path) = env::var("KOKORO_VOICES_PATH") {
         if !env_path.is_empty() {
             possible_paths.push(PathBuf::from(env_path));
         }
     }
-    
+
     // Check common locations relative to CARGO_MANIFEST_DIR
     if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
         let manifest_path = PathBuf::from(manifest_dir);
