@@ -221,6 +221,8 @@
   "audio.disable_sync": "Disable text sync",
   "audio.enable_sync": "Enable text sync",
   "audio.close_player": "Close audio player",
+  "audio.minimize_player": "Minimize audio player",
+  "audio.expand_player": "Expand audio player",
   "audio.previous_track": "Previous track",
   "audio.next_track": "Next track",
   "audio.skip_back": "Skip backward {{seconds}} seconds",

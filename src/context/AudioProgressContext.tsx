@@ -30,7 +30,11 @@ import {
   mimeTypeFromTrackHref,
   trackDisplayTitle,
 } from "../lib/audio-progress-utils";
-import { resolveUnfinishedChapterIndex } from "../lib/book-audio-duration";
+import {
+  audioTrackChapterIndex,
+  completedAudioChapterIndices,
+  resolveUnfinishedChapterIndex,
+} from "../lib/book-audio-duration";
 import { logger } from "../lib/logger";
 import { normalizeBook } from "../lib/normalize-book";
 import { useConversionState } from "./ConversionStateContext";
@@ -666,82 +670,154 @@ export function AudioProgressProvider({
       });
       const loadedBook = loadedBookRaw ? normalizeBook(loadedBookRaw) : null;
       const bookForLoad = loadedBook || book;
+      const savedState = loadedBook?.audioState;
+      const audioTracks = bookForLoad.audioTracks ?? [];
 
-      // Prefer saved completed-track progress, then the first completed track.
-      // When conversion is underway and no completed tracks exist yet (typical for
-      // the first text chapter), open the live converting chapter so playback is
-      // available before that chapter finishes. Once completed tracks exist, keep
-      // preferring those so opening a book does not jump to Live.
-      if (!audioTrackToLoad && loadedBook?.audioState?.currentTrackId) {
-        const savedTrackId = loadedBook.audioState.currentTrackId;
-        // Skip live-* saves so opening a converting book with completed tracks
-        // never jumps to the in-progress chapter; fall through to first completed
-        // track instead (or live below when nothing is completed yet).
-        if (!savedTrackId.startsWith("live-")) {
-          audioTrackToLoad =
-            loadedBook.audioTracks.find(
-              (track) => track.id === savedTrackId
-            ) || null;
-        }
-      }
+      const buildLiveTrackForChapter = (
+        chapterIndex: number
+      ): AudioTrack | null => {
+        const chapter = bookForLoad.chapters[chapterIndex];
+        if (!chapter) return null;
+        return {
+          id: `live-${bookForLoad.id}-${chapterIndex}`,
+          bookId: bookForLoad.id,
+          chapterHref: chapter.href,
+          filePath: chapter.href,
+          href: chapter.href,
+          title: chapter.title || `Chapter ${chapterIndex + 1}`,
+          order: chapterIndex,
+        };
+      };
 
-      if (!audioTrackToLoad && loadedBook?.audioState?.currentTrackHref) {
-        const savedHref = loadedBook.audioState.currentTrackHref;
-        audioTrackToLoad =
-          loadedBook.audioTracks.find((track) => {
-            const trackHref = track.href || track.filePath;
-            return trackHref === savedHref;
-          }) || null;
-      }
-
-      if (
-        !audioTrackToLoad &&
-        loadedBook?.audioState?.currentTrackIndex !== undefined
-      ) {
-        const savedTrackIndex = loadedBook.audioState.currentTrackIndex;
-        audioTrackToLoad =
-          loadedBook.audioTracks.find((track) => track.order === savedTrackIndex) ||
-          null;
-      }
-
-      if (
-        !audioTrackToLoad &&
-        loadedBook?.audioTracks?.length &&
-        loadedBook.audioTracks.length > 0
-      ) {
-        audioTrackToLoad = loadedBook.audioTracks[0];
-      }
-
-      if (!audioTrackToLoad && !(bookForLoad.audioTracks?.length > 0)) {
+      const canAttemptLivePlayback = async (): Promise<{
+        convertingChapter: number | null;
+        allowed: boolean;
+      }> => {
         let convertingChapter = getCurrentConvertingChapter(bookForLoad.id);
         if (convertingChapter === null) {
           convertingChapter =
             await refreshCurrentConvertingChapter(bookForLoad.id);
         }
+        const allowed =
+          bookForLoad.conversionStatus === "started" ||
+          convertingChapter !== null ||
+          (bookForLoad.completedChapters?.length ?? 0) > 0;
+        return { convertingChapter, allowed };
+      };
+
+      /** Resolve a saved live chapter: completed track if ready, else live. */
+      const resolveTrackForChapterIndex = async (
+        chapterIndex: number
+      ): Promise<AudioTrack | null> => {
+        if (
+          !Number.isInteger(chapterIndex) ||
+          chapterIndex < 0 ||
+          chapterIndex >= bookForLoad.chapters.length
+        ) {
+          return null;
+        }
+
+        const completedTrack =
+          audioTracks.find(
+            (track) =>
+              audioTrackChapterIndex(track, bookForLoad) === chapterIndex
+          ) ?? null;
+        if (completedTrack) {
+          return completedTrack;
+        }
+
+        const completedIndices = completedAudioChapterIndices(bookForLoad);
+        if (completedIndices.has(chapterIndex)) {
+          return null;
+        }
+
+        const { allowed } = await canAttemptLivePlayback();
+        if (!allowed) {
+          return null;
+        }
+
+        return buildLiveTrackForChapter(chapterIndex);
+      };
+
+      const openFirstAvailableTrack = async (): Promise<AudioTrack | null> => {
+        if (audioTracks.length > 0) {
+          return audioTracks[0];
+        }
+
+        const { convertingChapter, allowed } = await canAttemptLivePlayback();
+        if (!allowed) {
+          return null;
+        }
+
         const unfinishedChapterIndex = resolveUnfinishedChapterIndex(
           bookForLoad,
           convertingChapter
         );
-        const canOpenLive =
-          unfinishedChapterIndex !== null &&
-          (bookForLoad.conversionStatus === "started" ||
-            convertingChapter !== null ||
-            (bookForLoad.completedChapters?.length ?? 0) > 0);
+        if (unfinishedChapterIndex === null) {
+          return null;
+        }
 
-        if (canOpenLive && unfinishedChapterIndex !== null) {
-          const chapter = bookForLoad.chapters[unfinishedChapterIndex];
-          if (chapter) {
-            audioTrackToLoad = {
-              id: `live-${bookForLoad.id}-${unfinishedChapterIndex}`,
-              bookId: bookForLoad.id,
-              chapterHref: chapter.href,
-              filePath: chapter.href,
-              href: chapter.href,
-              title: chapter.title || `Chapter ${unfinishedChapterIndex + 1}`,
-              order: unfinishedChapterIndex,
-            };
+        return buildLiveTrackForChapter(unfinishedChapterIndex);
+      };
+
+      // First open (no save data): always start on the first track.
+      // Returning: restore last track + timestamp — including live chapters whose
+      // conversion is still incomplete, even when earlier chapters are completed.
+      if (savedState) {
+        if (savedState.currentTrackId) {
+          const savedTrackId = savedState.currentTrackId;
+          if (savedTrackId.startsWith("live-")) {
+            const parts = savedTrackId.split("-");
+            const chapterIndex = parseInt(parts[parts.length - 1], 10);
+            if (!Number.isNaN(chapterIndex)) {
+              audioTrackToLoad =
+                await resolveTrackForChapterIndex(chapterIndex);
+            }
+          } else {
+            audioTrackToLoad =
+              audioTracks.find((track) => track.id === savedTrackId) || null;
           }
         }
+
+        if (!audioTrackToLoad && savedState.currentTrackHref) {
+          const savedHref = savedState.currentTrackHref;
+          audioTrackToLoad =
+            audioTracks.find((track) => {
+              const trackHref = track.href || track.filePath;
+              return trackHref === savedHref;
+            }) || null;
+
+          if (!audioTrackToLoad) {
+            const chapterIndex = bookForLoad.chapters.findIndex(
+              (chapter) => chapter.href === savedHref
+            );
+            if (chapterIndex >= 0) {
+              audioTrackToLoad =
+                await resolveTrackForChapterIndex(chapterIndex);
+            }
+          }
+        }
+
+        if (
+          !audioTrackToLoad &&
+          savedState.currentTrackIndex !== undefined
+        ) {
+          const savedTrackIndex = savedState.currentTrackIndex;
+          audioTrackToLoad =
+            audioTracks.find((track) => track.order === savedTrackIndex) ||
+            null;
+
+          if (!audioTrackToLoad) {
+            audioTrackToLoad =
+              await resolveTrackForChapterIndex(savedTrackIndex);
+          }
+        }
+
+        if (!audioTrackToLoad) {
+          audioTrackToLoad = await openFirstAvailableTrack();
+        }
+      } else {
+        audioTrackToLoad = await openFirstAvailableTrack();
       }
 
       if (audioTrackToLoad) {
@@ -753,12 +829,12 @@ export function AudioProgressProvider({
           trackHref: audioTrackToLoad.href || audioTrackToLoad.filePath,
           savedState: loadedBook?.audioState,
         });
-        const isLiveTrack = Boolean(audioTrackToLoad.id?.startsWith('live-'));
+        const isLiveTrack = Boolean(audioTrackToLoad.id?.startsWith("live-"));
         if (isLiveTrack) {
           // Queue the desired resume time and auto-play intent for the live stream
           // effect before switching the current track.
           queueLivePlaybackRequest(
-            bookForLoad.audioState?.currentTimeSeconds ?? 0,
+            savedState?.currentTimeSeconds ?? 0,
             autoPlayAudio
           );
         }

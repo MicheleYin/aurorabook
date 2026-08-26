@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
+  ChevronDown,
+  ChevronUp,
   FastForward,
   Link2,
   Loader2,
@@ -77,6 +79,7 @@ export function FloatingAudioPlayer() {
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isTracksOpen, setIsTracksOpen] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
   const [liveGeneratedDuration, setLiveGeneratedDuration] = useState(0);
   const playbackIntentRef = useRef(false);
   const isSwitchingFromLiveRef = useRef(false);
@@ -1208,6 +1211,38 @@ export function FloatingAudioPlayer() {
     [switchToTrack]
   );
 
+  const handleClosePlayer = useCallback(async () => {
+    if (!currentBook) return;
+
+    playbackIntentRef.current = false;
+    const audioState = calculateAudioProgress();
+
+    if (audioState) {
+      const updatedBook = {
+        ...currentBook,
+        audioState,
+      };
+      setCurrentBook(updatedBook);
+      setLibrary(
+        library.map((book) =>
+          book.id === currentBook.id ? updatedBook : book
+        )
+      );
+      await saveAudioProgress(updatedBook);
+    }
+
+    await closeAudioPlayer(currentBook);
+    setIsMinimized(false);
+  }, [
+    calculateAudioProgress,
+    closeAudioPlayer,
+    currentBook,
+    library,
+    saveAudioProgress,
+    setCurrentBook,
+    setLibrary,
+  ]);
+
   const audioTrackTitle = useMemo(
     () => currentAudioTrack?.title || "Unknown Audio Track",
     [currentAudioTrack]
@@ -1428,198 +1463,280 @@ export function FloatingAudioPlayer() {
     return null;
   }
 
+  const progressRatio =
+    timelineMax > 0 ? Math.min(1, Math.max(0, currentTime / timelineMax)) : 0;
+
   return (
     <div
       className={cn(
         "fixed bottom-20 left-1/2 -translate-x-1/2 z-50 select-none",
-        "w-full max-w-2xl",
-        "px-4",
-        "transition-all duration-300"
+        "w-full px-4",
+        "transition-all duration-300",
+        isMinimized ? "max-w-md" : "max-w-2xl"
       )}
       data-testid="floating-audio-player"
+      data-minimized={isMinimized ? "true" : "false"}
       data-loading-audio={isLoadingAudio ? "true" : "false"}
       data-track-id={currentAudioTrack?.id ?? ""}
       data-live={currentAudioTrack?.isLiveStream ? "true" : "false"}
     >
-      <div className="bg-background/95 backdrop-blur-lg border rounded-lg shadow-lg space-y-3 p-4">
+      <div
+        className={cn(
+          "bg-background/95 backdrop-blur-lg border rounded-lg shadow-lg overflow-hidden",
+          "transition-all duration-300",
+          isMinimized ? "p-2" : "space-y-3 p-4"
+        )}
+      >
         <audio ref={audioRef} preload="auto" data-testid="floating-audio-element">
           <track kind="captions" />
         </audio>
-        <div className="flex items-center gap-2">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <p className="text-sm font-medium truncate">
-                {currentBook?.title || "Unknown Book"}
-              </p>
-              {showCurrentTrackStatusBadge && statusBadge && (
-                <Badge
-                  variant="secondary"
-                  className={cn(
-                    "h-6 min-w-0 truncate text-[10px] uppercase",
-                    statusBadge.className
-                  )}
-                >
-                  <span className="min-w-0 truncate">{statusBadge.text}</span>
-                </Badge>
-              )}
+
+        {isMinimized ? (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-10 w-10 shrink-0"
+                data-testid="audio-play-pause"
+                onClick={handlePlayPause}
+                disabled={isLoadingAudio}
+              >
+                {isLoadingAudio ? (
+                  <Loader2
+                    className="h-5 w-5 animate-spin shrink-0"
+                    data-testid="audio-loading-spinner"
+                  />
+                ) : isPlaying ? (
+                  <Pause className="h-5 w-5" />
+                ) : (
+                  <Play className="h-5 w-5" />
+                )}
+              </Button>
+
+              <button
+                type="button"
+                className="flex-1 min-w-0 text-left rounded-md px-1 py-0.5 hover:bg-muted/50 transition-colors"
+                onClick={() => setIsMinimized(false)}
+                title="Expand audio player"
+                data-testid="audio-expand-title"
+              >
+                <p className="text-sm font-medium truncate">
+                  {currentBook?.title || "Unknown Book"}
+                </p>
+                <p className="text-xs text-muted-foreground truncate">
+                  {audioTrackTitle}
+                </p>
+              </button>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                data-testid="audio-expand"
+                onClick={() => setIsMinimized(false)}
+                title="Expand audio player"
+              >
+                <ChevronUp className="h-4 w-4" />
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                data-testid="audio-close"
+                onClick={handleClosePlayer}
+                title="Close audio player"
+              >
+                <X className="h-4 w-4" />
+              </Button>
             </div>
-            <p className="text-xs text-muted-foreground truncate">
-              {audioTrackTitle}
-            </p>
-          </div>
 
-
-          <Button
-            variant={isSyncEnabled ? "secondary" : "ghost"}
-            size="icon"
-            className={cn(
-              "h-10 w-10",
-              isSyncEnabled && "bg-primary/10 hover:bg-primary/20"
-            )}
-            onClick={toggleSync}
-            disabled={isLoadingAudio || !currentBook}
-            title={isSyncEnabled ? "Disable text sync" : "Enable text sync"}
-          >
-            <Link2 className="h-5 w-5 shrink-0" />
-          </Button>
-
-          <Select
-            value={playbackRate.toString()}
-            onValueChange={(value) => setPlaybackRate(Number.parseFloat(value))}
-          >
-            <SelectTrigger className="h-10 w-20">
-              <SelectValue placeholder="1x" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="0.5">0.5x</SelectItem>
-              <SelectItem value="0.75">0.75x</SelectItem>
-              <SelectItem value="1">1x</SelectItem>
-              <SelectItem value="1.25">1.25x</SelectItem>
-              <SelectItem value="1.5">1.5x</SelectItem>
-              <SelectItem value="1.75">1.75x</SelectItem>
-              <SelectItem value="2">2x</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <AudioTracksButton
-            onClick={() => setIsTracksOpen(true)}
-            disabled={isLoadingAudio || !currentBook}
-          />
-
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0"
-            data-testid="audio-close"
-            onClick={async () => {
-              if (currentBook) {
-                playbackIntentRef.current = false;
-                const audioState = calculateAudioProgress();
-
-                if (audioState) {
-                  const updatedBook = {
-                    ...currentBook,
-                    audioState,
-                  };
-                  setCurrentBook(updatedBook);
-                  setLibrary(
-                    library.map((book) =>
-                      book.id === currentBook.id ? updatedBook : book
-                    )
-                  );
-                  await saveAudioProgress(updatedBook);
-                }
-
-                await closeAudioPlayer(currentBook);
-              }
-            }}
-            title="Close audio player"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-
-        <div className="space-y-2">
-          <Slider
-            value={[currentTime]}
-            min={timelineMin}
-            max={timelineMax}
-            step={0.1}
-            onValueChange={handleSeek}
-            className="w-full"
-            disabled={isLoadingAudio}
-          />
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span data-testid="audio-current-time">{formatTime(currentTime)}</span>
-            <span data-testid="audio-duration">{formatTime(timelineMax)}</span>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10"
-            onClick={handlePreviousTrack}
-            disabled={!hasPreviousTrack || isLoadingAudio}
-            title="Previous track"
-          >
-            <SkipBack className="h-5 w-5 shrink-0" />
-          </Button>
-
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10"
-            onClick={handleSkipBackward}
-            disabled={isLoadingAudio}
-            title="Skip backward 10 seconds"
-          >
-            <Rewind className="h-5 w-5 shrink-0" />
-          </Button>
-
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-12 w-12 shrink-0"
-            data-testid="audio-play-pause"
-            onClick={handlePlayPause}
-            disabled={isLoadingAudio}
-          >
-            {isLoadingAudio ? (
-              <Loader2
-                className="h-6 w-6 animate-spin shrink-0"
-                data-testid="audio-loading-spinner"
+            <div
+              className="h-1 w-full rounded-full bg-muted overflow-hidden"
+              aria-hidden="true"
+            >
+              <div
+                className="h-full bg-primary transition-[width] duration-150 ease-out"
+                style={{ width: `${progressRatio * 100}%` }}
+                data-testid="audio-mini-progress"
               />
-            ) : isPlaying ? (
-              <Pause className="h-6 w-6" />
-            ) : (
-              <Play className="h-6 w-6" />
-            )}
-          </Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm font-medium truncate">
+                    {currentBook?.title || "Unknown Book"}
+                  </p>
+                  {showCurrentTrackStatusBadge && statusBadge && (
+                    <Badge
+                      variant="secondary"
+                      className={cn(
+                        "h-6 min-w-0 truncate text-[10px] uppercase",
+                        statusBadge.className
+                      )}
+                    >
+                      <span className="min-w-0 truncate">{statusBadge.text}</span>
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground truncate">
+                  {audioTrackTitle}
+                </p>
+              </div>
 
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10"
-            onClick={handleSkipForward}
-            disabled={isLoadingAudio}
-            title="Skip forward 10 seconds"
-          >
-            <FastForward className="h-5 w-5 shrink-0" />
-          </Button>
+              <Button
+                variant={isSyncEnabled ? "secondary" : "ghost"}
+                size="icon"
+                className={cn(
+                  "h-10 w-10",
+                  isSyncEnabled && "bg-primary/10 hover:bg-primary/20"
+                )}
+                onClick={toggleSync}
+                disabled={isLoadingAudio || !currentBook}
+                title={isSyncEnabled ? "Disable text sync" : "Enable text sync"}
+              >
+                <Link2 className="h-5 w-5 shrink-0" />
+              </Button>
 
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10"
-            onClick={handleNextTrack}
-            disabled={!hasNextTrack || isLoadingAudio}
-            title="Next track"
-          >
-            <SkipForward className="h-5 w-5 shrink-0" />
-          </Button>
-        </div>
+              <Select
+                value={playbackRate.toString()}
+                onValueChange={(value) =>
+                  setPlaybackRate(Number.parseFloat(value))
+                }
+              >
+                <SelectTrigger className="h-10 w-20">
+                  <SelectValue placeholder="1x" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0.5">0.5x</SelectItem>
+                  <SelectItem value="0.75">0.75x</SelectItem>
+                  <SelectItem value="1">1x</SelectItem>
+                  <SelectItem value="1.25">1.25x</SelectItem>
+                  <SelectItem value="1.5">1.5x</SelectItem>
+                  <SelectItem value="1.75">1.75x</SelectItem>
+                  <SelectItem value="2">2x</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <AudioTracksButton
+                onClick={() => setIsTracksOpen(true)}
+                disabled={isLoadingAudio || !currentBook}
+              />
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                data-testid="audio-minimize"
+                onClick={() => setIsMinimized(true)}
+                title="Minimize audio player"
+              >
+                <ChevronDown className="h-4 w-4" />
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                data-testid="audio-close"
+                onClick={handleClosePlayer}
+                title="Close audio player"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="space-y-2">
+              <Slider
+                value={[currentTime]}
+                min={timelineMin}
+                max={timelineMax}
+                step={0.1}
+                onValueChange={handleSeek}
+                className="w-full"
+                disabled={isLoadingAudio}
+              />
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span data-testid="audio-current-time">
+                  {formatTime(currentTime)}
+                </span>
+                <span data-testid="audio-duration">
+                  {formatTime(timelineMax)}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-10 w-10"
+                onClick={handlePreviousTrack}
+                disabled={!hasPreviousTrack || isLoadingAudio}
+                title="Previous track"
+              >
+                <SkipBack className="h-5 w-5 shrink-0" />
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-10 w-10"
+                onClick={handleSkipBackward}
+                disabled={isLoadingAudio}
+                title="Skip backward 10 seconds"
+              >
+                <Rewind className="h-5 w-5 shrink-0" />
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-12 w-12 shrink-0"
+                data-testid="audio-play-pause"
+                onClick={handlePlayPause}
+                disabled={isLoadingAudio}
+              >
+                {isLoadingAudio ? (
+                  <Loader2
+                    className="h-6 w-6 animate-spin shrink-0"
+                    data-testid="audio-loading-spinner"
+                  />
+                ) : isPlaying ? (
+                  <Pause className="h-6 w-6" />
+                ) : (
+                  <Play className="h-6 w-6" />
+                )}
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-10 w-10"
+                onClick={handleSkipForward}
+                disabled={isLoadingAudio}
+                title="Skip forward 10 seconds"
+              >
+                <FastForward className="h-5 w-5 shrink-0" />
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-10 w-10"
+                onClick={handleNextTrack}
+                disabled={!hasNextTrack || isLoadingAudio}
+                title="Next track"
+              >
+                <SkipForward className="h-5 w-5 shrink-0" />
+              </Button>
+            </div>
+          </>
+        )}
       </div>
 
       {currentBook && (

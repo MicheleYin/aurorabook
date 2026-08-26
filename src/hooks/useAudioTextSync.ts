@@ -283,7 +283,7 @@ export function useAudioTextSync(
 
     let bottomOffset = 0;
     const audioPlayer = document.querySelector(
-      '[class*="fixed"][class*="bottom"]'
+      '[data-testid="floating-audio-player"]'
     ) as HTMLElement | null;
     if (audioPlayer && currentAudioTrackRef.current) {
       const playerRect = audioPlayer.getBoundingClientRect();

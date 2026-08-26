@@ -1099,7 +1099,7 @@ describe("AudioProgressProvider", () => {
       expect(result.current.currentAudioTrack?.isLiveStream).toBeFalsy();
     });
 
-    it("falls back to the first completed track when converting and no saved progress", async () => {
+    it("starts on the first completed track when converting and no saved progress", async () => {
       const book = createBook({
         conversionStatus: "started",
         completedChapters: ["ch1.xhtml"],
@@ -1157,6 +1157,194 @@ describe("AudioProgressProvider", () => {
       expect(result.current.currentAudioTrack).toMatchObject({
         id: "track-1",
         title: "Done",
+      });
+      expect(result.current.currentAudioTrack?.isLiveStream).toBeFalsy();
+    });
+
+    it("restores a saved live chapter when earlier chapters are already completed", async () => {
+      const completedTrack = createTrack({
+        id: "track-1",
+        order: 0,
+        title: "Done",
+        href: "ch1.xhtml",
+        filePath: "ch1.xhtml",
+        chapterHref: "ch1.xhtml",
+      });
+      const book = createBook({
+        conversionStatus: "started",
+        completedChapters: ["ch1.xhtml"],
+        chapters: [
+          {
+            id: "ch-1",
+            bookId: "book-1",
+            title: "Done",
+            href: "ch1.xhtml",
+            chapterOrder: 0,
+          },
+          {
+            id: "ch-2",
+            bookId: "book-1",
+            title: "In Progress",
+            href: "ch2.xhtml",
+            chapterOrder: 1,
+          },
+        ],
+        audioTracks: [completedTrack],
+        audioSyncMap: {
+          segments: [
+            {
+              textElementId: "w1",
+              chapterHref: "ch1.xhtml",
+              audioTrackHref: "ch1.xhtml",
+              clipBegin: 0,
+              clipEnd: 10,
+            },
+          ],
+        },
+        audioState: {
+          currentTrackId: "live-book-1-1",
+          currentTrackHref: "ch2.xhtml",
+          currentTrackIndex: 1,
+          currentTimeSeconds: 18.5,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { audioPlaybackSpeed: 1 };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          return 1;
+        }
+        if (cmd === "read_one_book") {
+          return book;
+        }
+        if (cmd === "append_app_log") {
+          return undefined;
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+
+      await act(async () => {
+        await result.current.loadLastOpenedAudioTrack(book, false);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "live-book-1-1",
+        isLiveStream: true,
+        liveChapterIndex: 1,
+        title: "In Progress",
+      });
+      expect(result.current.livePlaybackRequestRef.current).toEqual({
+        resumeTime: 18.5,
+        autoPlay: false,
+      });
+    });
+
+    it("restores the completed track when a saved live chapter has finished converting", async () => {
+      const firstTrack = createTrack({
+        id: "track-1",
+        order: 0,
+        title: "Done",
+        href: "ch1.xhtml",
+        filePath: "ch1.xhtml",
+        chapterHref: "ch1.xhtml",
+      });
+      const secondTrack = createTrack({
+        id: "track-2",
+        order: 1,
+        title: "Also Done",
+        href: "ch2.xhtml",
+        filePath: "ch2.xhtml",
+        chapterHref: "ch2.xhtml",
+      });
+      const book = createBook({
+        conversionStatus: "started",
+        completedChapters: ["ch1.xhtml", "ch2.xhtml"],
+        chapters: [
+          {
+            id: "ch-1",
+            bookId: "book-1",
+            title: "Done",
+            href: "ch1.xhtml",
+            chapterOrder: 0,
+          },
+          {
+            id: "ch-2",
+            bookId: "book-1",
+            title: "Also Done",
+            href: "ch2.xhtml",
+            chapterOrder: 1,
+          },
+          {
+            id: "ch-3",
+            bookId: "book-1",
+            title: "Still Going",
+            href: "ch3.xhtml",
+            chapterOrder: 2,
+          },
+        ],
+        audioTracks: [firstTrack, secondTrack],
+        audioSyncMap: {
+          segments: [
+            {
+              textElementId: "w1",
+              chapterHref: "ch1.xhtml",
+              audioTrackHref: "ch1.xhtml",
+              clipBegin: 0,
+              clipEnd: 10,
+            },
+            {
+              textElementId: "w2",
+              chapterHref: "ch2.xhtml",
+              audioTrackHref: "ch2.xhtml",
+              clipBegin: 0,
+              clipEnd: 10,
+            },
+          ],
+        },
+        audioState: {
+          currentTrackId: "live-book-1-1",
+          currentTrackHref: "ch2.xhtml",
+          currentTrackIndex: 1,
+          currentTimeSeconds: 22,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_app_settings") {
+          return { audioPlaybackSpeed: 1 };
+        }
+        if (cmd === "get_current_converting_chapter") {
+          return 2;
+        }
+        if (cmd === "read_one_book") {
+          return book;
+        }
+        if (cmd === "get_audio_stream_url") {
+          return "https://stream.local/track-2.mp3";
+        }
+        if (cmd === "update_book_audio_state") {
+          return undefined;
+        }
+        throw new Error(`Unexpected invoke: ${cmd}`);
+      });
+
+      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const audio = createAudioElement();
+      result.current.audioRef.current = audio;
+
+      await act(async () => {
+        await result.current.loadLastOpenedAudioTrack(book, false);
+      });
+
+      expect(result.current.currentAudioTrack).toMatchObject({
+        id: "track-2",
+        title: "Also Done",
       });
       expect(result.current.currentAudioTrack?.isLiveStream).toBeFalsy();
     });

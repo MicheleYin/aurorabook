@@ -223,4 +223,44 @@ describe("FloatingAudioPlayer live → completed handoff", () => {
     expect(screen.getByTestId("audio-loading-spinner")).toBeInTheDocument();
     expect(screen.getByTestId("audio-play-pause")).toBeDisabled();
   });
+
+  it("toggles between expanded and minimized player layouts", async () => {
+    const userEvent = (await import("@testing-library/user-event")).default;
+    const user = userEvent.setup();
+
+    render(
+      <Wrapper>
+        <FloatingAudioPlayer />
+      </Wrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("floating-audio-player")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("floating-audio-player")).toHaveAttribute(
+      "data-minimized",
+      "false"
+    );
+    expect(screen.getByTestId("audio-minimize")).toBeInTheDocument();
+    expect(screen.queryByTestId("audio-mini-progress")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("audio-minimize"));
+
+    expect(screen.getByTestId("floating-audio-player")).toHaveAttribute(
+      "data-minimized",
+      "true"
+    );
+    expect(screen.getByTestId("audio-expand")).toBeInTheDocument();
+    expect(screen.getByTestId("audio-mini-progress")).toBeInTheDocument();
+    expect(screen.queryByTestId("audio-minimize")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("audio-expand"));
+
+    expect(screen.getByTestId("floating-audio-player")).toHaveAttribute(
+      "data-minimized",
+      "false"
+    );
+    expect(screen.getByTestId("audio-minimize")).toBeInTheDocument();
+  });
 });
