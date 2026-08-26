@@ -27,6 +27,16 @@ function syncStoreAssets() {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
+function ensureVclibsDependency(manifestPath) {
+  const script = path.join(__dirname, "ensure-windows-msix-vclibs-dependency.cjs");
+  const result = spawnSync(
+    process.execPath,
+    [script, `--manifest=${manifestPath}`],
+    { stdio: "inherit", cwd: root }
+  );
+  if (result.status !== 0) process.exit(result.status ?? 1);
+}
+
 function hasArg(name) {
   return process.argv.includes(name);
 }
@@ -120,4 +130,5 @@ if (cert) {
 }
 
 syncStoreAssets();
+ensureVclibsDependency(manifest);
 runWinapp(args);

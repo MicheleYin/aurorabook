@@ -125,6 +125,77 @@ Add-AppxPackage -Path .\AuroraBook_3.3.2.0.msix
 
 Skip the cert for Store uploads — submit an **unsigned** `.msix` / `.msixbundle`.
 
+### Local Store smoke test (fast loop)
+
+Use this to catch MSIX-only issues (missing frameworks, tile assets, sandbox paths) before Partner Center upload.
+
+**One-time setup**
+
+1. **VCLibs framework** — required on clean VMs; MSIX cannot use `System32\MSVCP140.dll` unless the manifest declares it. Install once per architecture:
+
+```powershell
+# x64 (most dev PCs)
+Add-AppxPackage 'https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx'
+
+# ARM64 (Surface / ARM test device)
+Add-AppxPackage 'https://aka.ms/Microsoft.VCLibs.arm64.14.00.Desktop.appx'
+```
+
+2. **Dev signing cert** (see above): `winapp cert generate --output src-tauri\signing\devcert.pfx --install`
+
+3. **`winapp init`** + Partner Center identity in `Package.appxmanifest` (if not done yet)
+
+**Full build + install**
+
+```powershell
+$env:WINAPP_DEV_CERT = "src-tauri\signing\devcert.pfx"
+$env:WINAPP_DEV_CERT_PASSWORD = "password"
+bun run build:windows:store:x64
+Add-AppxPackage -Path .\AuroraBook_<version>.msix
+```
+
+Launch from Start → AuroraBook. If a previous sideload is installed, bump `Version` in `Package.appxmanifest` or remove first:
+
+```powershell
+Get-AppxPackage MicheleYin.Aurorabook | Remove-AppxPackage
+```
+
+**Fast re-test after code changes** (skip full `tauri build` when only re-packing):
+
+```powershell
+# Rebuild exe only
+node scripts/ensure-windows-ffmpeg-resource.cjs --arch=x64
+node scripts/bundle-windows-directml.cjs --arch=x64
+node scripts/with-msvc-env.cjs --target x86_64-pc-windows-msvc -- node scripts/tauri-cli.cjs build --no-bundle --target x86_64-pc-windows-msvc -c src-tauri/tauri.windows.conf.json
+node scripts/ensure-windows-ort-dlls.cjs --arch=x64 --require-dawn
+node scripts/stage-windows-msix-layout.cjs --arch=x64
+
+# Re-pack + install (signed)
+$env:WINAPP_DEV_CERT = "src-tauri\signing\devcert.pfx"
+$env:WINAPP_DEV_CERT_PASSWORD = "password"
+bun run pack:windows:msix -- --arch=x64
+Add-AppxPackage -Path .\AuroraBook_<version>.msix
+```
+
+`pack-windows-msix` automatically adds the `Microsoft.VCLibs.140.00.UWPDesktop` dependency to your manifest via `scripts/ensure-windows-msix-vclibs-dependency.cjs`.
+
+### MSVCP140.dll / “MSVP140.dll was not found”
+
+**Symptom:** App fails immediately on launch from the Store MSIX (or sideload), even though the same `.exe` works when built/run outside MSIX on a dev PC with Visual Studio installed.
+
+**Cause:** Rust/MSVC builds link dynamically against `MSVCP140.dll` and `MSVCP140_1.dll`. Packaged apps must declare:
+
+```xml
+<Dependencies>
+  <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.18362.0" MaxVersionTested="10.0.26200.0" />
+  <PackageDependency Name="Microsoft.VCLibs.140.00.UWPDesktop" MinVersion="14.0.33728.0" Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US" />
+</Dependencies>
+```
+
+Do **not** copy those DLLs beside the exe for Store builds — Microsoft delivers them via the framework package at install time.
+
+**NSIS `.exe` installs** (CI) are not sandboxed; they rely on the user having the [VC++ 2015–2022 redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) installed, which most Windows 10/11 PCs already have.
+
 ### Build commands
 
 **x64 (WebGPU + DirectML):**
