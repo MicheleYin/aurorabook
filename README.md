@@ -12,6 +12,20 @@
 
 ![AuroraBook Logo](logo-svg.png)
 
+<p align="center">
+  <a href="https://apps.apple.com/it/app/aurorabook/id6757122986">
+    <img src="assets/badges/app-store-badge.svg" alt="Download on the App Store" height="54" />
+  </a>
+  &nbsp;&nbsp;
+  <a href="https://apps.microsoft.com/detail/9nhvkx2hch28">
+    <img src="assets/badges/microsoft-store-badge.svg" alt="Get it from Microsoft" height="54" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://aurorabook-landing-page.vercel.app/"><strong>Website &amp; FAQ</strong></a>
+</p>
+
 </div>
 
 ---
