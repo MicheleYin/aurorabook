@@ -45,7 +45,7 @@ src-tauri/watermark_test.mp3
 # Windows Store / winapp — never commit (see src-tauri/signing/README.md)
 Package.appxmanifest
 appxmanifest.xml
-Assets/
+# Assets/
 msix-layout/
 *.msix
 *.msixbundle
