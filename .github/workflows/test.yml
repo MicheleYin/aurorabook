@@ -87,7 +87,10 @@ jobs:
           # Stable path under src-tauri/ (independent of CARGO_TARGET_DIR)
           OUT="${{ github.workspace }}/src-tauri/target/llvm-cov/lcov.info"
           mkdir -p "$(dirname "$OUT")"
-          cargo llvm-cov --lcov --output-path "$OUT" --lib --test mod
+          # --test-threads=1: the "mod" integration suite creates real ONNX/CoreML
+          # TTS engine sessions; running them concurrently corrupts shared
+          # Metal/GPU state and aborts the process (SIGABRT/SIGSEGV).
+          cargo llvm-cov --lcov --output-path "$OUT" --lib --test mod -- --test-threads=1
 
       - name: Upload Rust LCOV
         if: always()
