@@ -43,6 +43,14 @@ jobs:
           path: coverage/lcov.info
           if-no-files-found: warn
 
+      - name: Upload frontend coverage to Codacy
+        if: always()
+        uses: codacy/codacy-coverage-reporter-action@v1
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: coverage/lcov.info
+          partial: true
+
   rust:
     name: Rust (fast suite + llvm-cov)
     runs-on: macos-15
@@ -99,3 +107,23 @@ jobs:
           name: coverage-rust-lcov
           path: src-tauri/target/llvm-cov/lcov.info
           if-no-files-found: warn
+
+      - name: Upload Rust coverage to Codacy
+        if: always()
+        uses: codacy/codacy-coverage-reporter-action@v1
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: src-tauri/target/llvm-cov/lcov.info
+          partial: true
+
+  coverage-final:
+    name: Finalize Codacy coverage report
+    needs: [frontend, rust]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close Codacy coverage report
+        uses: codacy/codacy-coverage-reporter-action@v1
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          final: true
