@@ -9,6 +9,8 @@ pub struct SentenceWithSpan {
     pub end_byte: usize,
 }
 
+// Minimum sizes used to decide whether to merge "short fragment" sentences.
+// Adjusting these values changes sentence segmentation / highlighting behavior.
 const MIN_SENTENCE_WORDS: usize = 20;
 const MIN_SENTENCE_ALNUM_CHARS: usize = 40;
 
