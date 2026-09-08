@@ -165,12 +165,15 @@ export async function hydrateLogsFromDb(): Promise<void> {
       // Keep any entries that arrived while the DB load was in flight.
       const live = logStore;
       const seen = new Set(
-        mapped.map((entry) => `${entry.timestamp}|${entry.source}|${entry.message}`)
+        mapped.map(
+          (entry) => `${entry.timestamp}|${entry.source}|${entry.message}`
+        )
       );
       const merged = [
         ...mapped,
         ...live.filter(
-          (entry) => !seen.has(`${entry.timestamp}|${entry.source}|${entry.message}`)
+          (entry) =>
+            !seen.has(`${entry.timestamp}|${entry.source}|${entry.message}`)
         ),
       ];
       logStore = merged.slice(-MAX_LOGS);

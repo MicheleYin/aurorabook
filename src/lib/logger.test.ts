@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { invoke } from "../test/tauri-mocks";
+import { emitTauriEvent, invoke, listen } from "../test/tauri-mocks";
 
 type LoggerModule = typeof import("./logger");
 
@@ -120,5 +120,106 @@ describe("logger", () => {
       expect.any(Error)
     );
     expect(errorSpy).toHaveBeenCalledWith("error");
+  });
+
+  it("hydrates persisted logs and normalizes stored levels/sources", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_app_logs") {
+        return [
+          {
+            timestamp: "2024-01-01T00:00:00.000Z",
+            level: "warning",
+            source: "backend",
+            message: "persisted warning",
+          },
+          {
+            timestamp: "2024-01-01T00:00:01.000Z",
+            level: "trace",
+            source: "unknown-source",
+            message: "persisted trace",
+          },
+          {
+            timestamp: "2024-01-01T00:00:02.000Z",
+            level: "totally-unknown",
+            source: "frontend",
+            message: "persisted default",
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    const { getLogs, hydrateLogsFromDb, logger } = await loadLogger();
+
+    // Entry logged before hydration resolves should be preserved after merge.
+    logger.log("live entry");
+
+    await hydrateLogsFromDb();
+    // A second call must be a no-op once already hydrated.
+    await hydrateLogsFromDb();
+
+    const logs = getLogs();
+    expect(logs).toHaveLength(4);
+    expect(logs[0]).toMatchObject({ level: "warn", source: "backend" });
+    expect(logs[1]).toMatchObject({ level: "debug", source: "frontend" });
+    expect(logs[2]).toMatchObject({ level: "log", source: "frontend" });
+    expect(logs[3].message).toBe("live entry");
+    expect(invoke).toHaveBeenCalledWith("list_app_logs");
+  });
+
+  it("logs an error when hydration fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_app_logs") {
+        throw new Error("db unavailable");
+      }
+      return undefined;
+    });
+
+    const { hydrateLogsFromDb } = await loadLogger();
+    await hydrateLogsFromDb();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Failed to hydrate logs from database:",
+      expect.any(Error)
+    );
+  });
+
+  it("starts the backend log bridge and appends bridged entries without re-persisting", async () => {
+    const { getLogs, startBackendLogBridge } = await loadLogger();
+
+    startBackendLogBridge();
+    // Second call should not attach a duplicate listener.
+    startBackendLogBridge();
+    await Promise.resolve();
+
+    emitTauriEvent("backend-log", {
+      timestamp: "2024-02-02T00:00:00.000Z",
+      level: "warning",
+      source: "backend",
+      message: "from backend",
+    });
+
+    const logs = getLogs();
+    const bridged = logs.find((log) => log.message === "from backend");
+    expect(bridged).toMatchObject({ level: "warn", source: "backend" });
+    expect(invoke).not.toHaveBeenCalledWith(
+      "append_app_log",
+      expect.anything()
+    );
+  });
+
+  it("recovers if the backend log listener fails to attach", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    listen.mockRejectedValueOnce(new Error("listen failed"));
+
+    const { startBackendLogBridge } = await loadLogger();
+    startBackendLogBridge();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Failed to set up backend log listener:",
+      expect.any(Error)
+    );
   });
 });

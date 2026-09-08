@@ -1,5 +1,5 @@
-use htmlparser::{Tokenizer, Token};
-use crate::utils::errors::{ AppResult};
+use crate::utils::errors::AppResult;
+use htmlparser::{Token, Tokenizer};
 
 /// Sentence with its position in the original HTML
 #[derive(Debug, Clone)]
@@ -9,8 +9,10 @@ pub struct SentenceWithSpan {
     pub end_byte: usize,
 }
 
-const MIN_SENTENCE_WORDS: usize = 10;
-const MIN_SENTENCE_ALNUM_CHARS: usize = 20;
+// Minimum sizes used to decide whether to merge "short fragment" sentences.
+// Adjusting these values changes sentence segmentation / highlighting behavior.
+const MIN_SENTENCE_WORDS: usize = 20;
+const MIN_SENTENCE_ALNUM_CHARS: usize = 40;
 
 fn is_too_short_sentence(text: &str) -> bool {
     let trimmed = text.trim();
@@ -58,9 +60,7 @@ fn looks_like_full_html_document(html: &str) -> bool {
     let trimmed = html.trim_start_matches('\u{feff}').trim_start();
     let prefix: String = trimmed.chars().take(32).collect();
     let lower = prefix.to_ascii_lowercase();
-    lower.starts_with("<?xml")
-        || lower.starts_with("<!doctype")
-        || lower.starts_with("<html")
+    lower.starts_with("<?xml") || lower.starts_with("<!doctype") || lower.starts_with("<html")
 }
 
 /// Wrap multi-root fragments so the tokenizer keeps every paragraph. Full HTML/XHTML
@@ -90,11 +90,7 @@ fn unwrap_parse_wrap(updated: &str, original: &str) -> String {
         return inner.to_string();
     }
     if let Some(idx) = rest.rfind(PARSE_WRAP_SUFFIX) {
-        format!(
-            "{}{}",
-            &rest[..idx],
-            &rest[idx + PARSE_WRAP_SUFFIX.len()..]
-        )
+        format!("{}{}", &rest[..idx], &rest[idx + PARSE_WRAP_SUFFIX.len()..])
     } else {
         rest.to_string()
     }
@@ -105,15 +101,18 @@ fn should_capture_text(in_body: bool, has_body: bool, skip_depth: usize) -> bool
 }
 
 const ABBREVIATIONS: &[&str] = &[
-    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "vs", "etc", "inc", "ltd", "st", "rd",
-    "ave", "no", "vol", "fig", "al", "cf", "eg", "ie", "ch", "pg", "pp", "ed", "eds",
-    "rev", "gen", "col", "sgt", "capt", "lt", "jan", "feb", "mar", "apr", "jun", "jul",
-    "aug", "sep", "sept", "oct", "nov", "dec",
+    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "vs", "etc", "inc", "ltd", "st", "rd", "ave",
+    "no", "vol", "fig", "al", "cf", "eg", "ie", "ch", "pg", "pp", "ed", "eds", "rev", "gen", "col",
+    "sgt", "capt", "lt", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct",
+    "nov", "dec",
 ];
 
 fn word_before_dot(text: &str, dot_index: usize) -> &str {
     let before = text.get(..dot_index).unwrap_or("");
-    before.rsplit(|c: char| !c.is_alphabetic()).next().unwrap_or("")
+    before
+        .rsplit(|c: char| !c.is_alphabetic())
+        .next()
+        .unwrap_or("")
 }
 
 fn is_decimal_dot(text: &str, dot_index: usize) -> bool {
@@ -160,9 +159,7 @@ fn split_prose_sentences(text: &str) -> Vec<(usize, usize)> {
             break;
         };
         let ch_len = ch.len_utf8();
-        let is_ellipsis = ch == '…'
-            || (ch == '.'
-                && text.get(idx..idx + 3) == Some("..."));
+        let is_ellipsis = ch == '…' || (ch == '.' && text.get(idx..idx + 3) == Some("..."));
         let is_end_punct = ch == '.' || ch == '!' || ch == '?' || is_ellipsis;
 
         if is_end_punct {
@@ -210,7 +207,11 @@ fn split_prose_sentences(text: &str) -> Vec<(usize, usize)> {
 /// markup. Otherwise `extract_text_with_spans` closes spans at element boundaries and the merged
 /// `SentenceWithSpan` (one `start_byte`/`end_byte` covering both) no longer matches span `id`s in
 /// the rebuilt HTML — breaking sentence-id lookup for highlighting.
-fn can_merge_adjacent_in_html(html: &str, left: &SentenceWithSpan, right: &SentenceWithSpan) -> bool {
+fn can_merge_adjacent_in_html(
+    html: &str,
+    left: &SentenceWithSpan,
+    right: &SentenceWithSpan,
+) -> bool {
     if left.end_byte > right.start_byte {
         return false;
     }
@@ -227,7 +228,10 @@ fn can_merge_adjacent_in_html(html: &str, left: &SentenceWithSpan, right: &Sente
 /// 2. If fragment is first sentence, merge into next sentence.
 /// 3. If merging with previous is impossible (markup between), try merging into the next sentence.
 /// 4. Retry until no mergeable short fragments remain.
-fn merge_short_sentences(html: &str, mut sentences: Vec<SentenceWithSpan>) -> Vec<SentenceWithSpan> {
+fn merge_short_sentences(
+    html: &str,
+    mut sentences: Vec<SentenceWithSpan>,
+) -> Vec<SentenceWithSpan> {
     if sentences.len() <= 1 {
         return sentences;
     }
@@ -252,13 +256,9 @@ fn merge_short_sentences(html: &str, mut sentences: Vec<SentenceWithSpan>) -> Ve
             if can_merge_adjacent_in_html(html, prev, cur) {
                 let short = sentences.remove(idx);
                 let previous = &mut sentences[idx - 1];
-                previous.text = format!(
-                    "{} {}",
-                    previous.text.trim_end(),
-                    short.text.trim_start()
-                )
-                .trim()
-                .to_string();
+                previous.text = format!("{} {}", previous.text.trim_end(), short.text.trim_start())
+                    .trim()
+                    .to_string();
                 previous.end_byte = previous.end_byte.max(short.end_byte);
                 merged_count += 1;
                 merged = true;
@@ -313,14 +313,17 @@ fn merge_short_sentences(html: &str, mut sentences: Vec<SentenceWithSpan>) -> Ve
 /// * `String` - Updated HTML with span tags for synchronization
 /// * `Vec<(String, usize, usize)>` - List of (span_id, start_word_index, end_word_index) for mapping
 ///
-pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWithSpan]>) -> AppResult<(String, String, Vec<(String, usize, usize)>)> {
+pub fn extract_text_with_spans(
+    html: &str,
+    sentence_spans: Option<&[SentenceWithSpan]>,
+) -> AppResult<(String, String, Vec<(String, usize, usize)>)> {
     // Use provided spans if available, otherwise extract them
     let sentences_with_spans = if let Some(spans) = sentence_spans {
         spans.to_vec()
     } else {
         extract_all_sentences(html)?
     };
-    
+
     if sentences_with_spans.is_empty() {
         return Ok((String::new(), html.to_string(), Vec::new()));
     }
@@ -328,59 +331,62 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
     let original_html = html;
     let document = wrap_for_parse(original_html);
     let html = document.as_str();
-    
+
     // Extract just the sentence texts for compatibility
-    let sentences: Vec<String> = sentences_with_spans.iter().map(|s| s.text.clone()).collect();
-    
+    let sentences: Vec<String> = sentences_with_spans
+        .iter()
+        .map(|s| s.text.clone())
+        .collect();
+
     let mut full_text = String::new();
     let mut span_mappings: Vec<(String, usize, usize)> = Vec::new();
     let mut current_word_index = 0;
-    
+
     // Build full text and span mappings from the extracted sentences
     for (span_index, sentence) in sentences.iter().enumerate() {
         let span_id = format!("f{:06}", span_index + 1);
-        
+
         // Count words in this sentence
         let word_count = crate::utils::text::count_words(sentence);
         let start_word = current_word_index;
         let end_word = current_word_index + word_count;
-        
+
         // Add to full text
         if !full_text.is_empty() {
             full_text.push(' ');
         }
         full_text.push_str(sentence);
         current_word_index = end_word;
-        
+
         // Track span mapping
         span_mappings.push((span_id, start_word, end_word));
     }
-    
+
     // Parse HTML and insert spans around text content
     // Simplified strategy:
     // 1. Open a span when we encounter the start of a sentence in a text token
     // 2. Close a span when we encounter the end of a sentence in a text token
     // 3. When an element closes, close any open span (prevents spans leaking across boundaries)
     // 4. Only track if a span is open - this is the single source of truth
-    
+
     let mut html_pos = 0;
     let mut output = String::with_capacity(html.len() + sentences.len() * 50);
-    
+
     // Single source of truth: is a span currently open in the output?
     let mut span_is_open = false;
     let has_body = html_has_body_element(html);
     let mut in_body = false;
     let mut skip_depth = 0usize;
-    
+
     // Track HTML element stack (for validation, not span management)
     let mut element_stack: Vec<String> = Vec::new();
-    
+
     for token in Tokenizer::from(html) {
         match token {
             Ok(Token::ElementStart { local, span, .. }) => {
                 // Output HTML before this token
                 output.push_str(&html[html_pos..span.start()]);
-                
+
                 // Check if this is a self-closing tag (like <a id="page-1"/>)
                 // Self-closing tags don't need to be tracked in the stack
                 let element_str = &html[span.start()..span.end()];
@@ -390,7 +396,7 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                 if started_skip {
                     skip_depth += 1;
                 }
-                
+
                 // Only push to stack if not self-closing
                 if !is_self_closing {
                     if is_body_tag(element_name) {
@@ -400,7 +406,7 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                 } else if started_skip {
                     skip_depth = skip_depth.saturating_sub(1);
                 }
-                
+
                 // Output the element start tag
                 output.push_str(element_str);
                 html_pos = span.end();
@@ -452,23 +458,24 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                 let text_start = text.start();
                 let text_end = text.end();
                 let text_content = text.as_str();
-                
+
                 // Output HTML before this text token
                 output.push_str(&html[html_pos..text_start]);
-                
+
                 // Only wrap sentences in captured prose (body, or whole document if no body)
                 if should_capture_text(in_body, has_body, skip_depth) {
                     // Find all sentences that overlap with this text token, sorted by start position
-                    let mut relevant_sentences: Vec<(usize, &SentenceWithSpan)> = sentences_with_spans
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, span_data)| {
-                            // Sentence overlaps if it starts before token ends and ends after token starts
-                            span_data.start_byte < text_end && span_data.end_byte > text_start
-                        })
-                        .collect();
+                    let mut relevant_sentences: Vec<(usize, &SentenceWithSpan)> =
+                        sentences_with_spans
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, span_data)| {
+                                // Sentence overlaps if it starts before token ends and ends after token starts
+                                span_data.start_byte < text_end && span_data.end_byte > text_start
+                            })
+                            .collect();
                     relevant_sentences.sort_by_key(|(_, span_data)| span_data.start_byte);
-                    
+
                     if relevant_sentences.is_empty() {
                         // No sentences in this token - just output text
                         // Don't close spans here - let element closing or next token handle it
@@ -477,7 +484,7 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                     } else {
                         // Process sentences in order
                         let mut pos_in_token = 0;
-                        
+
                         for (sent_idx, span_data) in relevant_sentences {
                             // Determine boundaries within this token
                             let sent_start_in_token = if span_data.start_byte >= text_start {
@@ -485,26 +492,27 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                             } else {
                                 0 // Sentence started before this token
                             };
-                            
+
                             let sent_end_in_token = if span_data.end_byte <= text_end {
                                 span_data.end_byte - text_start
                             } else {
                                 text_content.len() // Sentence continues beyond this token
                             };
-                            
+
                             // Output any text before this sentence starts
                             if sent_start_in_token > pos_in_token {
-                                let slice = &text_content[pos_in_token..sent_start_in_token.min(text_content.len())];
+                                let slice = &text_content
+                                    [pos_in_token..sent_start_in_token.min(text_content.len())];
                                 output.push_str(slice);
                                 pos_in_token = sent_start_in_token;
                             }
-                            
+
                             // Close any open span before starting a new one
                             if span_is_open {
                                 output.push_str("</span>");
                                 span_is_open = false;
                             }
-                            
+
                             // Open sentence span:
                             // 1. If it's newly starting in this token
                             // 2. OR if it started before but we aren't currently in an open span (continuity)
@@ -513,21 +521,25 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                                 output.push_str(&format!(r#"<span id="{}">"#, span_id));
                                 span_is_open = true;
                             }
-                            
+
                             // Output text for this sentence
                             if sent_end_in_token > pos_in_token {
-                                let slice = &text_content[pos_in_token..sent_end_in_token.min(text_content.len())];
+                                let slice = &text_content
+                                    [pos_in_token..sent_end_in_token.min(text_content.len())];
                                 output.push_str(slice);
                                 pos_in_token = sent_end_in_token;
                             }
-                            
+
                             // Close sentence if it ends in this token
-                            if span_data.end_byte > text_start && span_data.end_byte <= text_end && span_is_open {
+                            if span_data.end_byte > text_start
+                                && span_data.end_byte <= text_end
+                                && span_is_open
+                            {
                                 output.push_str("</span>");
                                 span_is_open = false;
                             }
                         }
-                        
+
                         // Output any remaining text after the last sentence
                         if pos_in_token < text_content.len() {
                             let slice = &text_content[pos_in_token..];
@@ -538,7 +550,7 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
                     // Not in body - just output text
                     output.push_str(text_content);
                 }
-                
+
                 html_pos = text_end;
             }
             Err(e) => {
@@ -547,7 +559,7 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
             _ => {}
         }
     }
-    
+
     // Close leftover spans before copying the remainder so a parse-only
     // `</body></html>` suffix can be stripped cleanly.
     if span_is_open {
@@ -559,13 +571,13 @@ pub fn extract_text_with_spans(html: &str, sentence_spans: Option<&[SentenceWith
     }
 
     let updated_html = unwrap_parse_wrap(&output, original_html);
-    
+
     log::debug!(
         "extract_text_with_spans: Processed {} sentences, added {} spans",
         sentences.len(),
         updated_html.matches(r#"<span id="f"#).count()
     );
-    
+
     Ok((full_text, updated_html, span_mappings))
 }
 
@@ -600,10 +612,36 @@ struct TextSegment {
 fn is_inline_tag(tag: &str) -> bool {
     matches!(
         normalize_tag_name(tag).to_ascii_lowercase().as_str(),
-        "a" | "b" | "i" | "em" | "strong" | "span" | "sub" | "sup" | "u" | "code"
-            | "mark" | "cite" | "q" | "br" | "small" | "big" | "font" | "abbr" | "dfn"
-            | "time" | "ruby" | "rb" | "rt" | "rp" | "bdi" | "bdo" | "wbr" | "s"
-            | "strike" | "del" | "ins"
+        "a" | "b"
+            | "i"
+            | "em"
+            | "strong"
+            | "span"
+            | "sub"
+            | "sup"
+            | "u"
+            | "code"
+            | "mark"
+            | "cite"
+            | "q"
+            | "br"
+            | "small"
+            | "big"
+            | "font"
+            | "abbr"
+            | "dfn"
+            | "time"
+            | "ruby"
+            | "rb"
+            | "rt"
+            | "rp"
+            | "bdi"
+            | "bdo"
+            | "wbr"
+            | "s"
+            | "strike"
+            | "del"
+            | "ins"
     )
 }
 
@@ -628,8 +666,7 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
                 }
                 if last_start_was_skip {
                     skip_depth += 1;
-                } else if should_capture_text(in_body, has_body, skip_depth)
-                    && !is_inline_tag(tag)
+                } else if should_capture_text(in_body, has_body, skip_depth) && !is_inline_tag(tag)
                 {
                     current_block_id += 1;
                 }
@@ -685,11 +722,11 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
             _ => {}
         }
     }
-    
+
     if text_segments.is_empty() {
         return Ok(Vec::new());
     }
-    
+
     // Helper: map a byte position in combined text to HTML byte position
     let map_to_html = |combined_pos: usize, segments: &[TextSegment]| -> Option<usize> {
         if segments.is_empty() {
@@ -728,7 +765,7 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
                 }
             })
     };
-    
+
     // Group segments by block_id and process each block separately
     let mut all_sentences: Vec<SentenceWithSpan> = Vec::new();
     if text_segments.is_empty() {
@@ -754,8 +791,7 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
                 if range_end <= range_start {
                     continue;
                 }
-                let start_combined =
-                    block_segments[0].combined_start + block_offset + range_start;
+                let start_combined = block_segments[0].combined_start + block_offset + range_start;
                 let end_combined = start_combined + (range_end - range_start);
                 let start_byte = map_to_html(start_combined, block_segments)
                     .unwrap_or(block_segments[0].html_start);
@@ -782,10 +818,14 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
         let trimmed_all = all_text.trim();
         if !trimmed_all.is_empty() {
             let trim_offset = all_text.find(trimmed_all).unwrap_or(0);
-            let start_byte = map_to_html(trim_offset, &text_segments)
-                .unwrap_or(text_segments[0].html_start);
-            let end_byte = map_to_html(trim_offset + trimmed_all.len(), &text_segments)
-                .unwrap_or(text_segments.last().map(|s| s.html_end).unwrap_or(html.len()));
+            let start_byte =
+                map_to_html(trim_offset, &text_segments).unwrap_or(text_segments[0].html_start);
+            let end_byte = map_to_html(trim_offset + trimmed_all.len(), &text_segments).unwrap_or(
+                text_segments
+                    .last()
+                    .map(|s| s.html_end)
+                    .unwrap_or(html.len()),
+            );
             all_sentences.push(SentenceWithSpan {
                 text: trimmed_all.to_string(),
                 start_byte,
@@ -793,7 +833,7 @@ pub fn extract_all_sentences(html: &str) -> AppResult<Vec<SentenceWithSpan>> {
             });
         }
     }
-    
+
     let sentence_count_before_merge = all_sentences.len();
     all_sentences = merge_short_sentences(html, all_sentences);
     all_sentences.sort_by_key(|sentence| (sentence.start_byte, sentence.end_byte));
@@ -840,7 +880,10 @@ mod tests {
             sentences.len() >= 2,
             "expected two sentences, got {}: {:?}",
             sentences.len(),
-            sentences.iter().map(|s| s.text.as_str()).collect::<Vec<_>>()
+            sentences
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<Vec<_>>()
         );
         assert!(sentences[0].text.contains("Alpha"));
         assert!(sentences[1].text.contains("Beta"));
@@ -864,7 +907,11 @@ mod tests {
             <p>Second spoken sentence is long enough to keep.</p>
         </body></html>"#;
         let sentences = extract_all_sentences(html).unwrap();
-        let joined = sentences.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
+        let joined = sentences
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
         assert!(joined.contains("First spoken"));
         assert!(joined.contains("Second spoken"));
         assert!(!joined.contains("ignored.payload"));
@@ -874,7 +921,9 @@ mod tests {
 
     #[test]
     fn split_prose_keeps_reading_order() {
-        let ranges = split_prose_sentences("Hello there everyone listening. Then came the second spoken sentence.");
+        let ranges = split_prose_sentences(
+            "Hello there everyone listening. Then came the second spoken sentence.",
+        );
         assert_eq!(ranges.len(), 2);
         assert!(ranges[0].0 < ranges[1].0);
     }
@@ -903,7 +952,10 @@ mod tests {
         let (_text, updated, mappings) = extract_text_with_spans(html, Some(&sentences)).unwrap();
 
         assert!(
-            !updated.trim_start().to_ascii_lowercase().starts_with("<html"),
+            !updated
+                .trim_start()
+                .to_ascii_lowercase()
+                .starts_with("<html"),
             "fragment chapters must not be stored as a nested html/body document: {updated}"
         );
         assert!(updated.contains("<p>"));
@@ -928,7 +980,14 @@ mod tests {
 <p>Beta paragraph two is long enough to remain a standalone spoken sentence.</p>
 </html>"#;
         let sentences = extract_all_sentences(html).unwrap();
-        assert!(sentences.len() >= 2, "got {:?}", sentences.iter().map(|s| s.text.as_str()).collect::<Vec<_>>());
+        assert!(
+            sentences.len() >= 2,
+            "got {:?}",
+            sentences
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<Vec<_>>()
+        );
         let (_text, updated, mappings) = extract_text_with_spans(html, Some(&sentences)).unwrap();
 
         let lower = updated.to_ascii_lowercase();
@@ -938,7 +997,10 @@ mod tests {
             "must not nest a parse wrap around an existing html document: {updated}"
         );
         let ids = span_ids_in_html(&updated);
-        assert!(!ids.is_empty(), "expected highlight spans, got html: {updated}");
+        assert!(
+            !ids.is_empty(),
+            "expected highlight spans, got html: {updated}"
+        );
         for (span_id, _, _) in &mappings {
             assert!(
                 ids.contains(span_id),
@@ -965,4 +1027,3 @@ mod tests {
         }
     }
 }
-

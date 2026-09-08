@@ -43,6 +43,14 @@ jobs:
           path: coverage/lcov.info
           if-no-files-found: warn
 
+      - name: Upload frontend coverage to Codacy
+        if: always()
+        uses: codacy/codacy-coverage-reporter-action@v1
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: coverage/lcov.info
+          partial: true
+
   rust:
     name: Rust (fast suite + llvm-cov)
     runs-on: macos-15
@@ -87,7 +95,10 @@ jobs:
           # Stable path under src-tauri/ (independent of CARGO_TARGET_DIR)
           OUT="${{ github.workspace }}/src-tauri/target/llvm-cov/lcov.info"
           mkdir -p "$(dirname "$OUT")"
-          cargo llvm-cov --lcov --output-path "$OUT" --lib --test mod
+          # --test-threads=1: the "mod" integration suite creates real ONNX/CoreML
+          # TTS engine sessions; running them concurrently corrupts shared
+          # Metal/GPU state and aborts the process (SIGABRT/SIGSEGV).
+          cargo llvm-cov --lcov --output-path "$OUT" --lib --test mod -- --test-threads=1
 
       - name: Upload Rust LCOV
         if: always()
@@ -96,3 +107,23 @@ jobs:
           name: coverage-rust-lcov
           path: src-tauri/target/llvm-cov/lcov.info
           if-no-files-found: warn
+
+      - name: Upload Rust coverage to Codacy
+        if: always()
+        uses: codacy/codacy-coverage-reporter-action@v1
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: src-tauri/target/llvm-cov/lcov.info
+          partial: true
+
+  coverage-final:
+    name: Finalize Codacy coverage report
+    needs: [frontend, rust]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close Codacy coverage report
+        uses: codacy/codacy-coverage-reporter-action@v1
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          final: true
