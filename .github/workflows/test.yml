@@ -123,7 +123,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Close Codacy coverage report
-        uses: codacy/codacy-coverage-reporter-action@v1
-        with:
-          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
-          final: true
+        run: |
+          bash <(curl -Ls https://raw.githubusercontent.com/codacy/codacy-coverage-reporter/master/get.sh) final \
+            --project-token ${{ secrets.CODACY_PROJECT_TOKEN }}
