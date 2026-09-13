@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
-import type { Book, ChapterWithContent } from "../../types/book";
-import type { ReaderSettings } from "./ReaderSettings";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { useAudioTextSync } from "../../hooks/useAudioTextSync";
 import { useReaderDictionary } from "../../hooks/useReaderDictionary";
@@ -17,8 +15,10 @@ import {
 } from "../../lib/reader-utils";
 import { themeClassNames } from "../../lib/theme";
 import { cn } from "../../lib/utils";
+import type { Book, ChapterWithContent } from "../../types/book";
 import { LoadingScreen } from "../app/LoadingScreen";
 import { ReaderDictionaryCard } from "./ReaderDictionaryCard";
+import type { ReaderSettings } from "./ReaderSettings";
 
 interface ReaderContentProps {
   book: Book;
@@ -309,7 +309,7 @@ export function ReaderContent({
   const fontSizeStyle = useMemo(() => {
     const parsed = Number(settings?.fontSize);
     const fontSize = Number.isFinite(parsed)
-      ? Math.min(28, Math.max(12, parsed))
+      ? Math.min(36, Math.max(11, parsed))
       : 16;
     const lineHeight =
       fontSize >= 20 ? 1.7 : fontSize >= 18 ? 1.65 : 1.6;
@@ -325,7 +325,7 @@ export function ReaderContent({
   const paddingStyle = useMemo(() => {
     const parsed = Number(settings?.contentPadding);
     const padding = Number.isFinite(parsed)
-      ? Math.min(64, Math.max(8, parsed))
+      ? Math.min(128, Math.max(8, parsed))
       : 24;
     return { paddingLeft: padding, paddingRight: padding };
   }, [settings]);

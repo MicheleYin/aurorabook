@@ -21,7 +21,7 @@ export function normalizeFontSize(value: string | undefined): string {
     default: {
       const parsed = Number(value);
       if (Number.isFinite(parsed)) {
-        return String(Math.min(28, Math.max(12, Math.round(parsed))));
+        return String(Math.min(36, Math.max(11, Math.round(parsed))));
       }
       return DEFAULT_READER_SETTINGS.fontSize;
     }
@@ -40,7 +40,7 @@ export function normalizeContentPadding(value: string | undefined): string {
     default: {
       const parsed = Number(value);
       if (Number.isFinite(parsed)) {
-        return String(Math.min(64, Math.max(8, Math.round(parsed / 2) * 2)));
+        return String(Math.min(128, Math.max(8, Math.round(parsed / 2) * 2)));
       }
       return DEFAULT_READER_SETTINGS.contentPadding;
     }

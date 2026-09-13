@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
 import { Check } from "lucide-react";
+import { useEffect, useRef } from "react";
 
 import { useTranslation } from "../../lib/i18n";
 import { cn } from "../../lib/utils";
@@ -195,15 +195,15 @@ export function ReaderSettings({
                 </div>
                 <Slider
                   value={[fontSizeValue]}
-                  min={12}
-                  max={28}
+                  min={11}
+                  max={36}
                   step={1}
                   onValueChange={handleFontSizeChange}
                   aria-label={t("reader.font_size")}
                 />
                 <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>12px</span>
-                  <span>28px</span>
+                  <span>11px</span>
+                  <span>36px</span>
                 </div>
               </CardContent>
             </Card>
@@ -234,14 +234,14 @@ export function ReaderSettings({
                 <Slider
                   value={[contentPaddingValue]}
                   min={8}
-                  max={64}
+                  max={128}
                   step={2}
                   onValueChange={handlePaddingChange}
                   aria-label={t("reader.padding")}
                 />
                 <div className="flex justify-between text-xs text-muted-foreground">
                   <span>8px</span>
-                  <span>64px</span>
+                  <span>128px</span>
                 </div>
               </CardContent>
             </Card>

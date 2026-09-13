@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef } from "react";
 
+import { BookOpenIcon, LibraryIcon, SettingsIcon } from "lucide-react";
 import { FloatingAudioPlayer } from "./components/audio/FloatingAudioPlayer";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Library } from "./components/library/Library";
@@ -106,20 +107,32 @@ function AppContent() {
               value="library"
               className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
             >
-              {t("library.title")}
+              {/* // add library icon */}
+              <div className="flex items-center gap-2"> 
+
+              <LibraryIcon className="w-4 h-4" />
+              <span className="md:block hidden transition-all duration-300 ease-out">{t("library.title")}</span>
+              </div>
             </TabsTrigger>
             <TabsTrigger
               value="reader"
               disabled={!currentBook}
               className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
             >
-              {t("reader.title")}
+              <div className="flex items-center gap-2"> 
+              <BookOpenIcon className="w-4 h-4" />
+              <span className="md:block hidden transition-all duration-300 ease-out">{t("reader.title")}</span>
+              </div>
             </TabsTrigger>
             <TabsTrigger
               value="settings"
               className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
             >
-              {t("app.settings")}
+              <div className="flex items-center gap-2"> 
+              <SettingsIcon className="w-4 h-4" />
+              {/* // add transtion when shownig  */}
+              <span className="md:block hidden transition-all duration-300 ease-out">{t("app.settings")}</span>
+              </div>
             </TabsTrigger>
           </TabsList>
         </div>
