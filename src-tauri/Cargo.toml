@@ -78,7 +78,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 
 # In-tree Supertonic TTS runtime
 # Base ort (no EP feature). Platform targets add WebGPU / DirectML below.

@@ -6,8 +6,8 @@
     "organization": "MicheleYin",
     "repositoryId": "897258",
     "repositoryName": "aurorabook",
-    "createdAt": "2026-08-23T08:25:20.156Z",
-    "updatedAt": "2026-08-23T08:25:20.156Z",
+    "createdAt": "2026-09-04T15:45:59.944Z",
+    "updatedAt": "2026-09-04T15:45:59.944Z",
     "languages": [
       "C",
       "CSS",
@@ -6538,6 +6538,7 @@
     }
   ],
   "exclude": [
-    "src-tauri/resources/voice-samples/README.md"
+    "src-tauri/resources/voice-samples/README.md",
+    "src-tauri/src/book_service/ios_export.rs"
   ]
 }

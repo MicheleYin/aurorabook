@@ -95,3 +95,7 @@ AuroraBook/
 
 # Windows SDK packages and generated files
 .winapp
+
+
+# ignore android assets
+src-tauri/gen/android/app/src/main/assets/*
