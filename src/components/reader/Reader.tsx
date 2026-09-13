@@ -92,11 +92,9 @@ export function Reader() {
   };
 
   const handleContentClick = () => {
-    setIsHeaderVisible((prev) => {
-      const next = !prev;
-      void saveSettings({ readerHeaderVisible: next });
-      return next;
-    });
+    const next = !isHeaderVisible;
+    setIsHeaderVisible(next);
+    void saveSettings({ readerHeaderVisible: next });
   };
 
   if (!currentBook) {

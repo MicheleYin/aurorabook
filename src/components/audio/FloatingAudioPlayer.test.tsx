@@ -47,6 +47,17 @@ vi.mock("@/context/AppContext", () => ({
     setCurrentBook: state.setCurrentBook,
     library: state.currentBook ? [state.currentBook] : [],
     setLibrary: state.setLibrary,
+    currentTab: "library",
+  }),
+}));
+
+vi.mock("@/context/SettingsContext", () => ({
+  useSettingsContext: () => ({
+    settings: {
+      audioPlayerMinimized: false,
+      readerHeaderVisible: true,
+    },
+    saveSettings: vi.fn(async () => undefined),
   }),
 }));
 

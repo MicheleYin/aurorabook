@@ -78,9 +78,31 @@ function ThemeSwitcherComponent({
     if (isDarkTheme(value)) setPreferredDark(value);
   }, [value]);
 
-  const activeTheme = autoEnabled
-    ? resolveColorTheme("system")
-    : (value as ColorTheme);
+  // Re-resolve when OS appearance changes; SettingsContext only updates DOM classes.
+  const [systemTheme, setSystemTheme] = useState<ColorTheme>(() =>
+    resolveColorTheme("system")
+  );
+
+  useEffect(() => {
+    if (!autoEnabled) return;
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const syncSystemTheme = () => {
+      setSystemTheme(resolveColorTheme("system"));
+    };
+
+    syncSystemTheme();
+
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener("change", syncSystemTheme);
+      return () => mediaQuery.removeEventListener("change", syncSystemTheme);
+    }
+
+    mediaQuery.addListener(syncSystemTheme);
+    return () => mediaQuery.removeListener(syncSystemTheme);
+  }, [autoEnabled, preferredLight, preferredDark]);
+
+  const activeTheme = autoEnabled ? systemTheme : (value as ColorTheme);
   const lightActive = isLightTheme(activeTheme);
   const darkActive = isDarkTheme(activeTheme);
 
