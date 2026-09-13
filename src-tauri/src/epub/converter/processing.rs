@@ -562,12 +562,15 @@ pub(crate) async fn process_sentence(
         .await?;
 
         if audio_samples.is_empty() {
-            log::warn!(
-                "Empty audio for sentence {} chunk {}: '{}'",
-                sentence_index,
-                chunk_idx,
-                chunk.chars().take(50).collect::<String>()
-            );
+            // Empty cleaned text can legitimately yield no audio; non-empty text must not.
+            if !chunk.trim().is_empty() {
+                return Err(anyhow::anyhow!(
+                    "TTS produced empty audio for sentence {} chunk {}: '{}'",
+                    sentence_index,
+                    chunk_idx,
+                    chunk.chars().take(50).collect::<String>()
+                ));
+            }
             continue;
         }
 
@@ -591,6 +594,14 @@ pub(crate) async fn process_sentence(
         &mut all_word_alignments,
         sentence_pcm_duration,
     );
+
+    if all_audio_samples.is_empty() && !text.is_empty() {
+        return Err(anyhow::anyhow!(
+            "TTS produced empty audio for sentence {}: '{}'",
+            sentence_index,
+            text.chars().take(50).collect::<String>()
+        ));
+    }
 
     Ok((all_audio_samples, all_word_alignments, text.to_string()))
 }
@@ -636,7 +647,7 @@ async fn process_single_chunk(
         return Ok((Vec::new(), Vec::new(), String::new()));
     }
 
-    // Stop before ONNX/WebGPU when the app left the foreground (or user cancelled).
+    // Stop early when the user cancelled.
     check_cancellation!(cancel_token);
 
     // Try processing the chunk
@@ -649,13 +660,12 @@ async fn process_single_chunk(
             check_cancellation!(cancel_token);
 
             if audio_samples.is_empty() {
-                log::warn!(
-                    "Empty audio samples returned for sentence {} chunk {}: '{}'",
+                return Err(anyhow::anyhow!(
+                    "TTS produced empty audio for sentence {} chunk {}: '{}'",
                     sentence_index,
                     chunk_index,
                     text.chars().take(50).collect::<String>()
-                );
-                return Ok((Vec::new(), Vec::new(), String::new()));
+                ));
             }
 
             let word_alignments = crate::tts::word_timing::estimate_word_timings(
@@ -693,6 +703,7 @@ async fn process_single_chunk(
                     let mut all_audio = Vec::new();
                     let mut all_alignments = Vec::new();
                     let mut cumulative_duration = 0.0;
+                    let mut last_sub_error: Option<String> = None;
 
                     for (sub_idx, sub_chunk) in smaller_chunks.iter().enumerate() {
                         check_cancellation!(cancel_token);
@@ -700,33 +711,41 @@ async fn process_single_chunk(
                         // Use direct processing to avoid recursion
                         match process_chunk_direct(sub_chunk, engine, worker_id, voice_id, language).await {
                             Ok(audio) => {
-                                if !audio.is_empty() {
-                                    let audio_duration_sec = crate::tts::word_timing::pcm_duration_seconds(
-                                        audio.len(),
-                                        SAMPLE_RATE,
-                                    );
-                                    let sub_alignments =
-                                        crate::tts::word_timing::place_alignments_on_track(
-                                            &crate::tts::word_timing::estimate_word_timings(
-                                                sub_chunk,
-                                                &audio,
-                                                SAMPLE_RATE,
-                                            ),
-                                            cumulative_duration,
-                                            audio_duration_sec,
-                                        );
-
-                                    all_alignments.extend(sub_alignments);
-                                    all_audio.extend_from_slice(&audio);
-                                    cumulative_duration += audio_duration_sec;
+                                if audio.is_empty() {
+                                    return Err(anyhow::anyhow!(
+                                        "TTS produced empty audio for sentence {} chunk {} sub-chunk {}: '{}'",
+                                        sentence_index,
+                                        chunk_index,
+                                        sub_idx,
+                                        sub_chunk.chars().take(50).collect::<String>()
+                                    ));
                                 }
+
+                                let audio_duration_sec = crate::tts::word_timing::pcm_duration_seconds(
+                                    audio.len(),
+                                    SAMPLE_RATE,
+                                );
+                                let sub_alignments =
+                                    crate::tts::word_timing::place_alignments_on_track(
+                                        &crate::tts::word_timing::estimate_word_timings(
+                                            sub_chunk,
+                                            &audio,
+                                            SAMPLE_RATE,
+                                        ),
+                                        cumulative_duration,
+                                        audio_duration_sec,
+                                    );
+
+                                all_alignments.extend(sub_alignments);
+                                all_audio.extend_from_slice(&audio);
+                                cumulative_duration += audio_duration_sec;
                             }
                             Err(sub_err) => {
                                 log::warn!(
-                                    "Failed to process sub-chunk {} of sentence {} chunk {}: {}. Skipping this sub-chunk.",
+                                    "Failed to process sub-chunk {} of sentence {} chunk {}: {}.",
                                     sub_idx, sentence_index, chunk_index, sub_err
                                 );
-                                // Continue with other chunks rather than failing completely
+                                last_sub_error = Some(sub_err);
                             }
                         }
                     }
@@ -742,22 +761,27 @@ async fn process_single_chunk(
                         );
                         return Ok((all_audio, all_alignments, text));
                     }
+
+                    if let Some(sub_err) = last_sub_error {
+                        return Err(anyhow::anyhow!(
+                            "TTS generation failed for sentence {} chunk {} after split retries: {}",
+                            sentence_index,
+                            chunk_index,
+                            sub_err
+                        ));
+                    }
                 }
 
-                // If we get here, phonemization failed completely (even after splitting)
-                // Return empty audio instead of crashing - this allows conversion to continue
-                log::warn!(
-                    "Phonemization completely failed for sentence {} chunk {} ({} chars, {} words): {}. Returning empty audio to allow conversion to continue.",
+                return Err(anyhow::anyhow!(
+                    "Phonemization completely failed for sentence {} chunk {} ({} chars, {} words): {}",
                     sentence_index,
                     chunk_index,
                     text.chars().count(),
                     word_count,
                     e
-                );
-                return Ok((Vec::new(), Vec::new(), String::new()));
+                ));
             }
 
-            // For other errors (not "No tokens generated"), still return error but log it
             log::error!(
                 "TTS generation failed for sentence {} chunk {}: {}. Text: '{}'",
                 sentence_index,
@@ -766,12 +790,12 @@ async fn process_single_chunk(
                 text.chars().take(100).collect::<String>()
             );
 
-            // For production safety, return empty audio instead of crashing on unknown errors
-            // This prevents the entire conversion from failing due to a single chunk
-            log::warn!(
-                "Returning empty audio for failed chunk to prevent app crash. Conversion will continue."
-            );
-            Ok((Vec::new(), Vec::new(), String::new()))
+            Err(anyhow::anyhow!(
+                "TTS generation failed for sentence {} chunk {}: {}",
+                sentence_index,
+                chunk_index,
+                e
+            ))
         }
     }
 }
