@@ -16,8 +16,6 @@ import { listen } from "@tauri-apps/api/event";
 import { type } from "@tauri-apps/plugin-os";
 import { toast } from "sonner";
 
-import { AppSettings } from "@/types/settings";
-
 import type {
   AudioTrack,
   AudioTrackWithData,
@@ -38,6 +36,7 @@ import {
 import { logger } from "../lib/logger";
 import { normalizeBook } from "../lib/normalize-book";
 import { useConversionState } from "./ConversionStateContext";
+import { useSettingsContext } from "./SettingsContext";
 
 export interface AudioProgressContextType {
   currentAudioTrack: AudioTrackWithData | null;
@@ -109,6 +108,11 @@ export function AudioProgressProvider({
 }: AudioProgressProviderProps) {
   const { getCurrentConvertingChapter, refreshCurrentConvertingChapter } =
     useConversionState();
+  const {
+    settings,
+    isLoading: isLoadingSettings,
+    saveSettings,
+  } = useSettingsContext();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
   // Last known position from the native AVPlayer (updated by native-player-event).
@@ -154,17 +158,6 @@ export function AudioProgressProvider({
     [calculateAudioProgress]
   );
 
-  const saveSettings = useCallback(async (updates: Partial<AppSettings>) => {
-    try {
-      const currentSettings = await invoke<AppSettings>("get_app_settings");
-      const updatedSettings: AppSettings = { ...currentSettings, ...updates };
-      await invoke<AppSettings>("update_app_settings", {
-        settings: updatedSettings,
-      });
-    } catch (err) {
-      logger.error("Failed to save settings:", err);
-    }
-  }, []);
   const handleSetPlaybackRate = useCallback(
     (rate: number) => {
       const nextRate = applyMediaPlaybackRate(
@@ -172,7 +165,7 @@ export function AudioProgressProvider({
         rate
       );
       setPlaybackRate(nextRate);
-      saveSettings({ audioPlaybackSpeed: nextRate });
+      void saveSettings({ audioPlaybackSpeed: nextRate });
     },
     [audioRef, saveSettings]
   );
@@ -261,28 +254,15 @@ export function AudioProgressProvider({
     };
   }, [audioRef]);
 
-  // Load playback speed from backend on mount
+  // Load playback speed from shared app settings
   useEffect(() => {
-    const loadSettings = async () => {
-      try {
-        const settings = await invoke<AppSettings>("get_app_settings");
+    if (isLoadingSettings || !settings?.audioPlaybackSpeed) return;
 
-        if (settings.audioPlaybackSpeed) {
-          setPlaybackRate(settings.audioPlaybackSpeed);
-
-          if (audioRef.current) {
-            applyMediaPlaybackRate(
-              audioRef.current,
-              settings.audioPlaybackSpeed
-            );
-          }
-        }
-      } catch (err) {
-        logger.error("Failed to load playback speed:", err);
-      }
-    };
-    loadSettings();
-  }, [audioRef]);
+    setPlaybackRate(settings.audioPlaybackSpeed);
+    if (audioRef.current) {
+      applyMediaPlaybackRate(audioRef.current, settings.audioPlaybackSpeed);
+    }
+  }, [audioRef, isLoadingSettings, settings?.audioPlaybackSpeed]);
   const restoreAudioProgress = useCallback(
     (book: Book, track: AudioTrack, autoPlayAudio: boolean) => {
       const savedState = book.audioState;

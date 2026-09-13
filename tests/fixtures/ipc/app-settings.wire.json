@@ -5,5 +5,10 @@
   "ttsLanguage": "en",
   "ttsSynthesisQuality": "balanced",
   "autoScrollEnabled": true,
-  "audioPlaybackSpeed": 1.0
+  "audioPlaybackSpeed": 1.0,
+  "lastOpenedBookId": null,
+  "currentTab": "library",
+  "libraryViewMode": "grid",
+  "audioPlayerMinimized": false,
+  "readerHeaderVisible": true
 }

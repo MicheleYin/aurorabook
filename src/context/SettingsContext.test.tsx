@@ -87,6 +87,53 @@ describe("SettingsProvider", () => {
     expect(result.current.settings?.theme).toBe("light");
   });
 
+  it("merges rapid partial saves without dropping lastOpenedBookId", async () => {
+    let stored = {
+      theme: "dark",
+      language: "en",
+      ttsLanguage: "en",
+      ttsVoiceId: "F1",
+      ttsSynthesisQuality: "balanced",
+      autoScrollEnabled: true,
+      audioPlaybackSpeed: 1,
+      lastOpenedBookId: null as string | null,
+      currentTab: "library",
+    };
+
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "get_app_settings") {
+        return { ...stored };
+      }
+      if (cmd === "update_app_settings") {
+        stored = {
+          ...stored,
+          ...((args as { settings?: typeof stored } | undefined)?.settings ??
+            {}),
+        };
+        return { ...stored };
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useSettingsContext(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.settings).not.toBeNull();
+    });
+
+    await act(async () => {
+      await Promise.all([
+        result.current.saveSettings({ lastOpenedBookId: "book-1" }),
+        result.current.saveSettings({ currentTab: "reader" }),
+      ]);
+    });
+
+    expect(stored.lastOpenedBookId).toBe("book-1");
+    expect(stored.currentTab).toBe("reader");
+    expect(result.current.settings?.lastOpenedBookId).toBe("book-1");
+    expect(result.current.settings?.currentTab).toBe("reader");
+  });
+
   it("applyTheme resolves system preference using last dark theme", () => {
     rememberPreferredTheme("pitch");
 

@@ -7,7 +7,9 @@ import { toast } from "sonner";
 import { useAudioProgressContext } from "@/context/AudioProgressContext";
 
 import type { Book } from "../../types/book";
+import type { LibraryViewMode } from "../../types/settings";
 import { useAppContext } from "../../context/AppContext";
+import { useSettingsContext } from "../../context/SettingsContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
 import { useUnfinishedChapterDuration } from "../../hooks/useUnfinishedChapterDuration";
 import { staggerDelay } from "../../lib/animations";
@@ -16,6 +18,7 @@ import {
   totalBookAudioDurationSeconds,
 } from "../../lib/book-audio-duration";
 import { logger } from "../../lib/logger";
+import { normalizeLibraryViewMode } from "../../lib/settings-utils";
 import {
   showLoadingToast,
   updateLoadingToastToError,
@@ -28,8 +31,6 @@ import { Card, CardContent, CardFooter } from "../ui/card";
 import { Input } from "../ui/input";
 import { Progress } from "../ui/progress";
 import { BookDetailDialog } from "./BookDetailDialog";
-
-type ViewMode = "grid" | "list";
 
 function LibraryBookDuration({ book }: Readonly<{ book: Book }>) {
   const unfinishedDurationSeconds = useUnfinishedChapterDuration(book, true);
@@ -61,6 +62,7 @@ export function Library() {
 
     loadBooks,
   } = useAppContext();
+  const { settings, saveSettings } = useSettingsContext();
   const { saveAudioProgress, calculateAudioProgress, currentAudioTrack, closeAudioPlayer } =
     useAudioProgressContext();
 
@@ -72,7 +74,9 @@ export function Library() {
   }, [books]);
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [viewMode, setViewMode] = useState<LibraryViewMode>(() =>
+    normalizeLibraryViewMode(settings?.libraryViewMode)
+  );
   const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isAddingBook, setIsAddingBook] = useState(false);
@@ -115,10 +119,25 @@ export function Library() {
     }
   }, [filteredBooks]);
 
+  useEffect(() => {
+    if (settings?.libraryViewMode == null) return;
+    setViewMode(normalizeLibraryViewMode(settings.libraryViewMode));
+  }, [settings?.libraryViewMode]);
+
+  const handleViewModeChange = useCallback(
+    (mode: LibraryViewMode) => {
+      setViewMode(mode);
+      void saveSettings({ libraryViewMode: mode });
+    },
+    [saveSettings]
+  );
+
   const handleOpenBook = (book: Book, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    setCurrentBookWithLoading(book, false);
-    setCurrentTab("reader");
+    void (async () => {
+      await setCurrentBookWithLoading(book, false);
+      setCurrentTab("reader");
+    })();
   };
 
   const preserveActiveAudioState = useCallback(
@@ -402,20 +421,35 @@ export function Library() {
       const bookTitle = book?.title || "";
 
       // Stop and close the player if this book is currently loaded/playing.
+      const deletingCurrentBook = currentBook?.id === selectedBookId;
+      const deletingLastOpened =
+        settings?.lastOpenedBookId === selectedBookId;
       if (
         book &&
-        (currentAudioTrack?.bookId === selectedBookId ||
-          currentBook?.id === selectedBookId)
+        (currentAudioTrack?.bookId === selectedBookId || deletingCurrentBook)
       ) {
         await closeAudioPlayer(book, { skipSave: true });
       }
-      if (currentBook?.id === selectedBookId) {
+      if (deletingCurrentBook) {
         setCurrentBook(null);
       }
 
       await invoke("delete_book", {
         bookId: selectedBookId,
       });
+
+      // Clear Kindle-style resume if this was the last opened book.
+      if (deletingLastOpened) {
+        void saveSettings({
+          lastOpenedBookId: null,
+          ...(settings?.currentTab === "reader"
+            ? { currentTab: "library" }
+            : {}),
+        });
+      }
+      if (deletingCurrentBook && settings?.currentTab === "reader") {
+        setCurrentTab("library");
+      }
 
       updateLoadingToastToSuccess(`"${bookTitle}" deleted`, "delete-book");
 
@@ -484,7 +518,7 @@ export function Library() {
             <Button
               variant={viewMode === "grid" ? "default" : "outline"}
               size="sm"
-              onClick={() => setViewMode("grid")}
+              onClick={() => handleViewModeChange("grid")}
               className="h-9 w-9 p-0"
             >
               <Grid2x2 className="h-4 w-4" />
@@ -492,7 +526,7 @@ export function Library() {
             <Button
               variant={viewMode === "list" ? "default" : "outline"}
               size="sm"
-              onClick={() => setViewMode("list")}
+              onClick={() => handleViewModeChange("list")}
               className="h-9 w-9 p-0"
             >
               <List className="h-4 w-4" />

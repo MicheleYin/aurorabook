@@ -1,11 +1,12 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BookOpen } from "lucide-react";
 
+import { useAppContext } from "../../context/AppContext";
 import { useAudioSyncContext } from "@/context/AudioSyncContext";
 import { useChapterProgressContext } from "@/context/ChapterProgressContext";
+import { useSettingsContext } from "../../context/SettingsContext";
 
 import type { Chapter } from "../../types/book";
-import { useAppContext } from "../../context/AppContext";
 import { useReaderSettings } from "../../hooks/useReaderSettings";
 import { useTranslation } from "../../lib/i18n";
 import { logger } from "../../lib/logger";
@@ -18,6 +19,7 @@ import { ReaderSettings } from "./ReaderSettings";
 
 export function Reader() {
   const { currentBook, setCurrentTab } = useAppContext();
+  const { settings, saveSettings } = useSettingsContext();
   const { t } = useTranslation();
   const {
     currentChapter,
@@ -28,11 +30,18 @@ export function Reader() {
   } = useChapterProgressContext();
 
   const [isTocOpen, setIsTocOpen] = useState(false);
-  const [isHeaderVisible, setIsHeaderVisible] = useState(true);
+  const [isHeaderVisible, setIsHeaderVisible] = useState(
+    () => settings?.readerHeaderVisible ?? true
+  );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const { readerSettings, setReaderSettings } = useReaderSettings();
   const { isSyncEnabled, toggleSync } = useAudioSyncContext();
   const headerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (settings?.readerHeaderVisible == null) return;
+    setIsHeaderVisible(settings.readerHeaderVisible);
+  }, [settings?.readerHeaderVisible]);
 
   const handlePreviousChapter = async () => {
     if (!currentBook || !currentChapter) return;
@@ -83,7 +92,11 @@ export function Reader() {
   };
 
   const handleContentClick = () => {
-    setIsHeaderVisible((prev) => !prev);
+    setIsHeaderVisible((prev) => {
+      const next = !prev;
+      void saveSettings({ readerHeaderVisible: next });
+      return next;
+    });
   };
 
   if (!currentBook) {

@@ -195,10 +195,33 @@ pub struct AppSettings {
     pub auto_scroll_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_playback_speed: Option<f64>,
+    /// Last book opened in the reader (Kindle-style resume).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_opened_book_id: Option<String>,
+    /// Last app page: `library`, `reader`, or `settings`.
+    #[serde(default = "default_current_tab")]
+    pub current_tab: String,
+    /// Library layout: `grid` or `list`.
+    #[serde(default = "default_library_view_mode")]
+    pub library_view_mode: String,
+    /// Floating audio player chrome: minimized vs expanded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_player_minimized: Option<bool>,
+    /// Reader immersive mode: `true` shows the header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reader_header_visible: Option<bool>,
 }
 
 fn default_tts_synthesis_quality() -> String {
     "balanced".to_string()
+}
+
+fn default_current_tab() -> String {
+    "library".to_string()
+}
+
+fn default_library_view_mode() -> String {
+    "grid".to_string()
 }
 
 /// Persisted log row for the in-app log viewer (frontend + backend).

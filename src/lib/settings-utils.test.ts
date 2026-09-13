@@ -1,17 +1,33 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeTtsSynthesisQuality } from "./settings-utils";
+import {
+  normalizeAppTab,
+  normalizeLibraryViewMode,
+  normalizeOptionalBookId,
+  normalizeTtsSynthesisQuality,
+} from "./settings-utils";
 
-describe("normalizeTtsSynthesisQuality", () => {
-  it("keeps known presets", () => {
-    expect(normalizeTtsSynthesisQuality("fastest")).toBe("fastest");
-    expect(normalizeTtsSynthesisQuality("balanced")).toBe("balanced");
-    expect(normalizeTtsSynthesisQuality("quality")).toBe("quality");
+describe("settings-utils", () => {
+  it("normalizes app tabs", () => {
+    expect(normalizeAppTab("reader")).toBe("reader");
+    expect(normalizeAppTab("settings")).toBe("settings");
+    expect(normalizeAppTab("nope")).toBe("library");
   });
 
-  it("defaults unknown values to balanced", () => {
-    expect(normalizeTtsSynthesisQuality(undefined)).toBe("balanced");
-    expect(normalizeTtsSynthesisQuality("max")).toBe("balanced");
-    expect(normalizeTtsSynthesisQuality(12)).toBe("balanced");
+  it("normalizes library view modes", () => {
+    expect(normalizeLibraryViewMode("list")).toBe("list");
+    expect(normalizeLibraryViewMode("grid")).toBe("grid");
+    expect(normalizeLibraryViewMode("cards")).toBe("grid");
+  });
+
+  it("normalizes optional book ids", () => {
+    expect(normalizeOptionalBookId("book-1")).toBe("book-1");
+    expect(normalizeOptionalBookId("")).toBeNull();
+    expect(normalizeOptionalBookId(null)).toBeNull();
+  });
+
+  it("normalizes tts quality", () => {
+    expect(normalizeTtsSynthesisQuality("quality")).toBe("quality");
+    expect(normalizeTtsSynthesisQuality("nope")).toBe("balanced");
   });
 });

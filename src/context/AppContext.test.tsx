@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import { AppProvider, useAppContext } from "./AppContext";
+import { SettingsProvider } from "./SettingsContext";
 import type { Book } from "../types/book";
 import { invoke } from "../test/tauri-mocks";
 
@@ -57,13 +58,39 @@ const deps = {
 };
 
 function wrapper({ children }: { children: ReactNode }) {
-  return <AppProvider {...deps}>{children}</AppProvider>;
+  return (
+    <SettingsProvider>
+      <AppProvider {...deps}>{children}</AppProvider>
+    </SettingsProvider>
+  );
 }
 
 describe("AppProvider", () => {
   beforeEach(() => {
     Object.values(deps).forEach((fn) => fn.mockClear?.());
-    invoke.mockImplementation(async (cmd: string) => {
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "get_app_settings") {
+        return {
+          theme: "system",
+          language: "en",
+          ttsLanguage: "en",
+          ttsVoiceId: "F1",
+          ttsSynthesisQuality: "balanced",
+          autoScrollEnabled: true,
+          audioPlaybackSpeed: 1,
+          lastOpenedBookId: null,
+          currentTab: "library",
+          libraryViewMode: "grid",
+          audioPlayerMinimized: false,
+          readerHeaderVisible: true,
+        };
+      }
+      if (cmd === "update_app_settings") {
+        return (args as { settings?: unknown } | undefined)?.settings;
+      }
+      if (cmd === "update_book_last_opened_time") {
+        return undefined;
+      }
       if (cmd === "read_all_books") {
         return [createBook(), createBook({ id: "book-2", title: "Two" })];
       }

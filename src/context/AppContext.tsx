@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -18,10 +19,13 @@ import type {
   BookAudioState,
   BookProgress,
 } from "../types/book";
+import type { AppTab } from "../types/settings";
 import { logger } from "../lib/logger";
 import { normalizeBooks } from "../lib/normalize-book";
+import { normalizeAppTab } from "../lib/settings-utils";
+import { useSettingsContext } from "./SettingsContext";
 
-export type TabValue = "library" | "reader" | "settings";
+export type TabValue = AppTab;
 
 export interface AppContextType {
   currentTab: TabValue;
@@ -75,10 +79,21 @@ export function AppProvider({
   calculateAudioProgress,
   saveAudioProgress,
 }: Readonly<AppProviderProps>) {
-  const [currentTab, setCurrentTab] = useState<TabValue>("library");
+  const {
+    settings,
+    isLoading: isLoadingSettings,
+    saveSettings,
+  } = useSettingsContext();
+  const [currentTab, setCurrentTabState] = useState<TabValue>("library");
   const [currentBook, setCurrentBook] = useState<Book | null>(null);
   const [isLoadingLibrary, setIsLoadingLibrary] = useState(true);
   const [library, setLibrary] = useState<Book[]>([]);
+  const hasRestoredSessionRef = useRef(false);
+  const currentBookRef = useRef<Book | null>(null);
+
+  useEffect(() => {
+    currentBookRef.current = currentBook;
+  }, [currentBook]);
 
   const loadBooks = useCallback(async () => {
     try {
@@ -99,8 +114,9 @@ export function AppProvider({
     async (book: Book, autoPlayAudio: boolean) => {
       // FIX: Save the CURRENT book's audio progress BEFORE switching
       // This prevents corrupting the new book's audioState with the old book's data
-      if (currentBook && currentBook.id !== book.id) {
-        await saveAudioProgress(currentBook);
+      const previousBook = currentBookRef.current;
+      if (previousBook && previousBook.id !== book.id) {
+        await saveAudioProgress(previousBook);
       }
 
       setCurrentBook(book);
@@ -109,18 +125,29 @@ export function AppProvider({
       loadLastOpenedChapter(book);
       // also load the audio track
       loadLastOpenedAudioTrack(book, autoPlayAudio);
+
+      void invoke("update_book_last_opened_time", { bookId: book.id }).catch(
+        (err) => {
+          logger.error("Failed to update book last opened time:", err);
+        }
+      );
+      // Persist book id before any follow-up tab save can race.
+      await saveSettings({ lastOpenedBookId: book.id });
     },
-    [currentBook, loadLastOpenedChapter, loadLastOpenedAudioTrack, saveAudioProgress]
+    [loadLastOpenedChapter, loadLastOpenedAudioTrack, saveAudioProgress, saveSettings]
   );
+
   const changeCurrentTab = useCallback(
     (tab: TabValue) => {
-      setCurrentTab(tab);
-      if (currentBook) {
-        const progress = calculateBookProgress(currentBook);
-        const audioState = calculateAudioProgress(currentBook);
-        void saveChapterProgress(currentBook);
-        void saveAudioProgress(currentBook);
-        let newBook = currentBook;
+      setCurrentTabState(tab);
+      void saveSettings({ currentTab: tab });
+      const activeBook = currentBookRef.current;
+      if (activeBook) {
+        const progress = calculateBookProgress(activeBook);
+        const audioState = calculateAudioProgress(activeBook);
+        void saveChapterProgress(activeBook);
+        void saveAudioProgress(activeBook);
+        let newBook = activeBook;
         if (progress) {
           newBook = {
             ...newBook,
@@ -135,16 +162,16 @@ export function AppProvider({
         }
         setCurrentBook(newBook);
         setLibrary((prev) =>
-          prev.map((book) => (book.id === currentBook.id ? newBook : book))
+          prev.map((book) => (book.id === activeBook.id ? newBook : book))
         );
       }
     },
     [
-      currentBook,
       calculateBookProgress,
       calculateAudioProgress,
       saveChapterProgress,
       saveAudioProgress,
+      saveSettings,
     ]
   );
 
@@ -152,6 +179,54 @@ export function AppProvider({
   useEffect(() => {
     loadBooks();
   }, [loadBooks]);
+
+  // Restore last page + last book once settings and library are ready.
+  useEffect(() => {
+    if (hasRestoredSessionRef.current) return;
+    if (isLoadingSettings || isLoadingLibrary || !settings) return;
+
+    hasRestoredSessionRef.current = true;
+
+    const savedTab = normalizeAppTab(settings.currentTab);
+    const savedBookId = settings.lastOpenedBookId ?? null;
+    const savedBook = savedBookId
+      ? library.find((book) => book.id === savedBookId) ?? null
+      : null;
+
+    logger.info("Restoring session", {
+      savedTab,
+      savedBookId,
+      foundBook: Boolean(savedBook),
+    });
+
+    if (savedBookId && !savedBook) {
+      void saveSettings({
+        lastOpenedBookId: null,
+        currentTab: savedTab === "reader" ? "library" : savedTab,
+      });
+      setCurrentTabState(savedTab === "reader" ? "library" : savedTab);
+      return;
+    }
+
+    if (savedBook) {
+      void changeCurrentBook(savedBook, false);
+    }
+
+    if (savedTab === "reader" && !savedBook) {
+      setCurrentTabState("library");
+      void saveSettings({ currentTab: "library" });
+      return;
+    }
+
+    setCurrentTabState(savedTab);
+  }, [
+    changeCurrentBook,
+    isLoadingLibrary,
+    isLoadingSettings,
+    library,
+    saveSettings,
+    settings,
+  ]);
 
   const contextValue = useMemo(
     () => ({

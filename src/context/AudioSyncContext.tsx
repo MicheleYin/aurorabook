@@ -8,11 +8,10 @@ import {
   useRef,
   useState,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
-import type { AppSettings } from "../types/settings";
 import { logger } from "../lib/logger";
+import { useSettingsContext } from "./SettingsContext";
 
 export interface AudioSyncContextType {
   isSyncEnabled: boolean;
@@ -38,49 +37,35 @@ interface AudioSyncProviderProps {
 }
 
 export function AudioSyncProvider({ children }: AudioSyncProviderProps) {
+  const { settings, isLoading: isLoadingSettings, saveSettings } =
+    useSettingsContext();
   const [isSyncEnabled, setIsSyncEnabled] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const isInitialMountRef = useRef(true);
   const previousValueRef = useRef(isSyncEnabled);
+  const hasHydratedRef = useRef(false);
+  const skipNextSaveRef = useRef(true);
 
-  // Load settings from backend on mount
+  // Hydrate from shared app settings once available.
   useEffect(() => {
-    const loadSettings = async () => {
-      try {
-        const settings = await invoke<AppSettings>("get_app_settings");
-        setIsSyncEnabled(settings.autoScrollEnabled ?? false);
-        previousValueRef.current = settings.autoScrollEnabled ?? false;
-      } catch (err) {
-        logger.error("Failed to load sync settings:", err);
-        // Default to false on error
-        setIsSyncEnabled(false);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    loadSettings();
-  }, []);
+    if (isLoadingSettings || !settings || hasHydratedRef.current) return;
+    hasHydratedRef.current = true;
+    const enabled = settings.autoScrollEnabled ?? false;
+    setIsSyncEnabled(enabled);
+    previousValueRef.current = enabled;
+    setIsLoading(false);
+  }, [isLoadingSettings, settings]);
 
-  // Save to backend when sync state changes
+  // Save to backend when sync state changes (skip the hydrate write).
   useEffect(() => {
-    if (isLoading) return; // Don't save on initial load
+    if (isLoading || !hasHydratedRef.current) return;
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
 
-    const saveSettings = async () => {
-      try {
-        const currentSettings = await invoke<AppSettings>("get_app_settings");
-        const updatedSettings: AppSettings = {
-          ...currentSettings,
-          autoScrollEnabled: isSyncEnabled,
-        };
-        await invoke<AppSettings>("update_app_settings", {
-          settings: updatedSettings,
-        });
-      } catch (err) {
-        logger.error("Failed to save sync settings:", err);
-      }
-    };
-    saveSettings();
-  }, [isSyncEnabled, isLoading]);
+    void saveSettings({ autoScrollEnabled: isSyncEnabled });
+  }, [isSyncEnabled, isLoading, saveSettings]);
 
   // Show toast when sync state changes (but not on initial mount or during loading)
   useEffect(() => {
