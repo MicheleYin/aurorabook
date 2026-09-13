@@ -1,8 +1,8 @@
-import { memo, useEffect, useState } from "react";
 import { Check } from "lucide-react";
+import { memo, useEffect, useState } from "react";
 
-import type { ColorTheme, DarkTheme, LightTheme, UITheme } from "../types/ui";
 import { anim } from "../lib/animations";
+import { useTranslation } from "../lib/i18n";
 import {
   getPreferredDarkTheme,
   getPreferredLightTheme,
@@ -12,13 +12,12 @@ import {
   resolveColorTheme,
 } from "../lib/theme";
 import { cn } from "../lib/utils";
-import { useTranslation } from "../lib/i18n";
+import type { ColorTheme, DarkTheme, LightTheme, UITheme } from "../types/ui";
 
 interface ThemeSwitcherProps {
   value: UITheme;
   onChange: (theme: UITheme) => void;
 }
-
 const LIGHT_VARIANTS: Array<{
   id: LightTheme;
   labelKey: string;
@@ -36,6 +35,24 @@ const LIGHT_VARIANTS: Array<{
     labelKey: "reader.theme_cream",
     preview: "bg-[#f7f1e3] text-[#3a2f24]",
     chip: "bg-[#f7f1e3] border border-black/15",
+  },
+  {
+    id: "sunset",
+    labelKey: "reader.theme_sunset",
+    preview: "bg-[#f8e9d8] text-[#4a2a23]",
+    chip: "bg-[#f8e9d8] border border-black/15",
+  },
+  {
+    id: "rose",
+    labelKey: "reader.theme_rose",
+    preview: "bg-[#f9e9ee] text-[#4e303c]",
+    chip: "bg-[#f9e9ee] border border-black/15",
+  },
+  {
+    id: "forest",
+    labelKey: "reader.theme_forest",
+    preview: "bg-[#35483f] text-[#e8eadf]",
+    chip: "bg-[#35483f] border border-white/20",
   },
 ];
 
@@ -56,6 +73,24 @@ const DARK_VARIANTS: Array<{
     labelKey: "reader.theme_pitch",
     preview: "bg-black text-[#f5f5f5]",
     chip: "bg-black border border-white/20",
+  },
+  {
+    id: "plum",
+    labelKey: "reader.theme_plum",
+    preview: "bg-[#1b1319] text-[#f5eef3]",
+    chip: "bg-[#1b1319] border border-white/20",
+  },
+  {
+    id: "dark_violet",
+    labelKey: "reader.theme_dark_violet",
+    preview: "bg-[#15131f] text-[#f1eff8]",
+    chip: "bg-[#15131f] border border-white/20",
+  },
+  {
+    id: "dark_green",
+    labelKey: "reader.theme_dark_green",
+    preview: "bg-[#11231a] text-[#eaf2e9]",
+    chip: "bg-[#11231a] border border-white/20",
   },
 ];
 

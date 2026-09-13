@@ -1,11 +1,11 @@
-import type { UITheme, ColorTheme, LightTheme, DarkTheme } from "../types/ui";
+import type { ColorTheme, DarkTheme, LightTheme, UITheme } from "../types/ui";
 
 const PREFERRED_LIGHT_KEY = "aurorabook.preferredLightTheme";
 const PREFERRED_DARK_KEY = "aurorabook.preferredDarkTheme";
 
-const LIGHT_THEMES: readonly LightTheme[] = ["light", "cream"];
-const DARK_THEMES: readonly DarkTheme[] = ["dark", "pitch"];
-const ALL_THEME_CLASSES = ["light", "dark", "theme-cream", "theme-pitch"] as const;
+const LIGHT_THEMES: readonly LightTheme[] = ["light", "cream", "forest", "sunset", "rose"];
+const DARK_THEMES: readonly DarkTheme[] = ["dark", "pitch", "dark_violet", "plum", "dark_green"];
+const ALL_THEME_CLASSES = ["light", "dark", "theme-cream", "theme-pitch", "theme-dark_violet", "theme-plum", "theme-forest", "theme-sunset", "theme-rose", "theme-dark_green"] as const;
 
 /** In-memory fallback when localStorage is unavailable (e.g. some test envs). */
 const memoryStore = new Map<string, string>();
@@ -76,10 +76,10 @@ export function resolveColorTheme(theme: UITheme): ColorTheme {
   }
   return theme;
 }
-
 /** Apply theme classes on the document root (Tailwind `dark` + variant). */
 export function applyThemeToDocument(theme: UITheme): ColorTheme {
   const resolved = resolveColorTheme(theme);
+
   if (isColorTheme(theme)) {
     rememberPreferredTheme(theme);
   }
@@ -87,15 +87,7 @@ export function applyThemeToDocument(theme: UITheme): ColorTheme {
   const root = document.documentElement;
   root.classList.remove(...ALL_THEME_CLASSES);
 
-  if (resolved === "cream") {
-    root.classList.add("light", "theme-cream");
-  } else if (resolved === "pitch") {
-    root.classList.add("dark", "theme-pitch");
-  } else if (resolved === "dark") {
-    root.classList.add("dark");
-  } else {
-    root.classList.add("light");
-  }
+  root.classList.add(...themeClassNames(resolved).split(" "));
 
   return resolved;
 }
@@ -103,11 +95,43 @@ export function applyThemeToDocument(theme: UITheme): ColorTheme {
 /** CSS classes for a scoped subtree (e.g. reader content). */
 export function themeClassNames(theme: string | undefined): string {
   if (!theme || theme === "system") return "";
-  if (theme === "cream") return "light theme-cream";
-  if (theme === "pitch") return "dark theme-pitch";
-  if (theme === "dark") return "dark";
-  if (theme === "light") return "light";
-  return "";
+
+  switch (theme) {
+    // Light themes
+    case "light":
+      return "light";
+
+    case "cream":
+      return "light theme-cream";
+
+    case "forest":
+      return "light theme-forest";
+
+    case "sunset":
+      return "light theme-sunset";
+
+    case "rose":
+      return "light theme-rose";
+
+    // Dark themes
+    case "dark":
+      return "dark";
+
+    case "pitch":
+      return "dark theme-pitch";
+
+    case "dark_violet":
+      return "dark theme-dark_violet";
+
+    case "plum":
+      return "dark theme-plum";
+
+    case "dark_green":
+      return "dark theme-dark_green";
+
+    default:
+      return "";
+  }
 }
 
 /** Test helper: clear preferred theme memory (and localStorage when present). */
