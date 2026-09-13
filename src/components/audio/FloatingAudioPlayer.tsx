@@ -65,7 +65,8 @@ export function FloatingAudioPlayer() {
     queueLivePlaybackRequest,
     livePlaybackRequestVersion,
   } = useAudioProgressContext();
-  const { library, setLibrary, currentBook, setCurrentBook } = useAppContext();
+  const { library, setLibrary, currentBook, setCurrentBook, currentTab } =
+    useAppContext();
   const { settings, saveSettings } = useSettingsContext();
   const { loadChapterContent } = useChapterProgressContext();
   const {
@@ -1481,14 +1482,18 @@ export function FloatingAudioPlayer() {
 
   const progressRatio =
     timelineMax > 0 ? Math.min(1, Math.max(0, currentTime / timelineMax)) : 0;
+  const immersiveLowered =
+    currentTab === "reader" && settings?.readerHeaderVisible === false;
 
   return (
     <div
       className={cn(
-        "fixed bottom-20 left-1/2 -translate-x-1/2 z-50 select-none",
+        "fixed left-1/2 -translate-x-1/2 z-50 select-none",
         "w-full px-4",
-        "transition-all duration-300",
-        isMinimized ? "max-w-md" : "max-w-2xl"
+        "transition-all duration-300 ease-out",
+        isMinimized ? "max-w-md" : "max-w-2xl",
+        // Sit above the tab bar normally; drop into that space when tabs hide.
+        immersiveLowered ? "bottom-4" : "bottom-20"
       )}
       data-testid="floating-audio-player"
       data-minimized={isMinimized ? "true" : "false"}

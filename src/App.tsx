@@ -12,6 +12,7 @@ import { Toaster } from "./components/ui/sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { AppProvider, TabValue, useAppContext } from "./context/AppContext";
 import { useTranslation } from "./lib/i18n";
+import { cn } from "./lib/utils";
 import {
   AudioProgressProvider,
   useAudioProgressContext,
@@ -23,14 +24,20 @@ import {
 } from "./context/ChapterProgressContext";
 import { AudioExportStateProvider } from "./context/AudioExportStateContext";
 import { ConversionStateProvider } from "./context/ConversionStateContext";
-import { SettingsProvider } from "./context/SettingsContext";
+import {
+  SettingsProvider,
+  useSettingsContext,
+} from "./context/SettingsContext";
 import { useBookConversion } from "./hooks/useBookConversion";
 import { logger, startBackendLogBridge } from "./lib/logger";
 import { normalizeBook } from "./lib/normalize-book";
 
 function AppContent() {
   const { currentTab, setCurrentTab, currentBook } = useAppContext();
+  const { settings } = useSettingsContext();
   const { t } = useTranslation();
+  const hideNavTabs =
+    currentTab === "reader" && settings?.readerHeaderVisible === false;
 
   useEffect(() => {
     startBackendLogBridge();
@@ -68,7 +75,15 @@ function AppContent() {
             <Settings />
           </TabsContent>
         </main>
-        <div className="absolute bottom-0 left-0 right-0 flex justify-center pb-4 pointer-events-none z-10 select-none">
+        <div
+          className={cn(
+            "absolute bottom-0 left-0 right-0 flex justify-center pb-4 z-10 select-none transition-all duration-300 ease-out",
+            hideNavTabs
+              ? "opacity-0 translate-y-full pointer-events-none"
+              : "opacity-100 translate-y-0 pointer-events-none"
+          )}
+          aria-hidden={hideNavTabs}
+        >
           <TabsList className="rounded-full bg-background/80 backdrop-blur-lg border shadow-lg px-1 py-2 gap-1 pointer-events-auto">
             <TabsTrigger
               value="library"
