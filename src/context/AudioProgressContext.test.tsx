@@ -7,6 +7,7 @@ import {
   useAudioProgressContext,
 } from "./AudioProgressContext";
 import { ConversionStateProvider } from "./ConversionStateContext";
+import { SettingsProvider } from "./SettingsContext";
 import type { AudioTrack, Book } from "../types/book";
 import {
   emitTauriEvent,
@@ -107,17 +108,22 @@ function createAudioElement(): HTMLAudioElement {
 
 function wrapper({ children }: { children: ReactNode }) {
   return (
-    <ConversionStateProvider>
-      <AudioProgressProvider>{children}</AudioProgressProvider>
-    </ConversionStateProvider>
+    <SettingsProvider>
+      <ConversionStateProvider>
+        <AudioProgressProvider>{children}</AudioProgressProvider>
+      </ConversionStateProvider>
+    </SettingsProvider>
   );
 }
 
 describe("AudioProgressProvider", () => {
   beforeEach(() => {
-    invoke.mockImplementation(async (cmd: string) => {
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === "get_app_settings") {
         return { audioPlaybackSpeed: 1.25 };
+      }
+      if (cmd === "update_app_settings") {
+        return (args as { settings?: unknown } | undefined)?.settings;
       }
       if (cmd === "get_current_converting_chapter") {
         return null;

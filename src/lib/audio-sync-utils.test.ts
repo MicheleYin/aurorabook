@@ -15,8 +15,10 @@ import {
   placeWordCuesOnTrack,
   resolvePlaybackMarker,
   chapterHrefForSync,
+  readCssLengthPx,
   scrollTopToRevealRect,
   shouldRunSyncPass,
+  uncoveredTopInsetPx,
 } from "./audio-sync-utils";
 
 function seg(
@@ -168,6 +170,24 @@ describe("scrollTopToRevealRect", () => {
         bottomOffset: 0,
       })
     ).toBe(572);
+  });
+});
+
+describe("uncoveredTopInsetPx", () => {
+  it("returns the safe-area still covering the container top", () => {
+    expect(uncoveredTopInsetPx(0, 47)).toBe(47);
+    expect(uncoveredTopInsetPx(20, 47)).toBe(27);
+    expect(uncoveredTopInsetPx(60, 47)).toBe(0);
+    expect(uncoveredTopInsetPx(0, 0)).toBe(0);
+  });
+});
+
+describe("readCssLengthPx", () => {
+  it("parses pixel lengths and rejects empty values", () => {
+    expect(readCssLengthPx("47px")).toBe(47);
+    expect(readCssLengthPx(" 12.5px ")).toBe(12.5);
+    expect(readCssLengthPx("")).toBe(0);
+    expect(readCssLengthPx(undefined)).toBe(0);
   });
 });
 

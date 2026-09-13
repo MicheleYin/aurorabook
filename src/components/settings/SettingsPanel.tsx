@@ -12,6 +12,7 @@ import { KOKORO_VOICE_GROUPS, voiceSamplePathsToTry } from "../../constants/koko
 import { SHOW_LOGS, SUPPORT_EMAIL } from "../../constants/support";
 import { emailLogsReport, exportLogsToFile } from "../../lib/log-export";
 import { logger } from "../../lib/logger";
+import { defaultTtsSynthesisQuality } from "../../lib/settings-utils";
 import { LogViewer } from "../debug/LogViewer";
 import { ThemeSwitcher } from "../ThemeSwitcher";
 import { LanguageSelect } from "./LanguageSelect";
@@ -256,7 +257,7 @@ export function Settings() {
 
   return (
     <div className="flex h-full flex-col overflow-auto select-none">
-      <div className="app-page-padding space-y-6">
+      <div className="app-page-padding app-page-padding--safe-top space-y-6">
         <div className="space-y-2">
           <h1 className="text-3xl font-bold tracking-tight">{t("app.settings")}</h1>
           <p className="text-muted-foreground">
@@ -284,19 +285,17 @@ export function Settings() {
             <CardContent className="space-y-6">
               <LanguageSelect />
               <Separator />
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="flex flex-col gap-4">
                 <div className="space-y-1">
                   <p className="font-medium">{t("app.theme")}</p>
                   <p className="text-sm text-muted-foreground">
                     {t("settings.theme_description")}
                   </p>
                 </div>
-                <div className="flex items-center justify-center sm:justify-end">
-                  <ThemeSwitcher
-                    value={(settings?.theme as UITheme) || "system"}
-                    onChange={handleThemeChange}
-                  />
-                </div>
+                <ThemeSwitcher
+                  value={(settings?.theme as UITheme) || "system"}
+                  onChange={handleThemeChange}
+                />
               </div>
             </CardContent>
           </Card>
@@ -320,7 +319,9 @@ export function Settings() {
                   </p>
                 </div>
                 <Select
-                  value={settings?.ttsSynthesisQuality ?? "balanced"}
+                  value={
+                    settings?.ttsSynthesisQuality ?? defaultTtsSynthesisQuality()
+                  }
                   onValueChange={handleTtsQualityChange}
                 >
                   <SelectTrigger className="w-full sm:w-[260px] shrink-0">

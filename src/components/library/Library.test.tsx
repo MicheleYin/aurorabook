@@ -39,6 +39,19 @@ vi.mock("../../context/AppContext", () => ({
   }),
 }));
 
+vi.mock("../../context/SettingsContext", () => ({
+  useSettingsContext: () => ({
+    settings: {
+      theme: "system",
+      language: "en",
+      ttsLanguage: "en",
+      ttsVoiceId: "F1",
+      libraryViewMode: "grid",
+    },
+    saveSettings: vi.fn(),
+  }),
+}));
+
 vi.mock("../../hooks/useBookConversion", () => ({
   useBookConversion: () => conversionState,
 }));

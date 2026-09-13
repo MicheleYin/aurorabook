@@ -25,14 +25,15 @@ import { useAudioProgressContext } from "@/context/AudioProgressContext";
 import { useAudioSyncContext } from "@/context/AudioSyncContext";
 import { useChapterProgressContext } from "@/context/ChapterProgressContext";
 import { useConversionState } from "@/context/ConversionStateContext";
+import { useSettingsContext } from "@/context/SettingsContext";
 
 import { applyMediaPlaybackRate } from "../../lib/audio-progress-utils";
-import { logger } from "../../lib/logger";
 import {
   liveStreamPlaybackUrl,
   shouldHoldLivePlayback,
   shouldResumeLiveAfterHold,
 } from "../../lib/live-playback";
+import { logger } from "../../lib/logger";
 import { cn, formatTime } from "../../lib/utils";
 import type { AudioTrack, Book } from "../../types/book";
 import { Badge } from "../ui/badge";
@@ -64,7 +65,9 @@ export function FloatingAudioPlayer() {
     queueLivePlaybackRequest,
     livePlaybackRequestVersion,
   } = useAudioProgressContext();
-  const { library, setLibrary, currentBook, setCurrentBook } = useAppContext();
+  const { library, setLibrary, currentBook, setCurrentBook, currentTab } =
+    useAppContext();
+  const { settings, saveSettings } = useSettingsContext();
   const { loadChapterContent } = useChapterProgressContext();
   const {
     isConverting,
@@ -79,7 +82,9 @@ export function FloatingAudioPlayer() {
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isTracksOpen, setIsTracksOpen] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(
+    () => settings?.audioPlayerMinimized ?? false
+  );
   const [liveGeneratedDuration, setLiveGeneratedDuration] = useState(0);
   const playbackIntentRef = useRef(false);
   const isSwitchingFromLiveRef = useRef(false);
@@ -97,6 +102,19 @@ export function FloatingAudioPlayer() {
   useEffect(() => {
     currentBookRef.current = currentBook;
   }, [currentBook]);
+
+  useEffect(() => {
+    if (settings?.audioPlayerMinimized == null) return;
+    setIsMinimized(settings.audioPlayerMinimized);
+  }, [settings?.audioPlayerMinimized]);
+
+  const setPlayerMinimized = useCallback(
+    (minimized: boolean) => {
+      setIsMinimized(minimized);
+      void saveSettings({ audioPlayerMinimized: minimized });
+    },
+    [saveSettings]
+  );
 
   useEffect(() => {
     currentAudioTrackRef.current = currentAudioTrack;
@@ -1232,7 +1250,6 @@ export function FloatingAudioPlayer() {
     }
 
     await closeAudioPlayer(currentBook);
-    setIsMinimized(false);
   }, [
     calculateAudioProgress,
     closeAudioPlayer,
@@ -1465,14 +1482,19 @@ export function FloatingAudioPlayer() {
 
   const progressRatio =
     timelineMax > 0 ? Math.min(1, Math.max(0, currentTime / timelineMax)) : 0;
+  // When reader chrome/tabs hide, drop into the tab bar's bottom padding — stay visible.
+  const useTabBarSpace =
+    currentTab === "reader" && settings?.readerHeaderVisible === false;
 
   return (
     <div
       className={cn(
-        "fixed bottom-20 left-1/2 -translate-x-1/2 z-50 select-none",
-        "w-full px-4",
-        "transition-all duration-300",
-        isMinimized ? "max-w-md" : "max-w-2xl"
+        "fixed left-1/2 z-50 w-full max-w-2xl -translate-x-1/2 select-none px-4",
+        "transition-[bottom] duration-300 ease-out",
+        isMinimized && "max-w-md",
+        useTabBarSpace
+          ? "bottom-[calc(1rem+var(--app-safe-bottom,0px))]"
+          : "bottom-[calc(5rem+var(--app-safe-bottom,0px))]"
       )}
       data-testid="floating-audio-player"
       data-minimized={isMinimized ? "true" : "false"}
@@ -1517,7 +1539,7 @@ export function FloatingAudioPlayer() {
               <button
                 type="button"
                 className="flex-1 min-w-0 text-left rounded-md px-1 py-0.5 hover:bg-muted/50 transition-colors"
-                onClick={() => setIsMinimized(false)}
+                onClick={() => setPlayerMinimized(false)}
                 title="Expand audio player"
                 data-testid="audio-expand-title"
               >
@@ -1534,7 +1556,7 @@ export function FloatingAudioPlayer() {
                 size="icon"
                 className="h-8 w-8 shrink-0"
                 data-testid="audio-expand"
-                onClick={() => setIsMinimized(false)}
+                onClick={() => setPlayerMinimized(false)}
                 title="Expand audio player"
               >
                 <ChevronUp className="h-4 w-4" />
@@ -1632,7 +1654,7 @@ export function FloatingAudioPlayer() {
                 size="icon"
                 className="h-8 w-8 shrink-0"
                 data-testid="audio-minimize"
-                onClick={() => setIsMinimized(true)}
+                onClick={() => setPlayerMinimized(true)}
                 title="Minimize audio player"
               >
                 <ChevronDown className="h-4 w-4" />

@@ -10,6 +10,7 @@ import {
   normalizeContentPadding,
   normalizeFontSize,
 } from "../lib/reader-settings-utils";
+import type { UITheme } from "../types/ui";
 
 export function useReaderSettings() {
   const {
@@ -106,7 +107,7 @@ export function useReaderSettings() {
           normalizedSettings.theme &&
           appSettings?.theme !== normalizedSettings.theme
         ) {
-          applyTheme(normalizedSettings.theme as "light" | "dark" | "system");
+          applyTheme(normalizedSettings.theme as UITheme);
         }
 
         setReaderSettings(normalizedSettings);

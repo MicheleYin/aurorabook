@@ -165,11 +165,39 @@ describe("ChapterProgressProvider", () => {
       writable: true,
       value: 0,
     });
+    Object.defineProperty(container, "scrollHeight", {
+      configurable: true,
+      value: 2000,
+    });
+    container.getBoundingClientRect = () =>
+      ({
+        top: 0,
+        bottom: 400,
+        left: 0,
+        right: 300,
+        width: 300,
+        height: 400,
+        x: 0,
+        y: 0,
+        toJSON() {},
+      }) as DOMRect;
+
     const prose = document.createElement("div");
     prose.className = "prose";
     const target = document.createElement("p");
     target.id = "el-1";
-    target.scrollIntoView = vi.fn();
+    target.getBoundingClientRect = () =>
+      ({
+        top: 80,
+        bottom: 120,
+        left: 0,
+        right: 300,
+        width: 300,
+        height: 40,
+        x: 0,
+        y: 80,
+        toJSON() {},
+      }) as DOMRect;
     prose.appendChild(target);
     container.appendChild(prose);
     result.current.containerRef.current = container;
@@ -197,8 +225,8 @@ describe("ChapterProgressProvider", () => {
       );
     });
 
-    expect(container.scrollTop).toBe(120);
-    expect(target.scrollIntoView).toHaveBeenCalled();
+    // 120 + (80 - 0) - topInset(0) - padding(8) = 192
+    expect(container.scrollTop).toBe(192);
   });
 
   it("restores scroll position when element id is missing", async () => {

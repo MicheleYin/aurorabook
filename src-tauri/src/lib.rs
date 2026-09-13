@@ -381,6 +381,7 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             greet,
+            window::set_ios_immersive_chrome,
             dictionary::lookup_dictionary,
             tts_commands::init_kokoros_engine,
             tts_commands::generate_tts_cached,
@@ -390,7 +391,6 @@ pub fn run() {
             tts_commands::convert_pcm_to_mp3,
             epub::conversion_command::convert_epub_to_audiobook_command,
             epub::cancellation::cancel_conversion_command,
-            epub::cancellation::pause_conversions_for_background_command,
             resources::read_resource_file,
             book_service::read_all_books,
             book_service::read_one_book,
@@ -542,17 +542,6 @@ pub fn run() {
                     });
                 }
 
-                // iOS: applicationWillResignActive → pause conversion immediately so ONNX/WebGPU
-                // is not used after Metal is suspended (avoids Invalid input shape / silent failures).
-                #[cfg(target_os = "ios")]
-                tauri::RunEvent::WindowEvent {
-                    event: tauri::WindowEvent::Suspended,
-                    ..
-                } => {
-                    log::info!("App leaving foreground; pausing active conversions");
-                    epub::cancellation::pause_conversions_for_background(app_handle);
-                }
-                
                 // Handle file open events (when app is opened with a file)
                 #[cfg(any(target_os = "macos", target_os = "ios"))]
                 tauri::RunEvent::Opened { urls } => {

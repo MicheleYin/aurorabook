@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useCallback, useEffect, useRef } from "react";
 
-import type { Book } from "./types/book";
 import { FloatingAudioPlayer } from "./components/audio/FloatingAudioPlayer";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Library } from "./components/library/Library";
@@ -11,7 +10,7 @@ import { Settings } from "./components/settings/SettingsPanel";
 import { Toaster } from "./components/ui/sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { AppProvider, TabValue, useAppContext } from "./context/AppContext";
-import { useTranslation } from "./lib/i18n";
+import { AudioExportStateProvider } from "./context/AudioExportStateContext";
 import {
   AudioProgressProvider,
   useAudioProgressContext,
@@ -21,20 +20,45 @@ import {
   ChapterProgressProvider,
   useChapterProgressContext,
 } from "./context/ChapterProgressContext";
-import { AudioExportStateProvider } from "./context/AudioExportStateContext";
 import { ConversionStateProvider } from "./context/ConversionStateContext";
-import { SettingsProvider } from "./context/SettingsContext";
+import {
+  SettingsProvider,
+  useSettingsContext,
+} from "./context/SettingsContext";
 import { useBookConversion } from "./hooks/useBookConversion";
+import { useTranslation } from "./lib/i18n";
 import { logger, startBackendLogBridge } from "./lib/logger";
 import { normalizeBook } from "./lib/normalize-book";
+import { cn } from "./lib/utils";
+import type { Book } from "./types/book";
 
 function AppContent() {
   const { currentTab, setCurrentTab, currentBook } = useAppContext();
+  const { settings } = useSettingsContext();
   const { t } = useTranslation();
+  const hideNavTabs =
+    currentTab === "reader" && settings?.readerHeaderVisible === false;
 
   useEffect(() => {
     startBackendLogBridge();
   }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (hideNavTabs) {
+      root.dataset.readerImmersive = "true";
+    } else {
+      delete root.dataset.readerImmersive;
+    }
+    // iOS: hide/show system status bar + home indicator with immersive mode.
+    void invoke("set_ios_immersive_chrome", { hidden: hideNavTabs }).catch(
+      () => {}
+    );
+    return () => {
+      delete root.dataset.readerImmersive;
+      void invoke("set_ios_immersive_chrome", { hidden: false }).catch(() => {});
+    };
+  }, [hideNavTabs]);
 
   return (
     <div className="flex h-full flex-col relative">
@@ -68,7 +92,15 @@ function AppContent() {
             <Settings />
           </TabsContent>
         </main>
-        <div className="absolute bottom-0 left-0 right-0 flex justify-center pb-4 pointer-events-none z-10 select-none">
+        <div
+          className={cn(
+            "absolute bottom-0 left-0 right-0 flex justify-center z-10 select-none transition-all duration-300 ease-out pb-[calc(1rem+var(--app-safe-bottom,0px))]",
+            hideNavTabs
+              ? "opacity-0 translate-y-full pointer-events-none"
+              : "opacity-100 translate-y-0 pointer-events-none"
+          )}
+          aria-hidden={hideNavTabs}
+        >
           <TabsList className="rounded-full bg-background/80 backdrop-blur-lg border shadow-lg px-1 py-2 gap-1 pointer-events-auto">
             <TabsTrigger
               value="library"

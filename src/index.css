@@ -50,6 +50,37 @@
     --anim-easing-spring: cubic-bezier(0.68, -0.55, 0.265, 1.55);
   }
 
+  /* Cream white — warm paper light theme */
+  .theme-cream {
+    --background: 40 40% 96%;
+    --foreground: 30 18% 18%;
+
+    --card: 40 35% 94%;
+    --card-foreground: 30 18% 18%;
+
+    --popover: 40 35% 94%;
+    --popover-foreground: 30 18% 18%;
+
+    --primary: 30 22% 28%;
+    --primary-foreground: 40 40% 97%;
+
+    --secondary: 38 28% 90%;
+    --secondary-foreground: 30 18% 18%;
+
+    --muted: 38 24% 90%;
+    --muted-foreground: 30 10% 42%;
+
+    --accent: 38 28% 90%;
+    --accent-foreground: 30 18% 18%;
+
+    --destructive: 0 72% 48%;
+    --destructive-foreground: 40 40% 97%;
+
+    --border: 36 22% 84%;
+    --input: 36 22% 84%;
+    --ring: 30 22% 28%;
+  }
+
   .dark {
     --background: 220 15% 9%;
     --foreground: 210 40% 98%;
@@ -80,6 +111,37 @@
     --ring: 212.7 26.8% 83.9%;
   }
 
+  /* Pitch black — pure black dark theme */
+  .dark.theme-pitch {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 96%;
+
+    --card: 0 0% 4%;
+    --card-foreground: 0 0% 96%;
+
+    --popover: 0 0% 4%;
+    --popover-foreground: 0 0% 96%;
+
+    --primary: 0 0% 98%;
+    --primary-foreground: 0 0% 4%;
+
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 96%;
+
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 62%;
+
+    --accent: 0 0% 10%;
+    --accent-foreground: 0 0% 96%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 0 0% 14%;
+    --input: 0 0% 10%;
+    --ring: 0 0% 72%;
+  }
+
   * {
     @apply border-border;
   }
@@ -107,6 +169,22 @@
     height: 100%;
     width: 100%;
     overflow: hidden;
+    box-sizing: border-box;
+  }
+
+  /* Safe-area tokens — zeroed in reader immersive mode for edge-to-edge reading. */
+  :root {
+    --app-safe-top: env(safe-area-inset-top, 0px);
+    --app-safe-right: env(safe-area-inset-right, 0px);
+    --app-safe-bottom: env(safe-area-inset-bottom, 0px);
+    --app-safe-left: env(safe-area-inset-left, 0px);
+  }
+
+  html[data-reader-immersive="true"] {
+    --app-safe-top: 0px;
+    --app-safe-right: 0px;
+    --app-safe-bottom: 0px;
+    --app-safe-left: 0px;
   }
 }
 
@@ -931,43 +1009,49 @@
     animation: progress-wave 1.5s ease-in-out infinite;
   }
 
-  /* Safe area inset utilities */
+  /* Safe area inset utilities (follow --app-safe-* so immersive can clear them) */
   .safe-area-top {
-    padding-top: env(safe-area-inset-top, 0px) !important;
+    padding-top: var(--app-safe-top) !important;
   }
 
   .safe-area-bottom {
-    padding-bottom: env(safe-area-inset-bottom) !important;
+    padding-bottom: var(--app-safe-bottom) !important;
   }
 
   .safe-area-left {
-    padding-left: env(safe-area-inset-left) !important;
+    padding-left: var(--app-safe-left) !important;
   }
 
   .safe-area-right {
-    padding-right: env(safe-area-inset-right) !important;
+    padding-right: var(--app-safe-right) !important;
   }
 
   .safe-area-x {
-    padding-left: env(safe-area-inset-left) !important;
-    padding-right: env(safe-area-inset-right) !important;
+    padding-left: var(--app-safe-left) !important;
+    padding-right: var(--app-safe-right) !important;
   }
 
   .safe-area-y {
-    padding-top: env(safe-area-inset-top) !important;
-    padding-bottom: env(safe-area-inset-bottom) !important;
+    padding-top: var(--app-safe-top) !important;
+    padding-bottom: var(--app-safe-bottom) !important;
   }
 
   .safe-area {
-    padding-top: env(safe-area-inset-top) !important    ;
-    padding-right: env(safe-area-inset-right) !important;
-    padding-bottom: env(safe-area-inset-bottom) !important;
-    padding-left: env(safe-area-inset-left) !important;
+    padding-top: var(--app-safe-top) !important;
+    padding-right: var(--app-safe-right) !important;
+    padding-bottom: var(--app-safe-bottom) !important;
+    padding-left: var(--app-safe-left) !important;
   }
 
-  /* macOS draws under the unified title bar; Windows keeps native chrome — use tighter top inset. */
+  /* macOS draws under the unified title bar; Windows keeps native chrome — use tighter top inset.
+     iOS notch: do not pad #root globally (Library/Reader headers + absolute/fixed chrome already use
+     --app-safe-*; immersive zeros those tokens). Settings uses .app-page-padding--safe-top. */
   .app-page-padding {
     @apply p-6;
+  }
+
+  html[data-platform="ios"] .app-page-padding--safe-top {
+    padding-top: max(1.5rem, var(--app-safe-top));
   }
 
   html[data-platform="windows"] .app-page-padding {

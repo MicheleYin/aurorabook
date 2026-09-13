@@ -17,8 +17,10 @@ import {
   hasNonCollapsedTextSelection,
   chapterHrefForSync,
   resolvePlaybackMarker,
+  readAppSafeTopPx,
   scrollTopToRevealRect,
   segmentsForPlayback,
+  uncoveredTopInsetPx,
   type LiveSyncMarker,
   type PlaybackMarker,
 } from "../lib/audio-sync-utils";
@@ -279,6 +281,17 @@ export function useAudioTextSync(
     const header = headerRefInner.current?.current;
     if (header && isHeaderVisibleRef.current) {
       topOffset = header.getBoundingClientRect().height;
+    }
+
+    // Keep follow-scroll clear of notch / status bar / transparent title bar
+    // when the scroll viewport reaches into the unsafe top area (e.g. immersive).
+    const container = scrollContainerRefInner.current?.current;
+    if (container) {
+      const uncovered = uncoveredTopInsetPx(
+        container.getBoundingClientRect().top,
+        readAppSafeTopPx()
+      );
+      topOffset = Math.max(topOffset, uncovered);
     }
 
     let bottomOffset = 0;

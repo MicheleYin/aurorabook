@@ -14,6 +14,11 @@ import {
 import { toast } from "sonner";
 
 import { calculateBookProgress } from "@/lib/reader-utils";
+import {
+  readAppSafeTopPx,
+  scrollTopToRevealRect,
+  uncoveredTopInsetPx,
+} from "@/lib/audio-sync-utils";
 
 import { logger } from "../lib/logger";
 import type {
@@ -205,7 +210,21 @@ export function ChapterProgressProvider({
           element
         );
         if (element) {
-          element.scrollIntoView({ behavior: "auto", block: "start" });
+          const container = containerRef.current;
+          const containerRect = container.getBoundingClientRect();
+          const elementRect = element.getBoundingClientRect();
+          const topOffset = uncoveredTopInsetPx(
+            containerRect.top,
+            readAppSafeTopPx()
+          );
+          container.scrollTop = scrollTopToRevealRect(
+            container.scrollTop,
+            elementRect.top,
+            containerRect.top,
+            containerRect.height,
+            container.scrollHeight,
+            { topOffset, bottomOffset: 0 }
+          );
         }
       }
     },

@@ -15,7 +15,46 @@ import { normalizeAppLanguage, normalizeTtsLanguage } from "../constants/languag
 import type { AppSettings } from "../types/settings";
 import type { UITheme } from "../types/ui";
 import { logger } from "../lib/logger";
-import { normalizeTtsSynthesisQuality } from "../lib/settings-utils";
+import {
+  defaultTtsSynthesisQuality,
+  normalizeAppTab,
+  normalizeLibraryViewMode,
+  normalizeOptionalBookId,
+  normalizeTtsSynthesisQuality,
+} from "../lib/settings-utils";
+import { applyThemeToDocument, isUITheme } from "../lib/theme";
+
+function normalizeAppSettings(appSettings: AppSettings): AppSettings {
+  return {
+    ...appSettings,
+    language: normalizeAppLanguage(appSettings.language),
+    ttsLanguage: normalizeTtsLanguage(appSettings.ttsLanguage),
+    ttsVoiceId: normalizeVoiceId(appSettings.ttsVoiceId),
+    ttsSynthesisQuality: normalizeTtsSynthesisQuality(
+      appSettings.ttsSynthesisQuality
+    ),
+    lastOpenedBookId: normalizeOptionalBookId(appSettings.lastOpenedBookId),
+    currentTab: normalizeAppTab(appSettings.currentTab),
+    libraryViewMode: normalizeLibraryViewMode(appSettings.libraryViewMode),
+    audioPlayerMinimized: appSettings.audioPlayerMinimized ?? false,
+    readerHeaderVisible: appSettings.readerHeaderVisible ?? true,
+  };
+}
+
+const DEFAULT_APP_SETTINGS: AppSettings = {
+  theme: "system",
+  language: "en",
+  ttsLanguage: "en",
+  ttsVoiceId: "F1",
+  ttsSynthesisQuality: defaultTtsSynthesisQuality(),
+  autoScrollEnabled: true,
+  audioPlaybackSpeed: 1.0,
+  lastOpenedBookId: null,
+  currentTab: "library",
+  libraryViewMode: "grid",
+  audioPlayerMinimized: false,
+  readerHeaderVisible: true,
+};
 
 export interface SettingsContextType {
   settings: AppSettings | null;
@@ -49,22 +88,33 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const hasAppliedThemeRef = useRef(false);
+  const settingsRef = useRef<AppSettings | null>(null);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const initialLoadDoneRef = useRef(false);
+  const initialLoadWaitersRef = useRef<Array<() => void>>([]);
 
-  // Apply theme to document
+  const markInitialLoadDone = useCallback(() => {
+    if (initialLoadDoneRef.current) return;
+    initialLoadDoneRef.current = true;
+    const waiters = initialLoadWaitersRef.current;
+    initialLoadWaitersRef.current = [];
+    for (const resolve of waiters) resolve();
+  }, []);
+
+  const waitForInitialLoad = useCallback(() => {
+    if (initialLoadDoneRef.current) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      initialLoadWaitersRef.current.push(resolve);
+    });
+  }, []);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  // Apply theme to document (system uses last chosen light/dark variant)
   const applyTheme = useCallback((newTheme: UITheme) => {
-    const root = document.documentElement;
-
-    if (newTheme === "system") {
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-        .matches
-        ? "dark"
-        : "light";
-      root.classList.remove("light", "dark");
-      root.classList.add(systemTheme);
-    } else {
-      root.classList.remove("light", "dark");
-      root.classList.add(newTheme);
-    }
+    applyThemeToDocument(newTheme);
   }, []);
 
   // Load settings from backend
@@ -73,35 +123,24 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       setIsLoading(true);
       setError(null);
       const appSettings = await invoke<AppSettings>("get_app_settings");
-      setSettings({
-        ...appSettings,
-        language: normalizeAppLanguage(appSettings.language),
-        ttsLanguage: normalizeTtsLanguage(appSettings.ttsLanguage),
-        ttsVoiceId: normalizeVoiceId(appSettings.ttsVoiceId),
-        ttsSynthesisQuality: normalizeTtsSynthesisQuality(
-          appSettings.ttsSynthesisQuality
-        ),
-      });
+      const normalized = normalizeAppSettings(appSettings);
+      settingsRef.current = normalized;
+      setSettings(normalized);
 
       // Apply theme from backend settings (only once on initial load)
       if (!hasAppliedThemeRef.current && appSettings.theme) {
-        applyTheme(appSettings.theme as UITheme);
+        const theme = isUITheme(appSettings.theme)
+          ? appSettings.theme
+          : "system";
+        applyTheme(theme);
         hasAppliedThemeRef.current = true;
       }
     } catch (err) {
       logger.error("Failed to load settings:", err);
       setError(err instanceof Error ? err.message : "Failed to load settings");
       // Fallback to default settings
-      const defaultSettings: AppSettings = {
-        theme: "system",
-        language: "en",
-        ttsLanguage: "en",
-        ttsVoiceId: "F1",
-        ttsSynthesisQuality: "balanced",
-        autoScrollEnabled: true,
-        audioPlaybackSpeed: 1.0,
-      };
-      setSettings(defaultSettings);
+      settingsRef.current = DEFAULT_APP_SETTINGS;
+      setSettings(DEFAULT_APP_SETTINGS);
 
       // Apply default theme
       if (!hasAppliedThemeRef.current) {
@@ -110,8 +149,9 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       }
     } finally {
       setIsLoading(false);
+      markInitialLoadDone();
     }
-  }, [applyTheme]);
+  }, [applyTheme, markInitialLoadDone]);
 
   // Load settings on mount
   useEffect(() => {
@@ -145,40 +185,55 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     }
   }, [settings, applyTheme]);
 
-  // Save settings to backend
+  // Save settings to backend. Queue + ref merge so rapid partial updates
+  // (e.g. lastOpenedBookId then currentTab) cannot overwrite each other.
   const saveSettings = useCallback(
     async (updates: Partial<AppSettings>) => {
-      if (!settings) return;
+      const run = async () => {
+        // Children can save during the initial load; wait so we don't drop updates.
+        await waitForInitialLoad();
+        const current = settingsRef.current;
+        if (!current) return;
 
-      try {
-        setIsSaving(true);
-        setError(null);
-        const updatedSettings: AppSettings = { ...settings, ...updates };
-        const savedSettings = await invoke<AppSettings>("update_app_settings", {
-          settings: updatedSettings,
-        });
-        setSettings(savedSettings);
+        try {
+          setIsSaving(true);
+          setError(null);
+          const updatedSettings = normalizeAppSettings({
+            ...current,
+            ...updates,
+          });
+          // Optimistic merge so the next queued save sees this update.
+          settingsRef.current = updatedSettings;
+          setSettings(updatedSettings);
 
-        // Apply theme if it changed
-        if (updates.theme) {
-          applyTheme(updates.theme as UITheme);
+          const savedSettings = await invoke<AppSettings>("update_app_settings", {
+            settings: updatedSettings,
+          });
+          const normalized = normalizeAppSettings(savedSettings);
+          settingsRef.current = normalized;
+          setSettings(normalized);
+
+          if (updates.theme && isUITheme(updates.theme)) {
+            applyTheme(updates.theme);
+          }
+        } catch (err) {
+          logger.error("Failed to save settings:", err);
+          setError(
+            err instanceof Error ? err.message : "Failed to save settings"
+          );
+        } finally {
+          setIsSaving(false);
         }
+      };
 
-        // Handle language change if needed (e.g., refresh translations)
-        if (updates.language) {
-          // You might want to call changeLanguage from useTranslation here
-          // but that's a bit circular. Better to let the app respond to settings change.
-        }
-      } catch (err) {
-        logger.error("Failed to save settings:", err);
-        setError(
-          err instanceof Error ? err.message : "Failed to save settings"
-        );
-      } finally {
-        setIsSaving(false);
-      }
+      const queued = saveQueueRef.current.then(run, run);
+      saveQueueRef.current = queued.then(
+        () => undefined,
+        () => undefined
+      );
+      await queued;
     },
-    [settings, applyTheme]
+    [applyTheme, waitForInitialLoad]
   );
 
   // Reload settings from backend

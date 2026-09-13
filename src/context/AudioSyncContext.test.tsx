@@ -7,20 +7,33 @@ import {
   AudioSyncProvider,
   useAudioSyncContext,
 } from "./AudioSyncContext";
+import { SettingsProvider } from "./SettingsContext";
 import { invoke } from "../test/tauri-mocks";
 
 function wrapper({ children }: { children: ReactNode }) {
-  return <AudioSyncProvider>{children}</AudioSyncProvider>;
+  return (
+    <SettingsProvider>
+      <AudioSyncProvider>{children}</AudioSyncProvider>
+    </SettingsProvider>
+  );
 }
 
 describe("AudioSyncProvider", () => {
   beforeEach(() => {
-    invoke.mockImplementation(async (cmd: string) => {
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === "get_app_settings") {
-        return { autoScrollEnabled: true };
+        return {
+          theme: "system",
+          language: "en",
+          ttsLanguage: "en",
+          ttsVoiceId: "F1",
+          ttsSynthesisQuality: "balanced",
+          autoScrollEnabled: true,
+          audioPlaybackSpeed: 1,
+        };
       }
       if (cmd === "update_app_settings") {
-        return { autoScrollEnabled: false };
+        return (args as { settings?: unknown } | undefined)?.settings;
       }
       throw new Error(`Unexpected invoke: ${cmd}`);
     });
@@ -56,12 +69,13 @@ describe("AudioSyncProvider", () => {
     expect(toast.info).toHaveBeenCalledWith("Audio-text sync disabled");
   });
 
-  it("defaults to false when settings load fails", async () => {
+  it("uses settings defaults when settings load fails", async () => {
     invoke.mockRejectedValue(new Error("offline"));
     const { result } = renderHook(() => useAudioSyncContext(), { wrapper });
 
     await waitFor(() => {
-      expect(result.current.isSyncEnabled).toBe(false);
+      // SettingsProvider falls back to autoScrollEnabled: true
+      expect(result.current.isSyncEnabled).toBe(true);
     });
   });
 });

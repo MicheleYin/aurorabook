@@ -1,11 +1,11 @@
-import { useCallback, useMemo } from "react";
 import { ArrowLeft, Headphones, Settings } from "lucide-react";
+import { useCallback, useMemo } from "react";
 
 import { useAppContext } from "@/context/AppContext";
 
-import type { Book, Chapter } from "../../types/book";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { useConversionState } from "../../context/ConversionStateContext";
+import type { Book, Chapter } from "../../types/book";
 import { Button } from "../ui/button";
 import { TOCDrawer } from "./TOCDrawer";
 
@@ -46,7 +46,7 @@ export function ReaderHeader({
   }, [loadLastOpenedAudioTrack, book]);
   return (
     <div className="flex-shrink-0 select-none border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="flex items-center justify-between p-4">
+      <div className="flex items-center justify-between px-4 pb-4 pt-[max(1rem,var(--app-safe-top,0px))]">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" onClick={onBack}>
             <ArrowLeft className="h-5 w-5" />
