@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  defaultTtsSynthesisQuality,
   normalizeAppTab,
   normalizeLibraryViewMode,
   normalizeOptionalBookId,
@@ -28,6 +29,25 @@ describe("settings-utils", () => {
 
   it("normalizes tts quality", () => {
     expect(normalizeTtsSynthesisQuality("quality")).toBe("quality");
-    expect(normalizeTtsSynthesisQuality("nope")).toBe("balanced");
+    expect(normalizeTtsSynthesisQuality("nope")).toBe(
+      defaultTtsSynthesisQuality()
+    );
+  });
+
+  it("defaults tts quality to fastest on iOS user agents", () => {
+    const original = navigator.userAgent;
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)",
+    });
+    try {
+      expect(defaultTtsSynthesisQuality()).toBe("fastest");
+      expect(normalizeTtsSynthesisQuality("bogus")).toBe("fastest");
+    } finally {
+      Object.defineProperty(navigator, "userAgent", {
+        configurable: true,
+        value: original,
+      });
+    }
   });
 });

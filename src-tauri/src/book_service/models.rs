@@ -212,8 +212,16 @@ pub struct AppSettings {
     pub reader_header_visible: Option<bool>,
 }
 
-fn default_tts_synthesis_quality() -> String {
-    "balanced".to_string()
+/// Platform default for Supertonic quality: iOS prefers speed.
+pub fn default_tts_synthesis_quality() -> String {
+    #[cfg(target_os = "ios")]
+    {
+        "fastest".to_string()
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        "balanced".to_string()
+    }
 }
 
 fn default_current_tab() -> String {

@@ -16,6 +16,7 @@ import type { AppSettings } from "../types/settings";
 import type { UITheme } from "../types/ui";
 import { logger } from "../lib/logger";
 import {
+  defaultTtsSynthesisQuality,
   normalizeAppTab,
   normalizeLibraryViewMode,
   normalizeOptionalBookId,
@@ -45,7 +46,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   language: "en",
   ttsLanguage: "en",
   ttsVoiceId: "F1",
-  ttsSynthesisQuality: "balanced",
+  ttsSynthesisQuality: defaultTtsSynthesisQuality(),
   autoScrollEnabled: true,
   audioPlaybackSpeed: 1.0,
   lastOpenedBookId: null,

@@ -12,6 +12,7 @@ import { KOKORO_VOICE_GROUPS, voiceSamplePathsToTry } from "../../constants/koko
 import { SHOW_LOGS, SUPPORT_EMAIL } from "../../constants/support";
 import { emailLogsReport, exportLogsToFile } from "../../lib/log-export";
 import { logger } from "../../lib/logger";
+import { defaultTtsSynthesisQuality } from "../../lib/settings-utils";
 import { LogViewer } from "../debug/LogViewer";
 import { ThemeSwitcher } from "../ThemeSwitcher";
 import { LanguageSelect } from "./LanguageSelect";
@@ -318,7 +319,9 @@ export function Settings() {
                   </p>
                 </div>
                 <Select
-                  value={settings?.ttsSynthesisQuality ?? "balanced"}
+                  value={
+                    settings?.ttsSynthesisQuality ?? defaultTtsSynthesisQuality()
+                  }
                   onValueChange={handleTtsQualityChange}
                 >
                   <SelectTrigger className="w-full sm:w-[260px] shrink-0">

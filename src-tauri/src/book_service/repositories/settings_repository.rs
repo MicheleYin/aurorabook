@@ -1,5 +1,5 @@
 use sqlx::{SqlitePool, Row};
-use crate::book_service::models::AppSettings;
+use crate::book_service::models::{default_tts_synthesis_quality, AppSettings};
 
 const SETTINGS_ID: &str = "default";
 
@@ -36,7 +36,7 @@ impl SettingsRepository {
                 tts_voice_id: row.get("tts_voice_id"),
                 tts_synthesis_quality: row
                     .try_get::<String, _>("tts_synthesis_quality")
-                    .unwrap_or_else(|_| "balanced".to_string()),
+                    .unwrap_or_else(|_| default_tts_synthesis_quality()),
                 auto_scroll_enabled: Some(row.get::<i64, _>("auto_scroll_enabled") != 0),
                 audio_playback_speed: Some(row.get("audio_playback_speed")),
                 last_opened_book_id: optional_string(&row, "last_opened_book_id"),
@@ -57,7 +57,7 @@ impl SettingsRepository {
                 language: "en".to_string(),
                 tts_language: "en".to_string(),
                 tts_voice_id: "F1".to_string(),
-                tts_synthesis_quality: "balanced".to_string(),
+                tts_synthesis_quality: default_tts_synthesis_quality(),
                 auto_scroll_enabled: Some(true),
                 audio_playback_speed: Some(1.0),
                 last_opened_book_id: None,

@@ -602,7 +602,9 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
     migrate_epub_data_schema(pool).await?;
     
     // Create app_settings table (singleton - only one row)
-    sqlx::query(
+    // iOS defaults to fastest synthesis; other platforms keep balanced.
+    let default_tts_quality = crate::book_service::models::default_tts_synthesis_quality();
+    sqlx::query(&format!(
         r#"
         CREATE TABLE IF NOT EXISTS app_settings (
             id TEXT PRIMARY KEY DEFAULT 'default',
@@ -610,7 +612,7 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
             language TEXT NOT NULL DEFAULT 'en',
             tts_language TEXT NOT NULL DEFAULT 'en',
             tts_voice_id TEXT NOT NULL,
-            tts_synthesis_quality TEXT NOT NULL DEFAULT 'balanced',
+            tts_synthesis_quality TEXT NOT NULL DEFAULT '{default_tts_quality}',
             auto_scroll_enabled INTEGER NOT NULL DEFAULT 1,
             audio_playback_speed REAL NOT NULL DEFAULT 1.0,
             last_opened_book_id TEXT,
@@ -620,8 +622,8 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
             reader_header_visible INTEGER NOT NULL DEFAULT 1,
             updated_at TEXT NOT NULL
         )
-        "#,
-    )
+        "#
+    ))
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to create app_settings table: {}", e))?;
@@ -651,9 +653,9 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
 
     if !table_sql.contains("tts_synthesis_quality") {
         log::info!("Migrating app_settings table (adding tts_synthesis_quality column)");
-        sqlx::query(
-            "ALTER TABLE app_settings ADD COLUMN tts_synthesis_quality TEXT NOT NULL DEFAULT 'balanced'",
-        )
+        sqlx::query(&format!(
+            "ALTER TABLE app_settings ADD COLUMN tts_synthesis_quality TEXT NOT NULL DEFAULT '{default_tts_quality}'",
+        ))
         .execute(pool)
         .await
         .map_err(|e| format!("Failed to add tts_synthesis_quality column to app_settings: {}", e))?;
