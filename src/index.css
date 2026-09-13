@@ -180,20 +180,12 @@
     --app-safe-left: env(safe-area-inset-left, 0px);
   }
 
-  /* html[data-reader-immersive="true"] {
+  html[data-reader-immersive="true"] {
     --app-safe-top: 0px;
     --app-safe-right: 0px;
     --app-safe-bottom: 0px;
     --app-safe-left: 0px;
-  } */
-
-  /* iOS: keep chrome clear of notch/home indicator unless immersive. */
-  /* html[data-platform="ios"] #root {
-    padding-top: var(--app-safe-top);
-    padding-right: var(--app-safe-right);
-    padding-bottom: var(--app-safe-bottom);
-    padding-left: var(--app-safe-left);
-  } */
+  }
 }
 
 @layer base {
@@ -1051,9 +1043,15 @@
     padding-left: var(--app-safe-left) !important;
   }
 
-  /* macOS draws under the unified title bar; Windows keeps native chrome — use tighter top inset. */
+  /* macOS draws under the unified title bar; Windows keeps native chrome — use tighter top inset.
+     iOS notch: do not pad #root globally (Library/Reader headers + absolute/fixed chrome already use
+     --app-safe-*; immersive zeros those tokens). Settings uses .app-page-padding--safe-top. */
   .app-page-padding {
     @apply p-6;
+  }
+
+  html[data-platform="ios"] .app-page-padding--safe-top {
+    padding-top: max(1.5rem, var(--app-safe-top));
   }
 
   html[data-platform="windows"] .app-page-padding {

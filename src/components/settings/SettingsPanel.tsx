@@ -257,7 +257,7 @@ export function Settings() {
 
   return (
     <div className="flex h-full flex-col overflow-auto select-none">
-      <div className="app-page-padding space-y-6">
+      <div className="app-page-padding app-page-padding--safe-top space-y-6">
         <div className="space-y-2">
           <h1 className="text-3xl font-bold tracking-tight">{t("app.settings")}</h1>
           <p className="text-muted-foreground">

@@ -90,6 +90,23 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
   const hasAppliedThemeRef = useRef(false);
   const settingsRef = useRef<AppSettings | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const initialLoadDoneRef = useRef(false);
+  const initialLoadWaitersRef = useRef<Array<() => void>>([]);
+
+  const markInitialLoadDone = useCallback(() => {
+    if (initialLoadDoneRef.current) return;
+    initialLoadDoneRef.current = true;
+    const waiters = initialLoadWaitersRef.current;
+    initialLoadWaitersRef.current = [];
+    for (const resolve of waiters) resolve();
+  }, []);
+
+  const waitForInitialLoad = useCallback(() => {
+    if (initialLoadDoneRef.current) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      initialLoadWaitersRef.current.push(resolve);
+    });
+  }, []);
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -132,8 +149,9 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       }
     } finally {
       setIsLoading(false);
+      markInitialLoadDone();
     }
-  }, [applyTheme]);
+  }, [applyTheme, markInitialLoadDone]);
 
   // Load settings on mount
   useEffect(() => {
@@ -172,6 +190,8 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
   const saveSettings = useCallback(
     async (updates: Partial<AppSettings>) => {
       const run = async () => {
+        // Children can save during the initial load; wait so we don't drop updates.
+        await waitForInitialLoad();
         const current = settingsRef.current;
         if (!current) return;
 
@@ -213,7 +233,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       );
       await queued;
     },
-    [applyTheme]
+    [applyTheme, waitForInitialLoad]
   );
 
   // Reload settings from backend

@@ -134,6 +134,60 @@ describe("SettingsProvider", () => {
     expect(result.current.settings?.currentTab).toBe("reader");
   });
 
+  it("queues saves that arrive before settings finish loading", async () => {
+    let resolveLoad: ((value: unknown) => void) | undefined;
+    const loadPromise = new Promise((resolve) => {
+      resolveLoad = resolve;
+    });
+
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "get_app_settings") {
+        return loadPromise;
+      }
+      if (cmd === "update_app_settings") {
+        return (args as { settings?: unknown } | undefined)?.settings;
+      }
+      throw new Error(`Unexpected invoke: ${cmd}`);
+    });
+
+    const { result } = renderHook(() => useSettingsContext(), { wrapper });
+
+    const savePromise = act(async () => {
+      await result.current.saveSettings({ libraryViewMode: "list" });
+    });
+
+    expect(invoke).not.toHaveBeenCalledWith(
+      "update_app_settings",
+      expect.anything()
+    );
+
+    await act(async () => {
+      resolveLoad?.({
+        theme: "dark",
+        language: "en",
+        ttsLanguage: "en",
+        ttsVoiceId: "F1",
+        ttsSynthesisQuality: "balanced",
+        autoScrollEnabled: true,
+        audioPlaybackSpeed: 1,
+        libraryViewMode: "grid",
+      });
+      await loadPromise;
+    });
+
+    await savePromise;
+
+    await waitFor(() => {
+      expect(result.current.settings?.libraryViewMode).toBe("list");
+      expect(invoke).toHaveBeenCalledWith(
+        "update_app_settings",
+        expect.objectContaining({
+          settings: expect.objectContaining({ libraryViewMode: "list" }),
+        })
+      );
+    });
+  });
+
   it("applyTheme resolves system preference using last dark theme", () => {
     rememberPreferredTheme("pitch");
 
