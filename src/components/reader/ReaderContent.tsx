@@ -15,6 +15,7 @@ import {
   scrollTopAfterChromeToggle,
   shouldToggleReaderHeaderOnClick,
 } from "../../lib/reader-utils";
+import { themeClassNames } from "../../lib/theme";
 import { cn } from "../../lib/utils";
 import { LoadingScreen } from "../app/LoadingScreen";
 import { ReaderDictionaryCard } from "./ReaderDictionaryCard";
@@ -292,15 +293,10 @@ export function ReaderContent({
   );
 
   // Apply settings styles - map backend string values to CSS
-  const themeClass = useMemo(() => {
-    if (!settings?.theme) return "";
-    if (settings.theme === "dark") return "dark";
-    if (settings.theme === "system") {
-      // Use system theme (respects OS preference)
-      return "";
-    }
-    return "";
-  }, [settings]);
+  const themeClass = useMemo(
+    () => themeClassNames(settings?.theme),
+    [settings?.theme]
+  );
 
   const fontFamilyClass = useMemo(() => {
     if (!settings?.fontFamily) return "font-serif";

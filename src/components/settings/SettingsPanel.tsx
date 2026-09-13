@@ -284,19 +284,17 @@ export function Settings() {
             <CardContent className="space-y-6">
               <LanguageSelect />
               <Separator />
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="flex flex-col gap-4">
                 <div className="space-y-1">
                   <p className="font-medium">{t("app.theme")}</p>
                   <p className="text-sm text-muted-foreground">
                     {t("settings.theme_description")}
                   </p>
                 </div>
-                <div className="flex items-center justify-center sm:justify-end">
-                  <ThemeSwitcher
-                    value={(settings?.theme as UITheme) || "system"}
-                    onChange={handleThemeChange}
-                  />
-                </div>
+                <ThemeSwitcher
+                  value={(settings?.theme as UITheme) || "system"}
+                  onChange={handleThemeChange}
+                />
               </div>
             </CardContent>
           </Card>

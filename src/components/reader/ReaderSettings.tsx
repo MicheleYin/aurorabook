@@ -1,8 +1,10 @@
 import { useEffect, useRef } from "react";
-import { Check, Monitor, Moon, Sun } from "lucide-react";
+import { Check } from "lucide-react";
 
 import { useTranslation } from "../../lib/i18n";
 import { cn } from "../../lib/utils";
+import type { UITheme } from "../../types/ui";
+import { ThemeSwitcher } from "../ThemeSwitcher";
 import { Card, CardContent } from "../ui/card";
 import {
   Drawer,
@@ -35,14 +37,11 @@ export function ReaderSettings({
   onOpenChange,
 }: Readonly<ReaderSettingsProps>) {
   const { t } = useTranslation();
-  const themeLightRef = useRef<HTMLDivElement>(null);
-  const themeDarkRef = useRef<HTMLDivElement>(null);
-  const themeSystemRef = useRef<HTMLDivElement>(null);
   const fontFamilyMerriweatherRef = useRef<HTMLDivElement>(null);
   const fontFamilyInterRef = useRef<HTMLDivElement>(null);
   const fontFamilyMonospaceRef = useRef<HTMLDivElement>(null);
 
-  const handleThemeChange = (theme: string) => {
+  const handleThemeChange = (theme: UITheme) => {
     onSettingsChange({ ...settings, theme });
   };
 
@@ -72,11 +71,6 @@ export function ReaderSettings({
       });
     };
 
-    const themeRefs: Record<string, React.RefObject<HTMLDivElement | null>> = {
-      light: themeLightRef,
-      dark: themeDarkRef,
-      system: themeSystemRef,
-    };
     const fontFamilyRefs: Record<
       string,
       React.RefObject<HTMLDivElement | null>
@@ -87,12 +81,11 @@ export function ReaderSettings({
     };
 
     const timeoutId = setTimeout(() => {
-      scrollToElement(themeRefs[settings.theme]);
       scrollToElement(fontFamilyRefs[settings.fontFamily]);
     }, 100);
 
     return () => clearTimeout(timeoutId);
-  }, [isOpen, settings.fontFamily, settings.theme]);
+  }, [isOpen, settings.fontFamily]);
 
   return (
     <Drawer open={isOpen} onOpenChange={onOpenChange}>
@@ -104,71 +97,10 @@ export function ReaderSettings({
         <div className="flex flex-col gap-4 overflow-y-auto p-4">
           <div className="space-y-2">
             <Label className="text-sm">{t("reader.theme")}</Label>
-            <div className="flex flex-row gap-2 overflow-x-auto p-1">
-              <Card
-                ref={themeLightRef}
-                className={cn(
-                  "w-24 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
-                  settings.theme === "light" &&
-                    "border-primary ring-2 ring-primary"
-                )}
-                onClick={() => handleThemeChange("light")}
-              >
-                <CardContent className="flex h-20 flex-col items-center gap-1 p-4">
-                  <Sun className="h-3 w-3" />
-                  <span className="text-xs font-medium">
-                    {t("reader.theme_light")}
-                  </span>
-                  <div className="flex h-3 w-3 items-center justify-center">
-                    {settings.theme === "light" && (
-                      <Check className="h-3 w-3 text-primary" />
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-              <Card
-                ref={themeDarkRef}
-                className={cn(
-                  "w-24 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
-                  settings.theme === "dark" &&
-                    "border-primary ring-2 ring-primary"
-                )}
-                onClick={() => handleThemeChange("dark")}
-              >
-                <CardContent className="flex h-20 flex-col items-center gap-1 p-4">
-                  <Moon className="h-3 w-3" />
-                  <span className="text-xs font-medium">
-                    {t("reader.theme_dark")}
-                  </span>
-                  <div className="flex h-3 w-3 items-center justify-center">
-                    {settings.theme === "dark" && (
-                      <Check className="h-3 w-3 text-primary" />
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-              <Card
-                ref={themeSystemRef}
-                className={cn(
-                  "w-24 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
-                  settings.theme === "system" &&
-                    "border-primary ring-2 ring-primary"
-                )}
-                onClick={() => handleThemeChange("system")}
-              >
-                <CardContent className="flex h-20 flex-col items-center gap-1 p-4">
-                  <Monitor className="h-3 w-3" />
-                  <span className="text-xs font-medium">
-                    {t("reader.theme_system")}
-                  </span>
-                  <div className="flex h-3 w-3 items-center justify-center">
-                    {settings.theme === "system" && (
-                      <Check className="h-3 w-3 text-primary" />
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+            <ThemeSwitcher
+              value={(settings.theme as UITheme) || "system"}
+              onChange={handleThemeChange}
+            />
           </div>
 
           <div className="space-y-3">

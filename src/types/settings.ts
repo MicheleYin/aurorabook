@@ -7,7 +7,7 @@ export type AppLocaleCode = AppLanguageCode;
 export type TtsSynthesisQuality = "fastest" | "balanced" | "quality";
 
 export interface AppSettings {
-  theme: string; // "light" | "dark" | "system"
+  theme: string; // "light" | "cream" | "dark" | "pitch" | "system"
   language: string;
   ttsVoiceId: string;
   ttsLanguage: string;

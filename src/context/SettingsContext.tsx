@@ -16,6 +16,7 @@ import type { AppSettings } from "../types/settings";
 import type { UITheme } from "../types/ui";
 import { logger } from "../lib/logger";
 import { normalizeTtsSynthesisQuality } from "../lib/settings-utils";
+import { applyThemeToDocument, isUITheme } from "../lib/theme";
 
 export interface SettingsContextType {
   settings: AppSettings | null;
@@ -50,21 +51,9 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
   const [error, setError] = useState<string | null>(null);
   const hasAppliedThemeRef = useRef(false);
 
-  // Apply theme to document
+  // Apply theme to document (system uses last chosen light/dark variant)
   const applyTheme = useCallback((newTheme: UITheme) => {
-    const root = document.documentElement;
-
-    if (newTheme === "system") {
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-        .matches
-        ? "dark"
-        : "light";
-      root.classList.remove("light", "dark");
-      root.classList.add(systemTheme);
-    } else {
-      root.classList.remove("light", "dark");
-      root.classList.add(newTheme);
-    }
+    applyThemeToDocument(newTheme);
   }, []);
 
   // Load settings from backend
@@ -85,7 +74,10 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
 
       // Apply theme from backend settings (only once on initial load)
       if (!hasAppliedThemeRef.current && appSettings.theme) {
-        applyTheme(appSettings.theme as UITheme);
+        const theme = isUITheme(appSettings.theme)
+          ? appSettings.theme
+          : "system";
+        applyTheme(theme);
         hasAppliedThemeRef.current = true;
       }
     } catch (err) {
@@ -160,8 +152,8 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         setSettings(savedSettings);
 
         // Apply theme if it changed
-        if (updates.theme) {
-          applyTheme(updates.theme as UITheme);
+        if (updates.theme && isUITheme(updates.theme)) {
+          applyTheme(updates.theme);
         }
 
         // Handle language change if needed (e.g., refresh translations)

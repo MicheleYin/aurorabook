@@ -184,7 +184,7 @@ pub struct LibraryFilter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    pub theme: String, // "light", "dark", "system"
+    pub theme: String, // "light", "cream", "dark", "pitch", "system"
     pub language: String, // "en", "es", "it", "zh"
     pub tts_language: String, // Supertonic 3 ISO code (30 langs; see AVAILABLE_LANGS)
     pub tts_voice_id: String,
@@ -216,7 +216,7 @@ pub struct AppLogEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReaderPreferences {
-    pub theme: String, // "light", "dark", "system"
+    pub theme: String, // "light", "cream", "dark", "pitch", "system"
     pub font_family: String,
     pub content_padding: String,
     pub font_size: String,

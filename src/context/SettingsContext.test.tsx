@@ -6,6 +6,7 @@ import {
   SettingsProvider,
   useSettingsContext,
 } from "./SettingsContext";
+import { rememberPreferredTheme } from "../lib/theme";
 import { invoke } from "../test/tauri-mocks";
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -86,7 +87,9 @@ describe("SettingsProvider", () => {
     expect(result.current.settings?.theme).toBe("light");
   });
 
-  it("applyTheme resolves system preference", () => {
+  it("applyTheme resolves system preference using last dark theme", () => {
+    rememberPreferredTheme("pitch");
+
     const { result } = renderHook(() => useSettingsContext(), { wrapper });
 
     Object.defineProperty(window, "matchMedia", {
@@ -106,5 +109,8 @@ describe("SettingsProvider", () => {
     });
 
     expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(document.documentElement.classList.contains("theme-pitch")).toBe(
+      true
+    );
   });
 });
