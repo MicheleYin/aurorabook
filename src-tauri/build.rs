@@ -3,7 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Compile `swift/NativePlayer.swift` and `swift/AudiobookExporter.swift` into static
+/// Compile `swift/NativePlayer.swift` and other Swift bridges into static
 /// libs and link them for iOS.
 ///
 /// Rust declares `extern "C"` for the `@_cdecl` exports. Cargo builds `cdylib` before
@@ -55,6 +55,7 @@ fn compile_ios_swift_bridges() {
         ("AudiobookExporter", "AudiobookExporter.swift"),
         ("ExportFileWriter", "ExportFileWriter.swift"),
         ("ShareExport", "ShareExport.swift"),
+        ("ImmersiveChrome", "ImmersiveChrome.swift"),
     ];
 
     for (lib_name, file_name) in sources {

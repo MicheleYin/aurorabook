@@ -381,6 +381,7 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             greet,
+            window::set_ios_immersive_chrome,
             dictionary::lookup_dictionary,
             tts_commands::init_kokoros_engine,
             tts_commands::generate_tts_cached,

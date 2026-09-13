@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { BookOpen, Grid2x2, List, Plus } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { useAudioProgressContext } from "@/context/AudioProgressContext";
 
-import type { Book } from "../../types/book";
-import type { LibraryViewMode } from "../../types/settings";
 import { useAppContext } from "../../context/AppContext";
 import { useSettingsContext } from "../../context/SettingsContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
@@ -25,6 +23,8 @@ import {
   updateLoadingToastToSuccess,
 } from "../../lib/toast-utils";
 import { cn, formatTime } from "../../lib/utils";
+import type { Book } from "../../types/book";
+import type { LibraryViewMode } from "../../types/settings";
 import { LoadingScreen } from "../app/LoadingScreen";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardFooter } from "../ui/card";
@@ -487,7 +487,7 @@ export function Library() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden select-none">
-      <div className="flex-shrink-0 app-page-padding space-y-4 border-b">
+      <div className="flex-shrink-0 space-y-4 border-b px-6 pb-6 pt-[max(1.5rem,var(--app-safe-top,0px))]">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Library</h1>

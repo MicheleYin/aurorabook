@@ -1,5 +1,27 @@
 use tauri::{AppHandle, Emitter, WebviewWindow};
 
+#[cfg(target_os = "ios")]
+extern "C" {
+    fn aurora_set_immersive_chrome(hidden: bool);
+}
+
+/// Toggle iOS status bar + home-indicator chrome for reader immersive mode.
+///
+/// No-op on non-iOS. Prefer this over permanent `UIStatusBarHidden` in Info.plist
+/// so the bar can reappear when immersive mode is off.
+#[tauri::command]
+pub fn set_ios_immersive_chrome(hidden: bool) -> Result<(), String> {
+    #[cfg(target_os = "ios")]
+    {
+        // Swift dispatches to the main queue if needed.
+        unsafe {
+            aurora_set_immersive_chrome(hidden);
+        }
+    }
+    let _ = hidden;
+    Ok(())
+}
+
 /// Window state information
 #[derive(Debug, Clone)]
 pub struct WindowState {

@@ -430,6 +430,38 @@ export interface ViewportOffsets {
   bottomOffset: number;
 }
 
+/** Parse a CSS length like `47px` / `0px` from a custom property. */
+export function readCssLengthPx(
+  value: string | null | undefined
+): number {
+  if (!value) return 0;
+  const parsed = Number.parseFloat(value.trim());
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** Current `--app-safe-top` in CSS pixels. */
+export function readAppSafeTopPx(
+  style: CSSStyleDeclaration | null = typeof document !== "undefined"
+    ? getComputedStyle(document.documentElement)
+    : null
+): number {
+  if (!style) return 0;
+  return readCssLengthPx(style.getPropertyValue("--app-safe-top"));
+}
+
+/**
+ * How much of the system top inset still covers the scroll container.
+ * When the header sits above the container, this is usually 0; in immersive
+ * mode (container at the screen top) it equals the remaining safe-area.
+ */
+export function uncoveredTopInsetPx(
+  containerTop: number,
+  safeTopPx: number
+): number {
+  if (safeTopPx <= 0) return 0;
+  return Math.max(0, safeTopPx - Math.max(0, containerTop));
+}
+
 /**
  * Whether an element is fully visible in the scroll container viewport,
  * accounting for header (top) and floating player (bottom) chrome.

@@ -28,12 +28,12 @@ import { useConversionState } from "@/context/ConversionStateContext";
 import { useSettingsContext } from "@/context/SettingsContext";
 
 import { applyMediaPlaybackRate } from "../../lib/audio-progress-utils";
-import { logger } from "../../lib/logger";
 import {
   liveStreamPlaybackUrl,
   shouldHoldLivePlayback,
   shouldResumeLiveAfterHold,
 } from "../../lib/live-playback";
+import { logger } from "../../lib/logger";
 import { cn, formatTime } from "../../lib/utils";
 import type { AudioTrack, Book } from "../../types/book";
 import { Badge } from "../ui/badge";
@@ -1493,8 +1493,8 @@ export function FloatingAudioPlayer() {
         "transition-[bottom] duration-300 ease-out",
         isMinimized && "max-w-md",
         useTabBarSpace
-          ? "bottom-[max(1rem,env(safe-area-inset-bottom,0px))]"
-          : "bottom-[calc(5rem+env(safe-area-inset-bottom,0px))]"
+          ? "bottom-[calc(1rem+var(--app-safe-bottom,0px))]"
+          : "bottom-[calc(5rem+var(--app-safe-bottom,0px))]"
       )}
       data-testid="floating-audio-player"
       data-minimized={isMinimized ? "true" : "false"}
