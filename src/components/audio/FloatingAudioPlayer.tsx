@@ -1482,18 +1482,19 @@ export function FloatingAudioPlayer() {
 
   const progressRatio =
     timelineMax > 0 ? Math.min(1, Math.max(0, currentTime / timelineMax)) : 0;
-  const immersiveLowered =
+  // When reader chrome/tabs hide, drop into the tab bar's bottom padding — stay visible.
+  const useTabBarSpace =
     currentTab === "reader" && settings?.readerHeaderVisible === false;
 
   return (
     <div
       className={cn(
-        "fixed left-1/2 -translate-x-1/2 z-50 select-none",
-        "w-full px-4",
-        "transition-all duration-300 ease-out",
-        isMinimized ? "max-w-md" : "max-w-2xl",
-        // Sit above the tab bar normally; drop into that space when tabs hide.
-        immersiveLowered ? "bottom-4" : "bottom-20"
+        "fixed left-1/2 z-50 w-full max-w-2xl -translate-x-1/2 select-none px-4",
+        "transition-[bottom] duration-300 ease-out",
+        isMinimized && "max-w-md",
+        useTabBarSpace
+          ? "bottom-[max(1rem,env(safe-area-inset-bottom,0px))]"
+          : "bottom-[calc(5rem+env(safe-area-inset-bottom,0px))]"
       )}
       data-testid="floating-audio-player"
       data-minimized={isMinimized ? "true" : "false"}
