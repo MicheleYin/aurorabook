@@ -7680,7 +7680,3 @@ dependencies = [
  "syn 3.0.4",
  "winnow 1.0.4",
 ]
-
-[[patch.unused]]
-name = "audiopus_sys"
-version = "0.2.2"
