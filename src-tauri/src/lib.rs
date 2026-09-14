@@ -435,6 +435,9 @@ pub fn run() {
             book_service::audio_stream::get_live_segment_bytes,
             utils::path_resolver::get_path_diagnostics,
             native_player::ios_player_load,
+            native_player::ios_player_load_live,
+            native_player::ios_player_refresh_live,
+            native_player::ios_player_set_expects_more,
             native_player::ios_player_play,
             native_player::ios_player_pause,
             native_player::ios_player_seek,
@@ -535,8 +538,17 @@ pub fn run() {
                         handle.spawn(async move {
                             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                             log::info!("Restarting audio server after app resume...");
-                            if let Err(e) = book_service::audio_stream::restart_audio_server(app_handle_clone).await {
-                                log::error!("Failed to restart audio server after resume: {}", e);
+                            match book_service::audio_stream::restart_audio_server(app_handle_clone.clone()).await {
+                                Ok(()) => {
+                                    use tauri::Emitter;
+                                    let port = book_service::audio_stream::current_server_port();
+                                    if let Err(e) = app_handle_clone.emit("audio-server-restarted", port) {
+                                        log::warn!("Failed to emit audio-server-restarted: {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to restart audio server after resume: {}", e);
+                                }
                             }
                         });
                     });

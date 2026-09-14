@@ -26,11 +26,12 @@ export type NativePlayerEvent =
   | { type: "next" }
   | { type: "prev" }
   | { type: "timeUpdate"; time: number }
-  | { type: "ended" };
+  | { type: "ended" }
+  | { type: "durationUpdate"; time: number };
 
 /**
  * Applies a native-player-event payload to local playback state.
- * Returns the next native time (if updated) and whether to synthesise `<audio>` `ended`.
+ * Returns the next native time (if updated), WebView sync actions, and duration.
  */
 export function applyNativePlayerEvent(
   event: { type: string; time?: number },
@@ -39,21 +40,97 @@ export function applyNativePlayerEvent(
   nativeTime: number | null;
   seekWebViewTo: number | null;
   synthesiseEnded: boolean;
+  shouldPlay: boolean;
+  shouldPause: boolean;
+  durationUpdate: number | null;
+  shouldNext: boolean;
+  shouldPrev: boolean;
 } {
+  if (event.type === "play") {
+    return {
+      nativeTime: null,
+      seekWebViewTo: null,
+      synthesiseEnded: false,
+      shouldPlay: true,
+      shouldPause: false,
+      durationUpdate: null,
+      shouldNext: false,
+      shouldPrev: false,
+    };
+  }
+
+  if (event.type === "pause") {
+    return {
+      nativeTime: null,
+      seekWebViewTo: null,
+      synthesiseEnded: false,
+      shouldPlay: false,
+      shouldPause: true,
+      durationUpdate: null,
+      shouldNext: false,
+      shouldPrev: false,
+    };
+  }
+
+  if (event.type === "next") {
+    return {
+      nativeTime: null,
+      seekWebViewTo: null,
+      synthesiseEnded: false,
+      shouldPlay: false,
+      shouldPause: false,
+      durationUpdate: null,
+      shouldNext: true,
+      shouldPrev: false,
+    };
+  }
+
+  if (event.type === "prev") {
+    return {
+      nativeTime: null,
+      seekWebViewTo: null,
+      synthesiseEnded: false,
+      shouldPlay: false,
+      shouldPause: false,
+      durationUpdate: null,
+      shouldNext: false,
+      shouldPrev: true,
+    };
+  }
+
   if (
     (event.type === "timeUpdate" || event.type === "seek") &&
     event.time !== undefined
   ) {
+    // Always push native clock onto the (muted) WebView element on iOS so UI/state stay in sync.
     const seekWebViewTo =
-      event.type === "seek" &&
-      webViewCurrentTime !== null &&
-      shouldMirrorNativeSeek(webViewCurrentTime, event.time)
-        ? event.time
-        : null;
+      event.type === "seek" && webViewCurrentTime !== null
+        ? shouldMirrorNativeSeek(webViewCurrentTime, event.time)
+          ? event.time
+          : null
+        : event.time;
     return {
       nativeTime: event.time,
       seekWebViewTo,
       synthesiseEnded: false,
+      shouldPlay: false,
+      shouldPause: false,
+      durationUpdate: null,
+      shouldNext: false,
+      shouldPrev: false,
+    };
+  }
+
+  if (event.type === "durationUpdate" && event.time !== undefined) {
+    return {
+      nativeTime: null,
+      seekWebViewTo: null,
+      synthesiseEnded: false,
+      shouldPlay: false,
+      shouldPause: false,
+      durationUpdate: event.time,
+      shouldNext: false,
+      shouldPrev: false,
     };
   }
 
@@ -62,6 +139,11 @@ export function applyNativePlayerEvent(
       nativeTime: null,
       seekWebViewTo: null,
       synthesiseEnded: true,
+      shouldPlay: false,
+      shouldPause: false,
+      durationUpdate: null,
+      shouldNext: false,
+      shouldPrev: false,
     };
   }
 
@@ -69,6 +151,11 @@ export function applyNativePlayerEvent(
     nativeTime: null,
     seekWebViewTo: null,
     synthesiseEnded: false,
+    shouldPlay: false,
+    shouldPause: false,
+    durationUpdate: null,
+    shouldNext: false,
+    shouldPrev: false,
   };
 }
 

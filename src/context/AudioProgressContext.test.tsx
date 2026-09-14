@@ -463,9 +463,11 @@ describe("AudioProgressProvider", () => {
       expect(invoke).toHaveBeenCalledWith(
         "ios_player_load",
         expect.objectContaining({
-          bookId: "book-1",
-          trackId: "track-1",
-          title: "Intro",
+          options: expect.objectContaining({
+            bookId: "book-1",
+            trackId: "track-1",
+            title: "Intro",
+          }),
         })
       );
     });
