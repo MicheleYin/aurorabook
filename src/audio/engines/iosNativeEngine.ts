@@ -149,11 +149,19 @@ export function createIosNativeEngine(): PlaybackEngine {
     async play() {
       ensureNativeBridge();
       await invoke("ios_player_play");
+      // Optimistically sync UI; Control Center / timeControlStatus may also emit.
+      if (!playing) {
+        playing = true;
+        emit({ type: "play" });
+      }
     },
 
     async pause() {
       await invoke("ios_player_pause");
-      playing = false;
+      if (playing) {
+        playing = false;
+        emit({ type: "pause" });
+      }
     },
 
     async seek(seconds: number) {

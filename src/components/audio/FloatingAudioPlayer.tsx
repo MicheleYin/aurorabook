@@ -672,12 +672,14 @@ export function FloatingAudioPlayer() {
 
     if (playing) {
       playbackIntentRef.current = false;
+      setIsPlaying(false);
       void pauseAudio();
       return;
     }
 
     try {
       playbackIntentRef.current = true;
+      setIsPlaying(true);
       if (!isIosNativeAudio && audioRef.current) {
         applyMediaPlaybackRate(audioRef.current, playbackRate);
       }
@@ -687,6 +689,7 @@ export function FloatingAudioPlayer() {
       }
     } catch (err) {
       playbackIntentRef.current = false;
+      setIsPlaying(false);
       logger.error("Failed to play audio:", err);
     }
   }, [
@@ -696,6 +699,7 @@ export function FloatingAudioPlayer() {
     pauseAudio,
     playAudio,
     playbackRate,
+    setIsPlaying,
   ]);
 
   const isLiveStream = useMemo(

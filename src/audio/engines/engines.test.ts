@@ -132,8 +132,10 @@ describe("createIosNativeEngine", () => {
 
     await engine.play();
     expect(invoke).toHaveBeenCalledWith("ios_player_play");
+    expect(engine.isPlaying()).toBe(true);
     await engine.pause();
     expect(invoke).toHaveBeenCalledWith("ios_player_pause");
+    expect(engine.isPlaying()).toBe(false);
     await engine.seek(33);
     expect(invoke).toHaveBeenCalledWith("ios_player_seek", { seconds: 33 });
     expect(engine.getCurrentTime()).toBe(33);
