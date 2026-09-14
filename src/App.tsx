@@ -40,23 +40,30 @@ function AppContent() {
   const hideNavTabs =
     currentTab === "reader" && settings?.readerHeaderVisible === false;
 
-  useEffect(() => {
-    startBackendLogBridge();
-  }, []);
-
-  useEffect(() => {
+  // Sync immersive CSS tokens during render (before child useLayoutEffects) so
+  // reader chrome-toggle scroll compensation measures the header with the
+  // correct --app-safe-* values. Updating in useEffect is too late and causes
+  // an iOS-only text jump when exiting immersive (safe-top restores after measure).
+  if (typeof document !== "undefined") {
     const root = document.documentElement;
     if (hideNavTabs) {
       root.dataset.readerImmersive = "true";
     } else {
       delete root.dataset.readerImmersive;
     }
+  }
+
+  useEffect(() => {
+    startBackendLogBridge();
+  }, []);
+
+  useEffect(() => {
     // iOS: hide/show system status bar + home indicator with immersive mode.
     void invoke("set_ios_immersive_chrome", { hidden: hideNavTabs }).catch(
       () => {}
     );
     return () => {
-      delete root.dataset.readerImmersive;
+      delete document.documentElement.dataset.readerImmersive;
       void invoke("set_ios_immersive_chrome", { hidden: false }).catch(() => {});
     };
   }, [hideNavTabs]);

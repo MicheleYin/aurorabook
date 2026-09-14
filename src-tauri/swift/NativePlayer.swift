@@ -52,6 +52,8 @@ private final class AuroraPlayer: NSObject {
     private var expectsMoreContent = false
     private var waitingForMoreContent = false
     private var wantsPlaying = false
+    /// Desired playback speed; applied on play, never treated as play intent.
+    private var preferredRate: Float = 1.0
     private var pendingSeekSeconds: Double? = nil
     private var coverArtwork: MPMediaItemArtwork?
 
@@ -228,6 +230,7 @@ private final class AuroraPlayer: NSObject {
         metaDuration = duration
         expectsMoreContent = expectsMore
         waitingForMoreContent = false
+        wantsPlaying = false
         coverArtwork = Self.makeArtwork(from: coverPath)
 
         replaceItem(preservingTime: 0, andPlay: false)
@@ -298,9 +301,7 @@ private final class AuroraPlayer: NSObject {
             player?.replaceCurrentItem(with: item)
         }
 
-        if andPlay {
-            wantsPlaying = true
-        }
+        wantsPlaying = andPlay
         if seconds > 0.05 {
             pendingSeekSeconds = seconds
         } else {
@@ -341,14 +342,16 @@ private final class AuroraPlayer: NSObject {
     }
 
     func setRate(_ rate: Float) {
-        if rate == 0 {
+        preferredRate = max(0, rate)
+        if preferredRate == 0 {
             player?.pause()
             wantsPlaying = false
-        } else if player?.currentItem?.status == .readyToPlay {
-            player?.rate = rate
-            wantsPlaying = true
-        } else {
-            wantsPlaying = true
+            updateNowPlaying(elapsed: currentTime())
+            return
+        }
+        // Never treat a rate update as play intent — that caused auto-play on track load.
+        if wantsPlaying, player?.currentItem?.status == .readyToPlay {
+            player?.rate = preferredRate
         }
         updateNowPlaying(elapsed: currentTime())
     }
@@ -387,6 +390,12 @@ private final class AuroraPlayer: NSObject {
         }
     }
 
+    private func startPlaybackAtPreferredRate() {
+        let rate = preferredRate > 0 ? preferredRate : 1
+        // Setting rate > 0 starts AVPlayer; play() alone would leave default 1.0.
+        player?.rate = rate
+    }
+
     private func applyPendingSeekAndMaybePlay() {
         activateSession()
         if let seekTo = pendingSeekSeconds, seekTo > 0.05 {
@@ -395,12 +404,12 @@ private final class AuroraPlayer: NSObject {
             player?.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
                 guard let self, finished else { return }
                 if self.wantsPlaying {
-                    self.player?.play()
+                    self.startPlaybackAtPreferredRate()
                 }
                 self.updateNowPlaying(elapsed: seekTo)
             }
         } else if wantsPlaying {
-            player?.play()
+            startPlaybackAtPreferredRate()
             updateNowPlaying(elapsed: currentTime())
         }
     }
