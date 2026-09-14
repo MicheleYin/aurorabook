@@ -1529,7 +1529,6 @@ export function FloatingAudioPlayer() {
       if (type === "play") {
         playbackIntentRef.current = true;
         setIsPlaying(true);
-        setPlayerMinimized(false);
         if (!currentAudioTrackRef.current && currentBookRef.current) {
           loadLastOpenedAudioTrack(currentBookRef.current, false);
         }
@@ -1626,7 +1625,6 @@ export function FloatingAudioPlayer() {
     restoreAudioProgress,
     saveAudioProgress,
     selectableTracks,
-    setPlayerMinimized,
     setIsPlaying,
   ]);
 
