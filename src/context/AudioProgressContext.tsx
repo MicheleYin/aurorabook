@@ -47,6 +47,10 @@ export interface AudioProgressContextType {
   blobUrlRef: React.RefObject<string | null>;
   /** True when native AVPlayer is the audible source (iOS). */
   isIosNativeAudio: boolean;
+  /** Playback clock used by progress save + text sync (native on iOS). */
+  getPlaybackTime: () => number;
+  /** Whether audio is currently playing (AVPlayer on iOS, `<audio>` elsewhere). */
+  isPlaybackActive: () => boolean;
   /** Mark native player load success; WebView stays muted / empty on iOS. */
   markIosNativeReady: (ready: boolean) => void;
   loadAudioTrack: (
@@ -121,6 +125,8 @@ export function AudioProgressProvider({
   const blobUrlRef = useRef<string | null>(null);
   // Last known position from the native AVPlayer (updated by native-player-event).
   const nativeTimeRef = useRef<number>(0);
+  /** True while AVPlayer reports playing (iOS). */
+  const iosPlayingRef = useRef(false);
   /** True only after a successful ios_player_load / load_live. */
   const iosNativeReadyRef = useRef(false);
   const [isIosNativeAudio, setIsIosNativeAudio] = useState(false);
@@ -136,23 +142,34 @@ export function AudioProgressProvider({
   const [playbackRate, setPlaybackRate] = useState(1);
   const [livePlaybackRequestVersion, setLivePlaybackRequestVersion] =
     useState(0);
+  const getPlaybackTime = useCallback((): number => {
+    if (isIosRef.current) {
+      const nativeTime = nativeTimeRef.current;
+      return Number.isFinite(nativeTime) ? Math.max(0, nativeTime) : 0;
+    }
+    const webTime = audioRef.current?.currentTime ?? 0;
+    return Number.isFinite(webTime) ? Math.max(0, webTime) : 0;
+  }, []);
+
+  const isPlaybackActive = useCallback((): boolean => {
+    if (isIosRef.current) {
+      return iosPlayingRef.current;
+    }
+    const el = audioRef.current;
+    return Boolean(el && !el.paused && !el.ended);
+  }, []);
+
   const calculateAudioProgress = useCallback((): BookAudioState | null => {
     if (!currentAudioTrack) return null;
-    const webTime = audioRef.current?.currentTime ?? 0;
-    const nativeTime = nativeTimeRef.current;
-    const currentTimeSeconds =
-      isIosRef.current && Number.isFinite(nativeTime) && nativeTime > 0
-        ? nativeTime
-        : webTime;
     return {
       currentTrackId: currentAudioTrack.id,
       currentTrackHref:
         currentAudioTrack.href ?? currentAudioTrack.filePath,
       currentTrackIndex: currentAudioTrack.order,
-      currentTimeSeconds,
+      currentTimeSeconds: getPlaybackTime(),
       updatedAt: new Date().toISOString(),
     };
-  }, [currentAudioTrack]);
+  }, [currentAudioTrack, getPlaybackTime]);
   const saveAudioProgress = useCallback(
     async (book: Book) => {
       const audioState = calculateAudioProgress();
@@ -277,6 +294,15 @@ export function AudioProgressProvider({
         if (result.nativeTime !== null) {
           nativeTimeRef.current = result.nativeTime;
         }
+        // Periodic timeUpdate callbacks only fire while AVPlayer is playing.
+        if (event.payload.type === "timeUpdate") {
+          iosPlayingRef.current = true;
+        }
+        if (result.playing === true) {
+          iosPlayingRef.current = true;
+        } else if (result.playing === false) {
+          iosPlayingRef.current = false;
+        }
 
         if (result.shouldNext) {
           window.dispatchEvent(
@@ -289,6 +315,7 @@ export function AudioProgressProvider({
           );
         }
         if (result.synthesiseEnded) {
+          iosPlayingRef.current = false;
           window.dispatchEvent(new CustomEvent("aurora-native-ended"));
         }
         // Re-broadcast for FloatingAudioPlayer UI (visual consumer only).
@@ -964,6 +991,7 @@ export function AudioProgressProvider({
       }
       iosNativeReadyRef.current = false;
       nativeTimeRef.current = 0;
+      iosPlayingRef.current = false;
 
       // Clean up blob URL
       if (blobUrlRef.current) {
@@ -1001,6 +1029,8 @@ export function AudioProgressProvider({
       audioRef,
       blobUrlRef,
       isIosNativeAudio,
+      getPlaybackTime,
+      isPlaybackActive,
       markIosNativeReady,
       loadAudioTrack,
       loadLastOpenedAudioTrack,
@@ -1018,6 +1048,8 @@ export function AudioProgressProvider({
       currentAudioTrack,
       isLoadingAudio,
       isIosNativeAudio,
+      getPlaybackTime,
+      isPlaybackActive,
       markIosNativeReady,
       loadAudioTrack,
       loadLastOpenedAudioTrack,

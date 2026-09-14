@@ -54,7 +54,13 @@ export function useAudioTextSync(
   headerRef?: React.RefObject<HTMLDivElement | null>,
   isHeaderVisible?: boolean
 ) {
-  const { audioRef, currentAudioTrack } = useAudioProgressContext();
+  const {
+    audioRef,
+    currentAudioTrack,
+    getPlaybackTime,
+    isPlaybackActive,
+    isIosNativeAudio,
+  } = useAudioProgressContext();
   const { currentChapter, loadChapterContent } = useChapterProgressContext();
   const { isSyncEnabled } = useAudioSyncContext();
 
@@ -506,11 +512,10 @@ export function useAudioTextSync(
     (allowScroll: boolean) => {
       if (!isSyncEnabledRef.current) return;
 
-      const audio = audioRef.current;
       const bookValue = bookRef.current;
       const track = currentAudioTrackRef.current;
       const scrollContainer = scrollContainerRefInner.current?.current;
-      if (!audio || !bookValue || !track || !scrollContainer) return;
+      if (!bookValue || !track || !scrollContainer) return;
 
       const followScroll =
         allowScroll &&
@@ -518,7 +523,7 @@ export function useAudioTextSync(
         !isSelectionFrozen() &&
         !isFollowScrollPaused(lastUserScrollAtRef.current, Date.now());
 
-      const currentTime = audio.currentTime;
+      const currentTime = getPlaybackTime();
       const isLiveTrack = Boolean(track.isLiveStream);
       if (isLiveTrack) {
         pollLiveMarker(currentTime);
@@ -598,8 +603,7 @@ export function useAudioTextSync(
       );
     },
     [
-      audioRef,
-      hrefMatches,
+      getPlaybackTime,
       locateSentenceElement,
       pollLiveMarker,
       requestSyncedChapter,
@@ -671,8 +675,6 @@ export function useAudioTextSync(
   }, [isSyncEnabled, scrollContainerRef, pauseFollowScroll]);
 
   useEffect(() => {
-    const audio = audioRef.current;
-
     const stopRaf = () => {
       if (rafIdRef.current !== null) {
         cancelAnimationFrame(rafIdRef.current);
@@ -686,8 +688,7 @@ export function useAudioTextSync(
         return;
       }
       syncFromClock(!isScrubbingRef.current);
-      const el = audioRef.current;
-      if (el && !el.paused && !el.ended) {
+      if (isPlaybackActive()) {
         rafIdRef.current = requestAnimationFrame(tick);
       } else {
         rafIdRef.current = null;
@@ -696,8 +697,7 @@ export function useAudioTextSync(
 
     const startRaf = () => {
       if (rafIdRef.current !== null) return;
-      const el = audioRef.current;
-      if (!el || el.paused || el.ended) return;
+      if (!isPlaybackActive()) return;
       rafIdRef.current = requestAnimationFrame(tick);
     };
 
@@ -707,12 +707,12 @@ export function useAudioTextSync(
       return;
     }
 
-    if (
-      !book ||
-      !currentAudioTrack ||
-      !audio ||
-      !scrollContainerRef?.current
-    ) {
+    if (!book || !currentAudioTrack || !scrollContainerRef?.current) {
+      return;
+    }
+
+    // Desktop still needs the media element; iOS uses the empty visual <audio> only as a mount point.
+    if (!isIosNativeAudio && !audioRef.current) {
       return;
     }
 
@@ -720,6 +720,7 @@ export function useAudioTextSync(
       bookId: book.id,
       trackId: currentAudioTrack.id,
       segmentsCount: book.audioSyncMap?.segments?.length ?? 0,
+      iosNative: isIosNativeAudio,
     });
 
     const onSeeking = () => {
@@ -741,22 +742,57 @@ export function useAudioTextSync(
       stopRaf();
     };
 
-    audio.addEventListener("seeking", onSeeking);
-    audio.addEventListener("seeked", onSeeked);
-    audio.addEventListener("timeupdate", onTimeUpdate);
-    audio.addEventListener("play", onPlay);
-    audio.addEventListener("pause", onPause);
+    const audio = audioRef.current;
+    if (!isIosNativeAudio && audio) {
+      audio.addEventListener("seeking", onSeeking);
+      audio.addEventListener("seeked", onSeeked);
+      audio.addEventListener("timeupdate", onTimeUpdate);
+      audio.addEventListener("play", onPlay);
+      audio.addEventListener("pause", onPause);
+    }
+
+    const onNativeUi = (event: Event) => {
+      const payload = (event as CustomEvent<{ type: string; time?: number }>)
+        .detail;
+      if (!payload) return;
+      if (payload.type === "play") {
+        startRaf();
+        syncFromClock(true);
+      } else if (payload.type === "pause" || payload.type === "ended") {
+        stopRaf();
+        syncFromClock(false);
+      } else if (payload.type === "seek") {
+        isScrubbingRef.current = true;
+        syncFromClock(false);
+        isScrubbingRef.current = false;
+        syncFromClock(true);
+      } else if (payload.type === "timeUpdate") {
+        if (isScrubbingRef.current) return;
+        // Keep RAF alive while native is playing; also sync on each tick.
+        if (isPlaybackActive()) startRaf();
+        syncFromClock(true);
+      }
+    };
+
+    if (isIosNativeAudio) {
+      window.addEventListener("aurora-native-ui", onNativeUi);
+    }
 
     syncFromClock(true);
-    if (!audio.paused) startRaf();
+    if (isPlaybackActive()) startRaf();
 
     return () => {
       stopRaf();
-      audio.removeEventListener("seeking", onSeeking);
-      audio.removeEventListener("seeked", onSeeked);
-      audio.removeEventListener("timeupdate", onTimeUpdate);
-      audio.removeEventListener("play", onPlay);
-      audio.removeEventListener("pause", onPause);
+      if (!isIosNativeAudio && audio) {
+        audio.removeEventListener("seeking", onSeeking);
+        audio.removeEventListener("seeked", onSeeked);
+        audio.removeEventListener("timeupdate", onTimeUpdate);
+        audio.removeEventListener("play", onPlay);
+        audio.removeEventListener("pause", onPause);
+      }
+      if (isIosNativeAudio) {
+        window.removeEventListener("aurora-native-ui", onNativeUi);
+      }
     };
   }, [
     isSyncEnabled,
@@ -767,6 +803,9 @@ export function useAudioTextSync(
     scrollContainerRef,
     removeAllHighlights,
     syncFromClock,
+    getPlaybackTime,
+    isPlaybackActive,
+    isIosNativeAudio,
   ]);
 
   useLayoutEffect(() => {

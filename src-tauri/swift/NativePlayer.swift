@@ -322,6 +322,7 @@ private final class AuroraPlayer: NSObject {
         activateSession()
         playIfReady()
         updateNowPlaying(elapsed: currentTime())
+        rustPlayerCallback(eventType: 1, value: 0)
     }
 
     func pause() {
@@ -329,6 +330,7 @@ private final class AuroraPlayer: NSObject {
         waitingForMoreContent = false
         player?.pause()
         updateNowPlaying(elapsed: currentTime())
+        rustPlayerCallback(eventType: 2, value: 0)
     }
 
     func seek(to seconds: Double) {
