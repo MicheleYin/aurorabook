@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
-import type { Book, Chapter } from "../../types/book";
 import { useTranslation } from "../../lib/i18n";
+import type { Book, Chapter } from "../../types/book";
 import { Button } from "../ui/button";
 
 interface ReaderNavigationProps {
@@ -33,7 +33,7 @@ export function ReaderNavigation({
           className="rounded-full gap-2 shadow-md"
           disabled={!hasPrevious}
         >
-          <ChevronLeft className="h-4 w-4" />
+          <ChevronLeft className="h-5 w-5" />
           <span className="hidden md:block">{t("common.previous")}</span>
         </Button>
         <div className="text-sm text-muted-foreground">
@@ -49,7 +49,7 @@ export function ReaderNavigation({
           className="rounded-full gap-2 shadow-md"
         >
           <span className="hidden md:block">{t("common.next")}</span>
-          <ChevronRight className="h-4 w-4" />
+          <ChevronRight className="h-5 w-5" />
         </Button>
       </div>
     </div>
