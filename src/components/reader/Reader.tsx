@@ -151,10 +151,12 @@ export function Reader() {
       <div
         ref={headerRef}
         className={cn(
-          "transition-all duration-300 ease-out",
+          // Opacity/transform only — animating height would make chrome-toggle
+          // scroll compensation measure the wrong header size mid-transition.
+          "transition-[opacity,transform] duration-300 ease-out",
           isHeaderVisible
             ? "opacity-100 translate-y-0 pointer-events-auto"
-            : "opacity-0 -translate-y-full pointer-events-none h-0 p-0 m-0"
+            : "opacity-0 -translate-y-full pointer-events-none h-0 overflow-hidden p-0 m-0"
         )}
       >
         <ReaderHeader
@@ -180,7 +182,7 @@ export function Reader() {
       />
       <div
         className={cn(
-          "relative transition-all duration-300 ease-out",
+          "relative transition-[opacity,transform] duration-300 ease-out",
           isHeaderVisible
             ? "opacity-100 translate-y-0 pointer-events-auto"
             : "opacity-0 translate-y-full pointer-events-none"

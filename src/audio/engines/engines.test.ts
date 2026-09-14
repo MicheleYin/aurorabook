@@ -132,11 +132,25 @@ describe("createIosNativeEngine", () => {
 
     await engine.play();
     expect(invoke).toHaveBeenCalledWith("ios_player_play");
+    expect(engine.isPlaying()).toBe(true);
     await engine.pause();
     expect(invoke).toHaveBeenCalledWith("ios_player_pause");
+    expect(engine.isPlaying()).toBe(false);
     await engine.seek(33);
     expect(invoke).toHaveBeenCalledWith("ios_player_seek", { seconds: 33 });
     expect(engine.getCurrentTime()).toBe(33);
+
+    engine.destroy();
+  });
+
+  it("emits seek so paused UI can update the progress bar", async () => {
+    invoke.mockResolvedValue(undefined);
+    const engine = createIosNativeEngine();
+    const onEvent = vi.fn();
+    engine.subscribe(onEvent);
+
+    await engine.seek(42);
+    expect(onEvent).toHaveBeenCalledWith({ type: "seek", time: 42 });
 
     engine.destroy();
   });

@@ -118,9 +118,24 @@ export function ReaderContent({
       return;
     }
     pendingChromeScrollRef.current = null;
-    const nextHeaderHeight = isHeaderVisible
-      ? (headerRef?.current?.getBoundingClientRect().height ?? 0)
-      : 0;
+
+    // Match App's immersive CSS tokens before measuring. Child layout effects
+    // can run while --app-safe-* still reflect the previous mode; without this,
+    // exiting immersive on iOS under-counts header height (safe-top) and text jumps.
+    const root = document.documentElement;
+    if (isHeaderVisible) {
+      delete root.dataset.readerImmersive;
+    } else {
+      root.dataset.readerImmersive = "true";
+    }
+
+    const header = headerRef?.current;
+    let nextHeaderHeight = 0;
+    if (isHeaderVisible && header) {
+      // Force style recalc so safe-area padding is included in the measurement.
+      void header.offsetHeight;
+      nextHeaderHeight = header.getBoundingClientRect().height;
+    }
     container.scrollTop = scrollTopAfterChromeToggle(
       pending.scrollTop,
       pending.headerHeight,
