@@ -142,6 +142,188 @@
     --ring: 0 0% 72%;
   }
 
+
+/* Forest — darker woodland green reading theme */
+.theme-forest {
+  --background: 145 22% 88%;
+  --foreground: 150 30% 17%;
+
+  --card: 145 20% 84%;
+  --card-foreground: 150 30% 17%;
+
+  --popover: 145 20% 84%;
+  --popover-foreground: 150 30% 17%;
+
+  --primary: 150 38% 25%;
+  --primary-foreground: 145 22% 94%;
+
+  --secondary: 145 20% 78%;
+  --secondary-foreground: 150 30% 17%;
+
+  --muted: 145 18% 79%;
+  --muted-foreground: 150 16% 38%;
+
+  --accent: 145 24% 75%;
+  --accent-foreground: 150 30% 17%;
+
+  --destructive: 5 65% 45%;
+  --destructive-foreground: 145 22% 94%;
+
+  --border: 145 18% 68%;
+  --input: 145 18% 68%;
+  --ring: 150 38% 25%;
+}
+/* Sunset — warm orange / terracotta */
+.theme-sunset {
+  --background: 30 55% 96%;
+  --foreground: 12 35% 22%;
+
+  --card: 27 50% 93%;
+  --card-foreground: 12 35% 22%;
+
+  --popover: 27 50% 93%;
+  --popover-foreground: 12 35% 22%;
+
+  --primary: 14 68% 43%;
+  --primary-foreground: 30 55% 98%;
+
+  --secondary: 25 55% 89%;
+  --secondary-foreground: 12 35% 22%;
+
+  --muted: 25 45% 90%;
+  --muted-foreground: 15 18% 45%;
+
+  --accent: 21 62% 87%;
+  --accent-foreground: 12 35% 22%;
+
+  --destructive: 2 72% 48%;
+  --destructive-foreground: 30 55% 98%;
+
+  --border: 22 35% 82%;
+  --input: 22 35% 82%;
+  --ring: 14 68% 43%;
+}
+
+/* Rose — soft pink / dusty berry */
+.theme-rose {
+  --background: 350 35% 97%;
+  --foreground: 340 28% 24%;
+
+  --card: 350 30% 94%;
+  --card-foreground: 340 28% 24%;
+
+  --popover: 350 30% 94%;
+  --popover-foreground: 340 28% 24%;
+
+  --primary: 340 45% 40%;
+  --primary-foreground: 350 35% 98%;
+
+  --secondary: 345 30% 91%;
+  --secondary-foreground: 340 28% 24%;
+
+  --muted: 345 25% 91%;
+  --muted-foreground: 340 14% 46%;
+
+  --accent: 345 35% 89%;
+  --accent-foreground: 340 28% 24%;
+
+  --destructive: 0 68% 48%;
+  --destructive-foreground: 350 35% 98%;
+
+  --border: 345 25% 84%;
+  --input: 345 25% 84%;
+  --ring: 340 45% 40%;
+}
+/* Midnight Violet — richer indigo / violet dark */
+.dark.theme-dark_violet {
+  --background: 252 28% 11%;
+  --foreground: 250 25% 96%;
+
+  --card: 252 26% 14%;
+  --card-foreground: 250 25% 96%;
+
+  --popover: 252 26% 14%;
+  --popover-foreground: 250 25% 96%;
+
+  --primary: 263 65% 72%;
+  --primary-foreground: 252 30% 10%;
+
+  --secondary: 253 25% 21%;
+  --secondary-foreground: 250 25% 96%;
+
+  --muted: 253 23% 20%;
+  --muted-foreground: 255 15% 68%;
+
+  --accent: 263 30% 24%;
+  --accent-foreground: 250 25% 96%;
+
+  --destructive: 350 60% 43%;
+  --destructive-foreground: 250 25% 96%;
+
+  --border: 253 22% 29%;
+  --input: 253 25% 21%;
+  --ring: 263 65% 72%;
+}
+/* Plum — dark pink / purple, cozy */
+.dark.theme-plum {
+  --background: 330 18% 9%;
+  --foreground: 330 25% 96%;
+
+  --card: 330 18% 12%;
+  --card-foreground: 330 25% 96%;
+
+  --popover: 330 18% 12%;
+  --popover-foreground: 330 25% 96%;
+
+  --primary: 330 55% 72%;
+  --primary-foreground: 330 25% 10%;
+
+  --secondary: 330 18% 19%;
+  --secondary-foreground: 330 25% 96%;
+
+  --muted: 330 16% 18%;
+  --muted-foreground: 330 12% 66%;
+
+  --accent: 330 24% 21%;
+  --accent-foreground: 330 25% 96%;
+
+  --destructive: 0 62% 42%;
+  --destructive-foreground: 330 25% 96%;
+
+  --border: 330 18% 25%;
+  --input: 330 18% 19%;
+  --ring: 330 55% 72%;
+}
+/* Dark Green — deep evergreen */
+.dark.theme-dark_green {
+  --background: 145 35% 10%;
+  --foreground: 90 20% 96%;
+
+  --card: 145 32% 13%;
+  --card-foreground: 90 20% 96%;
+
+  --popover: 145 32% 13%;
+  --popover-foreground: 90 20% 96%;
+
+  --primary: 142 40% 62%;
+  --primary-foreground: 145 35% 9%;
+
+  --secondary: 145 25% 19%;
+  --secondary-foreground: 90 20% 96%;
+
+  --muted: 145 23% 18%;
+  --muted-foreground: 100 12% 66%;
+
+  --accent: 145 28% 21%;
+  --accent-foreground: 90 20% 96%;
+
+  --destructive: 0 62% 42%;
+  --destructive-foreground: 90 20% 98%;
+
+  --border: 145 22% 27%;
+  --input: 145 25% 19%;
+  --ring: 142 40% 62%;
+}
   * {
     @apply border-border;
   }

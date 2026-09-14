@@ -1,8 +1,8 @@
-import { memo, useEffect, useState } from "react";
 import { Check } from "lucide-react";
+import { memo, useEffect, useState } from "react";
 
-import type { ColorTheme, DarkTheme, LightTheme, UITheme } from "../types/ui";
 import { anim } from "../lib/animations";
+import { useTranslation } from "../lib/i18n";
 import {
   getPreferredDarkTheme,
   getPreferredLightTheme,
@@ -10,32 +10,42 @@ import {
   isLightTheme,
   rememberPreferredTheme,
   resolveColorTheme,
+  themeClassNames,
 } from "../lib/theme";
 import { cn } from "../lib/utils";
-import { useTranslation } from "../lib/i18n";
-
+import type { ColorTheme, DarkTheme, LightTheme, UITheme } from "../types/ui";
 interface ThemeSwitcherProps {
   value: UITheme;
   onChange: (theme: UITheme) => void;
-}
-
-const LIGHT_VARIANTS: Array<{
+}const LIGHT_VARIANTS: Array<{
   id: LightTheme;
   labelKey: string;
   preview: string;
-  chip: string;
 }> = [
   {
     id: "light",
     labelKey: "reader.theme_light",
     preview: "bg-[#f5f5f5] text-[#2a3d4d]",
-    chip: "bg-[#f7f7f7] border border-black/15",
   },
   {
     id: "cream",
     labelKey: "reader.theme_cream",
     preview: "bg-[#f7f1e3] text-[#3a2f24]",
-    chip: "bg-[#f7f1e3] border border-black/15",
+  },
+  {
+    id: "sunset",
+    labelKey: "reader.theme_sunset",
+    preview: "bg-[#f8e9d8] text-[#4a2a23]",
+  },
+  {
+    id: "rose",
+    labelKey: "reader.theme_rose",
+    preview: "bg-[#f9e9ee] text-[#4e303c]",
+  },
+  {
+    id: "forest",
+    labelKey: "reader.theme_forest",
+    preview: "bg-[#35483f] text-[#e8eadf]",
   },
 ];
 
@@ -43,19 +53,31 @@ const DARK_VARIANTS: Array<{
   id: DarkTheme;
   labelKey: string;
   preview: string;
-  chip: string;
 }> = [
   {
     id: "dark",
     labelKey: "reader.theme_dark",
     preview: "bg-[#14171c] text-[#f1f5f9]",
-    chip: "bg-[#14171c] border border-white/20",
   },
   {
     id: "pitch",
     labelKey: "reader.theme_pitch",
     preview: "bg-black text-[#f5f5f5]",
-    chip: "bg-black border border-white/20",
+  },
+  {
+    id: "plum",
+    labelKey: "reader.theme_plum",
+    preview: "bg-[#1b1319] text-[#f5eef3]",
+  },
+  {
+    id: "dark_violet",
+    labelKey: "reader.theme_dark_violet",
+    preview: "bg-[#15131f] text-[#f1eff8]",
+  },
+  {
+    id: "dark_green",
+    labelKey: "reader.theme_dark_green",
+    preview: "bg-[#11231a] text-[#eaf2e9]",
   },
 ];
 
@@ -157,7 +179,7 @@ function ThemeSwitcherComponent({
           variants={LIGHT_VARIANTS.map((variant) => ({
             id: variant.id,
             label: t(variant.labelKey),
-            chip: variant.chip,
+            theme: variant.id,
             active: preferredLight === variant.id,
             onSelect: () => chooseVariant(variant.id),
           }))}
@@ -171,7 +193,7 @@ function ThemeSwitcherComponent({
           variants={DARK_VARIANTS.map((variant) => ({
             id: variant.id,
             label: t(variant.labelKey),
-            chip: variant.chip,
+            theme: variant.id,
             active: preferredDark === variant.id,
             onSelect: () => chooseVariant(variant.id),
           }))}
@@ -223,7 +245,7 @@ interface ThemeSideCardProps {
   variants: Array<{
     id: string;
     label: string;
-    chip: string;
+    theme: string;
     active: boolean;
     onSelect: () => void;
   }>;
@@ -291,10 +313,19 @@ function ThemeSideCard({
                 : "opacity-70 hover:opacity-100"
             )}
           >
-            <span
-              className={cn("h-4 w-4 rounded-full", variant.chip)}
-              aria-hidden="true"
-            />
+          <span
+  className={cn(
+    "h-4 w-4 rounded-full border",
+    themeClassNames(variant.theme)
+  )}
+  style={{
+    backgroundColor: "hsl(var(--primary))",
+    borderColor: "hsl(var(--border))",
+    // transform to add alpha to the color
+  
+  }}
+  aria-hidden="true"
+/>
           </button>
         ))}
       </div>
