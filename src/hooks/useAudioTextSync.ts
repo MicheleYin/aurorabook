@@ -17,7 +17,7 @@ import {
   hasNonCollapsedTextSelection,
   chapterHrefForSync,
   resolvePlaybackMarker,
-  readAppSafeTopPx,
+  readDeviceSafeTopPx,
   scrollTopToRevealRect,
   segmentsForPlayback,
   uncoveredTopInsetPx,
@@ -291,11 +291,12 @@ export function useAudioTextSync(
 
     // Keep follow-scroll clear of notch / status bar / transparent title bar
     // when the scroll viewport reaches into the unsafe top area (e.g. immersive).
+    // Use device safe-top — immersive zeros --app-safe-top for edge-to-edge text.
     const container = scrollContainerRefInner.current?.current;
     if (container) {
       const uncovered = uncoveredTopInsetPx(
         container.getBoundingClientRect().top,
-        readAppSafeTopPx()
+        readDeviceSafeTopPx()
       );
       topOffset = Math.max(topOffset, uncovered);
     }

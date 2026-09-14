@@ -1908,11 +1908,13 @@ export function FloatingAudioPlayer() {
     <div
       className={cn(
         "fixed left-1/2 z-50 w-full max-w-2xl -translate-x-1/2 select-none px-4",
-        "transition-[bottom] duration-300 ease-ou safe-area-bottom",
+        "transition-[bottom] duration-300 ease-out",
         isMinimized && "max-w-md",
+        // Use device safe-bottom (not --app-safe-bottom) so immersive mode
+        // still clears the home indicator.
         useTabBarSpace
-          ? "bottom-4"
-          : "bottom-20"
+          ? "bottom-[calc(1rem+var(--app-device-safe-bottom,0px))]"
+          : "bottom-[calc(5rem+var(--app-device-safe-bottom,0px))]"
       )}
       data-testid="floating-audio-player"
       data-minimized={isMinimized ? "true" : "false"}
