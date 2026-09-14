@@ -47,9 +47,7 @@ export interface AudioProgressContextType {
   blobUrlRef: React.RefObject<string | null>;
   /** True when native AVPlayer is the audible source (iOS). */
   isIosNativeAudio: boolean;
-  /** Ignore WebView→native mirrors while applying native→WebView sync. */
-  syncingFromNativeRef: React.RefObject<boolean>;
-  /** Mark native player load success so WebView can mute once AVPlayer is audible. */
+  /** Mark native player load success; WebView stays muted / empty on iOS. */
   markIosNativeReady: (ready: boolean) => void;
   loadAudioTrack: (
     bookId: string,
@@ -123,11 +121,8 @@ export function AudioProgressProvider({
   const blobUrlRef = useRef<string | null>(null);
   // Last known position from the native AVPlayer (updated by native-player-event).
   const nativeTimeRef = useRef<number>(0);
-  const syncingFromNativeRef = useRef(false);
   /** True only after a successful ios_player_load / load_live. */
   const iosNativeReadyRef = useRef(false);
-  /** True after AVPlayer emits timeUpdate — proof it is actually producing audio. */
-  const iosNativeAudibleRef = useRef(false);
   const [isIosNativeAudio, setIsIosNativeAudio] = useState(false);
   // Whether we're running on iOS (set async on mount, so starts false).
   const isIosRef = useRef<boolean>(false);
@@ -184,6 +179,11 @@ export function AudioProgressProvider({
       );
       setPlaybackRate(nextRate);
       void saveSettings({ audioPlaybackSpeed: nextRate });
+      if (isIosRef.current) {
+        void invoke("ios_player_set_rate", { rate: nextRate }).catch(
+          () => undefined
+        );
+      }
     },
     [audioRef, saveSettings]
   );
@@ -200,23 +200,20 @@ export function AudioProgressProvider({
 
   const markIosNativeReady = useCallback((ready: boolean) => {
     iosNativeReadyRef.current = ready;
-    if (!ready) {
-      iosNativeAudibleRef.current = false;
-      if (audioRef.current) {
-        audioRef.current.muted = false;
-        audioRef.current.volume = 1;
-      }
-      return;
-    }
-    iosNativeAudibleRef.current = true;
-    if (audioRef.current) {
+    // On iOS the WebView <audio> is visual-only — never audible, never loaded.
+    if (audioRef.current && isIosRef.current) {
       audioRef.current.muted = true;
       audioRef.current.volume = 0;
+      audioRef.current.removeAttribute("src");
+      audioRef.current.load();
     }
   }, []);
 
-  // When the streaming server restarts (iOS app resume), reconnect the audio element.
+  // When the streaming server restarts (desktop / WebView fallback only).
+  // On iOS AVPlayer owns playback and does not use the local HTTP server.
   useEffect(() => {
+    if (isIosNativeAudio) return;
+
     const currentTrackRef = { current: currentAudioTrack };
     currentTrackRef.current = currentAudioTrack;
 
@@ -250,7 +247,7 @@ export function AudioProgressProvider({
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [currentAudioTrack, audioRef]);
+  }, [currentAudioTrack, audioRef, isIosNativeAudio]);
 
   // Detect iOS once on mount (plugin-os `type()` is async).
   useEffect(() => {
@@ -259,7 +256,10 @@ export function AudioProgressProvider({
         const ios = (await type()) === "ios";
         isIosRef.current = ios;
         setIsIosNativeAudio(ios);
-        // Do NOT mute here — wait until native load succeeds.
+        if (ios && audioRef.current) {
+          audioRef.current.muted = true;
+          audioRef.current.volume = 0;
+        }
       } catch {
         isIosRef.current = false;
         setIsIosNativeAudio(false);
@@ -267,64 +267,41 @@ export function AudioProgressProvider({
     })();
   }, []);
 
-  // Listen for native-player-event (AVPlayer callbacks from Swift).
+  // Native → app bridge: update progress clock + forward UI events.
+  // Never drive WebView play/pause/seek — AVPlayer is the only engine on iOS.
   useEffect(() => {
     const unlisten = listen<{ type: string; time?: number }>(
       "native-player-event",
       (event) => {
-        const el = audioRef.current;
-        const result = applyNativePlayerEvent(
-          event.payload,
-          el?.currentTime ?? null
-        );
+        const result = applyNativePlayerEvent(event.payload);
         if (result.nativeTime !== null) {
           nativeTimeRef.current = result.nativeTime;
         }
 
-        syncingFromNativeRef.current = true;
-        try {
-          if (result.seekWebViewTo !== null && el) {
-            try {
-              el.currentTime = result.seekWebViewTo;
-            } catch {
-              // Element may not have a seekable source yet (live before first load).
-            }
-          }
-          if (result.shouldPlay && el) {
-            // Native is the audible source — keep WebView muted as a clock.
-            if (iosNativeReadyRef.current) {
-              el.muted = true;
-              el.volume = 0;
-              iosNativeAudibleRef.current = true;
-            }
-            void el.play().catch(() => undefined);
-          }
-          if (result.shouldPause && el && !el.paused) {
-            el.pause();
-          }
-          if (result.synthesiseEnded) {
-            el?.dispatchEvent(new Event("ended"));
-          }
-          // next/prev are handled in FloatingAudioPlayer (has track list + switchToTrack).
-          if (result.shouldNext) {
-            window.dispatchEvent(new CustomEvent("aurora-native-skip", { detail: "next" }));
-          }
-          if (result.shouldPrev) {
-            window.dispatchEvent(new CustomEvent("aurora-native-skip", { detail: "prev" }));
-          }
-        } finally {
-          // Defer clearing so seeked/play/pause handlers see the flag.
-          queueMicrotask(() => {
-            syncingFromNativeRef.current = false;
-          });
+        if (result.shouldNext) {
+          window.dispatchEvent(
+            new CustomEvent("aurora-native-skip", { detail: "next" })
+          );
         }
+        if (result.shouldPrev) {
+          window.dispatchEvent(
+            new CustomEvent("aurora-native-skip", { detail: "prev" })
+          );
+        }
+        if (result.synthesiseEnded) {
+          window.dispatchEvent(new CustomEvent("aurora-native-ended"));
+        }
+        // Re-broadcast for FloatingAudioPlayer UI (visual consumer only).
+        window.dispatchEvent(
+          new CustomEvent("aurora-native-ui", { detail: event.payload })
+        );
       }
     );
 
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [audioRef]);
+  }, []);
 
   // Load playback speed from shared app settings
   useEffect(() => {
@@ -365,87 +342,93 @@ export function AudioProgressProvider({
 
       if (
         isSameTrack &&
-        savedState?.currentTimeSeconds !== undefined &&
-        audioRef.current
+        savedState?.currentTimeSeconds !== undefined
       ) {
-        const savedTime = savedState.currentTimeSeconds;
-        const applySavedTime = () => {
-          if (!audioRef.current) return;
+        const savedTime = Math.max(0, savedState.currentTimeSeconds);
+        nativeTimeRef.current = savedTime;
 
-          const audio = audioRef.current;
-          const hasFiniteDuration = Number.isFinite(audio.duration) && audio.duration > 0;
-          const maxSeek = hasFiniteDuration ? audio.duration : savedTime;
-
-          let minSeek = 0;
-          if (audio.seekable.length > 0) {
-            const seekableStart = audio.seekable.start(0);
-            if (Number.isFinite(seekableStart) && seekableStart >= 0) {
-              minSeek = seekableStart;
-            }
-          }
-
-          const targetTime = Math.max(minSeek, Math.min(savedTime, maxSeek));
-
-          logger.info("[audio-restore] applying saved timestamp", {
+        if (isIosRef.current && iosNativeReadyRef.current) {
+          logger.info("[audio-restore] seeking native player", {
             bookId: book.id,
             trackId: track.id,
             savedTime,
-            minSeek,
-            maxSeek,
-            targetTime,
-            readyState: audio.readyState,
           });
+          void invoke("ios_player_seek", { seconds: savedTime }).catch(
+            () => undefined
+          );
+        } else if (audioRef.current) {
+          const applySavedTime = () => {
+            if (!audioRef.current) return;
 
-          try {
-            audio.currentTime = targetTime;
-            if (isIosRef.current && iosNativeReadyRef.current) {
-              void invoke("ios_player_seek", { seconds: targetTime }).catch(
-                () => undefined
-              );
+            const audio = audioRef.current;
+            const hasFiniteDuration =
+              Number.isFinite(audio.duration) && audio.duration > 0;
+            const maxSeek = hasFiniteDuration ? audio.duration : savedTime;
+
+            let minSeek = 0;
+            if (audio.seekable.length > 0) {
+              const seekableStart = audio.seekable.start(0);
+              if (Number.isFinite(seekableStart) && seekableStart >= 0) {
+                minSeek = seekableStart;
+              }
             }
-          } catch (err) {
-            logger.warn("Failed restoring saved audio timestamp:", err);
-          }
-        };
 
-        // `loadAudioTrack` may already have loaded metadata before this runs.
-        if (audioRef.current.readyState >= 1) {
-          applySavedTime();
-        } else {
-          const handleAudioReady = () => {
+            const targetTime = Math.max(minSeek, Math.min(savedTime, maxSeek));
+
+            logger.info("[audio-restore] applying saved timestamp", {
+              bookId: book.id,
+              trackId: track.id,
+              savedTime,
+              minSeek,
+              maxSeek,
+              targetTime,
+              readyState: audio.readyState,
+            });
+
+            try {
+              audio.currentTime = targetTime;
+            } catch (err) {
+              logger.warn("Failed restoring saved audio timestamp:", err);
+            }
+          };
+
+          if (audioRef.current.readyState >= 1) {
             applySavedTime();
-            audioRef.current?.removeEventListener(
+          } else {
+            const handleAudioReady = () => {
+              applySavedTime();
+              audioRef.current?.removeEventListener(
+                "loadedmetadata",
+                handleAudioReady
+              );
+              audioRef.current?.removeEventListener(
+                "loadeddata",
+                handleAudioReady
+              );
+              audioRef.current?.removeEventListener(
+                "canplay",
+                handleAudioReady
+              );
+            };
+            audioRef.current.addEventListener(
               "loadedmetadata",
               handleAudioReady
             );
-            audioRef.current?.removeEventListener(
-              "loadeddata",
-              handleAudioReady
-            );
-            audioRef.current?.removeEventListener(
-              "canplay",
-              handleAudioReady
-            );
-          };
-          audioRef.current.addEventListener(
-            "loadedmetadata",
-            handleAudioReady
-          );
-          audioRef.current.addEventListener(
-            "loadeddata",
-            handleAudioReady
-          );
-          audioRef.current.addEventListener(
-            "canplay",
-            handleAudioReady
-          );
+            audioRef.current.addEventListener("loadeddata", handleAudioReady);
+            audioRef.current.addEventListener("canplay", handleAudioReady);
+          }
         }
+      } else if (isIosRef.current && iosNativeReadyRef.current) {
+        // Different track: start at 0 so the previous chapter's clock cannot stick.
+        nativeTimeRef.current = 0;
+        void invoke("ios_player_seek", { seconds: 0 }).catch(() => undefined);
       }
       if (autoPlayAudio) {
         if (isIosRef.current && iosNativeReadyRef.current) {
           void invoke("ios_player_play").catch(() => undefined);
+        } else {
+          audioRef.current?.play().catch(() => undefined);
         }
-        audioRef.current?.play().catch(() => undefined);
       }
     },
     [audioRef]
@@ -488,6 +471,8 @@ export function AudioProgressProvider({
   const loadAudioTrack = useCallback(
     async (bookId: string, track: AudioTrack, book: Book) => {
       setIsLoadingAudio(true);
+      // New track = new clock. Don't let the previous native position leak into UI/saves.
+      nativeTimeRef.current = 0;
       try {
         const chapterIndex = resolveTrackChapterIndex(book, track);
 
@@ -569,7 +554,56 @@ export function AudioProgressProvider({
           return;
         }
 
-        // Non-live: load a completed audio track via HTTP stream URL.
+        // Non-live: iOS loads native AVPlayer only; desktop uses HTTP stream URL.
+        if (isIosRef.current) {
+          if (blobUrlRef.current) {
+            URL.revokeObjectURL(blobUrlRef.current);
+            blobUrlRef.current = null;
+          }
+
+          if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.removeAttribute("src");
+            audioRef.current.load();
+            audioRef.current.muted = true;
+            audioRef.current.volume = 0;
+            audioRef.current.currentTime = 0;
+          }
+
+          const mimeType = mimeTypeFromTrackHref(track.href);
+          setCurrentAudioTrack({
+            ...track,
+            mimeType,
+            isLiveStream: false,
+            liveChapterIndex: undefined,
+          });
+
+          try {
+            await invoke("ios_player_load", {
+              options: {
+                bookId,
+                trackId: track.id,
+                title: trackDisplayTitle(track.title, track.order),
+                artist: book.author ?? "",
+                duration: track.duration ?? 0,
+                coverUrl: book.coverUrl ?? null,
+              },
+            });
+            iosNativeReadyRef.current = true;
+            void invoke("ios_player_set_rate", { rate: playbackRate }).catch(
+              () => undefined
+            );
+          } catch (err: unknown) {
+            iosNativeReadyRef.current = false;
+            logger.error("ios_player_load failed:", err);
+            toast.error("Failed to load audio on device");
+            throw err;
+          }
+
+          setMediaSessionMetadata();
+          return;
+        }
+
         let streamUrl: string;
         try {
           streamUrl = await invoke<string>("get_audio_stream_url", {
@@ -606,10 +640,6 @@ export function AudioProgressProvider({
 
           // Set up audio element with streaming URL
           if (audioRef.current) {
-            // Keep WebView audible until native confirms load — otherwise silence.
-            audioRef.current.muted = false;
-            audioRef.current.volume = 1;
-            iosNativeReadyRef.current = false;
             const waitForAudioReady = () =>
               new Promise<void>((resolve) => {
                 const audio = audioRef.current;
@@ -656,45 +686,6 @@ export function AudioProgressProvider({
             applyMediaPlaybackRate(audioRef.current, playbackRate);
 
             await waitForAudioReady();
-
-            // Mirror WebView audio events into the native AVPlayer so the lock
-            // screen always reflects what the in-app player is doing. Skip when
-            // the change originated from Control Center / AVPlayer itself.
-            if (isIosRef.current) {
-              const el = audioRef.current;
-              const onPlay = () => {
-                if (syncingFromNativeRef.current) return;
-                if (!iosNativeReadyRef.current) return;
-                void invoke("ios_player_play").catch(() => undefined);
-              };
-              const onPause = () => {
-                if (syncingFromNativeRef.current) return;
-                if (!iosNativeReadyRef.current) return;
-                void invoke("ios_player_pause").catch(() => undefined);
-              };
-              const onSeeked = () => {
-                if (syncingFromNativeRef.current) return;
-                if (!iosNativeReadyRef.current) return;
-                void invoke("ios_player_seek", {
-                  seconds: el.currentTime,
-                }).catch(() => undefined);
-              };
-              const onRate = () => {
-                if (syncingFromNativeRef.current) return;
-                if (!iosNativeReadyRef.current) return;
-                void invoke("ios_player_set_rate", {
-                  rate: el.playbackRate,
-                }).catch(() => undefined);
-              };
-              el.removeEventListener("play", onPlay);
-              el.removeEventListener("pause", onPause);
-              el.removeEventListener("seeked", onSeeked);
-              el.removeEventListener("ratechange", onRate);
-              el.addEventListener("play", onPlay);
-              el.addEventListener("pause", onPause);
-              el.addEventListener("seeked", onSeeked);
-              el.addEventListener("ratechange", onRate);
-            }
           }
 
           // Get MIME type from track href for metadata
@@ -706,39 +697,6 @@ export function AudioProgressProvider({
             isLiveStream: false,
             liveChapterIndex: undefined,
           });
-
-          if (isIosRef.current) {
-            try {
-              await invoke("ios_player_load", {
-                options: {
-                  bookId,
-                  trackId: track.id,
-                  title: trackDisplayTitle(track.title, track.order),
-                  artist: book.author ?? "",
-                  duration: track.duration ?? 0,
-                  coverUrl: book.coverUrl ?? null,
-                },
-              });
-              iosNativeReadyRef.current = true;
-              iosNativeAudibleRef.current = true;
-              // Native-only: mute WebView immediately; AVPlayer is the audible source.
-              if (audioRef.current) {
-                audioRef.current.muted = true;
-                audioRef.current.volume = 0;
-              }
-            } catch (err: unknown) {
-              iosNativeReadyRef.current = false;
-              iosNativeAudibleRef.current = false;
-              logger.warn(
-                "ios_player_load failed; keeping WebView audio unmuted:",
-                err
-              );
-              if (audioRef.current) {
-                audioRef.current.muted = false;
-                audioRef.current.volume = 1;
-              }
-            }
-          }
 
           setMediaSessionMetadata();
         }
@@ -975,12 +933,7 @@ export function AudioProgressProvider({
   const closeAudioPlayer = useCallback(
     async (book: Book, options?: { skipSave?: boolean }) => {
       // Save progress before closing if we have a track and book
-      if (
-        !options?.skipSave &&
-        audioRef.current &&
-        currentAudioTrack &&
-        !Number.isNaN(audioRef.current.currentTime)
-      ) {
+      if (!options?.skipSave && currentAudioTrack) {
         try {
           await saveAudioProgress(book);
         } catch (err) {
@@ -988,23 +941,29 @@ export function AudioProgressProvider({
         }
       }
 
-      // Stop playback
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-        audioRef.current.src = "";
-        audioRef.current.muted = false;
-        audioRef.current.volume = 1;
-      }
-      iosNativeReadyRef.current = false;
-      iosNativeAudibleRef.current = false;
-
       if (isIosRef.current) {
         void invoke("ios_player_pause").catch(() => undefined);
         void invoke("ios_player_set_expects_more", { expectsMore: false }).catch(
           () => undefined
         );
       }
+
+      // Stop WebView playback (desktop) / clear visual element (iOS)
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+        audioRef.current.removeAttribute("src");
+        audioRef.current.load();
+        if (isIosRef.current) {
+          audioRef.current.muted = true;
+          audioRef.current.volume = 0;
+        } else {
+          audioRef.current.muted = false;
+          audioRef.current.volume = 1;
+        }
+      }
+      iosNativeReadyRef.current = false;
+      nativeTimeRef.current = 0;
 
       // Clean up blob URL
       if (blobUrlRef.current) {
@@ -1042,7 +1001,6 @@ export function AudioProgressProvider({
       audioRef,
       blobUrlRef,
       isIosNativeAudio,
-      syncingFromNativeRef,
       markIosNativeReady,
       loadAudioTrack,
       loadLastOpenedAudioTrack,

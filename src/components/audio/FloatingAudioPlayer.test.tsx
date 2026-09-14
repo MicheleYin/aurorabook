@@ -77,6 +77,9 @@ vi.mock("@/context/AudioProgressContext", () => ({
     livePlaybackRequestVersion: 0,
     playbackRate: 1,
     setPlaybackRate: vi.fn(),
+    isIosNativeAudio: false,
+    markIosNativeReady: vi.fn(),
+    loadLastOpenedAudioTrack: vi.fn(),
   }),
 }));
 

@@ -7,18 +7,6 @@ export function mimeTypeFromTrackHref(href: string | undefined | null): string {
   return "audio/mpeg";
 }
 
-/**
- * Whether a lock-screen / native seek should be mirrored onto the WebView `<audio>`.
- * Avoids fighting tiny float differences between AVPlayer and HTMLMediaElement.
- */
-export function shouldMirrorNativeSeek(
-  webViewCurrentTime: number,
-  nativeTime: number,
-  thresholdSeconds = 1
-): boolean {
-  return Math.abs(webViewCurrentTime - nativeTime) > thresholdSeconds;
-}
-
 export type NativePlayerEvent =
   | { type: "play" }
   | { type: "pause" }
@@ -29,134 +17,64 @@ export type NativePlayerEvent =
   | { type: "ended" }
   | { type: "durationUpdate"; time: number };
 
-/**
- * Applies a native-player-event payload to local playback state.
- * Returns the next native time (if updated), WebView sync actions, and duration.
- */
-export function applyNativePlayerEvent(
-  event: { type: string; time?: number },
-  webViewCurrentTime: number | null
-): {
+export type NativePlayerEventResult = {
   nativeTime: number | null;
-  seekWebViewTo: number | null;
   synthesiseEnded: boolean;
-  shouldPlay: boolean;
-  shouldPause: boolean;
   durationUpdate: number | null;
   shouldNext: boolean;
   shouldPrev: boolean;
-} {
+  /** true = play, false = pause, null = unchanged */
+  playing: boolean | null;
+};
+
+/**
+ * Maps a native-player-event payload to UI / progress state.
+ * Does not drive WebView media — AVPlayer is the only engine on iOS.
+ */
+export function applyNativePlayerEvent(
+  event: { type: string; time?: number }
+): NativePlayerEventResult {
+  const idle: NativePlayerEventResult = {
+    nativeTime: null,
+    synthesiseEnded: false,
+    durationUpdate: null,
+    shouldNext: false,
+    shouldPrev: false,
+    playing: null,
+  };
+
   if (event.type === "play") {
-    return {
-      nativeTime: null,
-      seekWebViewTo: null,
-      synthesiseEnded: false,
-      shouldPlay: true,
-      shouldPause: false,
-      durationUpdate: null,
-      shouldNext: false,
-      shouldPrev: false,
-    };
+    return { ...idle, playing: true };
   }
 
   if (event.type === "pause") {
-    return {
-      nativeTime: null,
-      seekWebViewTo: null,
-      synthesiseEnded: false,
-      shouldPlay: false,
-      shouldPause: true,
-      durationUpdate: null,
-      shouldNext: false,
-      shouldPrev: false,
-    };
+    return { ...idle, playing: false };
   }
 
   if (event.type === "next") {
-    return {
-      nativeTime: null,
-      seekWebViewTo: null,
-      synthesiseEnded: false,
-      shouldPlay: false,
-      shouldPause: false,
-      durationUpdate: null,
-      shouldNext: true,
-      shouldPrev: false,
-    };
+    return { ...idle, shouldNext: true };
   }
 
   if (event.type === "prev") {
-    return {
-      nativeTime: null,
-      seekWebViewTo: null,
-      synthesiseEnded: false,
-      shouldPlay: false,
-      shouldPause: false,
-      durationUpdate: null,
-      shouldNext: false,
-      shouldPrev: true,
-    };
+    return { ...idle, shouldPrev: true };
   }
 
   if (
     (event.type === "timeUpdate" || event.type === "seek") &&
     event.time !== undefined
   ) {
-    // Always push native clock onto the (muted) WebView element on iOS so UI/state stay in sync.
-    const seekWebViewTo =
-      event.type === "seek" && webViewCurrentTime !== null
-        ? shouldMirrorNativeSeek(webViewCurrentTime, event.time)
-          ? event.time
-          : null
-        : event.time;
-    return {
-      nativeTime: event.time,
-      seekWebViewTo,
-      synthesiseEnded: false,
-      shouldPlay: false,
-      shouldPause: false,
-      durationUpdate: null,
-      shouldNext: false,
-      shouldPrev: false,
-    };
+    return { ...idle, nativeTime: event.time };
   }
 
   if (event.type === "durationUpdate" && event.time !== undefined) {
-    return {
-      nativeTime: null,
-      seekWebViewTo: null,
-      synthesiseEnded: false,
-      shouldPlay: false,
-      shouldPause: false,
-      durationUpdate: event.time,
-      shouldNext: false,
-      shouldPrev: false,
-    };
+    return { ...idle, durationUpdate: event.time };
   }
 
   if (event.type === "ended") {
-    return {
-      nativeTime: null,
-      seekWebViewTo: null,
-      synthesiseEnded: true,
-      shouldPlay: false,
-      shouldPause: false,
-      durationUpdate: null,
-      shouldNext: false,
-      shouldPrev: false,
-    };
+    return { ...idle, synthesiseEnded: true, playing: false };
   }
 
-  return {
-    nativeTime: null,
-    seekWebViewTo: null,
-    synthesiseEnded: false,
-    shouldPlay: false,
-    shouldPause: false,
-    durationUpdate: null,
-    shouldNext: false,
-    shouldPrev: false,
-  };
+  return idle;
 }
 
 /** Resume saved position after server restart; optionally continue playing. */
