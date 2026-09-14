@@ -68,6 +68,13 @@ export function FloatingAudioPlayer() {
     isIosNativeAudio,
     isPlaying,
     setIsPlaying,
+    isPlaybackActive,
+    playAudio,
+    pauseAudio,
+    seekAudio,
+    loadLiveAudio,
+    refreshLiveAudio,
+    setExpectsMoreContent,
     markIosNativeReady,
   } = useAudioProgressContext();
   const { library, setLibrary, currentBook, setCurrentBook, currentTab } =
@@ -148,15 +155,19 @@ export function FloatingAudioPlayer() {
 
   useEffect(() => {
     playbackRateRef.current = playbackRate;
-    if (audioRef.current) {
+    if (audioRef.current && !isIosNativeAudio) {
       applyMediaPlaybackRate(audioRef.current, playbackRate);
     }
-    if (isIosNativeAudio) {
-      void invoke("ios_player_set_rate", { rate: playbackRate }).catch(
-        () => undefined
-      );
-    }
   }, [audioRef, isIosNativeAudio, playbackRate]);
+
+  // When <audio> mounts after a deferred webview load, flush pending src via engine.seek.
+  useEffect(() => {
+    if (isIosNativeAudio || !currentAudioTrack || currentAudioTrack.isLiveStream) {
+      return;
+    }
+    if (!audioRef.current) return;
+    void seekAudio(audioRef.current.currentTime || 0).catch(() => undefined);
+  }, [audioRef, currentAudioTrack, isIosNativeAudio, seekAudio]);
 
   useEffect(() => {
     if (!currentBook) return;
@@ -584,7 +595,7 @@ export function FloatingAudioPlayer() {
 
       const shouldResumePlayback = playbackIntentRef.current;
       if (isIosNativeAudio) {
-        void invoke("ios_player_pause").catch(() => undefined);
+        void pauseAudio();
       } else if (audioRef.current) {
         audioRef.current.pause();
       }
@@ -633,10 +644,7 @@ export function FloatingAudioPlayer() {
 
         restoreAudioProgress(bookForRestore, track, shouldResumePlayback);
         if (shouldResumePlayback && isIosNativeAudio) {
-          void invoke("ios_player_set_rate", {
-            rate: playbackRateRef.current,
-          }).catch(() => undefined);
-          void invoke("ios_player_play").catch(() => undefined);
+          void playAudio();
           setIsPlaying(true);
         }
       }
@@ -648,55 +656,47 @@ export function FloatingAudioPlayer() {
       currentBook,
       isIosNativeAudio,
       loadAudioTrack,
+      pauseAudio,
+      playAudio,
       restoreAudioProgress,
       saveAudioProgress,
       queueLivePlaybackRequest,
       setCurrentBook,
       setCurrentAudioTrack,
+      setIsPlaying,
     ]
   );
 
   const handlePlayPause = useCallback(async () => {
-    if (isIosNativeAudio) {
-      // Ask AVPlayer — never trust a stale UI icon for the toggle direction.
-      let playing = false;
-      try {
-        playing = await invoke<boolean>("ios_player_is_playing");
-      } catch {
-        playing = isPlaying;
-      }
+    const playing = isPlaybackActive();
 
-      if (playing) {
-        playbackIntentRef.current = false;
-        void invoke("ios_player_pause").catch(() => undefined);
-      } else {
-        playbackIntentRef.current = true;
-        void invoke("ios_player_set_rate", { rate: playbackRate }).catch(
-          () => undefined
-        );
-        void invoke("ios_player_play").catch(() => undefined);
-      }
-      // Icon state comes from timeControlStatus events + reconcile poll.
+    if (playing) {
+      playbackIntentRef.current = false;
+      void pauseAudio();
       return;
     }
 
-    if (!audioRef.current) return;
-
-    if (isPlaying) {
-      playbackIntentRef.current = false;
-      audioRef.current.pause();
-    } else {
-      try {
-        playbackIntentRef.current = true;
+    try {
+      playbackIntentRef.current = true;
+      if (!isIosNativeAudio && audioRef.current) {
         applyMediaPlaybackRate(audioRef.current, playbackRate);
-        await audioRef.current.play();
-        applyMediaPlaybackRate(audioRef.current, playbackRate);
-      } catch (err) {
-        playbackIntentRef.current = false;
-        logger.error("Failed to play audio:", err);
       }
+      await playAudio();
+      if (!isIosNativeAudio && audioRef.current) {
+        applyMediaPlaybackRate(audioRef.current, playbackRate);
+      }
+    } catch (err) {
+      playbackIntentRef.current = false;
+      logger.error("Failed to play audio:", err);
     }
-  }, [audioRef, isIosNativeAudio, isPlaying, playbackRate]);
+  }, [
+    audioRef,
+    isIosNativeAudio,
+    isPlaybackActive,
+    pauseAudio,
+    playAudio,
+    playbackRate,
+  ]);
 
   const isLiveStream = useMemo(
     () => Boolean(currentAudioTrack?.isLiveStream),
@@ -715,10 +715,8 @@ export function FloatingAudioPlayer() {
     if (!isIosNativeAudio || !isLiveStream) {
       return;
     }
-    void invoke("ios_player_set_expects_more", {
-      expectsMore: !liveChapterCompleted,
-    }).catch(() => undefined);
-  }, [isIosNativeAudio, isLiveStream, liveChapterCompleted]);
+    void setExpectsMoreContent(!liveChapterCompleted).catch(() => undefined);
+  }, [isIosNativeAudio, isLiveStream, liveChapterCompleted, setExpectsMoreContent]);
 
   const liveChapterIndex = useMemo(() => {
     if (!currentAudioTrack) {
@@ -922,13 +920,10 @@ export function FloatingAudioPlayer() {
     const refreshLiveDuration = async () => {
       try {
         if (isIosNativeAudio) {
-          const status = await invoke<{
-            durationSeconds: number;
-            byteLength: number;
-          }>("ios_player_refresh_live", {
-            bookId: currentBook.id,
-            chapterIndex,
-          });
+          const status = await refreshLiveAudio(
+            currentBook.id,
+            chapterIndex
+          );
           if (!cancelled && Number.isFinite(status.durationSeconds)) {
             setLiveGeneratedDuration((prev) =>
               Math.max(prev, status.durationSeconds)
@@ -960,7 +955,13 @@ export function FloatingAudioPlayer() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [isIosNativeAudio, isLiveStream, currentBook, currentAudioTrack]);
+  }, [
+    isIosNativeAudio,
+    isLiveStream,
+    currentBook,
+    currentAudioTrack,
+    refreshLiveAudio,
+  ]);
 
   useEffect(() => {
     if (!isLiveStream || !audioRef.current || !liveStreamSourceKey) {
@@ -1024,16 +1025,11 @@ export function FloatingAudioPlayer() {
       if (isIosNativeAudio) {
         if (Number.isFinite(target) && target >= 0) {
           setCurrentTime(target);
-          void invoke("ios_player_seek", { seconds: target }).catch(
-            () => undefined
-          );
+          void seekAudio(target);
         }
         if (wasPlaying) {
           playbackIntentRef.current = true;
-          void invoke("ios_player_set_rate", {
-            rate: playbackRateRef.current,
-          }).catch(() => undefined);
-          void invoke("ios_player_play").catch(() => undefined);
+          void playAudio();
           setIsPlaying(true);
         }
         return;
@@ -1083,17 +1079,12 @@ export function FloatingAudioPlayer() {
       try {
         if (isIosNativeAudio) {
           try {
-            const status = await invoke<{
-              durationSeconds: number;
-              byteLength: number;
-            }>("ios_player_load_live", {
-              options: {
-                bookId,
-                chapterIndex,
-                title: activeTrack.title ?? `Chapter ${chapterIndex + 1}`,
-                artist: activeBook.author ?? "",
-                coverUrl: activeBook.coverUrl ?? null,
-              },
+            const status = await loadLiveAudio({
+              bookId,
+              chapterIndex,
+              title: activeTrack.title ?? `Chapter ${chapterIndex + 1}`,
+              artist: activeBook.author ?? "",
+              coverUrl: activeBook.coverUrl ?? null,
             });
 
             if (cancelled || requestId !== liveReloadRequestIdRef.current) {
@@ -1165,7 +1156,10 @@ export function FloatingAudioPlayer() {
     livePlaybackRequestRef,
     livePlaybackRequestVersion,
     liveStreamSourceKey,
+    loadLiveAudio,
     markIosNativeReady,
+    playAudio,
+    seekAudio,
   ]);
 
   const refreshLiveSourceAtTime = useCallback(
@@ -1356,10 +1350,8 @@ export function FloatingAudioPlayer() {
       }
       waitingForLiveChunksRef.current = false;
       playbackIntentRef.current = true;
-      void invoke("ios_player_seek", {
-        seconds: heldLiveTimeRef.current,
-      }).catch(() => undefined);
-      void invoke("ios_player_play").catch(() => undefined);
+      void seekAudio(heldLiveTimeRef.current);
+      void playAudio();
       setIsPlaying(true);
       return;
     }
@@ -1390,9 +1382,7 @@ export function FloatingAudioPlayer() {
             )
           : Math.max(0, requestedTime);
         setCurrentTime(nextTime);
-        void invoke("ios_player_seek", { seconds: nextTime }).catch(
-          () => undefined
-        );
+        void seekAudio(nextTime);
         return;
       }
 
@@ -1422,6 +1412,7 @@ export function FloatingAudioPlayer() {
       isLiveStream,
       liveGeneratedDuration,
       refreshLiveSourceAtTime,
+      seekAudio,
       seekMax,
       seekMin,
       timelineMax,
@@ -1433,9 +1424,7 @@ export function FloatingAudioPlayer() {
     if (isIosNativeAudio) {
       const newTime = Math.max(timelineMin, currentTime - 10);
       setCurrentTime(newTime);
-      void invoke("ios_player_seek", { seconds: newTime }).catch(
-        () => undefined
-      );
+      void seekAudio(newTime);
       return;
     }
 
@@ -1448,7 +1437,7 @@ export function FloatingAudioPlayer() {
         logger.warn("Skip backward failed for current stream:", err);
       }
     }
-  }, [audioRef, currentTime, isIosNativeAudio, timelineMin]);
+  }, [audioRef, currentTime, isIosNativeAudio, seekAudio, timelineMin]);
 
   const handleSkipForward = useCallback(() => {
     if (isIosNativeAudio) {
@@ -1457,9 +1446,7 @@ export function FloatingAudioPlayer() {
         : duration;
       const newTime = Math.min(maxTime, currentTime + 10);
       setCurrentTime(newTime);
-      void invoke("ios_player_seek", { seconds: newTime }).catch(
-        () => undefined
-      );
+      void seekAudio(newTime);
       return;
     }
 
@@ -1480,6 +1467,7 @@ export function FloatingAudioPlayer() {
     isIosNativeAudio,
     isLiveStream,
     liveGeneratedDuration,
+    seekAudio,
     seekMax,
   ]);
 
@@ -1610,10 +1598,7 @@ export function FloatingAudioPlayer() {
           await loadAudioTrack(book.id, nextTrack, book);
           if (!isLiveNextTrack) {
             restoreAudioProgress(book, nextTrack, true);
-            void invoke("ios_player_set_rate", {
-              rate: playbackRateRef.current,
-            }).catch(() => undefined);
-            void invoke("ios_player_play").catch(() => undefined);
+            void playAudio();
             setIsPlaying(true);
           }
         } else {
@@ -1632,6 +1617,7 @@ export function FloatingAudioPlayer() {
     isIosNativeAudio,
     loadAudioTrack,
     loadLastOpenedAudioTrack,
+    playAudio,
     queueLivePlaybackRequest,
     restoreAudioProgress,
     saveAudioProgress,

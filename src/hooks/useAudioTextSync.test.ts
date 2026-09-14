@@ -53,6 +53,15 @@ vi.mock("../context/AudioProgressContext", () => ({
       const el = audioRef.current;
       return Boolean(el && !el.paused && !el.ended);
     },
+    playAudio: async () => {
+      await audioRef.current?.play();
+    },
+    pauseAudio: async () => {
+      audioRef.current?.pause();
+    },
+    seekAudio: async (seconds: number) => {
+      if (audioRef.current) audioRef.current.currentTime = seconds;
+    },
   }),
 }));
 
