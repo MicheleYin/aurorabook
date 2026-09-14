@@ -102,36 +102,36 @@ function AppContent() {
           )}
           aria-hidden={hideNavTabs}
         >
-          <TabsList className="rounded-full bg-background/80 backdrop-blur-lg border shadow-lg px-1 py-2 gap-1 pointer-events-auto">
+          <TabsList className="rounded-full bg-background/80 backdrop-blur-lg border shadow-lg px-1 py-3 gap-1 pointer-events-auto">
             <TabsTrigger
               value="library"
-              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
+              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-1"
             >
               {/* // add library icon */}
               <div className="flex items-center gap-2"> 
 
-              <LibraryIcon className="w-4 h-4" />
-              <span className="md:block hidden transition-all duration-300 ease-out">{t("library.title")}</span>
+              <LibraryIcon className="w-5 h-5" />
+              <span className="xs:block hidden transition-all duration-300 ease-out">{t("library.title")}</span>
               </div>
             </TabsTrigger>
             <TabsTrigger
               value="reader"
               disabled={!currentBook}
-              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
+              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-1"
             >
               <div className="flex items-center gap-2"> 
-              <BookOpenIcon className="w-4 h-4" />
-              <span className="md:block hidden transition-all duration-300 ease-out">{t("reader.title")}</span>
+              <BookOpenIcon className="w-5 h-5" />
+              <span className="xs:block hidden transition-all duration-300 ease-out">{t("reader.title")}</span>
               </div>
             </TabsTrigger>
             <TabsTrigger
               value="settings"
-              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
+              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-1"
             >
               <div className="flex items-center gap-2"> 
-              <SettingsIcon className="w-4 h-4" />
+              <SettingsIcon className="w-5 h-5" />
               {/* // add transtion when shownig  */}
-              <span className="md:block hidden transition-all duration-300 ease-out">{t("app.settings")}</span>
+              <span className="xs:block hidden transition-all duration-300 ease-out">{t("app.settings")}</span>
               </div>
             </TabsTrigger>
           </TabsList>

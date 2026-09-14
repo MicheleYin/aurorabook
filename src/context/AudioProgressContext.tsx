@@ -13,7 +13,6 @@ import {
 import { getName } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { type } from "@tauri-apps/plugin-os";
 import { toast } from "sonner";
 
 import type {
@@ -23,7 +22,12 @@ import type {
   BookAudioState,
 } from "../types/book";
 import {
-  applyNativePlayerEvent,
+  clearMediaSession,
+  createPlaybackEngine,
+  type PlaybackEngine,
+  type PlaybackEngineKind,
+} from "../audio";
+import {
   applyMediaPlaybackRate,
   mimeTypeFromTrackHref,
   trackDisplayTitle,
@@ -47,6 +51,8 @@ export interface AudioProgressContextType {
   blobUrlRef: React.RefObject<string | null>;
   /** True when native AVPlayer is the audible source (iOS). */
   isIosNativeAudio: boolean;
+  /** Active engine kind once resolved. */
+  playbackEngineKind: PlaybackEngineKind | null;
   /** Shared play/pause UI state (native-authoritative on iOS). */
   isPlaying: boolean;
   setIsPlaying: (playing: boolean) => void;
@@ -54,6 +60,21 @@ export interface AudioProgressContextType {
   getPlaybackTime: () => number;
   /** Whether audio is currently playing (AVPlayer on iOS, `<audio>` elsewhere). */
   isPlaybackActive: () => boolean;
+  playAudio: () => Promise<void>;
+  pauseAudio: () => Promise<void>;
+  seekAudio: (seconds: number) => Promise<void>;
+  loadLiveAudio: (options: {
+    bookId: string;
+    chapterIndex: number;
+    title: string;
+    artist: string;
+    coverUrl?: string | null;
+  }) => Promise<{ durationSeconds: number; byteLength: number }>;
+  refreshLiveAudio: (
+    bookId: string,
+    chapterIndex: number
+  ) => Promise<{ durationSeconds: number; byteLength: number }>;
+  setExpectsMoreContent: (expectsMore: boolean) => Promise<void>;
   /** Mark native player load success; WebView stays muted / empty on iOS. */
   markIosNativeReady: (ready: boolean) => void;
   loadAudioTrack: (
@@ -126,15 +147,18 @@ export function AudioProgressProvider({
   } = useSettingsContext();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
-  // Last known position from the native AVPlayer (updated by native-player-event).
+  const engineRef = useRef<PlaybackEngine | null>(null);
+  // Last known position from the native AVPlayer (updated by engine events).
   const nativeTimeRef = useRef<number>(0);
   /** True while AVPlayer reports playing (iOS). */
   const iosPlayingRef = useRef(false);
   /** True only after a successful ios_player_load / load_live. */
   const iosNativeReadyRef = useRef(false);
   const [isIosNativeAudio, setIsIosNativeAudio] = useState(false);
+  const [playbackEngineKind, setPlaybackEngineKind] =
+    useState<PlaybackEngineKind | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  // Whether we're running on iOS (set async on mount, so starts false).
+  // Whether we're running on iOS (set when the engine resolves).
   const isIosRef = useRef<boolean>(false);
   const livePlaybackRequestRef = useRef({
     resumeTime: 0,
@@ -152,6 +176,10 @@ export function AudioProgressProvider({
   }, []);
 
   const getPlaybackTime = useCallback((): number => {
+    const engine = engineRef.current;
+    if (engine) {
+      return Math.max(0, engine.getCurrentTime());
+    }
     if (isIosRef.current) {
       const nativeTime = nativeTimeRef.current;
       return Number.isFinite(nativeTime) ? Math.max(0, nativeTime) : 0;
@@ -161,11 +189,78 @@ export function AudioProgressProvider({
   }, []);
 
   const isPlaybackActive = useCallback((): boolean => {
+    const engine = engineRef.current;
+    if (engine) {
+      return engine.isPlaying();
+    }
     if (isIosRef.current) {
       return iosPlayingRef.current;
     }
     const el = audioRef.current;
     return Boolean(el && !el.paused && !el.ended);
+  }, []);
+
+  const playAudio = useCallback(async () => {
+    const engine = engineRef.current;
+    if (engine) {
+      await engine.play();
+      return;
+    }
+    await audioRef.current?.play();
+  }, []);
+
+  const pauseAudio = useCallback(async () => {
+    const engine = engineRef.current;
+    if (engine) {
+      await engine.pause();
+      return;
+    }
+    audioRef.current?.pause();
+  }, []);
+
+  const seekAudio = useCallback(async (seconds: number) => {
+    const engine = engineRef.current;
+    if (engine) {
+      await engine.seek(seconds);
+      nativeTimeRef.current = Math.max(0, seconds);
+      return;
+    }
+    if (audioRef.current) {
+      audioRef.current.currentTime = Math.max(0, seconds);
+    }
+  }, []);
+
+  const loadLiveAudio = useCallback(
+    async (options: {
+      bookId: string;
+      chapterIndex: number;
+      title: string;
+      artist: string;
+      coverUrl?: string | null;
+    }) => {
+      const engine = engineRef.current;
+      if (!engine?.loadLive) {
+        throw new Error("Live load is not supported on this platform engine");
+      }
+      iosNativeReadyRef.current = true;
+      return engine.loadLive(options);
+    },
+    []
+  );
+
+  const refreshLiveAudio = useCallback(
+    async (bookId: string, chapterIndex: number) => {
+      const engine = engineRef.current;
+      if (!engine?.refreshLive) {
+        throw new Error("Live refresh is not supported on this platform engine");
+      }
+      return engine.refreshLive(bookId, chapterIndex);
+    },
+    []
+  );
+
+  const setExpectsMoreContent = useCallback(async (expectsMore: boolean) => {
+    await engineRef.current?.setExpectsMore?.(expectsMore);
   }, []);
 
   const calculateAudioProgress = useCallback((): BookAudioState | null => {
@@ -205,11 +300,7 @@ export function AudioProgressProvider({
       );
       setPlaybackRate(nextRate);
       void saveSettings({ audioPlaybackSpeed: nextRate });
-      if (isIosRef.current) {
-        void invoke("ios_player_set_rate", { rate: nextRate }).catch(
-          () => undefined
-        );
-      }
+      void engineRef.current?.setRate(nextRate).catch(() => undefined);
     },
     [audioRef, saveSettings]
   );
@@ -275,67 +366,83 @@ export function AudioProgressProvider({
     };
   }, [currentAudioTrack, audioRef, isIosNativeAudio]);
 
-  // Detect iOS once on mount (plugin-os `type()` is async).
+  // Resolve platform playback engine once and subscribe to its events.
   useEffect(() => {
-    void (async () => {
-      try {
-        const ios = (await type()) === "ios";
-        isIosRef.current = ios;
-        setIsIosNativeAudio(ios);
-        if (ios && audioRef.current) {
-          audioRef.current.muted = true;
-          audioRef.current.volume = 0;
-        }
-      } catch {
-        isIosRef.current = false;
-        setIsIosNativeAudio(false);
+    let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
+
+    void createPlaybackEngine(() => audioRef.current).then((engine) => {
+      if (cancelled) {
+        engine.destroy();
+        return;
       }
-    })();
-  }, []);
 
-  // Native → app bridge: update progress clock + forward UI events.
-  // Never drive WebView play/pause/seek — AVPlayer is the only engine on iOS.
-  useEffect(() => {
-    const unlisten = listen<{ type: string; time?: number }>(
-      "native-player-event",
-      (event) => {
-        const result = applyNativePlayerEvent(event.payload);
-        if (result.nativeTime !== null) {
-          nativeTimeRef.current = result.nativeTime;
-        }
-        // Periodic timeUpdate callbacks only fire while AVPlayer is playing.
-        if (event.payload.type === "timeUpdate") {
+      engineRef.current = engine;
+      const isIos = engine.kind === "ios-native";
+      isIosRef.current = isIos;
+      setIsIosNativeAudio(isIos);
+      setPlaybackEngineKind(engine.kind);
+
+      if (isIos && audioRef.current) {
+        audioRef.current.muted = true;
+        audioRef.current.volume = 0;
+      }
+
+      unsubscribe = engine.subscribe((event) => {
+        if (event.type === "play") {
           setPlayingState(true);
-        }
-        if (result.playing === true) {
-          setPlayingState(true);
-        } else if (result.playing === false) {
+          window.dispatchEvent(
+            new CustomEvent("aurora-native-ui", { detail: { type: "play" } })
+          );
+        } else if (event.type === "pause") {
           setPlayingState(false);
-        }
-
-        if (result.shouldNext) {
+          window.dispatchEvent(
+            new CustomEvent("aurora-native-ui", { detail: { type: "pause" } })
+          );
+        } else if (event.type === "timeUpdate") {
+          nativeTimeRef.current = event.time;
+          setPlayingState(true);
+          window.dispatchEvent(
+            new CustomEvent("aurora-native-ui", {
+              detail: { type: "timeUpdate", time: event.time },
+            })
+          );
+        } else if (event.type === "seek") {
+          nativeTimeRef.current = event.time;
+          window.dispatchEvent(
+            new CustomEvent("aurora-native-ui", {
+              detail: { type: "seek", time: event.time },
+            })
+          );
+        } else if (event.type === "durationUpdate") {
+          window.dispatchEvent(
+            new CustomEvent("aurora-native-ui", {
+              detail: { type: "durationUpdate", time: event.time },
+            })
+          );
+        } else if (event.type === "ended") {
+          setPlayingState(false);
+          window.dispatchEvent(new CustomEvent("aurora-native-ended"));
+          window.dispatchEvent(
+            new CustomEvent("aurora-native-ui", { detail: { type: "ended" } })
+          );
+        } else if (event.type === "next") {
           window.dispatchEvent(
             new CustomEvent("aurora-native-skip", { detail: "next" })
           );
-        }
-        if (result.shouldPrev) {
+        } else if (event.type === "prev") {
           window.dispatchEvent(
             new CustomEvent("aurora-native-skip", { detail: "prev" })
           );
         }
-        if (result.synthesiseEnded) {
-          setPlayingState(false);
-          window.dispatchEvent(new CustomEvent("aurora-native-ended"));
-        }
-        // Re-broadcast for FloatingAudioPlayer UI (visual consumer only).
-        window.dispatchEvent(
-          new CustomEvent("aurora-native-ui", { detail: event.payload })
-        );
-      }
-    );
+      });
+    });
 
     return () => {
-      void unlisten.then((fn) => fn());
+      cancelled = true;
+      unsubscribe?.();
+      engineRef.current?.destroy();
+      engineRef.current = null;
     };
   }, [setPlayingState]);
 
@@ -389,9 +496,7 @@ export function AudioProgressProvider({
             trackId: track.id,
             savedTime,
           });
-          void invoke("ios_player_seek", { seconds: savedTime }).catch(
-            () => undefined
-          );
+          void seekAudio(savedTime);
         } else if (audioRef.current) {
           const applySavedTime = () => {
             if (!audioRef.current) return;
@@ -457,17 +562,17 @@ export function AudioProgressProvider({
       } else if (isIosRef.current && iosNativeReadyRef.current) {
         // Different track: start at 0 so the previous chapter's clock cannot stick.
         nativeTimeRef.current = 0;
-        void invoke("ios_player_seek", { seconds: 0 }).catch(() => undefined);
+        void seekAudio(0);
       }
       if (autoPlayAudio) {
         if (isIosRef.current && iosNativeReadyRef.current) {
-          void invoke("ios_player_play").catch(() => undefined);
+          void playAudio();
         } else {
           audioRef.current?.play().catch(() => undefined);
         }
       }
     },
-    [audioRef]
+    [audioRef, playAudio, seekAudio]
   );
 
   const resolveTrackChapterIndex = useCallback((book: Book, track: AudioTrack) => {
@@ -531,8 +636,12 @@ export function AudioProgressProvider({
           !isCompletedLibraryTrack &&
           (isExplicitLiveTrack || currentConvertingChapter === chapterIndex);
 
-        // Helper: set OS media controls metadata (same logic for live and non-live).
+        // Helper: set OS media controls metadata (desktop Media Session only).
         const setMediaSessionMetadata = () => {
+          if (isIosRef.current) {
+            clearMediaSession();
+            return;
+          }
           if (!("mediaSession" in navigator) || !book) return;
           const trackTitle = track.title || `Track ${track.order + 1}`;
           let chapterTitle: string | undefined;
@@ -615,23 +724,24 @@ export function AudioProgressProvider({
           });
 
           try {
-            await invoke("ios_player_load", {
-              options: {
-                bookId,
-                trackId: track.id,
-                title: trackDisplayTitle(track.title, track.order),
-                artist: book.author ?? "",
-                duration: track.duration ?? 0,
-                coverUrl: book.coverUrl ?? null,
-              },
+            const engine = engineRef.current;
+            if (!engine) {
+              throw new Error("Playback engine not ready");
+            }
+            await engine.load({
+              bookId,
+              trackId: track.id,
+              title: trackDisplayTitle(track.title, track.order),
+              artist: book.author ?? "",
+              duration: track.duration ?? 0,
+              coverUrl: book.coverUrl ?? null,
+              playbackRate,
             });
             iosNativeReadyRef.current = true;
-            void invoke("ios_player_set_rate", { rate: playbackRate }).catch(
-              () => undefined
-            );
+            clearMediaSession();
           } catch (err: unknown) {
             iosNativeReadyRef.current = false;
-            logger.error("ios_player_load failed:", err);
+            logger.error("ios native load failed:", err);
             toast.error("Failed to load audio on device");
             throw err;
           }
@@ -674,8 +784,19 @@ export function AudioProgressProvider({
             blobUrlRef.current = null;
           }
 
-          // Set up audio element with streaming URL
-          if (audioRef.current) {
+          const engine = engineRef.current;
+          if (engine) {
+            await engine.load({
+              bookId,
+              trackId: track.id,
+              title: trackDisplayTitle(track.title, track.order),
+              artist: book.author ?? "",
+              duration: track.duration ?? 0,
+              coverUrl: book.coverUrl ?? null,
+              streamUrl,
+              playbackRate,
+            });
+          } else if (audioRef.current) {
             const waitForAudioReady = () =>
               new Promise<void>((resolve) => {
                 const audio = audioRef.current;
@@ -696,7 +817,6 @@ export function AudioProgressProvider({
                   resolve();
                 };
 
-                // Keep loader from hanging forever on problematic streams.
                 const timeoutId = setTimeout(settle, 8000);
                 const settleWithTimeoutClear = () => {
                   clearTimeout(timeoutId);
@@ -712,19 +832,14 @@ export function AudioProgressProvider({
 
             audioRef.current.src = streamUrl;
             audioRef.current.load();
-
-            // Pause first so the previous track is saved at its actual timestamp,
-            // then reset time for the newly loaded source.
             if (!audioRef.current.paused) {
               audioRef.current.pause();
             }
             audioRef.current.currentTime = 0;
             applyMediaPlaybackRate(audioRef.current, playbackRate);
-
             await waitForAudioReady();
           }
 
-          // Get MIME type from track href for metadata
           const mimeType = mimeTypeFromTrackHref(track.href);
 
           setCurrentAudioTrack({
@@ -978,10 +1093,8 @@ export function AudioProgressProvider({
       }
 
       if (isIosRef.current) {
-        void invoke("ios_player_pause").catch(() => undefined);
-        void invoke("ios_player_set_expects_more", { expectsMore: false }).catch(
-          () => undefined
-        );
+        void pauseAudio();
+        void engineRef.current?.setExpectsMore?.(false).catch(() => undefined);
       }
 
       // Stop WebView playback (desktop) / clear visual element (iOS)
@@ -1011,40 +1124,11 @@ export function AudioProgressProvider({
       // Clear current track
       setCurrentAudioTrack(null);
 
-      // Clear MediaSession metadata
-      if ("mediaSession" in navigator) {
-        navigator.mediaSession.metadata = null;
-      }
+      // Clear MediaSession metadata + handlers
+      clearMediaSession();
     },
-    [currentAudioTrack, saveAudioProgress, setPlayingState]
+    [currentAudioTrack, pauseAudio, saveAudioProgress, setPlayingState]
   );
-
-  // Reconcile in-app play/pause with AVPlayer (covers missed events / Control Center).
-  useEffect(() => {
-    if (!isIosNativeAudio || !currentAudioTrack) return;
-
-    let cancelled = false;
-    const syncPlaying = async () => {
-      try {
-        const playing = await invoke<boolean>("ios_player_is_playing");
-        if (!cancelled) {
-          setPlayingState(playing);
-        }
-      } catch {
-        // Native bridge unavailable — keep last known state.
-      }
-    };
-
-    void syncPlaying();
-    const intervalId = window.setInterval(() => {
-      void syncPlaying();
-    }, 1000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [currentAudioTrack, isIosNativeAudio, setPlayingState]);
 
   // Cleanup blob URL on unmount
   useEffect(() => {
@@ -1065,10 +1149,17 @@ export function AudioProgressProvider({
       audioRef,
       blobUrlRef,
       isIosNativeAudio,
+      playbackEngineKind,
       isPlaying,
       setIsPlaying: setPlayingState,
       getPlaybackTime,
       isPlaybackActive,
+      playAudio,
+      pauseAudio,
+      seekAudio,
+      loadLiveAudio,
+      refreshLiveAudio,
+      setExpectsMoreContent,
       markIosNativeReady,
       loadAudioTrack,
       loadLastOpenedAudioTrack,
@@ -1086,10 +1177,17 @@ export function AudioProgressProvider({
       currentAudioTrack,
       isLoadingAudio,
       isIosNativeAudio,
+      playbackEngineKind,
       isPlaying,
       setPlayingState,
       getPlaybackTime,
       isPlaybackActive,
+      playAudio,
+      pauseAudio,
+      seekAudio,
+      loadLiveAudio,
+      refreshLiveAudio,
+      setExpectsMoreContent,
       markIosNativeReady,
       loadAudioTrack,
       loadLastOpenedAudioTrack,
