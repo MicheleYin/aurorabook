@@ -42,8 +42,11 @@ private final class AuroraPlayer: NSObject {
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     private var statusObserver: NSKeyValueObservation?
+    private var timeControlObserver: NSKeyValueObservation?
     private var interruptionObserver: NSObjectProtocol?
     private var routeObserver: NSObjectProtocol?
+    /// Last play/pause event sent to JS — avoid duplicate Control Center / UI flips.
+    private var lastEmittedPlaying: Bool?
 
     private var loadedFilePath: String = ""
     private var expectsMoreContent = false
@@ -104,14 +107,12 @@ private final class AuroraPlayer: NSObject {
             case .began:
                 self.player?.pause()
                 self.updateNowPlaying(elapsed: self.currentTime())
-                rustPlayerCallback(eventType: 2, value: 0)
             case .ended:
                 let optionsValue = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
                 let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
                 if options.contains(.shouldResume), self.wantsPlaying {
                     self.activateSession()
                     self.play()
-                    rustPlayerCallback(eventType: 1, value: 0)
                 }
             @unknown default:
                 break
@@ -134,7 +135,6 @@ private final class AuroraPlayer: NSObject {
                 self.player?.pause()
                 self.wantsPlaying = false
                 self.updateNowPlaying(elapsed: self.currentTime())
-                rustPlayerCallback(eventType: 2, value: 0)
             }
         }
     }
@@ -147,14 +147,12 @@ private final class AuroraPlayer: NSObject {
         cc.playCommand.isEnabled = true
         cc.playCommand.addTarget { [weak self] _ in
             self?.play()
-            rustPlayerCallback(eventType: 1, value: 0)
             return .success
         }
 
         cc.pauseCommand.isEnabled = true
         cc.pauseCommand.addTarget { [weak self] _ in
             self?.pause()
-            rustPlayerCallback(eventType: 2, value: 0)
             return .success
         }
 
@@ -163,10 +161,8 @@ private final class AuroraPlayer: NSObject {
             guard let self else { return .commandFailed }
             if self.player?.timeControlStatus == .playing {
                 self.pause()
-                rustPlayerCallback(eventType: 2, value: 0)
             } else {
                 self.play()
-                rustPlayerCallback(eventType: 1, value: 0)
             }
             return .success
         }
@@ -297,6 +293,7 @@ private final class AuroraPlayer: NSObject {
         if player == nil {
             player = AVPlayer(playerItem: item)
             player?.automaticallyWaitsToMinimizeStalling = false
+            attachTimeControlObserver()
         } else {
             player?.replaceCurrentItem(with: item)
         }
@@ -322,7 +319,6 @@ private final class AuroraPlayer: NSObject {
         activateSession()
         playIfReady()
         updateNowPlaying(elapsed: currentTime())
-        rustPlayerCallback(eventType: 1, value: 0)
     }
 
     func pause() {
@@ -330,7 +326,8 @@ private final class AuroraPlayer: NSObject {
         waitingForMoreContent = false
         player?.pause()
         updateNowPlaying(elapsed: currentTime())
-        rustPlayerCallback(eventType: 2, value: 0)
+        // timeControlStatus observer emits pause; force one if player is nil.
+        emitPlayingStateIfChanged()
     }
 
     func seek(to seconds: Double) {
@@ -459,7 +456,7 @@ private final class AuroraPlayer: NSObject {
                 self.player?.pause()
                 self.updateNowPlaying(elapsed: self.currentTime())
                 // Keep wantsPlaying true so file-extension resume continues.
-                rustPlayerCallback(eventType: 2, value: 0)
+                // Pause UI event comes from timeControlStatus observer.
             } else {
                 self.wantsPlaying = false
                 self.waitingForMoreContent = false
@@ -467,6 +464,24 @@ private final class AuroraPlayer: NSObject {
                 rustPlayerCallback(eventType: 7, value: 0)
             }
         }
+    }
+
+    private func attachTimeControlObserver() {
+        timeControlObserver?.invalidate()
+        timeControlObserver = player?.observe(\.timeControlStatus, options: [.initial, .new]) {
+            [weak self] _, _ in
+            self?.emitPlayingStateIfChanged()
+            self?.updateNowPlaying(elapsed: self?.currentTime() ?? 0)
+        }
+    }
+
+    private func emitPlayingStateIfChanged() {
+        let playing = player?.timeControlStatus == .playing
+        if lastEmittedPlaying == playing {
+            return
+        }
+        lastEmittedPlaying = playing
+        rustPlayerCallback(eventType: playing ? 1 : 2, value: 0)
     }
 
     private func tearDownItemObservers() {
@@ -484,6 +499,9 @@ private final class AuroraPlayer: NSObject {
 
     private func tearDownObservers() {
         tearDownItemObservers()
+        timeControlObserver?.invalidate()
+        timeControlObserver = nil
+        lastEmittedPlaying = nil
     }
 
     // MARK: — Now Playing

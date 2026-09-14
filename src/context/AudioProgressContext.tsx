@@ -47,6 +47,9 @@ export interface AudioProgressContextType {
   blobUrlRef: React.RefObject<string | null>;
   /** True when native AVPlayer is the audible source (iOS). */
   isIosNativeAudio: boolean;
+  /** Shared play/pause UI state (native-authoritative on iOS). */
+  isPlaying: boolean;
+  setIsPlaying: (playing: boolean) => void;
   /** Playback clock used by progress save + text sync (native on iOS). */
   getPlaybackTime: () => number;
   /** Whether audio is currently playing (AVPlayer on iOS, `<audio>` elsewhere). */
@@ -130,6 +133,7 @@ export function AudioProgressProvider({
   /** True only after a successful ios_player_load / load_live. */
   const iosNativeReadyRef = useRef(false);
   const [isIosNativeAudio, setIsIosNativeAudio] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
   // Whether we're running on iOS (set async on mount, so starts false).
   const isIosRef = useRef<boolean>(false);
   const livePlaybackRequestRef = useRef({
@@ -142,6 +146,11 @@ export function AudioProgressProvider({
   const [playbackRate, setPlaybackRate] = useState(1);
   const [livePlaybackRequestVersion, setLivePlaybackRequestVersion] =
     useState(0);
+  const setPlayingState = useCallback((playing: boolean) => {
+    iosPlayingRef.current = playing;
+    setIsPlaying(playing);
+  }, []);
+
   const getPlaybackTime = useCallback((): number => {
     if (isIosRef.current) {
       const nativeTime = nativeTimeRef.current;
@@ -296,12 +305,12 @@ export function AudioProgressProvider({
         }
         // Periodic timeUpdate callbacks only fire while AVPlayer is playing.
         if (event.payload.type === "timeUpdate") {
-          iosPlayingRef.current = true;
+          setPlayingState(true);
         }
         if (result.playing === true) {
-          iosPlayingRef.current = true;
+          setPlayingState(true);
         } else if (result.playing === false) {
-          iosPlayingRef.current = false;
+          setPlayingState(false);
         }
 
         if (result.shouldNext) {
@@ -315,7 +324,7 @@ export function AudioProgressProvider({
           );
         }
         if (result.synthesiseEnded) {
-          iosPlayingRef.current = false;
+          setPlayingState(false);
           window.dispatchEvent(new CustomEvent("aurora-native-ended"));
         }
         // Re-broadcast for FloatingAudioPlayer UI (visual consumer only).
@@ -328,7 +337,7 @@ export function AudioProgressProvider({
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, []);
+  }, [setPlayingState]);
 
   // Load playback speed from shared app settings
   useEffect(() => {
@@ -991,7 +1000,7 @@ export function AudioProgressProvider({
       }
       iosNativeReadyRef.current = false;
       nativeTimeRef.current = 0;
-      iosPlayingRef.current = false;
+      setPlayingState(false);
 
       // Clean up blob URL
       if (blobUrlRef.current) {
@@ -1007,8 +1016,35 @@ export function AudioProgressProvider({
         navigator.mediaSession.metadata = null;
       }
     },
-    [currentAudioTrack, saveAudioProgress]
+    [currentAudioTrack, saveAudioProgress, setPlayingState]
   );
+
+  // Reconcile in-app play/pause with AVPlayer (covers missed events / Control Center).
+  useEffect(() => {
+    if (!isIosNativeAudio || !currentAudioTrack) return;
+
+    let cancelled = false;
+    const syncPlaying = async () => {
+      try {
+        const playing = await invoke<boolean>("ios_player_is_playing");
+        if (!cancelled) {
+          setPlayingState(playing);
+        }
+      } catch {
+        // Native bridge unavailable — keep last known state.
+      }
+    };
+
+    void syncPlaying();
+    const intervalId = window.setInterval(() => {
+      void syncPlaying();
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [currentAudioTrack, isIosNativeAudio, setPlayingState]);
 
   // Cleanup blob URL on unmount
   useEffect(() => {
@@ -1029,6 +1065,8 @@ export function AudioProgressProvider({
       audioRef,
       blobUrlRef,
       isIosNativeAudio,
+      isPlaying,
+      setIsPlaying: setPlayingState,
       getPlaybackTime,
       isPlaybackActive,
       markIosNativeReady,
@@ -1048,6 +1086,8 @@ export function AudioProgressProvider({
       currentAudioTrack,
       isLoadingAudio,
       isIosNativeAudio,
+      isPlaying,
+      setPlayingState,
       getPlaybackTime,
       isPlaybackActive,
       markIosNativeReady,

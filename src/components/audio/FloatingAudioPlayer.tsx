@@ -66,6 +66,8 @@ export function FloatingAudioPlayer() {
     queueLivePlaybackRequest,
     livePlaybackRequestVersion,
     isIosNativeAudio,
+    isPlaying,
+    setIsPlaying,
     markIosNativeReady,
   } = useAudioProgressContext();
   const { library, setLibrary, currentBook, setCurrentBook, currentTab } =
@@ -83,7 +85,6 @@ export function FloatingAudioPlayer() {
   // Local state for UI updates (only this component re-renders)
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [isTracksOpen, setIsTracksOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(
     () => settings?.audioPlayerMinimized ?? false
@@ -657,18 +658,25 @@ export function FloatingAudioPlayer() {
 
   const handlePlayPause = useCallback(async () => {
     if (isIosNativeAudio) {
-      if (isPlaying) {
+      // Ask AVPlayer — never trust a stale UI icon for the toggle direction.
+      let playing = false;
+      try {
+        playing = await invoke<boolean>("ios_player_is_playing");
+      } catch {
+        playing = isPlaying;
+      }
+
+      if (playing) {
         playbackIntentRef.current = false;
-        setIsPlaying(false);
         void invoke("ios_player_pause").catch(() => undefined);
       } else {
         playbackIntentRef.current = true;
-        setIsPlaying(true);
         void invoke("ios_player_set_rate", { rate: playbackRate }).catch(
           () => undefined
         );
         void invoke("ios_player_play").catch(() => undefined);
       }
+      // Icon state comes from timeControlStatus events + reconcile poll.
       return;
     }
 
@@ -1538,8 +1546,13 @@ export function FloatingAudioPlayer() {
         if (currentBookRef.current && currentAudioTrackRef.current) {
           void saveAudioProgress(currentBookRef.current);
         }
+      } else if (type === "timeUpdate") {
+        setIsPlaying(true);
+        if (typeof time === "number" && Number.isFinite(time)) {
+          setCurrentTime(time);
+        }
       } else if (
-        (type === "timeUpdate" || type === "seek") &&
+        type === "seek" &&
         typeof time === "number" &&
         Number.isFinite(time)
       ) {
@@ -1624,6 +1637,7 @@ export function FloatingAudioPlayer() {
     saveAudioProgress,
     selectableTracks,
     setPlayerMinimized,
+    setIsPlaying,
   ]);
 
   const handleTrackSelect = useCallback(
@@ -1894,11 +1908,11 @@ export function FloatingAudioPlayer() {
     <div
       className={cn(
         "fixed left-1/2 z-50 w-full max-w-2xl -translate-x-1/2 select-none px-4",
-        "transition-[bottom] duration-300 ease-out",
+        "transition-[bottom] duration-300 ease-ou safe-area-bottom",
         isMinimized && "max-w-md",
         useTabBarSpace
-          ? "bottom-[calc(1rem+var(--app-safe-bottom,0px))]"
-          : "bottom-[calc(5rem+var(--app-safe-bottom,0px))]"
+          ? "bottom-4"
+          : "bottom-20"
       )}
       data-testid="floating-audio-player"
       data-minimized={isMinimized ? "true" : "false"}
