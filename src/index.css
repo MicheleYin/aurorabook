@@ -354,12 +354,18 @@
     box-sizing: border-box;
   }
 
-  /* Safe-area tokens — zeroed in reader immersive mode for edge-to-edge reading. */
+  /* Device insets always mirror the system env() values.
+   * --app-safe-* follow them normally, but are zeroed in reader immersive
+   * for edge-to-edge text. Floating chrome / sync scroll should use device tokens. */
   :root {
-    --app-safe-top: env(safe-area-inset-top, 0px);
-    --app-safe-right: env(safe-area-inset-right, 0px);
-    --app-safe-bottom: env(safe-area-inset-bottom, 0px);
-    --app-safe-left: env(safe-area-inset-left, 0px);
+    --app-device-safe-top: env(safe-area-inset-top, 0px);
+    --app-device-safe-right: env(safe-area-inset-right, 0px);
+    --app-device-safe-bottom: env(safe-area-inset-bottom, 0px);
+    --app-device-safe-left: env(safe-area-inset-left, 0px);
+    --app-safe-top: var(--app-device-safe-top);
+    --app-safe-right: var(--app-device-safe-right);
+    --app-safe-bottom: var(--app-device-safe-bottom);
+    --app-safe-left: var(--app-device-safe-left);
   }
 
   html[data-reader-immersive="true"] {

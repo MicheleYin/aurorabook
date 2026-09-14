@@ -16,6 +16,8 @@ import {
   resolvePlaybackMarker,
   chapterHrefForSync,
   readCssLengthPx,
+  readAppSafeTopPx,
+  readDeviceSafeTopPx,
   scrollTopToRevealRect,
   shouldRunSyncPass,
   uncoveredTopInsetPx,
@@ -188,6 +190,35 @@ describe("readCssLengthPx", () => {
     expect(readCssLengthPx(" 12.5px ")).toBe(12.5);
     expect(readCssLengthPx("")).toBe(0);
     expect(readCssLengthPx(undefined)).toBe(0);
+  });
+});
+
+describe("readDeviceSafeTopPx", () => {
+  it("prefers device safe-top and falls back to app safe-top", () => {
+    expect(
+      readDeviceSafeTopPx({
+        getPropertyValue: (name: string) =>
+          name === "--app-device-safe-top" ? "47px" : "0px",
+      } as CSSStyleDeclaration)
+    ).toBe(47);
+
+    expect(
+      readDeviceSafeTopPx({
+        getPropertyValue: (name: string) =>
+          name === "--app-safe-top" ? "12px" : "0px",
+      } as CSSStyleDeclaration)
+    ).toBe(12);
+
+    expect(readDeviceSafeTopPx(null)).toBe(0);
+  });
+
+  it("readAppSafeTopPx reads the app token", () => {
+    expect(
+      readAppSafeTopPx({
+        getPropertyValue: (name: string) =>
+          name === "--app-safe-top" ? "0px" : "47px",
+      } as CSSStyleDeclaration)
+    ).toBe(0);
   });
 });
 

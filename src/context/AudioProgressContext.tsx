@@ -45,6 +45,17 @@ export interface AudioProgressContextType {
   setIsLoadingAudio: Dispatch<SetStateAction<boolean>>;
   audioRef: React.RefObject<HTMLAudioElement | null>;
   blobUrlRef: React.RefObject<string | null>;
+  /** True when native AVPlayer is the audible source (iOS). */
+  isIosNativeAudio: boolean;
+  /** Shared play/pause UI state (native-authoritative on iOS). */
+  isPlaying: boolean;
+  setIsPlaying: (playing: boolean) => void;
+  /** Playback clock used by progress save + text sync (native on iOS). */
+  getPlaybackTime: () => number;
+  /** Whether audio is currently playing (AVPlayer on iOS, `<audio>` elsewhere). */
+  isPlaybackActive: () => boolean;
+  /** Mark native player load success; WebView stays muted / empty on iOS. */
+  markIosNativeReady: (ready: boolean) => void;
   loadAudioTrack: (
     bookId: string,
     track: AudioTrack,
@@ -117,6 +128,12 @@ export function AudioProgressProvider({
   const blobUrlRef = useRef<string | null>(null);
   // Last known position from the native AVPlayer (updated by native-player-event).
   const nativeTimeRef = useRef<number>(0);
+  /** True while AVPlayer reports playing (iOS). */
+  const iosPlayingRef = useRef(false);
+  /** True only after a successful ios_player_load / load_live. */
+  const iosNativeReadyRef = useRef(false);
+  const [isIosNativeAudio, setIsIosNativeAudio] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
   // Whether we're running on iOS (set async on mount, so starts false).
   const isIosRef = useRef<boolean>(false);
   const livePlaybackRequestRef = useRef({
@@ -129,6 +146,28 @@ export function AudioProgressProvider({
   const [playbackRate, setPlaybackRate] = useState(1);
   const [livePlaybackRequestVersion, setLivePlaybackRequestVersion] =
     useState(0);
+  const setPlayingState = useCallback((playing: boolean) => {
+    iosPlayingRef.current = playing;
+    setIsPlaying(playing);
+  }, []);
+
+  const getPlaybackTime = useCallback((): number => {
+    if (isIosRef.current) {
+      const nativeTime = nativeTimeRef.current;
+      return Number.isFinite(nativeTime) ? Math.max(0, nativeTime) : 0;
+    }
+    const webTime = audioRef.current?.currentTime ?? 0;
+    return Number.isFinite(webTime) ? Math.max(0, webTime) : 0;
+  }, []);
+
+  const isPlaybackActive = useCallback((): boolean => {
+    if (isIosRef.current) {
+      return iosPlayingRef.current;
+    }
+    const el = audioRef.current;
+    return Boolean(el && !el.paused && !el.ended);
+  }, []);
+
   const calculateAudioProgress = useCallback((): BookAudioState | null => {
     if (!currentAudioTrack) return null;
     return {
@@ -136,10 +175,10 @@ export function AudioProgressProvider({
       currentTrackHref:
         currentAudioTrack.href ?? currentAudioTrack.filePath,
       currentTrackIndex: currentAudioTrack.order,
-      currentTimeSeconds: audioRef.current?.currentTime ?? 0,
+      currentTimeSeconds: getPlaybackTime(),
       updatedAt: new Date().toISOString(),
     };
-  }, [currentAudioTrack]);
+  }, [currentAudioTrack, getPlaybackTime]);
   const saveAudioProgress = useCallback(
     async (book: Book) => {
       const audioState = calculateAudioProgress();
@@ -166,6 +205,11 @@ export function AudioProgressProvider({
       );
       setPlaybackRate(nextRate);
       void saveSettings({ audioPlaybackSpeed: nextRate });
+      if (isIosRef.current) {
+        void invoke("ios_player_set_rate", { rate: nextRate }).catch(
+          () => undefined
+        );
+      }
     },
     [audioRef, saveSettings]
   );
@@ -180,8 +224,22 @@ export function AudioProgressProvider({
     []
   );
 
-  // When the streaming server restarts (iOS app resume), reconnect the audio element.
+  const markIosNativeReady = useCallback((ready: boolean) => {
+    iosNativeReadyRef.current = ready;
+    // On iOS the WebView <audio> is visual-only — never audible, never loaded.
+    if (audioRef.current && isIosRef.current) {
+      audioRef.current.muted = true;
+      audioRef.current.volume = 0;
+      audioRef.current.removeAttribute("src");
+      audioRef.current.load();
+    }
+  }, []);
+
+  // When the streaming server restarts (desktop / WebView fallback only).
+  // On iOS AVPlayer owns playback and does not use the local HTTP server.
   useEffect(() => {
+    if (isIosNativeAudio) return;
+
     const currentTrackRef = { current: currentAudioTrack };
     currentTrackRef.current = currentAudioTrack;
 
@@ -215,44 +273,71 @@ export function AudioProgressProvider({
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [currentAudioTrack, audioRef]);
+  }, [currentAudioTrack, audioRef, isIosNativeAudio]);
 
   // Detect iOS once on mount (plugin-os `type()` is async).
   useEffect(() => {
     void (async () => {
       try {
-        isIosRef.current = (await type()) === "ios";
+        const ios = (await type()) === "ios";
+        isIosRef.current = ios;
+        setIsIosNativeAudio(ios);
+        if (ios && audioRef.current) {
+          audioRef.current.muted = true;
+          audioRef.current.volume = 0;
+        }
       } catch {
         isIosRef.current = false;
+        setIsIosNativeAudio(false);
       }
     })();
   }, []);
 
-  // Listen for native-player-event (AVPlayer callbacks from Swift).
+  // Native → app bridge: update progress clock + forward UI events.
+  // Never drive WebView play/pause/seek — AVPlayer is the only engine on iOS.
   useEffect(() => {
     const unlisten = listen<{ type: string; time?: number }>(
       "native-player-event",
       (event) => {
-        const result = applyNativePlayerEvent(
-          event.payload,
-          audioRef.current?.currentTime ?? null
-        );
+        const result = applyNativePlayerEvent(event.payload);
         if (result.nativeTime !== null) {
           nativeTimeRef.current = result.nativeTime;
         }
-        if (result.seekWebViewTo !== null && audioRef.current) {
-          audioRef.current.currentTime = result.seekWebViewTo;
+        // Periodic timeUpdate callbacks only fire while AVPlayer is playing.
+        if (event.payload.type === "timeUpdate") {
+          setPlayingState(true);
+        }
+        if (result.playing === true) {
+          setPlayingState(true);
+        } else if (result.playing === false) {
+          setPlayingState(false);
+        }
+
+        if (result.shouldNext) {
+          window.dispatchEvent(
+            new CustomEvent("aurora-native-skip", { detail: "next" })
+          );
+        }
+        if (result.shouldPrev) {
+          window.dispatchEvent(
+            new CustomEvent("aurora-native-skip", { detail: "prev" })
+          );
         }
         if (result.synthesiseEnded) {
-          audioRef.current?.dispatchEvent(new Event("ended"));
+          setPlayingState(false);
+          window.dispatchEvent(new CustomEvent("aurora-native-ended"));
         }
+        // Re-broadcast for FloatingAudioPlayer UI (visual consumer only).
+        window.dispatchEvent(
+          new CustomEvent("aurora-native-ui", { detail: event.payload })
+        );
       }
     );
 
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [audioRef]);
+  }, [setPlayingState]);
 
   // Load playback speed from shared app settings
   useEffect(() => {
@@ -293,79 +378,93 @@ export function AudioProgressProvider({
 
       if (
         isSameTrack &&
-        savedState?.currentTimeSeconds !== undefined &&
-        audioRef.current
+        savedState?.currentTimeSeconds !== undefined
       ) {
-        const savedTime = savedState.currentTimeSeconds;
-        const applySavedTime = () => {
-          if (!audioRef.current) return;
+        const savedTime = Math.max(0, savedState.currentTimeSeconds);
+        nativeTimeRef.current = savedTime;
 
-          const audio = audioRef.current;
-          const hasFiniteDuration = Number.isFinite(audio.duration) && audio.duration > 0;
-          const maxSeek = hasFiniteDuration ? audio.duration : savedTime;
-
-          let minSeek = 0;
-          if (audio.seekable.length > 0) {
-            const seekableStart = audio.seekable.start(0);
-            if (Number.isFinite(seekableStart) && seekableStart >= 0) {
-              minSeek = seekableStart;
-            }
-          }
-
-          const targetTime = Math.max(minSeek, Math.min(savedTime, maxSeek));
-
-          logger.info("[audio-restore] applying saved timestamp", {
+        if (isIosRef.current && iosNativeReadyRef.current) {
+          logger.info("[audio-restore] seeking native player", {
             bookId: book.id,
             trackId: track.id,
             savedTime,
-            minSeek,
-            maxSeek,
-            targetTime,
-            readyState: audio.readyState,
           });
+          void invoke("ios_player_seek", { seconds: savedTime }).catch(
+            () => undefined
+          );
+        } else if (audioRef.current) {
+          const applySavedTime = () => {
+            if (!audioRef.current) return;
 
-          try {
-            audio.currentTime = targetTime;
-          } catch (err) {
-            logger.warn("Failed restoring saved audio timestamp:", err);
-          }
-        };
+            const audio = audioRef.current;
+            const hasFiniteDuration =
+              Number.isFinite(audio.duration) && audio.duration > 0;
+            const maxSeek = hasFiniteDuration ? audio.duration : savedTime;
 
-        // `loadAudioTrack` may already have loaded metadata before this runs.
-        if (audioRef.current.readyState >= 1) {
-          applySavedTime();
-        } else {
-          const handleAudioReady = () => {
+            let minSeek = 0;
+            if (audio.seekable.length > 0) {
+              const seekableStart = audio.seekable.start(0);
+              if (Number.isFinite(seekableStart) && seekableStart >= 0) {
+                minSeek = seekableStart;
+              }
+            }
+
+            const targetTime = Math.max(minSeek, Math.min(savedTime, maxSeek));
+
+            logger.info("[audio-restore] applying saved timestamp", {
+              bookId: book.id,
+              trackId: track.id,
+              savedTime,
+              minSeek,
+              maxSeek,
+              targetTime,
+              readyState: audio.readyState,
+            });
+
+            try {
+              audio.currentTime = targetTime;
+            } catch (err) {
+              logger.warn("Failed restoring saved audio timestamp:", err);
+            }
+          };
+
+          if (audioRef.current.readyState >= 1) {
             applySavedTime();
-            audioRef.current?.removeEventListener(
+          } else {
+            const handleAudioReady = () => {
+              applySavedTime();
+              audioRef.current?.removeEventListener(
+                "loadedmetadata",
+                handleAudioReady
+              );
+              audioRef.current?.removeEventListener(
+                "loadeddata",
+                handleAudioReady
+              );
+              audioRef.current?.removeEventListener(
+                "canplay",
+                handleAudioReady
+              );
+            };
+            audioRef.current.addEventListener(
               "loadedmetadata",
               handleAudioReady
             );
-            audioRef.current?.removeEventListener(
-              "loadeddata",
-              handleAudioReady
-            );
-            audioRef.current?.removeEventListener(
-              "canplay",
-              handleAudioReady
-            );
-          };
-          audioRef.current.addEventListener(
-            "loadedmetadata",
-            handleAudioReady
-          );
-          audioRef.current.addEventListener(
-            "loadeddata",
-            handleAudioReady
-          );
-          audioRef.current.addEventListener(
-            "canplay",
-            handleAudioReady
-          );
+            audioRef.current.addEventListener("loadeddata", handleAudioReady);
+            audioRef.current.addEventListener("canplay", handleAudioReady);
+          }
         }
+      } else if (isIosRef.current && iosNativeReadyRef.current) {
+        // Different track: start at 0 so the previous chapter's clock cannot stick.
+        nativeTimeRef.current = 0;
+        void invoke("ios_player_seek", { seconds: 0 }).catch(() => undefined);
       }
       if (autoPlayAudio) {
-        audioRef.current?.play();
+        if (isIosRef.current && iosNativeReadyRef.current) {
+          void invoke("ios_player_play").catch(() => undefined);
+        } else {
+          audioRef.current?.play().catch(() => undefined);
+        }
       }
     },
     [audioRef]
@@ -408,6 +507,8 @@ export function AudioProgressProvider({
   const loadAudioTrack = useCallback(
     async (bookId: string, track: AudioTrack, book: Book) => {
       setIsLoadingAudio(true);
+      // New track = new clock. Don't let the previous native position leak into UI/saves.
+      nativeTimeRef.current = 0;
       try {
         const chapterIndex = resolveTrackChapterIndex(book, track);
 
@@ -489,7 +590,56 @@ export function AudioProgressProvider({
           return;
         }
 
-        // Non-live: load a completed audio track via HTTP stream URL.
+        // Non-live: iOS loads native AVPlayer only; desktop uses HTTP stream URL.
+        if (isIosRef.current) {
+          if (blobUrlRef.current) {
+            URL.revokeObjectURL(blobUrlRef.current);
+            blobUrlRef.current = null;
+          }
+
+          if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.removeAttribute("src");
+            audioRef.current.load();
+            audioRef.current.muted = true;
+            audioRef.current.volume = 0;
+            audioRef.current.currentTime = 0;
+          }
+
+          const mimeType = mimeTypeFromTrackHref(track.href);
+          setCurrentAudioTrack({
+            ...track,
+            mimeType,
+            isLiveStream: false,
+            liveChapterIndex: undefined,
+          });
+
+          try {
+            await invoke("ios_player_load", {
+              options: {
+                bookId,
+                trackId: track.id,
+                title: trackDisplayTitle(track.title, track.order),
+                artist: book.author ?? "",
+                duration: track.duration ?? 0,
+                coverUrl: book.coverUrl ?? null,
+              },
+            });
+            iosNativeReadyRef.current = true;
+            void invoke("ios_player_set_rate", { rate: playbackRate }).catch(
+              () => undefined
+            );
+          } catch (err: unknown) {
+            iosNativeReadyRef.current = false;
+            logger.error("ios_player_load failed:", err);
+            toast.error("Failed to load audio on device");
+            throw err;
+          }
+
+          setMediaSessionMetadata();
+          return;
+        }
+
         let streamUrl: string;
         try {
           streamUrl = await invoke<string>("get_audio_stream_url", {
@@ -572,32 +722,6 @@ export function AudioProgressProvider({
             applyMediaPlaybackRate(audioRef.current, playbackRate);
 
             await waitForAudioReady();
-
-            // Mirror WebView audio events into the native AVPlayer so the lock
-            // screen always reflects what the in-app player is doing.
-            if (isIosRef.current) {
-              const el = audioRef.current;
-              const onPlay = () =>
-                void invoke("ios_player_play").catch(() => undefined);
-              const onPause = () =>
-                void invoke("ios_player_pause").catch(() => undefined);
-              const onSeeked = () =>
-                void invoke("ios_player_seek", {
-                  seconds: el.currentTime,
-                }).catch(() => undefined);
-              const onRate = () =>
-                void invoke("ios_player_set_rate", {
-                  rate: el.playbackRate,
-                }).catch(() => undefined);
-              el.removeEventListener("play", onPlay);
-              el.removeEventListener("pause", onPause);
-              el.removeEventListener("seeked", onSeeked);
-              el.removeEventListener("ratechange", onRate);
-              el.addEventListener("play", onPlay);
-              el.addEventListener("pause", onPause);
-              el.addEventListener("seeked", onSeeked);
-              el.addEventListener("ratechange", onRate);
-            }
           }
 
           // Get MIME type from track href for metadata
@@ -609,18 +733,6 @@ export function AudioProgressProvider({
             isLiveStream: false,
             liveChapterIndex: undefined,
           });
-
-          if (isIosRef.current) {
-            void invoke("ios_player_load", {
-              bookId,
-              trackId: track.id,
-              title: trackDisplayTitle(track.title, track.order),
-              artist: book.author ?? "",
-              duration: track.duration ?? 0,
-            }).catch((err: unknown) =>
-              logger.warn("ios_player_load failed (non-fatal):", err)
-            );
-          }
 
           setMediaSessionMetadata();
         }
@@ -857,12 +969,7 @@ export function AudioProgressProvider({
   const closeAudioPlayer = useCallback(
     async (book: Book, options?: { skipSave?: boolean }) => {
       // Save progress before closing if we have a track and book
-      if (
-        !options?.skipSave &&
-        audioRef.current &&
-        currentAudioTrack &&
-        !Number.isNaN(audioRef.current.currentTime)
-      ) {
+      if (!options?.skipSave && currentAudioTrack) {
         try {
           await saveAudioProgress(book);
         } catch (err) {
@@ -870,12 +977,30 @@ export function AudioProgressProvider({
         }
       }
 
-      // Stop playback
+      if (isIosRef.current) {
+        void invoke("ios_player_pause").catch(() => undefined);
+        void invoke("ios_player_set_expects_more", { expectsMore: false }).catch(
+          () => undefined
+        );
+      }
+
+      // Stop WebView playback (desktop) / clear visual element (iOS)
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.currentTime = 0;
-        audioRef.current.src = "";
+        audioRef.current.removeAttribute("src");
+        audioRef.current.load();
+        if (isIosRef.current) {
+          audioRef.current.muted = true;
+          audioRef.current.volume = 0;
+        } else {
+          audioRef.current.muted = false;
+          audioRef.current.volume = 1;
+        }
       }
+      iosNativeReadyRef.current = false;
+      nativeTimeRef.current = 0;
+      setPlayingState(false);
 
       // Clean up blob URL
       if (blobUrlRef.current) {
@@ -891,8 +1016,35 @@ export function AudioProgressProvider({
         navigator.mediaSession.metadata = null;
       }
     },
-    [currentAudioTrack, saveAudioProgress]
+    [currentAudioTrack, saveAudioProgress, setPlayingState]
   );
+
+  // Reconcile in-app play/pause with AVPlayer (covers missed events / Control Center).
+  useEffect(() => {
+    if (!isIosNativeAudio || !currentAudioTrack) return;
+
+    let cancelled = false;
+    const syncPlaying = async () => {
+      try {
+        const playing = await invoke<boolean>("ios_player_is_playing");
+        if (!cancelled) {
+          setPlayingState(playing);
+        }
+      } catch {
+        // Native bridge unavailable — keep last known state.
+      }
+    };
+
+    void syncPlaying();
+    const intervalId = window.setInterval(() => {
+      void syncPlaying();
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [currentAudioTrack, isIosNativeAudio, setPlayingState]);
 
   // Cleanup blob URL on unmount
   useEffect(() => {
@@ -912,6 +1064,12 @@ export function AudioProgressProvider({
       setIsLoadingAudio,
       audioRef,
       blobUrlRef,
+      isIosNativeAudio,
+      isPlaying,
+      setIsPlaying: setPlayingState,
+      getPlaybackTime,
+      isPlaybackActive,
+      markIosNativeReady,
       loadAudioTrack,
       loadLastOpenedAudioTrack,
       closeAudioPlayer,
@@ -927,6 +1085,12 @@ export function AudioProgressProvider({
     [
       currentAudioTrack,
       isLoadingAudio,
+      isIosNativeAudio,
+      isPlaying,
+      setPlayingState,
+      getPlaybackTime,
+      isPlaybackActive,
+      markIosNativeReady,
       loadAudioTrack,
       loadLastOpenedAudioTrack,
       closeAudioPlayer,

@@ -27,7 +27,7 @@ import { useChapterProgressContext } from "@/context/ChapterProgressContext";
 import { useConversionState } from "@/context/ConversionStateContext";
 import { useSettingsContext } from "@/context/SettingsContext";
 
-import { applyMediaPlaybackRate } from "../../lib/audio-progress-utils";
+import { applyMediaPlaybackRate, mimeTypeFromTrackHref } from "../../lib/audio-progress-utils";
 import {
   liveStreamPlaybackUrl,
   shouldHoldLivePlayback,
@@ -55,6 +55,7 @@ export function FloatingAudioPlayer() {
     setCurrentAudioTrack,
     isLoadingAudio,
     loadAudioTrack,
+    loadLastOpenedAudioTrack,
     closeAudioPlayer,
     calculateAudioProgress,
     saveAudioProgress,
@@ -64,6 +65,10 @@ export function FloatingAudioPlayer() {
     livePlaybackRequestRef,
     queueLivePlaybackRequest,
     livePlaybackRequestVersion,
+    isIosNativeAudio,
+    isPlaying,
+    setIsPlaying,
+    markIosNativeReady,
   } = useAudioProgressContext();
   const { library, setLibrary, currentBook, setCurrentBook, currentTab } =
     useAppContext();
@@ -80,7 +85,6 @@ export function FloatingAudioPlayer() {
   // Local state for UI updates (only this component re-renders)
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [isTracksOpen, setIsTracksOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(
     () => settings?.audioPlayerMinimized ?? false
@@ -93,6 +97,8 @@ export function FloatingAudioPlayer() {
   const lastLiveBoundaryRefreshAtRef = useRef(0);
   const waitingForLiveChunksRef = useRef(false);
   const heldLiveTimeRef = useRef(0);
+  const currentTimeRef = useRef(0);
+  const liveGeneratedDurationRef = useRef(0);
   const currentBookRef = useRef(currentBook);
   const currentAudioTrackRef = useRef(currentAudioTrack);
   const liveChapterIndexRef = useRef(-1);
@@ -120,12 +126,37 @@ export function FloatingAudioPlayer() {
     currentAudioTrackRef.current = currentAudioTrack;
   }, [currentAudioTrack]);
 
+  // Keep the visual clock/duration aligned when the active track identity changes.
+  // On iOS the <audio> element is empty, so metadata events never reset these.
+  useEffect(() => {
+    if (!currentAudioTrack) return;
+    const trackDuration =
+      typeof currentAudioTrack.duration === "number" &&
+      currentAudioTrack.duration > 0
+        ? currentAudioTrack.duration
+        : 0;
+    setDuration((prev) => (trackDuration > 0 ? trackDuration : prev));
+  }, [currentAudioTrack?.id, currentAudioTrack?.duration]);
+
+  useEffect(() => {
+    currentTimeRef.current = currentTime;
+  }, [currentTime]);
+
+  useEffect(() => {
+    liveGeneratedDurationRef.current = liveGeneratedDuration;
+  }, [liveGeneratedDuration]);
+
   useEffect(() => {
     playbackRateRef.current = playbackRate;
     if (audioRef.current) {
       applyMediaPlaybackRate(audioRef.current, playbackRate);
     }
-  }, [audioRef, playbackRate]);
+    if (isIosNativeAudio) {
+      void invoke("ios_player_set_rate", { rate: playbackRate }).catch(
+        () => undefined
+      );
+    }
+  }, [audioRef, isIosNativeAudio, playbackRate]);
 
   useEffect(() => {
     if (!currentBook) return;
@@ -360,20 +391,25 @@ export function FloatingAudioPlayer() {
     return selectableTracks.findIndex((track) => track.id === currentAudioTrack.id);
   }, [currentAudioTrack, selectableTracks]);
 
-  // Update UI state from audio element (throttled to reduce re-renders)
+  // Update UI state from audio element (desktop / WebView path only).
+  // On iOS AVPlayer is authoritative — see aurora-native-ui / aurora-native-ended.
   useEffect(() => {
-    if (!audioRef.current || !currentAudioTrack) return;
+    if (isIosNativeAudio || !audioRef.current || !currentAudioTrack) return;
 
     // Update on interval (throttled to ~10fps for smooth UI)
     const updateState = () => {
-      if (audioRef.current) {
-        setCurrentTime(audioRef.current.currentTime);
-        const nextDuration = audioRef.current.duration;
-        setDuration(
-          Number.isFinite(nextDuration) && nextDuration > 0 ? nextDuration : 0
-        );
-        setIsPlaying(!audioRef.current.paused);
-      }
+      if (!audioRef.current) return;
+      setCurrentTime(audioRef.current.currentTime);
+      setIsPlaying(!audioRef.current.paused);
+      const nextDuration = audioRef.current.duration;
+      const trackDuration = currentAudioTrack?.duration ?? 0;
+      setDuration(
+        Number.isFinite(nextDuration) && nextDuration > 0
+          ? nextDuration
+          : trackDuration > 0
+            ? trackDuration
+            : 0
+      );
     };
 
     const timeoutId = setTimeout(updateState, 0);
@@ -444,16 +480,16 @@ export function FloatingAudioPlayer() {
       ) {
         playbackIntentRef.current = true;
         const nextTrack = selectableTracks[currentTrackPosition + 1];
-          const isLiveNextTrack = Boolean(nextTrack.id?.startsWith('live-'));
-          if (isLiveNextTrack) {
-            queueLivePlaybackRequest(0, true);
-          }
-          await loadAudioTrack(currentBook.id, nextTrack, currentBook);
-          if (!isLiveNextTrack) {
-            restoreAudioProgress(currentBook, nextTrack, true);
-          }
-        } else {
-          playbackIntentRef.current = false;
+        const isLiveNextTrack = Boolean(nextTrack.id?.startsWith("live-"));
+        if (isLiveNextTrack) {
+          queueLivePlaybackRequest(0, true);
+        }
+        await loadAudioTrack(currentBook.id, nextTrack, currentBook);
+        if (!isLiveNextTrack) {
+          restoreAudioProgress(currentBook, nextTrack, true);
+        }
+      } else {
+        playbackIntentRef.current = false;
       }
     };
 
@@ -483,27 +519,29 @@ export function FloatingAudioPlayer() {
     restoreAudioProgress,
     currentAudioTrack,
     liveGeneratedDuration,
+    isIosNativeAudio,
   ]);
 
   // Auto-save progress every 2 seconds
   useEffect(() => {
-    if (!currentBook || !currentAudioTrack || !audioRef.current) return;
+    if (!currentBook || !currentAudioTrack) return;
 
     const saveProgressInterval = setInterval(() => {
-      if (
-        audioRef.current &&
-        currentAudioTrack &&
-        !Number.isNaN(audioRef.current.currentTime) &&
-        audioRef.current.currentTime > 0
-      ) {
-        saveAudioProgress(currentBook);
+      const state = calculateAudioProgress();
+      if (state && state.currentTimeSeconds > 0) {
+        void saveAudioProgress(currentBook);
       }
     }, 2000);
 
     return () => {
       clearInterval(saveProgressInterval);
     };
-  }, [currentBook, currentAudioTrack, audioRef, saveAudioProgress]);
+  }, [
+    currentBook,
+    currentAudioTrack,
+    calculateAudioProgress,
+    saveAudioProgress,
+  ]);
 
   const hasNextTrack = useMemo(
     () => currentTrackPosition >= 0 && currentTrackPosition < selectableTracks.length - 1,
@@ -518,59 +556,130 @@ export function FloatingAudioPlayer() {
     async (track: AudioTrack) => {
       if (!currentBook) return;
 
-      if (
-        audioRef.current &&
-        currentAudioTrack &&
-        !Number.isNaN(audioRef.current.currentTime)
-      ) {
-        saveAudioProgress(currentBook);
+      // Optimistically update the visible track so title/duration don't lag native audio.
+      const trackDuration =
+        typeof track.duration === "number" && track.duration > 0
+          ? track.duration
+          : 0;
+      setCurrentTime(0);
+      setDuration(trackDuration);
+      setCurrentAudioTrack({
+        ...track,
+        mimeType: mimeTypeFromTrackHref(track.href),
+        isLiveStream: Boolean(track.id?.startsWith("live-")),
+        liveChapterIndex: track.id?.startsWith("live-")
+          ? track.order
+          : undefined,
+      });
+
+      let bookForRestore = currentBook;
+      if (currentAudioTrack) {
+        const audioState = calculateAudioProgress();
+        if (audioState) {
+          bookForRestore = { ...currentBook, audioState };
+          setCurrentBook(bookForRestore);
+          void saveAudioProgress(bookForRestore);
+        }
       }
 
       const shouldResumePlayback = playbackIntentRef.current;
-      if (audioRef.current) {
+      if (isIosNativeAudio) {
+        void invoke("ios_player_pause").catch(() => undefined);
+      } else if (audioRef.current) {
         audioRef.current.pause();
       }
 
-      const isLiveTrack = Boolean(track.id?.startsWith('live-'));
+      const isLiveTrack = Boolean(track.id?.startsWith("live-"));
       if (isLiveTrack) {
-        const savedState = currentBook.audioState;
+        const savedState = bookForRestore.audioState;
         const trackHref = track.href || track.filePath;
         const savedTrackMatches = Boolean(
           savedState &&
-            (
-              savedState.currentTrackId === track.id ||
+            (savedState.currentTrackId === track.id ||
               (savedState.currentTrackHref &&
                 trackHref &&
                 savedState.currentTrackHref === trackHref) ||
               (savedState.currentTrackIndex !== undefined &&
-                savedState.currentTrackIndex === track.order)
-            )
+                savedState.currentTrackIndex === track.order))
         );
 
         queueLivePlaybackRequest(
-          savedTrackMatches ? Math.max(0, savedState?.currentTimeSeconds ?? 0) : 0,
+          savedTrackMatches
+            ? Math.max(0, savedState?.currentTimeSeconds ?? 0)
+            : 0,
           shouldResumePlayback
         );
       }
 
-      await loadAudioTrack(currentBook.id, track, currentBook);
+      await loadAudioTrack(currentBook.id, track, bookForRestore);
 
       if (!isLiveTrack) {
-        restoreAudioProgress(currentBook, track, shouldResumePlayback);
+        const savedState = bookForRestore.audioState;
+        const trackHref = track.href || track.filePath;
+        const savedTrackMatches = Boolean(
+          savedState &&
+            (savedState.currentTrackId === track.id ||
+              (savedState.currentTrackHref &&
+                trackHref &&
+                savedState.currentTrackHref === trackHref) ||
+              (savedState.currentTrackIndex !== undefined &&
+                savedState.currentTrackIndex === track.order))
+        );
+        if (savedTrackMatches && savedState?.currentTimeSeconds !== undefined) {
+          setCurrentTime(Math.max(0, savedState.currentTimeSeconds));
+        } else {
+          setCurrentTime(0);
+        }
+
+        restoreAudioProgress(bookForRestore, track, shouldResumePlayback);
+        if (shouldResumePlayback && isIosNativeAudio) {
+          void invoke("ios_player_set_rate", {
+            rate: playbackRateRef.current,
+          }).catch(() => undefined);
+          void invoke("ios_player_play").catch(() => undefined);
+          setIsPlaying(true);
+        }
       }
     },
     [
       audioRef,
+      calculateAudioProgress,
       currentAudioTrack,
       currentBook,
+      isIosNativeAudio,
       loadAudioTrack,
       restoreAudioProgress,
       saveAudioProgress,
       queueLivePlaybackRequest,
+      setCurrentBook,
+      setCurrentAudioTrack,
     ]
   );
 
   const handlePlayPause = useCallback(async () => {
+    if (isIosNativeAudio) {
+      // Ask AVPlayer — never trust a stale UI icon for the toggle direction.
+      let playing = false;
+      try {
+        playing = await invoke<boolean>("ios_player_is_playing");
+      } catch {
+        playing = isPlaying;
+      }
+
+      if (playing) {
+        playbackIntentRef.current = false;
+        void invoke("ios_player_pause").catch(() => undefined);
+      } else {
+        playbackIntentRef.current = true;
+        void invoke("ios_player_set_rate", { rate: playbackRate }).catch(
+          () => undefined
+        );
+        void invoke("ios_player_play").catch(() => undefined);
+      }
+      // Icon state comes from timeControlStatus events + reconcile poll.
+      return;
+    }
+
     if (!audioRef.current) return;
 
     if (isPlaying) {
@@ -587,7 +696,7 @@ export function FloatingAudioPlayer() {
         logger.error("Failed to play audio:", err);
       }
     }
-  }, [audioRef, isPlaying, playbackRate]);
+  }, [audioRef, isIosNativeAudio, isPlaying, playbackRate]);
 
   const isLiveStream = useMemo(
     () => Boolean(currentAudioTrack?.isLiveStream),
@@ -601,6 +710,15 @@ export function FloatingAudioPlayer() {
     const href = currentAudioTrack.chapterHref;
     return Boolean(href && (currentBook.completedChapters ?? []).includes(href));
   }, [currentAudioTrack, currentBook, isLiveStream]);
+
+  useEffect(() => {
+    if (!isIosNativeAudio || !isLiveStream) {
+      return;
+    }
+    void invoke("ios_player_set_expects_more", {
+      expectsMore: !liveChapterCompleted,
+    }).catch(() => undefined);
+  }, [isIosNativeAudio, isLiveStream, liveChapterCompleted]);
 
   const liveChapterIndex = useMemo(() => {
     if (!currentAudioTrack) {
@@ -625,10 +743,15 @@ export function FloatingAudioPlayer() {
   }, [currentAudioTrack, currentBook, isLiveStream, liveChapterIndex]);
 
   const liveWindow = useMemo(() => {
-    const fallbackEnd = Math.max(currentTime, duration, 0);
+    const fallbackEnd = Math.max(
+      currentTime,
+      duration,
+      isIosNativeAudio ? liveGeneratedDuration : 0,
+      0
+    );
     const audio = audioRef.current;
 
-    if (!isLiveStream || !audio) {
+    if (!isLiveStream || !audio || isIosNativeAudio) {
       return { start: 0, end: fallbackEnd };
     }
 
@@ -675,7 +798,14 @@ export function FloatingAudioPlayer() {
     }
 
     return { start, end };
-  }, [audioRef, currentTime, duration, isLiveStream]);
+  }, [
+    audioRef,
+    currentTime,
+    duration,
+    isIosNativeAudio,
+    isLiveStream,
+    liveGeneratedDuration,
+  ]);
 
   const timelineMin = useMemo(
     () => (isLiveStream ? Math.max(0, liveWindow.start) : 0),
@@ -791,6 +921,23 @@ export function FloatingAudioPlayer() {
 
     const refreshLiveDuration = async () => {
       try {
+        if (isIosNativeAudio) {
+          const status = await invoke<{
+            durationSeconds: number;
+            byteLength: number;
+          }>("ios_player_refresh_live", {
+            bookId: currentBook.id,
+            chapterIndex,
+          });
+          if (!cancelled && Number.isFinite(status.durationSeconds)) {
+            setLiveGeneratedDuration((prev) =>
+              Math.max(prev, status.durationSeconds)
+            );
+            setDuration((prev) => Math.max(prev, status.durationSeconds));
+          }
+          return;
+        }
+
         const nextDuration = await invoke<number>("get_live_chapter_duration", {
           bookId: currentBook.id,
           chapterIndex,
@@ -813,7 +960,7 @@ export function FloatingAudioPlayer() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [isLiveStream, currentBook, currentAudioTrack]);
+  }, [isIosNativeAudio, isLiveStream, currentBook, currentAudioTrack]);
 
   useEffect(() => {
     if (!isLiveStream || !audioRef.current || !liveStreamSourceKey) {
@@ -859,8 +1006,40 @@ export function FloatingAudioPlayer() {
 
     let cancelled = false;
 
-    const applySeekAndPlayback = async () => {
-      if (cancelled || requestId !== liveReloadRequestIdRef.current || !audioRef.current) {
+    const applySeekAndPlayback = async (maxSeekHint?: number) => {
+      if (cancelled || requestId !== liveReloadRequestIdRef.current) {
+        return;
+      }
+
+      const target = Math.max(
+        0,
+        Math.min(
+          resumeTime,
+          typeof maxSeekHint === "number" && maxSeekHint > 0
+            ? maxSeekHint
+            : resumeTime
+        )
+      );
+
+      if (isIosNativeAudio) {
+        if (Number.isFinite(target) && target >= 0) {
+          setCurrentTime(target);
+          void invoke("ios_player_seek", { seconds: target }).catch(
+            () => undefined
+          );
+        }
+        if (wasPlaying) {
+          playbackIntentRef.current = true;
+          void invoke("ios_player_set_rate", {
+            rate: playbackRateRef.current,
+          }).catch(() => undefined);
+          void invoke("ios_player_play").catch(() => undefined);
+          setIsPlaying(true);
+        }
+        return;
+      }
+
+      if (!audioRef.current) {
         return;
       }
 
@@ -868,20 +1047,22 @@ export function FloatingAudioPlayer() {
       let minSeek = 0;
       let maxSeek = resumeTime;
 
-      if (audioEl.seekable.length > 0) {
+      if (typeof maxSeekHint === "number" && maxSeekHint > 0) {
+        maxSeek = maxSeekHint;
+      } else if (audioEl.seekable.length > 0) {
         minSeek = Math.max(0, audioEl.seekable.start(0));
         maxSeek = audioEl.seekable.end(audioEl.seekable.length - 1);
       } else if (Number.isFinite(audioEl.duration) && audioEl.duration > 0) {
         maxSeek = audioEl.duration;
       }
 
-      const target = Math.max(minSeek, Math.min(resumeTime, maxSeek));
+      const webTarget = Math.max(minSeek, Math.min(resumeTime, maxSeek));
       applyMediaPlaybackRate(audioEl, playbackRateRef.current);
 
-      if (Number.isFinite(target) && target >= 0) {
+      if (Number.isFinite(webTarget) && webTarget >= 0) {
         try {
-          audioEl.currentTime = target;
-          setCurrentTime(target);
+          audioEl.currentTime = webTarget;
+          setCurrentTime(webTarget);
         } catch (err) {
           logger.warn("Failed to apply live seek target:", err);
         }
@@ -889,6 +1070,7 @@ export function FloatingAudioPlayer() {
 
       if (wasPlaying) {
         try {
+          playbackIntentRef.current = true;
           await audioEl.play();
           applyMediaPlaybackRate(audioEl, playbackRateRef.current);
         } catch (err) {
@@ -899,6 +1081,39 @@ export function FloatingAudioPlayer() {
 
     const loadLiveStream = async () => {
       try {
+        if (isIosNativeAudio) {
+          try {
+            const status = await invoke<{
+              durationSeconds: number;
+              byteLength: number;
+            }>("ios_player_load_live", {
+              options: {
+                bookId,
+                chapterIndex,
+                title: activeTrack.title ?? `Chapter ${chapterIndex + 1}`,
+                artist: activeBook.author ?? "",
+                coverUrl: activeBook.coverUrl ?? null,
+              },
+            });
+
+            if (cancelled || requestId !== liveReloadRequestIdRef.current) {
+              return;
+            }
+
+            markIosNativeReady(true);
+            setLiveGeneratedDuration((prev) =>
+              Math.max(prev, status.durationSeconds)
+            );
+            setDuration((prev) => Math.max(prev, status.durationSeconds));
+            await applySeekAndPlayback(status.durationSeconds);
+            return;
+          } catch (nativeErr) {
+            markIosNativeReady(false);
+            logger.error("ios_player_load_live failed:", nativeErr);
+            return;
+          }
+        }
+
         const baseUrl = await invoke<string>("get_audio_live_stream_url", {
           bookId,
           chapterIndex,
@@ -945,10 +1160,12 @@ export function FloatingAudioPlayer() {
     };
   }, [
     audioRef,
+    isIosNativeAudio,
     isLiveStream,
     livePlaybackRequestRef,
     livePlaybackRequestVersion,
     liveStreamSourceKey,
+    markIosNativeReady,
   ]);
 
   const refreshLiveSourceAtTime = useCallback(
@@ -988,6 +1205,12 @@ export function FloatingAudioPlayer() {
   const maybeRefreshLiveAtBoundary = useCallback(
     (reason: "progress" | "waiting" | "stalled" | "ended") => {
       if (!isLiveStream || !currentBook || !currentAudioTrack || !audioRef.current) {
+        return;
+      }
+
+      // iOS live playback uses a growing native file; AVPlayer reload is driven by
+      // ios_player_refresh_live, not WebView HTTP snapshot reloads.
+      if (isIosNativeAudio) {
         return;
       }
 
@@ -1052,6 +1275,7 @@ export function FloatingAudioPlayer() {
       audioRef,
       currentAudioTrack,
       currentBook,
+      isIosNativeAudio,
       isLiveStream,
       isLoadingAudio,
       liveGeneratedDuration,
@@ -1125,42 +1349,78 @@ export function FloatingAudioPlayer() {
     ) {
       return;
     }
+    if (isIosNativeAudio) {
+      if (isPlaying) {
+        waitingForLiveChunksRef.current = false;
+        return;
+      }
+      waitingForLiveChunksRef.current = false;
+      playbackIntentRef.current = true;
+      void invoke("ios_player_seek", {
+        seconds: heldLiveTimeRef.current,
+      }).catch(() => undefined);
+      void invoke("ios_player_play").catch(() => undefined);
+      setIsPlaying(true);
+      return;
+    }
     const audio = audioRef.current;
     if (audio && !audio.paused && !audio.ended) {
       waitingForLiveChunksRef.current = false;
       return;
     }
     void refreshLiveSourceAtTime(heldLiveTimeRef.current);
-  }, [audioRef, isLiveStream, liveGeneratedDuration, refreshLiveSourceAtTime]);
+  }, [
+    audioRef,
+    isIosNativeAudio,
+    isLiveStream,
+    isPlaying,
+    liveGeneratedDuration,
+    refreshLiveSourceAtTime,
+  ]);
 
   const handleSeek = useCallback(
     (value: number[]) => {
-      if (audioRef.current) {
-        const requestedTime = Math.max(timelineMin, value[0]);
+      const requestedTime = Math.max(timelineMin, value[0]);
 
-        if (
-          isLiveStream &&
-          (requestedTime > seekMax + 0.25 || seekMax <= seekMin + 0.05) &&
-          requestedTime <= timelineMax
-        ) {
-          // Reload live stream at target time when the browser seekable window is stale.
-          void refreshLiveSourceAtTime(requestedTime);
-          return;
-        }
+      if (isIosNativeAudio) {
+        const nextTime = isLiveStream
+          ? Math.min(
+              Math.max(liveGeneratedDuration, seekMax, timelineMax),
+              Math.max(seekMin, requestedTime)
+            )
+          : Math.max(0, requestedTime);
+        setCurrentTime(nextTime);
+        void invoke("ios_player_seek", { seconds: nextTime }).catch(
+          () => undefined
+        );
+        return;
+      }
 
-        // On live streams, clamp to the browser seekable window to avoid invalid seeks.
-        const nextTime = Math.min(seekMax, Math.max(seekMin, requestedTime));
-        try {
-          audioRef.current.currentTime = nextTime;
-          setCurrentTime(nextTime);
-        } catch (err) {
-          logger.warn("Seek failed for current stream:", err);
-        }
+      if (!audioRef.current) return;
+
+      if (
+        isLiveStream &&
+        (requestedTime > seekMax + 0.25 || seekMax <= seekMin + 0.05) &&
+        requestedTime <= timelineMax
+      ) {
+        // Reload live stream at target time when the browser seekable window is stale.
+        void refreshLiveSourceAtTime(requestedTime);
+        return;
+      }
+
+      const nextTime = Math.min(seekMax, Math.max(seekMin, requestedTime));
+      try {
+        audioRef.current.currentTime = nextTime;
+        setCurrentTime(nextTime);
+      } catch (err) {
+        logger.warn("Seek failed for current stream:", err);
       }
     },
     [
       audioRef,
+      isIosNativeAudio,
       isLiveStream,
+      liveGeneratedDuration,
       refreshLiveSourceAtTime,
       seekMax,
       seekMin,
@@ -1170,6 +1430,15 @@ export function FloatingAudioPlayer() {
   );
 
   const handleSkipBackward = useCallback(() => {
+    if (isIosNativeAudio) {
+      const newTime = Math.max(timelineMin, currentTime - 10);
+      setCurrentTime(newTime);
+      void invoke("ios_player_seek", { seconds: newTime }).catch(
+        () => undefined
+      );
+      return;
+    }
+
     if (audioRef.current) {
       const newTime = Math.max(timelineMin, audioRef.current.currentTime - 10);
       try {
@@ -1179,9 +1448,21 @@ export function FloatingAudioPlayer() {
         logger.warn("Skip backward failed for current stream:", err);
       }
     }
-  }, [audioRef]);
+  }, [audioRef, currentTime, isIosNativeAudio, timelineMin]);
 
   const handleSkipForward = useCallback(() => {
+    if (isIosNativeAudio) {
+      const maxTime = isLiveStream
+        ? Math.max(liveGeneratedDuration, seekMax)
+        : duration;
+      const newTime = Math.min(maxTime, currentTime + 10);
+      setCurrentTime(newTime);
+      void invoke("ios_player_seek", { seconds: newTime }).catch(
+        () => undefined
+      );
+      return;
+    }
+
     if (audioRef.current) {
       const maxTime = isLiveStream ? seekMax : audioRef.current.duration;
       const newTime = Math.min(maxTime, audioRef.current.currentTime + 10);
@@ -1192,7 +1473,15 @@ export function FloatingAudioPlayer() {
         logger.warn("Skip forward failed for current stream:", err);
       }
     }
-  }, [audioRef, isLiveStream, seekMax, timelineMin]);
+  }, [
+    audioRef,
+    currentTime,
+    duration,
+    isIosNativeAudio,
+    isLiveStream,
+    liveGeneratedDuration,
+    seekMax,
+  ]);
 
   const handlePreviousTrack = useCallback(async () => {
     if (!hasPreviousTrack || currentTrackPosition <= 0) return;
@@ -1220,6 +1509,135 @@ export function FloatingAudioPlayer() {
     hasNextTrack,
     selectableTracks,
     switchToTrack,
+  ]);
+
+  // Control Center / lock screen next/prev → in-app track switch.
+  useEffect(() => {
+    const onSkip = (event: Event) => {
+      const detail = (event as CustomEvent<string>).detail;
+      if (detail === "next") {
+        void handleNextTrack();
+      } else if (detail === "prev") {
+        void handlePreviousTrack();
+      }
+    };
+    window.addEventListener("aurora-native-skip", onSkip);
+    return () => window.removeEventListener("aurora-native-skip", onSkip);
+  }, [handleNextTrack, handlePreviousTrack]);
+
+  // Keep floating player UI + visibility in sync with native AVPlayer (visual only).
+  useEffect(() => {
+    if (!isIosNativeAudio) return;
+
+    const onUi = (event: Event) => {
+      const payload = (event as CustomEvent<{ type: string; time?: number }>)
+        .detail;
+      if (!payload) return;
+      const { type, time } = payload;
+      if (type === "play") {
+        playbackIntentRef.current = true;
+        setIsPlaying(true);
+        setPlayerMinimized(false);
+        if (!currentAudioTrackRef.current && currentBookRef.current) {
+          loadLastOpenedAudioTrack(currentBookRef.current, false);
+        }
+      } else if (type === "pause") {
+        setIsPlaying(false);
+        if (currentBookRef.current && currentAudioTrackRef.current) {
+          void saveAudioProgress(currentBookRef.current);
+        }
+      } else if (type === "timeUpdate") {
+        setIsPlaying(true);
+        if (typeof time === "number" && Number.isFinite(time)) {
+          setCurrentTime(time);
+        }
+      } else if (
+        type === "seek" &&
+        typeof time === "number" &&
+        Number.isFinite(time)
+      ) {
+        setCurrentTime(time);
+      } else if (
+        type === "durationUpdate" &&
+        typeof time === "number" &&
+        Number.isFinite(time) &&
+        time > 0
+      ) {
+        setDuration((prev) => Math.max(prev, time));
+        setLiveGeneratedDuration((prev) => Math.max(prev, time));
+      }
+    };
+
+    const onEnded = () => {
+      void (async () => {
+        const book = currentBookRef.current;
+        const track = currentAudioTrackRef.current;
+        if (!book || !track) return;
+
+        const isLive = Boolean(track.isLiveStream);
+        const liveHref = track.chapterHref;
+        const chapterCompleted = Boolean(
+          liveHref && (book.completedChapters ?? []).includes(liveHref)
+        );
+        const heldAt = currentTimeRef.current;
+        if (
+          shouldHoldLivePlayback({
+            isLiveStream: isLive,
+            chapterCompleted,
+            generatedDuration: liveGeneratedDurationRef.current,
+            currentTime: heldAt,
+          })
+        ) {
+          waitingForLiveChunksRef.current = playbackIntentRef.current;
+          heldLiveTimeRef.current = heldAt;
+          setIsPlaying(false);
+          return;
+        }
+
+        waitingForLiveChunksRef.current = false;
+        setIsPlaying(false);
+        setCurrentTime(0);
+        void saveAudioProgress(book);
+
+        const position = selectableTracks.findIndex((t) => t.id === track.id);
+        if (position >= 0 && position < selectableTracks.length - 1) {
+          playbackIntentRef.current = true;
+          const nextTrack = selectableTracks[position + 1];
+          const isLiveNextTrack = Boolean(nextTrack.id?.startsWith("live-"));
+          if (isLiveNextTrack) {
+            queueLivePlaybackRequest(0, true);
+          }
+          await loadAudioTrack(book.id, nextTrack, book);
+          if (!isLiveNextTrack) {
+            restoreAudioProgress(book, nextTrack, true);
+            void invoke("ios_player_set_rate", {
+              rate: playbackRateRef.current,
+            }).catch(() => undefined);
+            void invoke("ios_player_play").catch(() => undefined);
+            setIsPlaying(true);
+          }
+        } else {
+          playbackIntentRef.current = false;
+        }
+      })();
+    };
+
+    window.addEventListener("aurora-native-ui", onUi);
+    window.addEventListener("aurora-native-ended", onEnded);
+    return () => {
+      window.removeEventListener("aurora-native-ui", onUi);
+      window.removeEventListener("aurora-native-ended", onEnded);
+    };
+  }, [
+    isIosNativeAudio,
+    loadAudioTrack,
+    loadLastOpenedAudioTrack,
+    queueLivePlaybackRequest,
+    restoreAudioProgress,
+    saveAudioProgress,
+    selectableTracks,
+    setPlayerMinimized,
+    setIsPlaying,
   ]);
 
   const handleTrackSelect = useCallback(
@@ -1492,9 +1910,11 @@ export function FloatingAudioPlayer() {
         "fixed left-1/2 z-50 w-full max-w-2xl -translate-x-1/2 select-none px-4",
         "transition-[bottom] duration-300 ease-out",
         isMinimized && "max-w-md",
+        // Use device safe-bottom (not --app-safe-bottom) so immersive mode
+        // still clears the home indicator.
         useTabBarSpace
-          ? "bottom-[calc(1rem+var(--app-safe-bottom,0px))]"
-          : "bottom-[calc(5rem+var(--app-safe-bottom,0px))]"
+          ? "bottom-[calc(1rem+var(--app-device-safe-bottom,0px))]"
+          : "bottom-[calc(5rem+var(--app-device-safe-bottom,0px))]"
       )}
       data-testid="floating-audio-player"
       data-minimized={isMinimized ? "true" : "false"}

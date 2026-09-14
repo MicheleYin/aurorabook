@@ -7,18 +7,6 @@ export function mimeTypeFromTrackHref(href: string | undefined | null): string {
   return "audio/mpeg";
 }
 
-/**
- * Whether a lock-screen / native seek should be mirrored onto the WebView `<audio>`.
- * Avoids fighting tiny float differences between AVPlayer and HTMLMediaElement.
- */
-export function shouldMirrorNativeSeek(
-  webViewCurrentTime: number,
-  nativeTime: number,
-  thresholdSeconds = 1
-): boolean {
-  return Math.abs(webViewCurrentTime - nativeTime) > thresholdSeconds;
-}
-
 export type NativePlayerEvent =
   | { type: "play" }
   | { type: "pause" }
@@ -26,50 +14,67 @@ export type NativePlayerEvent =
   | { type: "next" }
   | { type: "prev" }
   | { type: "timeUpdate"; time: number }
-  | { type: "ended" };
+  | { type: "ended" }
+  | { type: "durationUpdate"; time: number };
+
+export type NativePlayerEventResult = {
+  nativeTime: number | null;
+  synthesiseEnded: boolean;
+  durationUpdate: number | null;
+  shouldNext: boolean;
+  shouldPrev: boolean;
+  /** true = play, false = pause, null = unchanged */
+  playing: boolean | null;
+};
 
 /**
- * Applies a native-player-event payload to local playback state.
- * Returns the next native time (if updated) and whether to synthesise `<audio>` `ended`.
+ * Maps a native-player-event payload to UI / progress state.
+ * Does not drive WebView media — AVPlayer is the only engine on iOS.
  */
 export function applyNativePlayerEvent(
-  event: { type: string; time?: number },
-  webViewCurrentTime: number | null
-): {
-  nativeTime: number | null;
-  seekWebViewTo: number | null;
-  synthesiseEnded: boolean;
-} {
+  event: { type: string; time?: number }
+): NativePlayerEventResult {
+  const idle: NativePlayerEventResult = {
+    nativeTime: null,
+    synthesiseEnded: false,
+    durationUpdate: null,
+    shouldNext: false,
+    shouldPrev: false,
+    playing: null,
+  };
+
+  if (event.type === "play") {
+    return { ...idle, playing: true };
+  }
+
+  if (event.type === "pause") {
+    return { ...idle, playing: false };
+  }
+
+  if (event.type === "next") {
+    return { ...idle, shouldNext: true };
+  }
+
+  if (event.type === "prev") {
+    return { ...idle, shouldPrev: true };
+  }
+
   if (
     (event.type === "timeUpdate" || event.type === "seek") &&
     event.time !== undefined
   ) {
-    const seekWebViewTo =
-      event.type === "seek" &&
-      webViewCurrentTime !== null &&
-      shouldMirrorNativeSeek(webViewCurrentTime, event.time)
-        ? event.time
-        : null;
-    return {
-      nativeTime: event.time,
-      seekWebViewTo,
-      synthesiseEnded: false,
-    };
+    return { ...idle, nativeTime: event.time };
+  }
+
+  if (event.type === "durationUpdate" && event.time !== undefined) {
+    return { ...idle, durationUpdate: event.time };
   }
 
   if (event.type === "ended") {
-    return {
-      nativeTime: null,
-      seekWebViewTo: null,
-      synthesiseEnded: true,
-    };
+    return { ...idle, synthesiseEnded: true, playing: false };
   }
 
-  return {
-    nativeTime: null,
-    seekWebViewTo: null,
-    synthesiseEnded: false,
-  };
+  return idle;
 }
 
 /** Resume saved position after server restart; optionally continue playing. */

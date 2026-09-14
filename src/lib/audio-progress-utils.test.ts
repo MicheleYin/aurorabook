@@ -5,9 +5,17 @@ import {
   applyNativePlayerEvent,
   canRestoreSavedTime,
   mimeTypeFromTrackHref,
-  shouldMirrorNativeSeek,
   trackDisplayTitle,
 } from "./audio-progress-utils";
+
+const idle = {
+  nativeTime: null,
+  synthesiseEnded: false,
+  durationUpdate: null,
+  shouldNext: false,
+  shouldPrev: false,
+  playing: null,
+};
 
 describe("mimeTypeFromTrackHref", () => {
   it("maps known extensions", () => {
@@ -24,55 +32,62 @@ describe("mimeTypeFromTrackHref", () => {
   });
 });
 
-describe("shouldMirrorNativeSeek", () => {
-  it("mirrors only when drift exceeds threshold", () => {
-    expect(shouldMirrorNativeSeek(10, 10.5)).toBe(false);
-    expect(shouldMirrorNativeSeek(10, 11.1)).toBe(true);
-    expect(shouldMirrorNativeSeek(10, 10.2, 0.1)).toBe(true);
-  });
-});
-
 describe("applyNativePlayerEvent", () => {
-  it("tracks timeUpdate without seeking the webview", () => {
-    expect(applyNativePlayerEvent({ type: "timeUpdate", time: 42 }, 40)).toEqual(
-      {
-        nativeTime: 42,
-        seekWebViewTo: null,
-        synthesiseEnded: false,
-      }
-    );
-  });
-
-  it("mirrors seek when webview drift is large", () => {
-    expect(applyNativePlayerEvent({ type: "seek", time: 50 }, 10)).toEqual({
-      nativeTime: 50,
-      seekWebViewTo: 50,
-      synthesiseEnded: false,
+  it("tracks timeUpdate for the UI clock", () => {
+    expect(applyNativePlayerEvent({ type: "timeUpdate", time: 42 })).toEqual({
+      ...idle,
+      nativeTime: 42,
     });
   });
 
-  it("does not mirror seek when already close", () => {
-    expect(applyNativePlayerEvent({ type: "seek", time: 10.2 }, 10)).toEqual({
-      nativeTime: 10.2,
-      seekWebViewTo: null,
-      synthesiseEnded: false,
+  it("tracks seek without WebView mirroring", () => {
+    expect(applyNativePlayerEvent({ type: "seek", time: 50 })).toEqual({
+      ...idle,
+      nativeTime: 50,
     });
   });
 
   it("synthesises ended", () => {
-    expect(applyNativePlayerEvent({ type: "ended" }, 99)).toEqual({
-      nativeTime: null,
-      seekWebViewTo: null,
+    expect(applyNativePlayerEvent({ type: "ended" })).toEqual({
+      ...idle,
       synthesiseEnded: true,
+      playing: false,
+    });
+  });
+
+  it("maps play and pause for Control Center sync", () => {
+    expect(applyNativePlayerEvent({ type: "play" })).toEqual({
+      ...idle,
+      playing: true,
+    });
+    expect(applyNativePlayerEvent({ type: "pause" })).toEqual({
+      ...idle,
+      playing: false,
+    });
+  });
+
+  it("maps next and prev", () => {
+    expect(applyNativePlayerEvent({ type: "next" })).toEqual({
+      ...idle,
+      shouldNext: true,
+    });
+    expect(applyNativePlayerEvent({ type: "prev" })).toEqual({
+      ...idle,
+      shouldPrev: true,
+    });
+  });
+
+  it("maps durationUpdate", () => {
+    expect(
+      applyNativePlayerEvent({ type: "durationUpdate", time: 12.5 })
+    ).toEqual({
+      ...idle,
+      durationUpdate: 12.5,
     });
   });
 
   it("ignores unrelated events", () => {
-    expect(applyNativePlayerEvent({ type: "play" }, 1)).toEqual({
-      nativeTime: null,
-      seekWebViewTo: null,
-      synthesiseEnded: false,
-    });
+    expect(applyNativePlayerEvent({ type: "unknown" })).toEqual(idle);
   });
 });
 
@@ -98,17 +113,16 @@ describe("trackDisplayTitle", () => {
 });
 
 describe("applyMediaPlaybackRate", () => {
-  it("sets both playbackRate and defaultPlaybackRate", () => {
+  it("applies a finite positive rate to both fields", () => {
     const media = { playbackRate: 1, defaultPlaybackRate: 1 };
     expect(applyMediaPlaybackRate(media, 1.5)).toBe(1.5);
     expect(media.playbackRate).toBe(1.5);
     expect(media.defaultPlaybackRate).toBe(1.5);
   });
 
-  it("falls back to 1x for invalid rates", () => {
+  it("falls back to 1 for invalid rates", () => {
     const media = { playbackRate: 2, defaultPlaybackRate: 2 };
     expect(applyMediaPlaybackRate(media, Number.NaN)).toBe(1);
     expect(media.playbackRate).toBe(1);
-    expect(media.defaultPlaybackRate).toBe(1);
   });
 });

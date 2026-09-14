@@ -52,6 +52,11 @@ fn get_server_port() -> Arc<std::sync::atomic::AtomicU16> {
         .clone()
 }
 
+/// Current bound audio-server port (0 if not running).
+pub fn current_server_port() -> u16 {
+    get_server_port().load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn get_server_shutdown() -> Arc<std::sync::Mutex<Option<oneshot::Sender<()>>>> {
     SERVER_SHUTDOWN
         .get_or_init(|| Arc::new(std::sync::Mutex::new(None)))

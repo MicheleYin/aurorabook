@@ -443,7 +443,7 @@ describe("AudioProgressProvider", () => {
     expect(restoreAudio.currentTime).toBe(28);
   });
 
-  it("mirrors playback into the native iOS player when on iOS", async () => {
+  it("loads completed tracks via native AVPlayer only on iOS", async () => {
     osType.mockReturnValue("ios");
     const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
 
@@ -463,34 +463,38 @@ describe("AudioProgressProvider", () => {
       expect(invoke).toHaveBeenCalledWith(
         "ios_player_load",
         expect.objectContaining({
-          bookId: "book-1",
-          trackId: "track-1",
-          title: "Intro",
+          options: expect.objectContaining({
+            bookId: "book-1",
+            trackId: "track-1",
+            title: "Intro",
+          }),
         })
       );
     });
 
-    audio.dispatchEvent(new Event("play"));
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("ios_player_play");
-    });
-
-    audio.dispatchEvent(new Event("pause"));
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("ios_player_pause");
-    });
+    expect(invoke).not.toHaveBeenCalledWith(
+      "get_audio_stream_url",
+      expect.anything()
+    );
+    expect(audio.muted).toBe(true);
+    expect(audio.getAttribute("src")).toBeNull();
+    expect(result.current.isIosNativeAudio).toBe(true);
   });
 
-  it("applies native-player seek and ended events to the webview audio element", async () => {
+  it("forwards native-player events to the UI without touching WebView audio", async () => {
+    osType.mockReturnValue("ios");
     const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
     const audio = createAudioElement();
     audio.currentTime = 5;
     result.current.audioRef.current = audio;
 
-    const ended = vi.fn();
-    audio.addEventListener("ended", ended);
+    const onUi = vi.fn();
+    const onEnded = vi.fn();
+    window.addEventListener("aurora-native-ui", onUi);
+    window.addEventListener("aurora-native-ended", onEnded);
 
     await waitFor(() => {
+      expect(result.current.isIosNativeAudio).toBe(true);
       expect(listen.mock.calls.some((call) => call[0] === "native-player-event")).toBe(
         true
       );
@@ -499,12 +503,30 @@ describe("AudioProgressProvider", () => {
     act(() => {
       emitTauriEvent("native-player-event", { type: "seek", time: 40 });
     });
-    expect(audio.currentTime).toBe(40);
+    expect(audio.currentTime).toBe(5);
+    expect(onUi).toHaveBeenCalled();
+
+    await act(async () => {
+      const book = createBook();
+      result.current.setCurrentAudioTrack({
+        ...book.audioTracks[0],
+        mimeType: "audio/mpeg",
+      });
+    });
+
+    act(() => {
+      emitTauriEvent("native-player-event", { type: "timeUpdate", time: 40 });
+    });
+    expect(result.current.calculateAudioProgress()?.currentTimeSeconds).toBe(40);
 
     act(() => {
       emitTauriEvent("native-player-event", { type: "ended" });
     });
-    expect(ended).toHaveBeenCalled();
+    expect(onEnded).toHaveBeenCalled();
+    expect(audio.currentTime).toBe(5);
+
+    window.removeEventListener("aurora-native-ui", onUi);
+    window.removeEventListener("aurora-native-ended", onEnded);
   });
 
   it("updates playback rate on the audio element and persists settings", async () => {

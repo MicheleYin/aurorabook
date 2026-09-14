@@ -439,7 +439,7 @@ export function readCssLengthPx(
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-/** Current `--app-safe-top` in CSS pixels. */
+/** Current `--app-safe-top` in CSS pixels (0 in reader immersive). */
 export function readAppSafeTopPx(
   style: CSSStyleDeclaration | null = typeof document !== "undefined"
     ? getComputedStyle(document.documentElement)
@@ -447,6 +447,22 @@ export function readAppSafeTopPx(
 ): number {
   if (!style) return 0;
   return readCssLengthPx(style.getPropertyValue("--app-safe-top"));
+}
+
+/**
+ * Physical top inset from `--app-device-safe-top` (never zeroed in immersive).
+ * Use for highlight follow-scroll so words stay clear of the notch/status bar.
+ */
+export function readDeviceSafeTopPx(
+  style: CSSStyleDeclaration | null = typeof document !== "undefined"
+    ? getComputedStyle(document.documentElement)
+    : null
+): number {
+  if (!style) return 0;
+  const device = readCssLengthPx(style.getPropertyValue("--app-device-safe-top"));
+  if (device > 0) return device;
+  // Fallback for older CSS without device tokens.
+  return readAppSafeTopPx(style);
 }
 
 /**

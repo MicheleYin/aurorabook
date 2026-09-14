@@ -47,6 +47,12 @@ vi.mock("../context/AudioProgressContext", () => ({
   useAudioProgressContext: () => ({
     audioRef,
     currentAudioTrack,
+    isIosNativeAudio: false,
+    getPlaybackTime: () => audioRef.current?.currentTime ?? 0,
+    isPlaybackActive: () => {
+      const el = audioRef.current;
+      return Boolean(el && !el.paused && !el.ended);
+    },
   }),
 }));
 

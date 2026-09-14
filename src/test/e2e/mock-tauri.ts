@@ -277,6 +277,21 @@ export async function invoke<T = unknown>(
       return ensureSilentAudioUrl() as T;
     case "get_live_chapter_duration":
       return 0 as T;
+    case "ios_player_load":
+    case "ios_player_load_live":
+      return { durationSeconds: 0, byteLength: 0 } as T;
+    case "ios_player_refresh_live":
+      return { durationSeconds: 0, byteLength: 0 } as T;
+    case "ios_player_set_expects_more":
+    case "ios_player_play":
+    case "ios_player_pause":
+    case "ios_player_seek":
+    case "ios_player_set_rate":
+      return undefined as T;
+    case "ios_player_current_time":
+      return 0 as T;
+    case "ios_player_is_playing":
+      return false as T;
     case "get_live_sync_marker":
       return null as T;
     case "get_current_converting_chapter":
