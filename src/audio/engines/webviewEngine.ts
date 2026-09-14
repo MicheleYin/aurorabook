@@ -171,8 +171,10 @@ export function createWebviewEngine(
       ensureListeners();
       const audio = getAudio();
       if (!audio) return;
+      const target = Math.max(0, seconds);
       try {
-        audio.currentTime = Math.max(0, seconds);
+        audio.currentTime = target;
+        emit({ type: "seek", time: target });
       } catch (err) {
         logger.warn("[webview-engine] seek failed:", err);
       }

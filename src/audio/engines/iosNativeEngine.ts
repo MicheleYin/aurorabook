@@ -168,6 +168,8 @@ export function createIosNativeEngine(): PlaybackEngine {
       const target = Math.max(0, seconds);
       nativeTime = target;
       await invoke("ios_player_seek", { seconds: target });
+      // Seek does not produce timeUpdate while paused — notify UI immediately.
+      emit({ type: "seek", time: target });
     },
 
     async setRate(rate: number) {

@@ -339,6 +339,8 @@ private final class AuroraPlayer: NSObject {
             applyPendingSeekAndMaybePlay()
         }
         updateNowPlaying(elapsed: clamped)
+        // Notify JS even while paused (no periodic timeUpdate until play).
+        rustPlayerCallback(eventType: 3, value: clamped)
     }
 
     func setRate(_ rate: Float) {

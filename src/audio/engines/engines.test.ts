@@ -142,6 +142,18 @@ describe("createIosNativeEngine", () => {
 
     engine.destroy();
   });
+
+  it("emits seek so paused UI can update the progress bar", async () => {
+    invoke.mockResolvedValue(undefined);
+    const engine = createIosNativeEngine();
+    const onEvent = vi.fn();
+    engine.subscribe(onEvent);
+
+    await engine.seek(42);
+    expect(onEvent).toHaveBeenCalledWith({ type: "seek", time: 42 });
+
+    engine.destroy();
+  });
 });
 
 describe("createAndroidEngine", () => {

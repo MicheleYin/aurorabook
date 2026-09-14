@@ -528,6 +528,11 @@ export function AudioProgressProvider({
 
             try {
               audio.currentTime = targetTime;
+              window.dispatchEvent(
+                new CustomEvent("aurora-native-ui", {
+                  detail: { type: "seek", time: targetTime },
+                })
+              );
             } catch (err) {
               logger.warn("Failed restoring saved audio timestamp:", err);
             }

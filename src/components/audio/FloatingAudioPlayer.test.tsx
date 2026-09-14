@@ -81,6 +81,7 @@ vi.mock("@/context/AudioProgressContext", () => ({
     isPlaying: false,
     setIsPlaying: vi.fn(),
     isPlaybackActive: vi.fn(() => false),
+    getPlaybackTime: vi.fn(() => 0),
     playAudio: vi.fn(async () => undefined),
     pauseAudio: vi.fn(async () => undefined),
     seekAudio: vi.fn(async () => undefined),

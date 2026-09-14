@@ -69,6 +69,7 @@ export function FloatingAudioPlayer() {
     isPlaying,
     setIsPlaying,
     isPlaybackActive,
+    getPlaybackTime,
     playAudio,
     pauseAudio,
     seekAudio,
@@ -92,6 +93,33 @@ export function FloatingAudioPlayer() {
   // Local state for UI updates (only this component re-renders)
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+
+  // Restore/seek often finishes before this player mounts its event listeners.
+  // Re-sync the progress bar from the engine clock when the track (or load) settles.
+  useEffect(() => {
+    if (!currentAudioTrack) {
+      setCurrentTime(0);
+      return;
+    }
+    if (isLoadingAudio) return;
+
+    const syncFromEngine = () => {
+      const t = getPlaybackTime();
+      if (Number.isFinite(t) && t >= 0) {
+        setCurrentTime(t);
+      }
+    };
+
+    syncFromEngine();
+    const t0 = window.setTimeout(syncFromEngine, 0);
+    const t1 = window.setTimeout(syncFromEngine, 50);
+    const t2 = window.setTimeout(syncFromEngine, 200);
+    return () => {
+      window.clearTimeout(t0);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [currentAudioTrack, getPlaybackTime, isLoadingAudio]);
   const [isTracksOpen, setIsTracksOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(
     () => settings?.audioPlayerMinimized ?? false
@@ -1516,6 +1544,23 @@ export function FloatingAudioPlayer() {
     window.addEventListener("aurora-native-skip", onSkip);
     return () => window.removeEventListener("aurora-native-skip", onSkip);
   }, [handleNextTrack, handlePreviousTrack]);
+
+  // Seek/restore progress for all platforms (desktop restore + engine seek events).
+  useEffect(() => {
+    const onSeekUi = (event: Event) => {
+      const payload = (event as CustomEvent<{ type: string; time?: number }>)
+        .detail;
+      if (
+        payload?.type === "seek" &&
+        typeof payload.time === "number" &&
+        Number.isFinite(payload.time)
+      ) {
+        setCurrentTime(Math.max(0, payload.time));
+      }
+    };
+    window.addEventListener("aurora-native-ui", onSeekUi);
+    return () => window.removeEventListener("aurora-native-ui", onSeekUi);
+  }, []);
 
   // Keep floating player UI + visibility in sync with native AVPlayer (visual only).
   useEffect(() => {
