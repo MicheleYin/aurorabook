@@ -1,18 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import { BookOpen } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useAppContext } from "../../context/AppContext";
 import { useAudioSyncContext } from "@/context/AudioSyncContext";
 import { useChapterProgressContext } from "@/context/ChapterProgressContext";
 import { useRegisterShortcutActions } from "@/context/KeyboardShortcutsContext";
+import { useAppContext } from "../../context/AppContext";
 import { useSettingsContext } from "../../context/SettingsContext";
 
-import type { Chapter } from "../../types/book";
 import { useReaderSettings } from "../../hooks/useReaderSettings";
 import { useTranslation } from "../../lib/i18n";
 import { logger } from "../../lib/logger";
 import { normalizeFontSize } from "../../lib/reader-settings-utils";
 import { cn } from "../../lib/utils";
+import type { Chapter } from "../../types/book";
 import { Button } from "../ui/button";
 import { ReaderContent } from "./ReaderContent";
 import { ReaderHeader } from "./ReaderHeader";
@@ -170,7 +170,7 @@ export function Reader() {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-4">
-          <BookOpen className="h-12 w-12 text-muted-foreground mx-auto" />
+          <BookOpen className="size-12 text-muted-foreground mx-auto" />
           <p className="text-lg font-medium">{t("reader.no_book")}</p>
           <Button onClick={handleBack}>{t("reader.back_to_library")}</Button>
         </div>
@@ -196,7 +196,7 @@ export function Reader() {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-4">
-          <BookOpen className="h-12 w-12 text-muted-foreground mx-auto" />
+          <BookOpen className="size-12 text-muted-foreground mx-auto" />
           <p className="text-lg font-medium">{t("reader.no_book")}</p>
           <Button onClick={handleBack}>{t("reader.back_to_library")}</Button>
         </div>

@@ -122,14 +122,14 @@ const BookDetailContent = ({
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center">
-              <BookOpen className="h-12 w-12 text-muted-foreground/50" />
+              <BookOpen className="size-12 text-muted-foreground/50" />
             </div>
           )}
         </div>
         <div className="flex-1 space-y-4">
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <User className="h-6 w-6 text-muted-foreground" />
+              <User className="size-4 text-muted-foreground" />
               <span className="font-medium">{t("book.author")}</span>
             </div>
             <p className="text-sm text-muted-foreground">{book.author}</p>
@@ -137,7 +137,7 @@ const BookDetailContent = ({
           {book.publisher && (
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <FileText className="h-6 w-6 text-muted-foreground" />
+                <FileText className="size-4 text-muted-foreground" />
                 <span className="font-medium">{t("book.publisher")}</span>
               </div>
               <p className="text-sm text-muted-foreground">
@@ -149,7 +149,7 @@ const BookDetailContent = ({
           {book.publishedYear && !book.publisher && (
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <Calendar className="h-6 w-6 text-muted-foreground" />
+                <Calendar className="size-4 text-muted-foreground" />
                 <span className="font-medium">{t("book.published")}</span>
               </div>
               <p className="text-sm text-muted-foreground">
@@ -654,7 +654,7 @@ export function BookDetailDialog({
                 }}
                 className="gap-2"
               >
-                <BookOpen className="h-6 w-6" />
+                <BookOpen className="size-4" />
                 {t("book.open")}
               </Button>
               <Select
@@ -666,7 +666,7 @@ export function BookDetailDialog({
                 <SelectTrigger className="w-[170px] gap-2">
                   {isExportingAudio || isAnotherBookExporting ? (
                     <div className="flex items-center gap-2">
-                      <Loader2 className="h-6 w-6 animate-spin" />
+                      <Loader2 className="size-4 animate-spin" />
                       <span>
                         {isAnotherBookExporting
                           ? t("book.export_busy")
@@ -677,7 +677,7 @@ export function BookDetailDialog({
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">
-                      <Download className="h-6 w-6" />
+                      <Download className="size-4" />
                       <SelectValue placeholder={t("book.export")} />
                     </div>
                   )}
@@ -703,7 +703,7 @@ export function BookDetailDialog({
                     disabled={isDeleting}
                     className="gap-2"
                   >
-                    <X className="h-6 w-6" />
+                    <X className="size-4" />
                     {t("book.cancel_export")}
                   </Button>
                 )}
@@ -714,7 +714,7 @@ export function BookDetailDialog({
                   disabled={isDeleting}
                   className="gap-2"
                 >
-                  <X className="h-6 w-6" />
+                  <X className="size-4" />
                   {t("book.cancel")}
                 </Button>
               )}
@@ -725,7 +725,7 @@ export function BookDetailDialog({
                   disabled={isDeleting || isConverting}
                   className="gap-2"
                 >
-                  <Play className="h-6 w-6" />
+                  <Play className="size-4" />
                   {t("book.resume")}
                 </Button>
               )}
@@ -736,7 +736,7 @@ export function BookDetailDialog({
                   className="gap-2"
                   disabled={isDeleting || isConverting}
                 >
-                  <Play className="h-6 w-6" />
+                  <Play className="size-4" />
                   {t("book.convert")}
                 </Button>
               )}
@@ -746,7 +746,7 @@ export function BookDetailDialog({
                 disabled={isDeleting || isConvertingThisBook}
                 className="gap-2"
               >
-                <Trash2 className="h-6 w-6" />
+                <Trash2 className="size-4" />
                 {isDeleting ? t("common.deleting") : t("book.delete")}
               </Button>
             </DialogFooter>
@@ -783,7 +783,7 @@ export function BookDetailDialog({
                 }}
                 className="gap-2"
               >
-                <BookOpen className="h-6 w-6" />
+                <BookOpen className="size-4" />
                 {t("book.open")}
               </Button>
               <Select
@@ -795,7 +795,7 @@ export function BookDetailDialog({
                 <SelectTrigger className="w-full gap-2">
                   {isExportingAudio || isAnotherBookExporting ? (
                     <div className="flex items-center gap-2">
-                      <Loader2 className="h-6 w-6 animate-spin" />
+                      <Loader2 className="size-4 animate-spin" />
                       <span>
                         {isAnotherBookExporting
                           ? t("book.export_busy")
@@ -806,7 +806,7 @@ export function BookDetailDialog({
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">
-                      <Download className="h-6 w-6" />
+                      <Download className="size-4" />
                       <SelectValue placeholder={t("book.export")} />
                     </div>
                   )}
@@ -840,7 +840,7 @@ export function BookDetailDialog({
                     disabled={isDeleting}
                     className="gap-2 w-full"
                   >
-                    <X className="h-6 w-6" />
+                    <X className="size-4" />
                     {t("book.cancel_export")}
                   </Button>
                 )}
@@ -851,7 +851,7 @@ export function BookDetailDialog({
                   disabled={isDeleting}
                   className="gap-2"
                 >
-                  <X className="h-6 w-6" />
+                  <X className="size-4" />
                   {t("book.cancel")}
                 </Button>
               )}
@@ -862,7 +862,7 @@ export function BookDetailDialog({
                   disabled={isDeleting || isConverting}
                   className="gap-2"
                 >
-                  <Play className="h-6 w-6" />
+                  <Play className="size-4" />
                   {t("book.resume")}
                 </Button>
               )}
@@ -873,7 +873,7 @@ export function BookDetailDialog({
                   className="gap-2"
                   disabled={isDeleting || isConverting}
                 >
-                  <Play className="h-6 w-6" />
+                  <Play className="size-4" />
                   {t("book.convert")}
                 </Button>
               )}
@@ -883,7 +883,7 @@ export function BookDetailDialog({
                 disabled={isDeleting || isConvertingThisBook}
                 className="gap-2"
               >
-                <Trash2 className="h-6 w-6" />
+                <Trash2 className="size-4" />
                 {isDeleting ? t("common.deleting") : t("book.delete")}
               </Button>
             </DrawerFooter>

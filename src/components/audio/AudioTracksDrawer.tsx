@@ -385,12 +385,12 @@ export function AudioTracksButton({
     <Button
       variant="ghost"
       size="icon"
-      className="h-10 w-10 shrink-0"
+      className="size-10 shrink-0"
       onClick={onClick}
       disabled={disabled}
       title="Audio tracks"
     >
-      <List className="h-6 w-6 shrink-0" />
+      <List className="size-4 shrink-0" />
     </Button>
   );
 }

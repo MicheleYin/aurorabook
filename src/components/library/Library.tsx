@@ -520,7 +520,7 @@ export function Library() {
               disabled={isAddingBook}
               className="gap-2"
             >
-              <Plus className="h-6 w-6" />
+              <Plus className="size-4" />
               {isAddingBook ? "Adding..." : "Add Book"}
             </Button>
           </div>
@@ -538,17 +538,17 @@ export function Library() {
               variant={viewMode === "grid" ? "default" : "outline"}
               size="sm"
               onClick={() => handleViewModeChange("grid")}
-              className="h-9 w-9 p-0"
+              className="size-9 p-0"
             >
-              <Grid2x2 className="h-6 w-6" />
+              <Grid2x2 className="size-4" />
             </Button>
             <Button
               variant={viewMode === "list" ? "default" : "outline"}
               size="sm"
               onClick={() => handleViewModeChange("list")}
-              className="h-9 w-9 p-0"
+              className="size-9 p-0"
             >
-              <List className="h-6 w-6" />
+              <List className="size-4" />
             </Button>
           </div>
         </div>
@@ -557,7 +557,7 @@ export function Library() {
       <div className="flex-1 overflow-auto app-page-padding">
         {filteredBooks.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
-            <BookOpen className="h-12 w-12 text-muted-foreground" />
+            <BookOpen className="size-12 text-muted-foreground" />
             <div>
               <p className="text-lg font-medium">
                 {searchQuery ? "No books found" : "No books in library"}
@@ -591,7 +591,7 @@ export function Library() {
                       />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
-                        <BookOpen className="h-12 w-12 text-muted-foreground/50" />
+                        <BookOpen className="size-12 text-muted-foreground/50" />
                       </div>
                     )}
                     {!!book.progress?.bookProgressPercent && (
@@ -685,7 +685,7 @@ export function Library() {
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
-                          <BookOpen className="h-8 w-8 text-muted-foreground/50" />
+                          <BookOpen className="size-6 text-muted-foreground/50" />
                         </div>
                       )}
                     </div>

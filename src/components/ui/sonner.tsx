@@ -37,11 +37,11 @@ export function Toaster({
     <SonnerToaster
       className="toaster group"
       icons={{
-        success: <CircleCheck className="h-6 w-6 shrink-0" />,
-        info: <Info className="h-6 w-6 shrink-0" />,
-        warning: <TriangleAlert className="h-6 w-6 shrink-0" />,
-        error: <OctagonX className="h-6 w-6 shrink-0" />,
-        loading: <Loader2 className="h-6 w-6 shrink-0 animate-spin" />,
+        success: <CircleCheck className="size-4 shrink-0" />,
+        info: <Info className="size-4 shrink-0" />,
+        warning: <TriangleAlert className="size-4 shrink-0" />,
+        error: <OctagonX className="size-4 shrink-0" />,
+        loading: <Loader2 className="size-4 shrink-0 animate-spin" />,
       }}
       offset={offset ?? { top: SAFE_TOP_OFFSET.desktop }}
       mobileOffset={mobileOffset ?? { top: SAFE_TOP_OFFSET.mobile }}

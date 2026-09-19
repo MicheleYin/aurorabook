@@ -49,7 +49,7 @@ export function ReaderHeader({
       <div className="flex items-center justify-between px-4 pb-4 pt-[max(1rem,var(--app-safe-top,0px))]">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" onClick={onBack}>
-            <ArrowLeft className="h-6 w-6" />
+            <ArrowLeft className="size-4" />
           </Button>
           <div className="flex flex-col">
             <h1 className="font-semibold text-base line-clamp-1">
@@ -68,7 +68,7 @@ export function ReaderHeader({
               onClick={onAudioShowClick}
               disabled={isLoadingAudio}
             >
-              <Headphones className="h-6 w-6" />
+              <Headphones className="size-4" />
             </Button>
           )}
           <TOCDrawer
@@ -80,7 +80,7 @@ export function ReaderHeader({
           />
           {onSettingsClick && (
             <Button variant="ghost" size="icon" onClick={onSettingsClick}>
-              <Settings className="h-6 w-6" />
+              <Settings className="size-4" />
             </Button>
           )}
         </div>

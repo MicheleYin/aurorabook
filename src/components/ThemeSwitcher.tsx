@@ -225,7 +225,7 @@ function ThemeSwitcherComponent({
         >
           <span
             className={cn(
-              "absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-background shadow-sm transition-transform",
+              "absolute top-0.5 left-0.5 size-4 rounded-full bg-background shadow-sm transition-transform",
               anim("medium", "transform"),
               autoEnabled && "translate-x-5"
             )}
@@ -293,8 +293,8 @@ function ThemeSideCard({
           {label}
         </span>
         {(selected || following) && (
-          <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
-            <Check className="h-4 w-4" aria-hidden="true" />
+          <span className="absolute right-2 top-2 flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
+            <Check className="size-4" aria-hidden="true" />
           </span>
         )}
         <span className="text-sm font-medium">
@@ -322,7 +322,7 @@ function ThemeSideCard({
               variant.onSelect();
             }}
             className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-full transition-transform",
+              "flex size-6 items-center justify-center rounded-full transition-transform",
               anim("fast", "transform"),
               variant.active
                 ? "ring-2 ring-primary scale-105"
@@ -331,7 +331,7 @@ function ThemeSideCard({
           >
             <span
               className={cn(
-                "h-6 w-6 rounded-full border isolate",
+                "size-4 rounded-full border isolate",
                 themeClassNames(variant.theme)
               )}
               style={{

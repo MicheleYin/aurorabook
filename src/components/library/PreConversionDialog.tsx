@@ -86,7 +86,7 @@ export function PreConversionDialog({
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Play className="h-6 w-6 text-primary" />
+            <Play className="size-4 text-primary" />
             {t("convert.title")}
           </DialogTitle>
           <DialogDescription>{t("convert.description")}</DialogDescription>
@@ -138,11 +138,11 @@ export function PreConversionDialog({
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} className="gap-2">
-            <X className="h-6 w-6" />
+            <X className="size-4" />
             {t("convert.cancel")}
           </Button>
           <Button onClick={handleConfirm} className="gap-2">
-            <Play className="h-6 w-6" />
+            <Play className="size-4" />
             {t("convert.start")}
           </Button>
         </DialogFooter>

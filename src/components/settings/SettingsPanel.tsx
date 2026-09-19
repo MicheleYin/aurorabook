@@ -234,7 +234,7 @@ export function Settings() {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-2">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+          <div className="animate-spin rounded-full size-6 border-b-2 border-primary mx-auto"></div>
           <p className="text-sm text-muted-foreground">{t("app.loading_settings")}</p>
         </div>
       </div>
@@ -407,12 +407,12 @@ export function Settings() {
                           settings?.ttsLanguage ?? "en"
                         )
                       }
-                      className="h-10 w-10 p-0 shrink-0"
+                      className="size-10 p-0 shrink-0"
                     >
                       {playingVoiceId === selectedVoice.id ? (
-                        <Pause className="h-6 w-6" />
+                        <Pause className="size-4" />
                       ) : (
-                        <Play className="h-6 w-6" />
+                        <Play className="size-4" />
                       )}
                     </Button>
                   </div>
@@ -452,7 +452,7 @@ export function Settings() {
               )}
               {isSaving && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+                  <div className="animate-spin rounded-full size-4 border-b-2 border-primary"></div>
                   {t("app.saving")}
                 </div>
               )}

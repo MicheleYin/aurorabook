@@ -1,23 +1,23 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
-    ChevronDown,
-    ChevronUp,
-    FastForward,
-    Link2,
-    Loader2,
-    Pause,
-    Play,
-    Rewind,
-    SkipBack,
-    SkipForward,
-    X,
+  ChevronDown,
+  ChevronUp,
+  FastForward,
+  Link2,
+  Loader2,
+  Pause,
+  Play,
+  Rewind,
+  SkipBack,
+  SkipForward,
+  X,
 } from "lucide-react";
 import {
-    useCallback,
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
 } from "react";
 
 import { useAppContext } from "@/context/AppContext";
@@ -31,9 +31,9 @@ import { useSettingsContext } from "@/context/SettingsContext";
 import { applyMediaPlaybackRate, mimeTypeFromTrackHref } from "../../lib/audio-progress-utils";
 import { PLAYBACK_RATES } from "../../lib/keyboard-shortcuts";
 import {
-    liveStreamPlaybackUrl,
-    shouldHoldLivePlayback,
-    shouldResumeLiveAfterHold,
+  liveStreamPlaybackUrl,
+  shouldHoldLivePlayback,
+  shouldResumeLiveAfterHold,
 } from "../../lib/live-playback";
 import { logger } from "../../lib/logger";
 import { cn, formatTime } from "../../lib/utils";
@@ -41,11 +41,11 @@ import type { AudioTrack, Book } from "../../types/book";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "../ui/select";
 import { Slider } from "../ui/slider";
 import { AudioTracksButton, AudioTracksDrawer } from "./AudioTracksDrawer";
@@ -2047,20 +2047,20 @@ export function FloatingAudioPlayer() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-10 w-10 shrink-0"
+                className="size-12 shrink-0 rounded-lg"
                 data-testid="audio-play-pause"
                 onClick={handlePlayPause}
                 disabled={isLoadingAudio}
               >
                 {isLoadingAudio ? (
                   <Loader2
-                    className="h-6 w-6 animate-spin shrink-0"
+                    className="size-4 animate-spin shrink-0"
                     data-testid="audio-loading-spinner"
                   />
                 ) : isPlaying ? (
-                  <Pause className="h-6 w-6" />
+                  <Pause className="size-4" />
                 ) : (
-                  <Play className="h-6 w-6" />
+                  <Play className="size-4" />
                 )}
               </Button>
 
@@ -2082,23 +2082,23 @@ export function FloatingAudioPlayer() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 shrink-0"
+                className="size-6 shrink-0"
                 data-testid="audio-expand"
                 onClick={() => setPlayerMinimized(false)}
                 title="Expand audio player"
               >
-                <ChevronUp className="h-6 w-6" />
+                <ChevronUp className="size-4" />
               </Button>
 
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 shrink-0"
+                className="size-6 shrink-0"
                 data-testid="audio-close"
                 onClick={handleClosePlayer}
                 title="Close audio player"
               >
-                <X className="h-6 w-6" />
+                <X className="size-4" />
               </Button>
             </div>
 
@@ -2142,14 +2142,14 @@ export function FloatingAudioPlayer() {
                 variant={isSyncEnabled ? "secondary" : "ghost"}
                 size="icon"
                 className={cn(
-                  "h-10 w-10",
+                  "size-10",
                   isSyncEnabled && "bg-primary/10 hover:bg-primary/20"
                 )}
                 onClick={toggleSync}
                 disabled={isLoadingAudio || !currentBook}
                 title={isSyncEnabled ? "Disable text sync" : "Enable text sync"}
               >
-                <Link2 className="h-6 w-6 shrink-0" />
+                <Link2 className="size-4 shrink-0" />
               </Button>
 
               <Select
@@ -2181,23 +2181,23 @@ export function FloatingAudioPlayer() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 shrink-0"
+                className="size-6 shrink-0"
                 data-testid="audio-minimize"
                 onClick={() => setPlayerMinimized(true)}
                 title="Minimize audio player"
               >
-                <ChevronDown className="h-6 w-6" />
+                <ChevronDown className="size-4" />
               </Button>
 
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 shrink-0"
+                className="size-6 shrink-0"
                 data-testid="audio-close"
                 onClick={handleClosePlayer}
                 title="Close audio player"
               >
-                <X className="h-6 w-6" />
+                <X className="size-4" />
               </Button>
             </div>
 
@@ -2225,66 +2225,65 @@ export function FloatingAudioPlayer() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-10 w-10"
+                className="size-10"
                 onClick={handlePreviousTrack}
                 disabled={!hasPreviousTrack || isLoadingAudio}
                 title="Previous track"
               >
-                <SkipBack className="h-6 w-6 shrink-0" />
+                <SkipBack className="size-4 shrink-0" />
               </Button>
 
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-10 w-10"
+                className="size-10"
                 onClick={handleSkipBackward}
                 disabled={isLoadingAudio}
                 title="Skip backward 10 seconds"
               >
-                <Rewind className="h-6 w-6 shrink-0" />
+                <Rewind className="size-4 shrink-0" />
               </Button>
 
               <Button
                 variant="ghost"
-                size="icon"
-                className="h-12 w-12 shrink-0"
+                size="icon-lg"
+                className="size-14 shrink-0 rounded-lg"
                 data-testid="audio-play-pause"
                 onClick={handlePlayPause}
                 disabled={isLoadingAudio}
               >
                 {isLoadingAudio ? (
                   <Loader2
-                    className="h-8 w-8 animate-spin shrink-0"
+                    className="size-6 animate-spin shrink-0"
                     data-testid="audio-loading-spinner"
                   />
                 ) : isPlaying ? (
-                  <Pause className="h-8 w-8 shrink-0
-                  " />
+                  <Pause className="size-6 shrink-0" />
                 ) : (
-                  <Play className="h-8 w-8 shrink-0" />
+                  <Play className="size-6 shrink-0" />
                 )}
               </Button>
 
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-10 w-10"
+                className="size-10"
                 onClick={handleSkipForward}
                 disabled={isLoadingAudio}
                 title="Skip forward 10 seconds"
               >
-                <FastForward className="h-6 w-6 shrink-0" />
+                <FastForward className="size-4 shrink-0" />
               </Button>
 
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-10 w-10"
+                className="size-10"
                 onClick={handleNextTrack}
                 disabled={!hasNextTrack || isLoadingAudio}
                 title="Next track"
               >
-                <SkipForward className="h-6 w-6 shrink-0" />
+                <SkipForward className="size-4 shrink-0" />
               </Button>
             </div>
           </>
