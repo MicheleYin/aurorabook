@@ -1,5 +1,13 @@
-import { useState, useMemo, useEffect } from "react";
+import { Play, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { DEFAULT_KOKORO_VOICE_ID, KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
+import {
+  AVAILABLE_LANGS,
+  normalizeTtsLanguage,
+  voiceMatchesTtsLanguage,
+} from "../../constants/languages";
 import { useTranslation } from "../../lib/i18n";
+import { Button } from "../ui/button";
 import {
   Dialog,
   DialogContent,
@@ -8,7 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
-import { Button } from "../ui/button";
+import { Label } from "../ui/label";
 import {
   Select,
   SelectContent,
@@ -16,14 +24,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { Label } from "../ui/label";
-import { KOKORO_VOICE_GROUPS, DEFAULT_KOKORO_VOICE_ID } from "../../constants/kokoro";
-import {
-  AVAILABLE_LANGS,
-  normalizeTtsLanguage,
-  voiceMatchesTtsLanguage,
-} from "../../constants/languages";
-import { Play, X } from "lucide-react";
 
 interface PreConversionDialogProps {
   isOpen: boolean;
@@ -136,7 +136,7 @@ export function PreConversionDialog({
           </div>
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-0">
+        <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} className="gap-2">
             <X className="h-4 w-4" />
             {t("convert.cancel")}
