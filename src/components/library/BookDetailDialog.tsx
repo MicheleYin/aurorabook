@@ -661,6 +661,7 @@ export function BookDetailDialog({
                 key={`desktop-${exportDropdownKey}`}
                 onValueChange={handleExportDropdownAction}
                 disabled={isExportDisabled}
+                clearable={false}
               >
                 <SelectTrigger className="w-[170px] gap-2">
                   {isExportingAudio || isAnotherBookExporting ? (
@@ -787,6 +788,7 @@ export function BookDetailDialog({
               </Button>
               <Select
                 key={`mobile-${exportDropdownKey}`}
+                clearable={false}
                 onValueChange={handleExportDropdownAction}
                 disabled={isExportDisabled}
               >
