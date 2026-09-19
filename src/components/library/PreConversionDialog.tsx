@@ -2,27 +2,27 @@ import { Play, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DEFAULT_KOKORO_VOICE_ID, KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
 import {
-  AVAILABLE_LANGS,
-  normalizeTtsLanguage,
-  voiceMatchesTtsLanguage,
+    AVAILABLE_LANGS,
+    normalizeTtsLanguage,
+    voiceMatchesTtsLanguage,
 } from "../../constants/languages";
 import { useTranslation } from "../../lib/i18n";
 import { Button } from "../ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
 } from "../ui/dialog";
 import { Label } from "../ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
 } from "../ui/select";
 
 interface PreConversionDialogProps {
@@ -86,7 +86,7 @@ export function PreConversionDialog({
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Play className="h-5 w-5 text-primary" />
+            <Play className="h-6 w-6 text-primary" />
             {t("convert.title")}
           </DialogTitle>
           <DialogDescription>{t("convert.description")}</DialogDescription>
@@ -138,11 +138,11 @@ export function PreConversionDialog({
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} className="gap-2">
-            <X className="h-4 w-4" />
+            <X className="h-6 w-6" />
             {t("convert.cancel")}
           </Button>
           <Button onClick={handleConfirm} className="gap-2">
-            <Play className="h-4 w-4" />
+            <Play className="h-6 w-6" />
             {t("convert.start")}
           </Button>
         </DialogFooter>

@@ -7,11 +7,11 @@ import type { UITheme } from "../../types/ui";
 import { ThemeSwitcher } from "../ThemeSwitcher";
 import { Card, CardContent } from "../ui/card";
 import {
-  Drawer,
-  DrawerContent,
-  DrawerHandle,
-  DrawerHeader,
-  DrawerTitle,
+    Drawer,
+    DrawerContent,
+    DrawerHandle,
+    DrawerHeader,
+    DrawerTitle,
 } from "../ui/drawer";
 import { Label } from "../ui/label";
 import { Slider } from "../ui/slider";
@@ -121,9 +121,9 @@ export function ReaderSettings({
                   <span className="text-xs text-muted-foreground">
                     {t("reader.font_serif")}
                   </span>
-                  <div className="flex h-4 w-4 items-center justify-center">
+                  <div className="flex h-6 w-6 items-center justify-center">
                     {settings.fontFamily === "merriweather" && (
-                      <Check className="h-4 w-4 text-primary" />
+                      <Check className="h-6 w-6 text-primary" />
                     )}
                   </div>
                 </CardContent>
@@ -143,9 +143,9 @@ export function ReaderSettings({
                   <span className="text-xs text-muted-foreground">
                     {t("reader.font_sans")}
                   </span>
-                  <div className="flex h-4 w-4 items-center justify-center">
+                  <div className="flex h-6 w-6 items-center justify-center">
                     {settings.fontFamily === "inter" && (
-                      <Check className="h-4 w-4 text-primary" />
+                      <Check className="h-6 w-6 text-primary" />
                     )}
                   </div>
                 </CardContent>
@@ -165,9 +165,9 @@ export function ReaderSettings({
                   <span className="text-xs text-muted-foreground">
                     {t("reader.font_fixed")}
                   </span>
-                  <div className="flex h-4 w-4 items-center justify-center">
+                  <div className="flex h-6 w-6 items-center justify-center">
                     {settings.fontFamily === "monospace" && (
-                      <Check className="h-4 w-4 text-primary" />
+                      <Check className="h-6 w-6 text-primary" />
                     )}
                   </div>
                 </CardContent>

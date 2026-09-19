@@ -1,46 +1,46 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { Pause, Play } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useSettingsContext } from "@/context/SettingsContext";
 import { useTranslation } from "../../lib/i18n";
 
-import type { UITheme } from "../../types/ui";
-import type { TtsSynthesisQuality } from "../../types/settings";
-import { voiceMatchesTtsLanguage } from "../../constants/languages";
 import { KOKORO_VOICE_GROUPS, voiceSamplePathsToTry } from "../../constants/kokoro";
+import { voiceMatchesTtsLanguage } from "../../constants/languages";
 import { SHOW_LOGS, SUPPORT_EMAIL } from "../../constants/support";
 import { emailLogsReport, exportLogsToFile } from "../../lib/log-export";
 import { logger } from "../../lib/logger";
 import { defaultTtsSynthesisQuality } from "../../lib/settings-utils";
+import type { TtsSynthesisQuality } from "../../types/settings";
+import type { UITheme } from "../../types/ui";
 import { LogViewer } from "../debug/LogViewer";
 import { ThemeSwitcher } from "../ThemeSwitcher";
-import { LanguageSelect } from "./LanguageSelect";
-import { ShortcutSettingsCard } from "./ShortcutSettingsCard";
-import { TtsLanguageSelect } from "./TtsLanguageSelect";
 import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
+    Accordion,
+    AccordionContent,
+    AccordionItem,
+    AccordionTrigger,
 } from "../ui/accordion";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
 } from "../ui/card";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
 } from "../ui/select";
 import { Separator } from "../ui/separator";
+import { LanguageSelect } from "./LanguageSelect";
+import { ShortcutSettingsCard } from "./ShortcutSettingsCard";
+import { TtsLanguageSelect } from "./TtsLanguageSelect";
 
 export function Settings() {
   const {
@@ -410,9 +410,9 @@ export function Settings() {
                       className="h-10 w-10 p-0 shrink-0"
                     >
                       {playingVoiceId === selectedVoice.id ? (
-                        <Pause className="h-4 w-4" />
+                        <Pause className="h-6 w-6" />
                       ) : (
-                        <Play className="h-4 w-4" />
+                        <Play className="h-6 w-6" />
                       )}
                     </Button>
                   </div>
@@ -452,7 +452,7 @@ export function Settings() {
               )}
               {isSaving && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
                   {t("app.saving")}
                 </div>
               )}

@@ -1,5 +1,5 @@
-import { createPortal } from "react-dom";
 import { BookOpen, X } from "lucide-react";
+import { createPortal } from "react-dom";
 
 import type { ReaderDictionaryState } from "../../hooks/useReaderDictionary";
 import { useTranslation } from "../../lib/i18n";
@@ -71,7 +71,7 @@ export function ReaderDictionaryCard({
       }}
     >
       <div className="flex items-start gap-3 border-b px-4 py-3">
-        <BookOpen className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+        <BookOpen className="mt-0.5 h-6 w-6 shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             {t("reader.dictionary.title")}
@@ -87,7 +87,7 @@ export function ReaderDictionaryCard({
           onClick={handleClose}
           aria-label={t("reader.dictionary.close")}
         >
-          <X className="h-4 w-4" />
+          <X className="h-6 w-6" />
         </Button>
       </div>
       <div

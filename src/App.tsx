@@ -114,11 +114,10 @@ function AppContent() {
           <TabsList className="rounded-full bg-background/80 backdrop-blur-lg border shadow-lg px-1 py-1 gap-1 pointer-events-auto">
             <TabsTrigger
               value="library"
-              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-1"
+              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-2"
             >
               {/* // add library icon */}
               <div className="flex items-center gap-2"> 
-
               <LibraryIcon className="w-5 h-5" />
               <span className="xs:block hidden transition-all duration-300 ease-out">{t("library.title")}</span>
               </div>
@@ -126,7 +125,7 @@ function AppContent() {
             <TabsTrigger
               value="reader"
               disabled={!currentBook}
-              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-1"
+              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-2"
             >
               <div className="flex items-center gap-2"> 
               <BookOpenIcon className="w-5 h-5" />
@@ -135,7 +134,7 @@ function AppContent() {
             </TabsTrigger>
             <TabsTrigger
               value="settings"
-              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-1"
+              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-2"
             >
               <div className="flex items-center gap-2"> 
               <SettingsIcon className="w-5 h-5" />

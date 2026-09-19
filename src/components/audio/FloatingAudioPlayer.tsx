@@ -1,23 +1,23 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
-  ChevronDown,
-  ChevronUp,
-  FastForward,
-  Link2,
-  Loader2,
-  Pause,
-  Play,
-  Rewind,
-  SkipBack,
-  SkipForward,
-  X,
+    ChevronDown,
+    ChevronUp,
+    FastForward,
+    Link2,
+    Loader2,
+    Pause,
+    Play,
+    Rewind,
+    SkipBack,
+    SkipForward,
+    X,
 } from "lucide-react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
 } from "react";
 
 import { useAppContext } from "@/context/AppContext";
@@ -31,9 +31,9 @@ import { useSettingsContext } from "@/context/SettingsContext";
 import { applyMediaPlaybackRate, mimeTypeFromTrackHref } from "../../lib/audio-progress-utils";
 import { PLAYBACK_RATES } from "../../lib/keyboard-shortcuts";
 import {
-  liveStreamPlaybackUrl,
-  shouldHoldLivePlayback,
-  shouldResumeLiveAfterHold,
+    liveStreamPlaybackUrl,
+    shouldHoldLivePlayback,
+    shouldResumeLiveAfterHold,
 } from "../../lib/live-playback";
 import { logger } from "../../lib/logger";
 import { cn, formatTime } from "../../lib/utils";
@@ -41,11 +41,11 @@ import type { AudioTrack, Book } from "../../types/book";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
 } from "../ui/select";
 import { Slider } from "../ui/slider";
 import { AudioTracksButton, AudioTracksDrawer } from "./AudioTracksDrawer";
@@ -2054,13 +2054,13 @@ export function FloatingAudioPlayer() {
               >
                 {isLoadingAudio ? (
                   <Loader2
-                    className="h-5 w-5 animate-spin shrink-0"
+                    className="h-6 w-6 animate-spin shrink-0"
                     data-testid="audio-loading-spinner"
                   />
                 ) : isPlaying ? (
-                  <Pause className="h-5 w-5" />
+                  <Pause className="h-6 w-6" />
                 ) : (
-                  <Play className="h-5 w-5" />
+                  <Play className="h-6 w-6" />
                 )}
               </Button>
 
@@ -2087,7 +2087,7 @@ export function FloatingAudioPlayer() {
                 onClick={() => setPlayerMinimized(false)}
                 title="Expand audio player"
               >
-                <ChevronUp className="h-4 w-4" />
+                <ChevronUp className="h-6 w-6" />
               </Button>
 
               <Button
@@ -2098,7 +2098,7 @@ export function FloatingAudioPlayer() {
                 onClick={handleClosePlayer}
                 title="Close audio player"
               >
-                <X className="h-4 w-4" />
+                <X className="h-6 w-6" />
               </Button>
             </div>
 
@@ -2149,7 +2149,7 @@ export function FloatingAudioPlayer() {
                 disabled={isLoadingAudio || !currentBook}
                 title={isSyncEnabled ? "Disable text sync" : "Enable text sync"}
               >
-                <Link2 className="h-5 w-5 shrink-0" />
+                <Link2 className="h-6 w-6 shrink-0" />
               </Button>
 
               <Select
@@ -2186,7 +2186,7 @@ export function FloatingAudioPlayer() {
                 onClick={() => setPlayerMinimized(true)}
                 title="Minimize audio player"
               >
-                <ChevronDown className="h-4 w-4" />
+                <ChevronDown className="h-6 w-6" />
               </Button>
 
               <Button
@@ -2197,7 +2197,7 @@ export function FloatingAudioPlayer() {
                 onClick={handleClosePlayer}
                 title="Close audio player"
               >
-                <X className="h-4 w-4" />
+                <X className="h-6 w-6" />
               </Button>
             </div>
 
@@ -2230,7 +2230,7 @@ export function FloatingAudioPlayer() {
                 disabled={!hasPreviousTrack || isLoadingAudio}
                 title="Previous track"
               >
-                <SkipBack className="h-5 w-5 shrink-0" />
+                <SkipBack className="h-6 w-6 shrink-0" />
               </Button>
 
               <Button
@@ -2241,7 +2241,7 @@ export function FloatingAudioPlayer() {
                 disabled={isLoadingAudio}
                 title="Skip backward 10 seconds"
               >
-                <Rewind className="h-5 w-5 shrink-0" />
+                <Rewind className="h-6 w-6 shrink-0" />
               </Button>
 
               <Button
@@ -2254,14 +2254,14 @@ export function FloatingAudioPlayer() {
               >
                 {isLoadingAudio ? (
                   <Loader2
-                    className="h-6 w-6 animate-spin shrink-0"
+                    className="h-8 w-8 animate-spin shrink-0"
                     data-testid="audio-loading-spinner"
                   />
                 ) : isPlaying ? (
-                  <Pause className="h-6 w-6 shrink-0
+                  <Pause className="h-8 w-8 shrink-0
                   " />
                 ) : (
-                  <Play className="h-6 w-6 shrink-0" />
+                  <Play className="h-8 w-8 shrink-0" />
                 )}
               </Button>
 
@@ -2273,7 +2273,7 @@ export function FloatingAudioPlayer() {
                 disabled={isLoadingAudio}
                 title="Skip forward 10 seconds"
               >
-                <FastForward className="h-5 w-5 shrink-0" />
+                <FastForward className="h-6 w-6 shrink-0" />
               </Button>
 
               <Button
@@ -2284,7 +2284,7 @@ export function FloatingAudioPlayer() {
                 disabled={!hasNextTrack || isLoadingAudio}
                 title="Next track"
               >
-                <SkipForward className="h-5 w-5 shrink-0" />
+                <SkipForward className="h-6 w-6 shrink-0" />
               </Button>
             </div>
           </>

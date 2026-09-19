@@ -520,7 +520,7 @@ export function Library() {
               disabled={isAddingBook}
               className="gap-2"
             >
-              <Plus className="h-4 w-4" />
+              <Plus className="h-6 w-6" />
               {isAddingBook ? "Adding..." : "Add Book"}
             </Button>
           </div>
@@ -540,7 +540,7 @@ export function Library() {
               onClick={() => handleViewModeChange("grid")}
               className="h-9 w-9 p-0"
             >
-              <Grid2x2 className="h-4 w-4" />
+              <Grid2x2 className="h-6 w-6" />
             </Button>
             <Button
               variant={viewMode === "list" ? "default" : "outline"}
@@ -548,7 +548,7 @@ export function Library() {
               onClick={() => handleViewModeChange("list")}
               className="h-9 w-9 p-0"
             >
-              <List className="h-4 w-4" />
+              <List className="h-6 w-6" />
             </Button>
           </div>
         </div>
@@ -685,7 +685,7 @@ export function Library() {
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
-                          <BookOpen className="h-6 w-6 text-muted-foreground/50" />
+                          <BookOpen className="h-8 w-8 text-muted-foreground/50" />
                         </div>
                       )}
                     </div>

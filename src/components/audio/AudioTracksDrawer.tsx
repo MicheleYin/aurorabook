@@ -10,11 +10,11 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent } from "../ui/dialog";
 import {
-  Drawer,
-  DrawerContent,
-  DrawerHandle,
-  DrawerHeader,
-  DrawerTitle,
+    Drawer,
+    DrawerContent,
+    DrawerHandle,
+    DrawerHeader,
+    DrawerTitle,
 } from "../ui/drawer";
 import { ScrollArea } from "../ui/scroll-area";
 
@@ -390,7 +390,7 @@ export function AudioTracksButton({
       disabled={disabled}
       title="Audio tracks"
     >
-      <List className="h-5 w-5 shrink-0" />
+      <List className="h-6 w-6 shrink-0" />
     </Button>
   );
 }
