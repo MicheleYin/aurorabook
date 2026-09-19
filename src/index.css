@@ -89,6 +89,42 @@
     --anim-easing-spring: cubic-bezier(0.68, -0.55, 0.265, 1.55);
   }
 
+  /* Scoped light reset — needed when nesting light previews under .dark */
+  .light {
+    --background: 0 0% 97%;
+    --foreground: 208 54% 28%;
+
+    --card: 0 0% 97%;
+    --card-foreground: 208 54% 28%;
+
+    --popover: 0 0% 97%;
+    --popover-foreground: 208 54% 28%;
+
+    --primary: 208 54% 28%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 94%;
+    --secondary-foreground: 208 54% 28%;
+
+    --muted: 210 40% 94%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 210 40% 94%;
+    --accent-foreground: 208 54% 28%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 89%;
+    --input: 214.3 31.8% 89%;
+    --ring: 208 54% 28%;
+
+    --audio-highlight: 48 96% 70%;
+    --audio-highlight-enter-alpha: 0.55;
+    --audio-highlight-active-alpha: 0.35;
+    --audio-highlight-word-alpha: 0.85;
+  }
+
   /* Cream white — warm paper light theme */
   .theme-cream {
     --background: 40 40% 96%;

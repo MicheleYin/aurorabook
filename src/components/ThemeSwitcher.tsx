@@ -236,6 +236,14 @@ function ThemeSwitcherComponent({
   );
 }
 
+/** Semi-transparent highlight composited over the theme background,
+ * matching how word highlights appear on reader pages. */
+const highlightPreviewStyle = {
+  backgroundImage:
+    "linear-gradient(hsl(var(--audio-highlight) / var(--audio-highlight-word-alpha)), hsl(var(--audio-highlight) / var(--audio-highlight-word-alpha)))",
+  backgroundColor: "hsl(var(--background))",
+} as const;
+
 interface ThemeSideCardProps {
   label: string;
   previewClass: string;
@@ -297,10 +305,7 @@ function ThemeSideCard({
             "mt-auto h-1.5 w-14 rounded-full",
             themeClassNames(variants.find((v) => v.active)?.theme)
           )}
-          style={{
-            backgroundColor:
-              "hsl(var(--audio-highlight) / var(--audio-highlight-word-alpha))",
-          }}
+          style={highlightPreviewStyle}
           aria-hidden="true"
         />
       </button>
@@ -321,17 +326,16 @@ function ThemeSideCard({
               anim("fast", "transform"),
               variant.active
                 ? "ring-2 ring-primary scale-105"
-                : "opacity-70 hover:opacity-100"
+                : "ring-1 ring-border/60 hover:ring-border"
             )}
           >
             <span
               className={cn(
-                "h-6 w-6 rounded-full border",
+                "h-6 w-6 rounded-full border isolate",
                 themeClassNames(variant.theme)
               )}
               style={{
-                backgroundColor:
-                  "hsl(var(--audio-highlight) / var(--audio-highlight-word-alpha))",
+                ...highlightPreviewStyle,
                 borderColor: "hsl(var(--border))",
               }}
               aria-hidden="true"
