@@ -14,6 +14,7 @@ import {
 } from "../lib/theme";
 import { cn } from "../lib/utils";
 import type { ColorTheme, DarkTheme, LightTheme, UITheme } from "../types/ui";
+import { Switch } from "./ui/switch";
 interface ThemeSwitcherProps {
   value: UITheme;
   onChange: (theme: UITheme) => void;
@@ -153,14 +154,6 @@ function ThemeSwitcherComponent({
     onChange(theme);
   };
 
-  const handleAutoToggle = () => {
-    if (autoEnabled) {
-      onChange(activeTheme);
-      return;
-    }
-    onChange("system");
-  };
-
   const activeLabel = t(
     lightActive
       ? `reader.theme_${preferredLight}`
@@ -209,28 +202,14 @@ function ThemeSwitcherComponent({
               : t("reader.theme_auto_off")}
           </p>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={autoEnabled}
+        <Switch
+          checked={autoEnabled}
+          onCheckedChange={(checked) => {
+            if (checked) onChange("system");
+            else onChange(activeTheme);
+          }}
           aria-label={t("reader.theme_auto")}
-          onClick={handleAutoToggle}
-          className={cn(
-            "relative h-7 w-12 shrink-0 rounded-full border transition-colors",
-            anim("medium", "colors"),
-            autoEnabled
-              ? "border-primary bg-primary"
-              : "border-border bg-muted"
-          )}
-        >
-          <span
-            className={cn(
-              "absolute top-0.5 left-0.5 size-4 rounded-full bg-background shadow-sm transition-transform",
-              anim("medium", "transform"),
-              autoEnabled && "translate-x-5"
-            )}
-          />
-        </button>
+        />
       </div>
     </div>
   );
@@ -294,7 +273,7 @@ function ThemeSideCard({
         </span>
         {(selected || following) && (
           <span className="absolute right-2 top-2 flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
-            <Check className="size-4" aria-hidden="true" />
+            <Check className="size-3" aria-hidden="true" />
           </span>
         )}
         <span className="text-sm font-medium">

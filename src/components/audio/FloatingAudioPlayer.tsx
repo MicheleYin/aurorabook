@@ -2082,7 +2082,6 @@ export function FloatingAudioPlayer() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-6 shrink-0"
                 data-testid="audio-expand"
                 onClick={() => setPlayerMinimized(false)}
                 title="Expand audio player"
@@ -2093,7 +2092,6 @@ export function FloatingAudioPlayer() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-6 shrink-0"
                 data-testid="audio-close"
                 onClick={handleClosePlayer}
                 title="Close audio player"
@@ -2181,7 +2179,7 @@ export function FloatingAudioPlayer() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-6 shrink-0"
+                className="shrink-0"
                 data-testid="audio-minimize"
                 onClick={() => setPlayerMinimized(true)}
                 title="Minimize audio player"
@@ -2192,7 +2190,7 @@ export function FloatingAudioPlayer() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-6 shrink-0"
+                className="shrink-0"
                 data-testid="audio-close"
                 onClick={handleClosePlayer}
                 title="Close audio player"
