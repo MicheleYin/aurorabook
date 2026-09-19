@@ -254,8 +254,8 @@ function FilterGroup<T extends string>({
         <Button
           key={option.value}
           variant={value === option.value ? "default" : "outline"}
-          
-          className={cn("h-7 shrink-0 text-xs", option.className)}
+          size="sm"
+          className={cn("shrink-0", option.className)}
           onClick={() => onChange(option.value)}
         >
           {option.label}
