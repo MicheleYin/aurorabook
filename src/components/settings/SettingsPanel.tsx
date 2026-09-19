@@ -1,22 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { Pause, Play } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useSettingsContext } from "@/context/SettingsContext";
 import { useTranslation } from "../../lib/i18n";
 
-import type { UITheme } from "../../types/ui";
-import type { TtsSynthesisQuality } from "../../types/settings";
-import { voiceMatchesTtsLanguage } from "../../constants/languages";
 import { KOKORO_VOICE_GROUPS, voiceSamplePathsToTry } from "../../constants/kokoro";
+import { voiceMatchesTtsLanguage } from "../../constants/languages";
 import { SHOW_LOGS, SUPPORT_EMAIL } from "../../constants/support";
 import { emailLogsReport, exportLogsToFile } from "../../lib/log-export";
 import { logger } from "../../lib/logger";
 import { defaultTtsSynthesisQuality } from "../../lib/settings-utils";
+import type { TtsSynthesisQuality } from "../../types/settings";
+import type { UITheme } from "../../types/ui";
 import { LogViewer } from "../debug/LogViewer";
 import { ThemeSwitcher } from "../ThemeSwitcher";
-import { LanguageSelect } from "./LanguageSelect";
-import { TtsLanguageSelect } from "./TtsLanguageSelect";
 import {
   Accordion,
   AccordionContent,
@@ -40,6 +38,9 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Separator } from "../ui/separator";
+import { LanguageSelect } from "./LanguageSelect";
+import { ShortcutSettingsCard } from "./ShortcutSettingsCard";
+import { TtsLanguageSelect } from "./TtsLanguageSelect";
 
 export function Settings() {
   const {
@@ -170,7 +171,8 @@ export function Settings() {
   );
 
   const handleVoiceChange = useCallback(
-    async (voiceId: string) => {
+    async (voiceId: string | undefined) => {
+      if (!voiceId) return;
       await saveSettings({ ttsVoiceId: voiceId });
     },
     [saveSettings]
@@ -195,7 +197,7 @@ export function Settings() {
   }, [appVersion, t]);
 
   const handleTtsQualityChange = useCallback(
-    async (value: string) => {
+    async (value: string | undefined) => {
       if (value === "fastest" || value === "balanced" || value === "quality") {
         await saveSettings({ ttsSynthesisQuality: value as TtsSynthesisQuality });
       }
@@ -232,7 +234,7 @@ export function Settings() {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-2">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+          <div className="animate-spin rounded-full size-6 border-b-2 border-primary mx-auto"></div>
           <p className="text-sm text-muted-foreground">{t("app.loading_settings")}</p>
         </div>
       </div>
@@ -319,6 +321,7 @@ export function Settings() {
                   </p>
                 </div>
                 <Select
+                  clearable={false}
                   value={
                     settings?.ttsSynthesisQuality ?? defaultTtsSynthesisQuality()
                   }
@@ -345,6 +348,7 @@ export function Settings() {
                 <div className="flex-1">
                   <p className="font-medium mb-2">{t("settings.voice")}</p>
                   <Select
+                    clearable={false}
                     value={settings?.ttsVoiceId || "F1"}
                     onValueChange={handleVoiceChange}
                   >
@@ -396,19 +400,19 @@ export function Settings() {
                     </div>
                     <Button
                       variant="outline"
-                      size="sm"
+                      
                       onClick={() =>
                         handlePlaySample(
                           selectedVoice.id,
                           settings?.ttsLanguage ?? "en"
                         )
                       }
-                      className="h-10 w-10 p-0 shrink-0"
+                      className="size-10 p-0 shrink-0"
                     >
                       {playingVoiceId === selectedVoice.id ? (
-                        <Pause className="h-4 w-4" />
+                        <Pause className="size-5" />
                       ) : (
-                        <Play className="h-4 w-4" />
+                        <Play className="size-5" />
                       )}
                     </Button>
                   </div>
@@ -438,7 +442,7 @@ export function Settings() {
                   </p>
                   <Button
                     variant="outline"
-                    size="sm"
+                    
                     className="w-fit"
                     onClick={() => setLogViewerOpen(true)}
                   >
@@ -448,7 +452,7 @@ export function Settings() {
               )}
               {isSaving && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                  <div className="animate-spin rounded-full size-5 border-b-2 border-primary"></div>
                   {t("app.saving")}
                 </div>
               )}
@@ -456,6 +460,8 @@ export function Settings() {
           </Card>
 
           <LogViewer isOpen={logViewerOpen} onOpenChange={setLogViewerOpen} />
+
+          <ShortcutSettingsCard />
 
           {/* FAQ Section */}
           <Card>
@@ -472,6 +478,15 @@ export function Settings() {
                   <AccordionContent>
                     <p className="text-sm text-muted-foreground">
                       {t("faq.how_works.a")}
+                    </p>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="keyboard-shortcuts">
+                  <AccordionTrigger>{t("faq.shortcuts.q")}</AccordionTrigger>
+                  <AccordionContent>
+                    <p className="text-sm text-muted-foreground">
+                      {t("faq.shortcuts.a")}
                     </p>
                   </AccordionContent>
                 </AccordionItem>
@@ -560,21 +575,21 @@ export function Settings() {
                     <div className="flex flex-wrap gap-2">
                       <Button
                         variant="outline"
-                        size="sm"
+                        
                         onClick={handleExportLogs}
                       >
                         {t("faq.bug_report.export_logs")}
                       </Button>
                       <Button
                         variant="outline"
-                        size="sm"
+                        
                         onClick={() => setLogViewerOpen(true)}
                       >
                         {t("faq.bug_report.view_logs")}
                       </Button>
                       <Button
                         variant="default"
-                        size="sm"
+                        
                         onClick={() => {
                           void handleEmailSupport();
                         }}

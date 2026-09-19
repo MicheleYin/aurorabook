@@ -25,16 +25,18 @@ export function ReaderNavigation({
   const hasNext = currentChapterIndex < book.chapters.length - 1;
 
   return (
-    <div className="absolute left-0 right-0 z-10 flex-shrink-0 bottom-0 select-none pb-[calc(1rem+var(--app-safe-bottom,0px))]">
+    <div className="absolute left-0 right-0 z-10 shrink-0 bottom-0 select-none pb-[calc(1rem+var(--app-safe-bottom,0px))] py-4">
       <div className="flex items-center justify-between px-4 pt-4">
         <Button
           variant="outline"
           onClick={onPrevious}
-          className="rounded-full gap-2 shadow-md"
+          className="rounded-full gap-2 shadow-md py-5"
           disabled={!hasPrevious}
         >
-          <ChevronLeft className="h-5 w-5" />
+          <div className="flex items-center gap-2">
+          <ChevronLeft className="size-5" />
           <span className="hidden md:block">{t("common.previous")}</span>
+          </div>
         </Button>
         <div className="text-sm text-muted-foreground">
           {t("book.chapter_count", {
@@ -46,10 +48,12 @@ export function ReaderNavigation({
           variant="outline"
           onClick={onNext}
           disabled={!hasNext}
-          className="rounded-full gap-2 shadow-md"
+          className="rounded-full gap-2 shadow-md py-5"
         >
+          <div className="flex items-center gap-2">
           <span className="hidden md:block">{t("common.next")}</span>
-          <ChevronRight className="h-5 w-5" />
+          <ChevronRight className="size-5" />
+          </div>
         </Button>
       </div>
     </div>

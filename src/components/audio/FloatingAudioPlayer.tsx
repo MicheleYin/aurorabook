@@ -25,9 +25,11 @@ import { useAudioProgressContext } from "@/context/AudioProgressContext";
 import { useAudioSyncContext } from "@/context/AudioSyncContext";
 import { useChapterProgressContext } from "@/context/ChapterProgressContext";
 import { useConversionState } from "@/context/ConversionStateContext";
+import { useRegisterShortcutActions } from "@/context/KeyboardShortcutsContext";
 import { useSettingsContext } from "@/context/SettingsContext";
 
 import { applyMediaPlaybackRate, mimeTypeFromTrackHref } from "../../lib/audio-progress-utils";
+import { PLAYBACK_RATES } from "../../lib/keyboard-shortcuts";
 import {
   liveStreamPlaybackUrl,
   shouldHoldLivePlayback,
@@ -1545,6 +1547,79 @@ export function FloatingAudioPlayer() {
     return () => window.removeEventListener("aurora-native-skip", onSkip);
   }, [handleNextTrack, handlePreviousTrack]);
 
+  useRegisterShortcutActions({
+    playPause: () => {
+      if (!currentAudioTrack) return false;
+      void handlePlayPause();
+    },
+    skipBack: () => {
+      if (!currentAudioTrack) return false;
+      handleSkipBackward();
+    },
+    skipForward: () => {
+      if (!currentAudioTrack) return false;
+      handleSkipForward();
+    },
+    prevTrack: () => {
+      if (!currentAudioTrack) return false;
+      void handlePreviousTrack();
+    },
+    nextTrack: () => {
+      if (!currentAudioTrack) return false;
+      void handleNextTrack();
+    },
+    toggleMinimizePlayer: () => {
+      if (!currentAudioTrack) return false;
+      setPlayerMinimized(!isMinimized);
+    },
+    slowerRate: () => {
+      if (!currentAudioTrack) return false;
+      const index = PLAYBACK_RATES.indexOf(
+        playbackRate as (typeof PLAYBACK_RATES)[number]
+      );
+      const currentIndex =
+        index >= 0
+          ? index
+          : PLAYBACK_RATES.reduce(
+              (best, rate, i) =>
+                Math.abs(rate - playbackRate) <
+                Math.abs(PLAYBACK_RATES[best] - playbackRate)
+                  ? i
+                  : best,
+              0
+            );
+      if (currentIndex <= 0) return;
+      setPlaybackRate(PLAYBACK_RATES[currentIndex - 1]);
+    },
+    fasterRate: () => {
+      if (!currentAudioTrack) return false;
+      const index = PLAYBACK_RATES.indexOf(
+        playbackRate as (typeof PLAYBACK_RATES)[number]
+      );
+      const currentIndex =
+        index >= 0
+          ? index
+          : PLAYBACK_RATES.reduce(
+              (best, rate, i) =>
+                Math.abs(rate - playbackRate) <
+                Math.abs(PLAYBACK_RATES[best] - playbackRate)
+                  ? i
+                  : best,
+              0
+            );
+      if (currentIndex >= PLAYBACK_RATES.length - 1) return;
+      setPlaybackRate(PLAYBACK_RATES[currentIndex + 1]);
+    },
+    showAudioPlayer: () => {
+      if (!currentBook) return false;
+      if (currentAudioTrack) {
+        setPlayerMinimized(false);
+        return;
+      }
+      loadLastOpenedAudioTrack(currentBook, false);
+    },
+  });
+
   // Seek/restore progress for all platforms (desktop restore + engine seek events).
   useEffect(() => {
     const onSeekUi = (event: Event) => {
@@ -1972,20 +2047,20 @@ export function FloatingAudioPlayer() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-10 w-10 shrink-0"
+                className="size-12 shrink-0 rounded-lg"
                 data-testid="audio-play-pause"
                 onClick={handlePlayPause}
                 disabled={isLoadingAudio}
               >
                 {isLoadingAudio ? (
                   <Loader2
-                    className="h-5 w-5 animate-spin shrink-0"
+                    className="size-5 animate-spin shrink-0"
                     data-testid="audio-loading-spinner"
                   />
                 ) : isPlaying ? (
-                  <Pause className="h-5 w-5" />
+                  <Pause className="size-6" />
                 ) : (
-                  <Play className="h-5 w-5" />
+                  <Play className="size-6" />
                 )}
               </Button>
 
@@ -2007,23 +2082,21 @@ export function FloatingAudioPlayer() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 shrink-0"
                 data-testid="audio-expand"
                 onClick={() => setPlayerMinimized(false)}
                 title="Expand audio player"
               >
-                <ChevronUp className="h-4 w-4" />
+                <ChevronUp className="size-5" />
               </Button>
 
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 shrink-0"
                 data-testid="audio-close"
                 onClick={handleClosePlayer}
                 title="Close audio player"
               >
-                <X className="h-4 w-4" />
+                <X className="size-5" />
               </Button>
             </div>
 
@@ -2067,23 +2140,24 @@ export function FloatingAudioPlayer() {
                 variant={isSyncEnabled ? "secondary" : "ghost"}
                 size="icon"
                 className={cn(
-                  "h-10 w-10",
+                  "size-10",
                   isSyncEnabled && "bg-primary/10 hover:bg-primary/20"
                 )}
                 onClick={toggleSync}
                 disabled={isLoadingAudio || !currentBook}
                 title={isSyncEnabled ? "Disable text sync" : "Enable text sync"}
               >
-                <Link2 className="h-5 w-5 shrink-0" />
+                <Link2 className="size-5 shrink-0" />
               </Button>
 
               <Select
                 value={playbackRate.toString()}
-                onValueChange={(value) =>
-                  setPlaybackRate(Number.parseFloat(value))
-                }
+                onValueChange={(value) => {
+                  if (value == null) return;
+                  setPlaybackRate(Number.parseFloat(value));
+                }} clearable={false}
               >
-                <SelectTrigger className="h-10 w-20">
+                <SelectTrigger className="h-10 w-20" >
                   <SelectValue placeholder="1x" />
                 </SelectTrigger>
                 <SelectContent>
@@ -2105,23 +2179,23 @@ export function FloatingAudioPlayer() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 shrink-0"
+                className="shrink-0"
                 data-testid="audio-minimize"
                 onClick={() => setPlayerMinimized(true)}
                 title="Minimize audio player"
               >
-                <ChevronDown className="h-4 w-4" />
+                <ChevronDown className="size-5" />
               </Button>
 
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 shrink-0"
+                className="shrink-0"
                 data-testid="audio-close"
                 onClick={handleClosePlayer}
                 title="Close audio player"
               >
-                <X className="h-4 w-4" />
+                <X className="size-5" />
               </Button>
             </div>
 
@@ -2149,65 +2223,65 @@ export function FloatingAudioPlayer() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-10 w-10"
+                className="size-10"
                 onClick={handlePreviousTrack}
                 disabled={!hasPreviousTrack || isLoadingAudio}
                 title="Previous track"
               >
-                <SkipBack className="h-5 w-5 shrink-0" />
+                <SkipBack className="size-5 shrink-0" />
               </Button>
 
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-10 w-10"
+                className="size-10"
                 onClick={handleSkipBackward}
                 disabled={isLoadingAudio}
                 title="Skip backward 10 seconds"
               >
-                <Rewind className="h-5 w-5 shrink-0" />
+                <Rewind className="size-5 shrink-0" />
               </Button>
 
               <Button
                 variant="ghost"
-                size="icon"
-                className="h-12 w-12 shrink-0"
+                size="icon-lg"
+                className="size-14 shrink-0 rounded-lg"
                 data-testid="audio-play-pause"
                 onClick={handlePlayPause}
                 disabled={isLoadingAudio}
               >
                 {isLoadingAudio ? (
                   <Loader2
-                    className="h-6 w-6 animate-spin shrink-0"
+                    className="size-7 animate-spin shrink-0"
                     data-testid="audio-loading-spinner"
                   />
                 ) : isPlaying ? (
-                  <Pause className="h-6 w-6" />
+                  <Pause className="size-7 shrink-0" />
                 ) : (
-                  <Play className="h-6 w-6" />
+                  <Play className="size-7 shrink-0" />
                 )}
               </Button>
 
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-10 w-10"
+                className="size-10"
                 onClick={handleSkipForward}
                 disabled={isLoadingAudio}
                 title="Skip forward 10 seconds"
               >
-                <FastForward className="h-5 w-5 shrink-0" />
+                <FastForward className="size-5 shrink-0" />
               </Button>
 
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-10 w-10"
+                className="size-10"
                 onClick={handleNextTrack}
                 disabled={!hasNextTrack || isLoadingAudio}
                 title="Next track"
               >
-                <SkipForward className="h-5 w-5 shrink-0" />
+                <SkipForward className="size-5 shrink-0" />
               </Button>
             </div>
           </>

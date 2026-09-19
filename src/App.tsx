@@ -8,6 +8,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Library } from "./components/library/Library";
 import { Reader } from "./components/reader/Reader";
 import { Settings } from "./components/settings/SettingsPanel";
+import { ShortcutsHelpDialog } from "./components/shortcuts/ShortcutsHelpDialog";
 import { Toaster } from "./components/ui/sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { AppProvider, TabValue, useAppContext } from "./context/AppContext";
@@ -22,6 +23,7 @@ import {
   useChapterProgressContext,
 } from "./context/ChapterProgressContext";
 import { ConversionStateProvider } from "./context/ConversionStateContext";
+import { KeyboardShortcutsProvider } from "./context/KeyboardShortcutsContext";
 import {
   SettingsProvider,
   useSettingsContext,
@@ -109,14 +111,13 @@ function AppContent() {
           )}
           aria-hidden={hideNavTabs}
         >
-          <TabsList className="rounded-full bg-background/80 backdrop-blur-lg border shadow-lg px-1 py-3 gap-1 pointer-events-auto">
+          <TabsList className="rounded-full bg-background/80 backdrop-blur-lg border shadow-lg px-1 py-1 gap-1 pointer-events-auto">
             <TabsTrigger
               value="library"
-              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-1"
+              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-2"
             >
               {/* // add library icon */}
               <div className="flex items-center gap-2"> 
-
               <LibraryIcon className="w-5 h-5" />
               <span className="xs:block hidden transition-all duration-300 ease-out">{t("library.title")}</span>
               </div>
@@ -124,7 +125,7 @@ function AppContent() {
             <TabsTrigger
               value="reader"
               disabled={!currentBook}
-              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-1"
+              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-2"
             >
               <div className="flex items-center gap-2"> 
               <BookOpenIcon className="w-5 h-5" />
@@ -133,7 +134,7 @@ function AppContent() {
             </TabsTrigger>
             <TabsTrigger
               value="settings"
-              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-1"
+              className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-2"
             >
               <div className="flex items-center gap-2"> 
               <SettingsIcon className="w-5 h-5" />
@@ -145,6 +146,7 @@ function AppContent() {
         </div>
       </Tabs>
       <FloatingAudioPlayer />
+      <ShortcutsHelpDialog />
     </div>
   );
 }
@@ -344,7 +346,9 @@ function AppWithProviders() {
     >
       <AppClosingHandler />
       <ConversionCallbackHandler />
-      <AppContent />
+      <KeyboardShortcutsProvider>
+        <AppContent />
+      </KeyboardShortcutsProvider>
     </AppProvider>
   );
 }

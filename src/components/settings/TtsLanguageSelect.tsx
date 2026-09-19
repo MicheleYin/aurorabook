@@ -15,7 +15,8 @@ export function TtsLanguageSelect() {
   const { t } = useTranslation();
   const { settings, saveSettings } = useSettingsContext();
 
-  const handleLanguageChange = (value: string) => {
+  const handleLanguageChange = (value: string | undefined) => {
+    if (!value) return;
     const firstVoice = KOKORO_VOICE_GROUPS.flatMap((g) => g.voices)[0];
 
     void saveSettings({
@@ -28,6 +29,7 @@ export function TtsLanguageSelect() {
     <div className="space-y-2">
       <Label htmlFor="tts-language-select">{t("settings.tts_language")}</Label>
       <Select
+        clearable={false}
         value={normalizeTtsLanguage(settings?.ttsLanguage)}
         onValueChange={handleLanguageChange}
       >

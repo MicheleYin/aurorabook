@@ -186,7 +186,7 @@ export function TOCDrawer({
     <Drawer open={isOpen} onOpenChange={onOpenChange} direction="left">
       <DrawerTrigger asChild>
         <Button variant="ghost" size="icon">
-          <BookOpen className="h-5 w-5" />
+          <BookOpen className="size-5" />
         </Button>
       </DrawerTrigger>
       <DrawerContent className="w-80 max-w-[85vw] !max-h-screen top-0 bottom-0 left-0 right-auto rounded-r-none rounded-t-none rounded-l-none safe-area-top">
@@ -227,7 +227,7 @@ export function TOCDrawer({
                       variant="secondary"
                       className="h-5 px-1.5 text-[10px] shrink-0"
                     >
-                      <Volume2 className="h-3 w-3 mr-1" />
+                      <Volume2 className="size-5 mr-1" />
                       Playing
                     </Badge>
                   )}

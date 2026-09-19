@@ -14,6 +14,7 @@ import {
 } from "../lib/theme";
 import { cn } from "../lib/utils";
 import type { ColorTheme, DarkTheme, LightTheme, UITheme } from "../types/ui";
+import { Switch } from "./ui/switch";
 interface ThemeSwitcherProps {
   value: UITheme;
   onChange: (theme: UITheme) => void;
@@ -153,14 +154,6 @@ function ThemeSwitcherComponent({
     onChange(theme);
   };
 
-  const handleAutoToggle = () => {
-    if (autoEnabled) {
-      onChange(activeTheme);
-      return;
-    }
-    onChange("system");
-  };
-
   const activeLabel = t(
     lightActive
       ? `reader.theme_${preferredLight}`
@@ -209,32 +202,26 @@ function ThemeSwitcherComponent({
               : t("reader.theme_auto_off")}
           </p>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={autoEnabled}
+        <Switch
+          checked={autoEnabled}
+          onCheckedChange={(checked) => {
+            if (checked) onChange("system");
+            else onChange(activeTheme);
+          }}
           aria-label={t("reader.theme_auto")}
-          onClick={handleAutoToggle}
-          className={cn(
-            "relative h-7 w-12 shrink-0 rounded-full border transition-colors",
-            anim("medium", "colors"),
-            autoEnabled
-              ? "border-primary bg-primary"
-              : "border-border bg-muted"
-          )}
-        >
-          <span
-            className={cn(
-              "absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-background shadow-sm transition-transform",
-              anim("medium", "transform"),
-              autoEnabled && "translate-x-5"
-            )}
-          />
-        </button>
+        />
       </div>
     </div>
   );
 }
+
+/** Semi-transparent highlight composited over the theme background,
+ * matching how word highlights appear on reader pages. */
+const highlightPreviewStyle = {
+  backgroundImage:
+    "linear-gradient(hsl(var(--audio-highlight) / var(--audio-highlight-word-alpha)), hsl(var(--audio-highlight) / var(--audio-highlight-word-alpha)))",
+  backgroundColor: "hsl(var(--background))",
+} as const;
 
 interface ThemeSideCardProps {
   label: string;
@@ -277,7 +264,7 @@ function ThemeSideCard({
         aria-pressed={selected || following}
         aria-label={t("app.switch_theme", { theme: label })}
         className={cn(
-          "relative flex h-20 w-full flex-col items-start justify-between p-3 text-left",
+          "relative flex h-24 w-full flex-col items-start justify-between gap-1 p-3 text-left",
           previewClass
         )}
       >
@@ -285,13 +272,21 @@ function ThemeSideCard({
           {label}
         </span>
         {(selected || following) && (
-          <span className="absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
-            <Check className="h-3 w-3" aria-hidden="true" />
+          <span className="absolute right-2 top-2 flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
+            <Check className="size-4" aria-hidden="true" />
           </span>
         )}
         <span className="text-sm font-medium">
           {variants.find((v) => v.active)?.label ?? label}
         </span>
+        <span
+          className={cn(
+            "mt-auto h-4 w-14 rounded-full",
+            themeClassNames(variants.find((v) => v.active)?.theme)
+          )}
+          style={highlightPreviewStyle}
+          aria-hidden="true"
+        />
       </button>
       <div className="flex items-center gap-1.5 border-t border-border/60 bg-background/80 px-2 py-1.5">
         {variants.map((variant) => (
@@ -306,26 +301,24 @@ function ThemeSideCard({
               variant.onSelect();
             }}
             className={cn(
-              "flex h-7 w-7 items-center justify-center rounded-full transition-transform",
+              "flex size-6 items-center justify-center rounded-full transition-transform",
               anim("fast", "transform"),
               variant.active
                 ? "ring-2 ring-primary scale-105"
-                : "opacity-70 hover:opacity-100"
+                : "ring-1 ring-border/60 hover:ring-border"
             )}
           >
-          <span
-  className={cn(
-    "h-4 w-4 rounded-full border",
-    themeClassNames(variant.theme)
-  )}
-  style={{
-    backgroundColor: "hsl(var(--primary))",
-    borderColor: "hsl(var(--border))",
-    // transform to add alpha to the color
-  
-  }}
-  aria-hidden="true"
-/>
+            <span
+              className={cn(
+                "size-5 rounded-full border isolate",
+                themeClassNames(variant.theme)
+              )}
+              style={{
+                ...highlightPreviewStyle,
+                borderColor: "hsl(var(--border))",
+              }}
+              aria-hidden="true"
+            />
           </button>
         ))}
       </div>

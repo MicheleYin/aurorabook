@@ -1,16 +1,18 @@
-import { useEffect, useRef, useState } from "react";
 import { BookOpen } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useAppContext } from "../../context/AppContext";
 import { useAudioSyncContext } from "@/context/AudioSyncContext";
 import { useChapterProgressContext } from "@/context/ChapterProgressContext";
+import { useRegisterShortcutActions } from "@/context/KeyboardShortcutsContext";
+import { useAppContext } from "../../context/AppContext";
 import { useSettingsContext } from "../../context/SettingsContext";
 
-import type { Chapter } from "../../types/book";
 import { useReaderSettings } from "../../hooks/useReaderSettings";
 import { useTranslation } from "../../lib/i18n";
 import { logger } from "../../lib/logger";
+import { normalizeFontSize } from "../../lib/reader-settings-utils";
 import { cn } from "../../lib/utils";
+import type { Chapter } from "../../types/book";
 import { Button } from "../ui/button";
 import { ReaderContent } from "./ReaderContent";
 import { ReaderHeader } from "./ReaderHeader";
@@ -43,10 +45,9 @@ export function Reader() {
     setIsHeaderVisible(settings.readerHeaderVisible);
   }, [settings?.readerHeaderVisible]);
 
-  const handlePreviousChapter = async () => {
+  const handlePreviousChapter = useCallback(async () => {
     if (!currentBook || !currentChapter) return;
 
-    // Find previous chapter
     const currentIndex = currentBook.chapters.findIndex(
       (ch) => ch.id === currentChapter.id
     );
@@ -54,9 +55,9 @@ export function Reader() {
       const previousChapter = currentBook.chapters[currentIndex - 1];
       await loadChapterContent(currentBook.id, previousChapter);
     }
-  };
+  }, [currentBook, currentChapter, loadChapterContent]);
 
-  const handleNextChapter = async () => {
+  const handleNextChapter = useCallback(async () => {
     if (!currentBook || !currentChapter) return;
     if (isSyncEnabled) {
       toggleSync();
@@ -69,7 +70,13 @@ export function Reader() {
     if (nextChapter) {
       await loadChapterContent(currentBook.id, nextChapter);
     }
-  };
+  }, [
+    currentBook,
+    currentChapter,
+    isSyncEnabled,
+    loadChapterContent,
+    toggleSync,
+  ]);
 
   const handleChapterSelect = async (chapter: Chapter) => {
     if (!currentBook) return;
@@ -78,30 +85,92 @@ export function Reader() {
       toggleSync();
     }
 
-    // Load selected chapter
     await loadChapterContent(currentBook.id, chapter);
     setIsTocOpen(false);
   };
 
-  const handleBack = () => {
+  const handleBack = useCallback(() => {
     if (!currentBook || !currentChapter || !containerRef.current) return;
     if (isSyncEnabled) {
       toggleSync();
     }
     setCurrentTab("library");
-  };
+  }, [
+    containerRef,
+    currentBook,
+    currentChapter,
+    isSyncEnabled,
+    setCurrentTab,
+    toggleSync,
+  ]);
 
-  const handleContentClick = () => {
+  const handleContentClick = useCallback(() => {
     const next = !isHeaderVisible;
     setIsHeaderVisible(next);
     void saveSettings({ readerHeaderVisible: next });
-  };
+  }, [isHeaderVisible, saveSettings]);
+
+  const adjustFontSize = useCallback(
+    (delta: number) => {
+      const current = Number(normalizeFontSize(readerSettings.fontSize));
+      const next = normalizeFontSize(String(current + delta));
+      if (next === readerSettings.fontSize) return;
+      setReaderSettings({ ...readerSettings, fontSize: next });
+    },
+    [readerSettings, setReaderSettings]
+  );
+
+  useRegisterShortcutActions({
+    prevChapter: () => {
+      if (!currentBook || !currentChapter) return false;
+      void handlePreviousChapter();
+    },
+    nextChapter: () => {
+      if (!currentBook || !currentChapter) return false;
+      void handleNextChapter();
+    },
+    toggleToc: () => {
+      if (!currentBook || !currentChapter) return false;
+      setIsTocOpen((open) => !open);
+    },
+    toggleChrome: () => {
+      if (!currentBook || !currentChapter) return false;
+      handleContentClick();
+    },
+    backToLibrary: () => {
+      if (!currentBook) return false;
+      handleBack();
+    },
+    increaseFont: () => {
+      if (!currentBook || !currentChapter) return false;
+      adjustFontSize(1);
+    },
+    decreaseFont: () => {
+      if (!currentBook || !currentChapter) return false;
+      adjustFontSize(-1);
+    },
+    toggleSync: () => {
+      if (!currentBook || !currentChapter) return false;
+      toggleSync();
+    },
+    closeOverlays: () => {
+      if (isSettingsOpen) {
+        setIsSettingsOpen(false);
+        return true;
+      }
+      if (isTocOpen) {
+        setIsTocOpen(false);
+        return true;
+      }
+      return false;
+    },
+  });
 
   if (!currentBook) {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-4">
-          <BookOpen className="h-12 w-12 text-muted-foreground mx-auto" />
+          <BookOpen className="size-12 text-muted-foreground mx-auto" />
           <p className="text-lg font-medium">{t("reader.no_book")}</p>
           <Button onClick={handleBack}>{t("reader.back_to_library")}</Button>
         </div>
@@ -127,7 +196,7 @@ export function Reader() {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-4">
-          <BookOpen className="h-12 w-12 text-muted-foreground mx-auto" />
+          <BookOpen className="size-12 text-muted-foreground mx-auto" />
           <p className="text-lg font-medium">{t("reader.no_book")}</p>
           <Button onClick={handleBack}>{t("reader.back_to_library")}</Button>
         </div>

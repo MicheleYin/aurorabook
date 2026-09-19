@@ -115,7 +115,6 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent
-        scrollableBody={false}
         className={cn(
           "flex w-[calc(100%-1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0",
           "h-[min(90dvh,100%)] max-h-[90dvh] sm:h-auto sm:max-h-[85vh]"
@@ -161,7 +160,7 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
             <div className="flex w-full gap-2 sm:ml-auto sm:w-auto">
               <Button
                 variant="outline"
-                size="sm"
+                
                 className="flex-1 sm:flex-none"
                 onClick={handleClear}
               >
@@ -169,7 +168,7 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
               </Button>
               <Button
                 variant="outline"
-                size="sm"
+                
                 className="flex-1 sm:flex-none"
                 onClick={exportLogs}
               >
@@ -256,7 +255,7 @@ function FilterGroup<T extends string>({
           key={option.value}
           variant={value === option.value ? "default" : "outline"}
           size="sm"
-          className={cn("h-7 shrink-0 text-xs", option.className)}
+          className={cn("shrink-0", option.className)}
           onClick={() => onChange(option.value)}
         >
           {option.label}

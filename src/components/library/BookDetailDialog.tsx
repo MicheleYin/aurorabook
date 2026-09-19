@@ -1,4 +1,3 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { type as osType } from "@tauri-apps/plugin-os";
@@ -15,18 +14,9 @@ import {
   User,
   X,
 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import type { Book } from "../../types/book";
-import { useIsMobile } from "../../hooks/useIsMobile";
-import { useUnfinishedChapterDuration } from "../../hooks/useUnfinishedChapterDuration";
-import {
-  sumAudioTrackDurationSeconds,
-  totalBookAudioDurationSeconds,
-} from "../../lib/book-audio-duration";
-import { logger } from "../../lib/logger";
-import { useTranslation } from "../../lib/i18n";
-import { humanizeDurationLocale } from "../../constants/languages";
 import {
   type AudioExportFormat,
   type AudioExportProgressPayload,
@@ -36,6 +26,16 @@ import {
 import type { ConversionProgress } from "@/context/ConversionStateContext";
 import { useConversionState } from "@/context/ConversionStateContext";
 import { useSettingsContext } from "@/context/SettingsContext";
+import { humanizeDurationLocale } from "../../constants/languages";
+import { useIsMobile } from "../../hooks/useIsMobile";
+import { useUnfinishedChapterDuration } from "../../hooks/useUnfinishedChapterDuration";
+import {
+  sumAudioTrackDurationSeconds,
+  totalBookAudioDurationSeconds,
+} from "../../lib/book-audio-duration";
+import { useTranslation } from "../../lib/i18n";
+import { logger } from "../../lib/logger";
+import type { Book } from "../../types/book";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -122,14 +122,14 @@ const BookDetailContent = ({
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center">
-              <BookOpen className="h-12 w-12 text-muted-foreground/50" />
+              <BookOpen className="size-12 text-muted-foreground/50" />
             </div>
           )}
         </div>
         <div className="flex-1 space-y-4">
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <User className="h-4 w-4 text-muted-foreground" />
+              <User className="size-5 text-muted-foreground" />
               <span className="font-medium">{t("book.author")}</span>
             </div>
             <p className="text-sm text-muted-foreground">{book.author}</p>
@@ -137,7 +137,7 @@ const BookDetailContent = ({
           {book.publisher && (
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <FileText className="h-4 w-4 text-muted-foreground" />
+                <FileText className="size-5 text-muted-foreground" />
                 <span className="font-medium">{t("book.publisher")}</span>
               </div>
               <p className="text-sm text-muted-foreground">
@@ -149,7 +149,7 @@ const BookDetailContent = ({
           {book.publishedYear && !book.publisher && (
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <Calendar className="h-4 w-4 text-muted-foreground" />
+                <Calendar className="size-5 text-muted-foreground" />
                 <span className="font-medium">{t("book.published")}</span>
               </div>
               <p className="text-sm text-muted-foreground">
@@ -596,7 +596,8 @@ export function BookDetailDialog({
   }, [cancelAudioExport]);
 
   const handleExportDropdownAction = useCallback(
-    (value: string) => {
+    (value: string | undefined) => {
+      if (!value) return;
       if (value === "epub") {
         void handleExportEpub();
       } else if (value === "mp3") {
@@ -653,18 +654,19 @@ export function BookDetailDialog({
                 }}
                 className="gap-2"
               >
-                <BookOpen className="h-4 w-4" />
+                <BookOpen className="size-5" />
                 {t("book.open")}
               </Button>
               <Select
                 key={`desktop-${exportDropdownKey}`}
                 onValueChange={handleExportDropdownAction}
                 disabled={isExportDisabled}
+                clearable={false}
               >
                 <SelectTrigger className="w-[170px] gap-2">
                   {isExportingAudio || isAnotherBookExporting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="size-5 animate-spin" />
                       <span>
                         {isAnotherBookExporting
                           ? t("book.export_busy")
@@ -672,12 +674,12 @@ export function BookDetailDialog({
                               format: formatLabel(activeExportFormat ?? "mp3"),
                             })}
                       </span>
-                    </>
+                    </div>
                   ) : (
-                    <>
-                      <Download className="h-4 w-4" />
+                    <div className="flex items-center gap-2">
+                      <Download className="size-5" />
                       <SelectValue placeholder={t("book.export")} />
-                    </>
+                    </div>
                   )}
                 </SelectTrigger>
                 <SelectContent>
@@ -701,7 +703,7 @@ export function BookDetailDialog({
                     disabled={isDeleting}
                     className="gap-2"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="size-5" />
                     {t("book.cancel_export")}
                   </Button>
                 )}
@@ -712,7 +714,7 @@ export function BookDetailDialog({
                   disabled={isDeleting}
                   className="gap-2"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="size-5" />
                   {t("book.cancel")}
                 </Button>
               )}
@@ -723,7 +725,7 @@ export function BookDetailDialog({
                   disabled={isDeleting || isConverting}
                   className="gap-2"
                 >
-                  <Play className="h-4 w-4" />
+                  <Play className="size-5" />
                   {t("book.resume")}
                 </Button>
               )}
@@ -734,7 +736,7 @@ export function BookDetailDialog({
                   className="gap-2"
                   disabled={isDeleting || isConverting}
                 >
-                  <Play className="h-4 w-4" />
+                  <Play className="size-5" />
                   {t("book.convert")}
                 </Button>
               )}
@@ -744,7 +746,7 @@ export function BookDetailDialog({
                 disabled={isDeleting || isConvertingThisBook}
                 className="gap-2"
               >
-                <Trash2 className="h-4 w-4" />
+                <Trash2 className="size-5" />
                 {isDeleting ? t("common.deleting") : t("book.delete")}
               </Button>
             </DialogFooter>
@@ -781,18 +783,19 @@ export function BookDetailDialog({
                 }}
                 className="gap-2"
               >
-                <BookOpen className="h-4 w-4" />
+                <BookOpen className="size-5" />
                 {t("book.open")}
               </Button>
               <Select
                 key={`mobile-${exportDropdownKey}`}
+                clearable={false}
                 onValueChange={handleExportDropdownAction}
                 disabled={isExportDisabled}
               >
                 <SelectTrigger className="w-full gap-2">
                   {isExportingAudio || isAnotherBookExporting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="size-5 animate-spin" />
                       <span>
                         {isAnotherBookExporting
                           ? t("book.export_busy")
@@ -800,12 +803,12 @@ export function BookDetailDialog({
                               format: formatLabel(activeExportFormat ?? "mp3"),
                             })}
                       </span>
-                    </>
+                    </div>
                   ) : (
-                    <>
-                      <Download className="h-4 w-4" />
+                    <div className="flex items-center gap-2">
+                      <Download className="size-5" />
                       <SelectValue placeholder={t("book.export")} />
-                    </>
+                    </div>
                   )}
                 </SelectTrigger>
                 <SelectContent className="w-full">
@@ -837,7 +840,7 @@ export function BookDetailDialog({
                     disabled={isDeleting}
                     className="gap-2 w-full"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="size-5" />
                     {t("book.cancel_export")}
                   </Button>
                 )}
@@ -848,7 +851,7 @@ export function BookDetailDialog({
                   disabled={isDeleting}
                   className="gap-2"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="size-5" />
                   {t("book.cancel")}
                 </Button>
               )}
@@ -859,7 +862,7 @@ export function BookDetailDialog({
                   disabled={isDeleting || isConverting}
                   className="gap-2"
                 >
-                  <Play className="h-4 w-4" />
+                  <Play className="size-5" />
                   {t("book.resume")}
                 </Button>
               )}
@@ -870,7 +873,7 @@ export function BookDetailDialog({
                   className="gap-2"
                   disabled={isDeleting || isConverting}
                 >
-                  <Play className="h-4 w-4" />
+                  <Play className="size-5" />
                   {t("book.convert")}
                 </Button>
               )}
@@ -880,7 +883,7 @@ export function BookDetailDialog({
                 disabled={isDeleting || isConvertingThisBook}
                 className="gap-2"
               >
-                <Trash2 className="h-4 w-4" />
+                <Trash2 className="size-5" />
                 {isDeleting ? t("common.deleting") : t("book.delete")}
               </Button>
             </DrawerFooter>
