@@ -109,7 +109,7 @@ function AppContent() {
           )}
           aria-hidden={hideNavTabs}
         >
-          <TabsList className="rounded-full bg-background/80 backdrop-blur-lg border shadow-lg px-1 py-3 gap-1 pointer-events-auto">
+          <TabsList className="rounded-full bg-background/80 backdrop-blur-lg border shadow-lg px-1 py-1 gap-1 pointer-events-auto">
             <TabsTrigger
               value="library"
               className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-1"

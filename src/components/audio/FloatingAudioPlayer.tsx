@@ -2079,9 +2079,10 @@ export function FloatingAudioPlayer() {
 
               <Select
                 value={playbackRate.toString()}
-                onValueChange={(value) =>
-                  setPlaybackRate(Number.parseFloat(value))
-                }
+                onValueChange={(value) => {
+                  if (value == null) return;
+                  setPlaybackRate(Number.parseFloat(value));
+                }}
               >
                 <SelectTrigger className="h-10 w-20">
                   <SelectValue placeholder="1x" />

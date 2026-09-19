@@ -115,7 +115,6 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent
-        scrollableBody={false}
         className={cn(
           "flex w-[calc(100%-1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0",
           "h-[min(90dvh,100%)] max-h-[90dvh] sm:h-auto sm:max-h-[85vh]"

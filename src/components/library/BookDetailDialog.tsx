@@ -1,4 +1,3 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { type as osType } from "@tauri-apps/plugin-os";
@@ -15,18 +14,9 @@ import {
   User,
   X,
 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import type { Book } from "../../types/book";
-import { useIsMobile } from "../../hooks/useIsMobile";
-import { useUnfinishedChapterDuration } from "../../hooks/useUnfinishedChapterDuration";
-import {
-  sumAudioTrackDurationSeconds,
-  totalBookAudioDurationSeconds,
-} from "../../lib/book-audio-duration";
-import { logger } from "../../lib/logger";
-import { useTranslation } from "../../lib/i18n";
-import { humanizeDurationLocale } from "../../constants/languages";
 import {
   type AudioExportFormat,
   type AudioExportProgressPayload,
@@ -36,6 +26,16 @@ import {
 import type { ConversionProgress } from "@/context/ConversionStateContext";
 import { useConversionState } from "@/context/ConversionStateContext";
 import { useSettingsContext } from "@/context/SettingsContext";
+import { humanizeDurationLocale } from "../../constants/languages";
+import { useIsMobile } from "../../hooks/useIsMobile";
+import { useUnfinishedChapterDuration } from "../../hooks/useUnfinishedChapterDuration";
+import {
+  sumAudioTrackDurationSeconds,
+  totalBookAudioDurationSeconds,
+} from "../../lib/book-audio-duration";
+import { useTranslation } from "../../lib/i18n";
+import { logger } from "../../lib/logger";
+import type { Book } from "../../types/book";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -596,7 +596,8 @@ export function BookDetailDialog({
   }, [cancelAudioExport]);
 
   const handleExportDropdownAction = useCallback(
-    (value: string) => {
+    (value: string | undefined) => {
+      if (!value) return;
       if (value === "epub") {
         void handleExportEpub();
       } else if (value === "mp3") {
@@ -663,7 +664,7 @@ export function BookDetailDialog({
               >
                 <SelectTrigger className="w-[170px] gap-2">
                   {isExportingAudio || isAnotherBookExporting ? (
-                    <>
+                    <div className="flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span>
                         {isAnotherBookExporting
@@ -672,12 +673,12 @@ export function BookDetailDialog({
                               format: formatLabel(activeExportFormat ?? "mp3"),
                             })}
                       </span>
-                    </>
+                    </div>
                   ) : (
-                    <>
+                    <div className="flex items-center gap-2">
                       <Download className="h-4 w-4" />
                       <SelectValue placeholder={t("book.export")} />
-                    </>
+                    </div>
                   )}
                 </SelectTrigger>
                 <SelectContent>

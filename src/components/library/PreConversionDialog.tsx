@@ -65,7 +65,8 @@ export function PreConversionDialog({
     );
   }, [selectedLanguage]);
 
-  const handleLanguageChange = (code: string) => {
+  const handleLanguageChange = (code: string | undefined) => {
+    if (!code) return;
     setSelectedLanguage(normalizeTtsLanguage(code));
     const voices = KOKORO_VOICE_GROUPS.flatMap((group) => group.voices).filter(
       (voice) => voiceMatchesTtsLanguage(voice.languageTag, code)
@@ -94,7 +95,7 @@ export function PreConversionDialog({
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">
             <Label htmlFor="tts-language">{t("convert.language")}</Label>
-            <Select value={selectedLanguage} onValueChange={handleLanguageChange}>
+            <Select clearable={false} value={selectedLanguage} onValueChange={handleLanguageChange}>
               <SelectTrigger id="tts-language">
                 <SelectValue placeholder={t("common.select_language")} />
               </SelectTrigger>
@@ -110,7 +111,13 @@ export function PreConversionDialog({
 
           <div className="grid gap-2">
             <Label htmlFor="tts-voice">{t("convert.voice")}</Label>
-            <Select value={selectedVoice} onValueChange={setSelectedVoice}>
+            <Select
+              clearable={false}
+              value={selectedVoice}
+              onValueChange={(value) => {
+                if (value) setSelectedVoice(value);
+              }}
+            >
               <SelectTrigger id="tts-voice">
                 <SelectValue placeholder={t("common.select_voice")} />
               </SelectTrigger>

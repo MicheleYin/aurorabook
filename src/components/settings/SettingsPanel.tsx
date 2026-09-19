@@ -170,7 +170,8 @@ export function Settings() {
   );
 
   const handleVoiceChange = useCallback(
-    async (voiceId: string) => {
+    async (voiceId: string | undefined) => {
+      if (!voiceId) return;
       await saveSettings({ ttsVoiceId: voiceId });
     },
     [saveSettings]
@@ -195,7 +196,7 @@ export function Settings() {
   }, [appVersion, t]);
 
   const handleTtsQualityChange = useCallback(
-    async (value: string) => {
+    async (value: string | undefined) => {
       if (value === "fastest" || value === "balanced" || value === "quality") {
         await saveSettings({ ttsSynthesisQuality: value as TtsSynthesisQuality });
       }
@@ -319,6 +320,7 @@ export function Settings() {
                   </p>
                 </div>
                 <Select
+                  clearable={false}
                   value={
                     settings?.ttsSynthesisQuality ?? defaultTtsSynthesisQuality()
                   }
@@ -345,6 +347,7 @@ export function Settings() {
                 <div className="flex-1">
                   <p className="font-medium mb-2">{t("settings.voice")}</p>
                   <Select
+                    clearable={false}
                     value={settings?.ttsVoiceId || "F1"}
                     onValueChange={handleVoiceChange}
                   >
