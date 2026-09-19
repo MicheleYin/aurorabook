@@ -8,13 +8,18 @@ import { cn, formatTime } from "../../lib/utils";
 import type { AudioTrack, Book } from "../../types/book";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Dialog, DialogContent } from "../ui/dialog";
 import {
-    Drawer,
-    DrawerContent,
-    DrawerHandle,
-    DrawerHeader,
-    DrawerTitle,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHandle,
+  DrawerHeader,
+  DrawerTitle,
 } from "../ui/drawer";
 import { ScrollArea } from "../ui/scroll-area";
 
@@ -264,94 +269,87 @@ export function AudioTracksDrawer({
     selectableTracks,
   ]);
 
-  const content = (
-    <>
-      <div className="pb-4">
-        <DrawerHeader>
-          <DrawerTitle>Audio Tracks</DrawerTitle>
-        </DrawerHeader>
-      </div>
-      <ScrollArea className="flex-1 overflow-y-auto">
-        <div className="p-4 space-y-1">
-          {selectableTracks.map((track) => {
-            const chapterIndex = getTrackChapterIndex(track);
-            const isCurrentTrack =
-              track.id === currentTrackId ||
-              (currentTrackChapterIndex !== null &&
-                chapterIndex === currentTrackChapterIndex);
-            const trackName = track.title || `Track ${track.order + 1}`;
-            const trackHref = track.href || track.filePath;
-            const chapterTitle = trackHref
-              ? trackChapters.get(trackHref)
+  const trackList = (
+    <ScrollArea className="flex-1 overflow-y-auto">
+      <div className="p-4 space-y-1">
+        {selectableTracks.map((track) => {
+          const chapterIndex = getTrackChapterIndex(track);
+          const isCurrentTrack =
+            track.id === currentTrackId ||
+            (currentTrackChapterIndex !== null &&
+              chapterIndex === currentTrackChapterIndex);
+          const trackName = track.title || `Track ${track.order + 1}`;
+          const trackHref = track.href || track.filePath;
+          const chapterTitle = trackHref
+            ? trackChapters.get(trackHref)
+            : null;
+          // Only show badge on the chapter that's actually being converted (from backend)
+          const showStatusBadge =
+            chapterIndex === effectiveConvertingChapter ||
+            (isConvertingThisBook &&
+              effectiveConvertingChapter === null &&
+              chapterIndex !== null &&
+              chapterIndex === currentTrackChapterIndex);
+          const statusText = isConvertingThisBook ? "Live" : "Paused";
+          const statusBadgeClass = isConvertingThisBook
+            ? "bg-amber-500 text-amber-950 hover:bg-amber-500"
+            : "bg-sky-600 text-sky-50 hover:bg-sky-600";
+          const duration =
+            "duration" in track &&
+            typeof track.duration === "number" &&
+            track.duration > 0
+              ? formatTime(track.duration)
               : null;
-            // Only show badge on the chapter that's actually being converted (from backend)
-            const showStatusBadge =
-              chapterIndex === effectiveConvertingChapter ||
-              (isConvertingThisBook &&
-                effectiveConvertingChapter === null &&
-                chapterIndex !== null &&
-                chapterIndex === currentTrackChapterIndex);
-            const statusText = isConvertingThisBook ? "Live" : "Paused";
-            const statusBadgeClass = isConvertingThisBook
-              ? "bg-amber-500 text-amber-950 hover:bg-amber-500"
-              : "bg-sky-600 text-sky-50 hover:bg-sky-600";
-            const duration =
-              "duration" in track &&
-              typeof track.duration === "number" &&
-              track.duration > 0
-                ? formatTime(track.duration)
-                : null;
 
-            return (
-              <button
-                key={track.id}
-                ref={isCurrentTrack ? currentTrackRef : null}
-                onClick={() => handleTrackSelect(track)}
-                className={cn(
-                  "w-full text-left px-3 py-2 rounded-md text-sm transition-colors",
-                  isCurrentTrack
-                    ? "bg-primary/10 hover:bg-primary/20 text-foreground"
-                    : "hover:bg-muted"
+          return (
+            <button
+              key={track.id}
+              ref={isCurrentTrack ? currentTrackRef : null}
+              onClick={() => handleTrackSelect(track)}
+              className={cn(
+                "w-full text-left px-3 py-2 rounded-md text-sm transition-colors",
+                isCurrentTrack
+                  ? "bg-primary/10 hover:bg-primary/20 text-foreground"
+                  : "hover:bg-muted"
+              )}
+            >
+              <div className="flex items-center gap-2">
+                <div className="font-medium flex-1">{trackName}</div>
+                {showStatusBadge && (
+                  <Badge
+                    variant="secondary"
+                    className={cn(
+                      "h-5 px-1.5 text-[10px] shrink-0",
+                      statusBadgeClass
+                    )}
+                  >
+                    {statusText}
+                  </Badge>
                 )}
-              >
-                <div className="flex items-center gap-2">
-                  <div className="font-medium flex-1">{trackName}</div>
-                  {showStatusBadge && (
-                    <Badge
-                      variant="secondary"
-                      className={cn(
-                        "h-5 px-1.5 text-[10px] shrink-0",
-                        statusBadgeClass
-                      )}
-                    >
-                      {statusText}
-                    </Badge>
-                  )}
-                  {duration && (
-                    <span className="text-xs text-muted-foreground shrink-0">
-                      {duration}
-                    </span>
-                  )}
-                  {isCurrentTrack && (
-                    <Badge
-                      variant="secondary"
-                      className="h-5 px-1.5 text-[10px] shrink-0"
-                    >
-                      Playing
-                    </Badge>
-                  )}
+                {duration && (
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {duration}
+                  </span>
+                )}
+                {isCurrentTrack && (
+                  <Badge
+                    variant="secondary"
+                    className="h-5 px-1.5 text-[10px] shrink-0"
+                  >
+                    Playing
+                  </Badge>
+                )}
+              </div>
+              {chapterTitle && (
+                <div className="text-xs opacity-70 mt-0.5 text-primary">
+                  {chapterTitle}
                 </div>
-                {chapterTitle && (
-                  <div className="text-xs opacity-70 mt-0.5 text-primary">
-                    {chapterTitle}
-                  </div>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </ScrollArea>
-    </>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </ScrollArea>
   );
 
   if (isMobile) {
@@ -359,7 +357,12 @@ export function AudioTracksDrawer({
       <Drawer open={isOpen} onOpenChange={onOpenChange} direction="bottom">
         <DrawerContent className="max-h-[80vh] flex flex-col">
           <DrawerHandle />
-          {content}
+          <div className="pb-4">
+            <DrawerHeader>
+              <DrawerTitle>Audio Tracks</DrawerTitle>
+            </DrawerHeader>
+          </div>
+          {trackList}
         </DrawerContent>
       </Drawer>
     );
@@ -367,7 +370,12 @@ export function AudioTracksDrawer({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md max-h-[80vh]">{content}</DialogContent>
+      <DialogContent className="max-w-md max-h-[80vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Audio Tracks</DialogTitle>
+        </DialogHeader>
+        {trackList}
+      </DialogContent>
     </Dialog>
   );
 }
@@ -390,7 +398,7 @@ export function AudioTracksButton({
       disabled={disabled}
       title="Audio tracks"
     >
-      <List className="size-4 shrink-0" />
+      <List className="size-5 shrink-0" />
     </Button>
   );
 }

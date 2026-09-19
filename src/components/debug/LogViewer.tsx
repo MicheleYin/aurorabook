@@ -160,7 +160,7 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
             <div className="flex w-full gap-2 sm:ml-auto sm:w-auto">
               <Button
                 variant="outline"
-                size="sm"
+                
                 className="flex-1 sm:flex-none"
                 onClick={handleClear}
               >
@@ -168,7 +168,7 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
               </Button>
               <Button
                 variant="outline"
-                size="sm"
+                
                 className="flex-1 sm:flex-none"
                 onClick={exportLogs}
               >
@@ -254,7 +254,7 @@ function FilterGroup<T extends string>({
         <Button
           key={option.value}
           variant={value === option.value ? "default" : "outline"}
-          size="sm"
+          
           className={cn("h-7 shrink-0 text-xs", option.className)}
           onClick={() => onChange(option.value)}
         >

@@ -16,26 +16,26 @@ import type { UITheme } from "../../types/ui";
 import { LogViewer } from "../debug/LogViewer";
 import { ThemeSwitcher } from "../ThemeSwitcher";
 import {
-    Accordion,
-    AccordionContent,
-    AccordionItem,
-    AccordionTrigger,
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
 } from "../ui/accordion";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "../ui/card";
 import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "../ui/select";
 import { Separator } from "../ui/separator";
 import { LanguageSelect } from "./LanguageSelect";
@@ -400,7 +400,7 @@ export function Settings() {
                     </div>
                     <Button
                       variant="outline"
-                      size="sm"
+                      
                       onClick={() =>
                         handlePlaySample(
                           selectedVoice.id,
@@ -410,9 +410,9 @@ export function Settings() {
                       className="size-10 p-0 shrink-0"
                     >
                       {playingVoiceId === selectedVoice.id ? (
-                        <Pause className="size-4" />
+                        <Pause className="size-5" />
                       ) : (
-                        <Play className="size-4" />
+                        <Play className="size-5" />
                       )}
                     </Button>
                   </div>
@@ -442,7 +442,7 @@ export function Settings() {
                   </p>
                   <Button
                     variant="outline"
-                    size="sm"
+                    
                     className="w-fit"
                     onClick={() => setLogViewerOpen(true)}
                   >
@@ -452,7 +452,7 @@ export function Settings() {
               )}
               {isSaving && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <div className="animate-spin rounded-full size-4 border-b-2 border-primary"></div>
+                  <div className="animate-spin rounded-full size-5 border-b-2 border-primary"></div>
                   {t("app.saving")}
                 </div>
               )}
@@ -575,21 +575,21 @@ export function Settings() {
                     <div className="flex flex-wrap gap-2">
                       <Button
                         variant="outline"
-                        size="sm"
+                        
                         onClick={handleExportLogs}
                       >
                         {t("faq.bug_report.export_logs")}
                       </Button>
                       <Button
                         variant="outline"
-                        size="sm"
+                        
                         onClick={() => setLogViewerOpen(true)}
                       >
                         {t("faq.bug_report.view_logs")}
                       </Button>
                       <Button
                         variant="default"
-                        size="sm"
+                        
                         onClick={() => {
                           void handleEmailSupport();
                         }}

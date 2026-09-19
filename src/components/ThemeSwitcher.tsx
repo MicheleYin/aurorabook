@@ -272,8 +272,8 @@ function ThemeSideCard({
           {label}
         </span>
         {(selected || following) && (
-          <span className="absolute right-2 top-2 flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
-            <Check className="size-3" aria-hidden="true" />
+          <span className="absolute right-2 top-2 flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
+            <Check className="size-4" aria-hidden="true" />
           </span>
         )}
         <span className="text-sm font-medium">
@@ -281,7 +281,7 @@ function ThemeSideCard({
         </span>
         <span
           className={cn(
-            "mt-auto h-1.5 w-14 rounded-full",
+            "mt-auto h-4 w-14 rounded-full",
             themeClassNames(variants.find((v) => v.active)?.theme)
           )}
           style={highlightPreviewStyle}
@@ -310,7 +310,7 @@ function ThemeSideCard({
           >
             <span
               className={cn(
-                "size-4 rounded-full border isolate",
+                "size-5 rounded-full border isolate",
                 themeClassNames(variant.theme)
               )}
               style={{

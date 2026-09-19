@@ -2054,13 +2054,13 @@ export function FloatingAudioPlayer() {
               >
                 {isLoadingAudio ? (
                   <Loader2
-                    className="size-4 animate-spin shrink-0"
+                    className="size-5 animate-spin shrink-0"
                     data-testid="audio-loading-spinner"
                   />
                 ) : isPlaying ? (
-                  <Pause className="size-4" />
+                  <Pause className="size-6" />
                 ) : (
-                  <Play className="size-4" />
+                  <Play className="size-6" />
                 )}
               </Button>
 
@@ -2086,7 +2086,7 @@ export function FloatingAudioPlayer() {
                 onClick={() => setPlayerMinimized(false)}
                 title="Expand audio player"
               >
-                <ChevronUp className="size-4" />
+                <ChevronUp className="size-5" />
               </Button>
 
               <Button
@@ -2096,7 +2096,7 @@ export function FloatingAudioPlayer() {
                 onClick={handleClosePlayer}
                 title="Close audio player"
               >
-                <X className="size-4" />
+                <X className="size-5" />
               </Button>
             </div>
 
@@ -2147,7 +2147,7 @@ export function FloatingAudioPlayer() {
                 disabled={isLoadingAudio || !currentBook}
                 title={isSyncEnabled ? "Disable text sync" : "Enable text sync"}
               >
-                <Link2 className="size-4 shrink-0" />
+                <Link2 className="size-5 shrink-0" />
               </Button>
 
               <Select
@@ -2184,7 +2184,7 @@ export function FloatingAudioPlayer() {
                 onClick={() => setPlayerMinimized(true)}
                 title="Minimize audio player"
               >
-                <ChevronDown className="size-4" />
+                <ChevronDown className="size-5" />
               </Button>
 
               <Button
@@ -2195,7 +2195,7 @@ export function FloatingAudioPlayer() {
                 onClick={handleClosePlayer}
                 title="Close audio player"
               >
-                <X className="size-4" />
+                <X className="size-5" />
               </Button>
             </div>
 
@@ -2228,7 +2228,7 @@ export function FloatingAudioPlayer() {
                 disabled={!hasPreviousTrack || isLoadingAudio}
                 title="Previous track"
               >
-                <SkipBack className="size-4 shrink-0" />
+                <SkipBack className="size-5 shrink-0" />
               </Button>
 
               <Button
@@ -2239,7 +2239,7 @@ export function FloatingAudioPlayer() {
                 disabled={isLoadingAudio}
                 title="Skip backward 10 seconds"
               >
-                <Rewind className="size-4 shrink-0" />
+                <Rewind className="size-5 shrink-0" />
               </Button>
 
               <Button
@@ -2252,13 +2252,13 @@ export function FloatingAudioPlayer() {
               >
                 {isLoadingAudio ? (
                   <Loader2
-                    className="size-6 animate-spin shrink-0"
+                    className="size-7 animate-spin shrink-0"
                     data-testid="audio-loading-spinner"
                   />
                 ) : isPlaying ? (
-                  <Pause className="size-6 shrink-0" />
+                  <Pause className="size-7 shrink-0" />
                 ) : (
-                  <Play className="size-6 shrink-0" />
+                  <Play className="size-7 shrink-0" />
                 )}
               </Button>
 
@@ -2270,7 +2270,7 @@ export function FloatingAudioPlayer() {
                 disabled={isLoadingAudio}
                 title="Skip forward 10 seconds"
               >
-                <FastForward className="size-4 shrink-0" />
+                <FastForward className="size-5 shrink-0" />
               </Button>
 
               <Button
@@ -2281,7 +2281,7 @@ export function FloatingAudioPlayer() {
                 disabled={!hasNextTrack || isLoadingAudio}
                 title="Next track"
               >
-                <SkipForward className="size-4 shrink-0" />
+                <SkipForward className="size-5 shrink-0" />
               </Button>
             </div>
           </>

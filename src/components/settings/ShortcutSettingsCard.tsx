@@ -1,15 +1,7 @@
-import { useEffect, useMemo } from "react";
 import { RotateCcw } from "lucide-react";
+import { useEffect, useMemo } from "react";
 import { toast } from "sonner";
 
-import { useKeyboardShortcuts } from "@/context/KeyboardShortcutsContext";
-import { useTranslation } from "@/lib/i18n";
-import {
-  chordFromKeyboardEvent,
-  formatShortcutKeys,
-  SHORTCUT_GROUP_ORDER,
-  type ShortcutActionId,
-} from "@/lib/keyboard-shortcuts";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -19,6 +11,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
+import { useKeyboardShortcuts } from "@/context/KeyboardShortcutsContext";
+import { useTranslation } from "@/lib/i18n";
+import {
+  chordFromKeyboardEvent,
+  formatShortcutKeys,
+  SHORTCUT_GROUP_ORDER,
+  type ShortcutActionId,
+} from "@/lib/keyboard-shortcuts";
 
 export function ShortcutSettingsCard() {
   const { t } = useTranslation();
@@ -117,7 +117,7 @@ export function ShortcutSettingsCard() {
         <Button
           type="button"
           variant="outline"
-          size="sm"
+          
           className="shrink-0"
           disabled={isBindingsLoading || customizedIds.size === 0}
           onClick={() => {
@@ -204,7 +204,7 @@ export function ShortcutSettingsCard() {
                         <Button
                           type="button"
                           variant="ghost"
-                          size="sm"
+                          
                           className="h-8 px-2"
                           onClick={() => {
                             void handleResetOne(item.id);

@@ -520,7 +520,7 @@ export function Library() {
               disabled={isAddingBook}
               className="gap-2"
             >
-              <Plus className="size-4" />
+              <Plus className="size-5" />
               {isAddingBook ? "Adding..." : "Add Book"}
             </Button>
           </div>
@@ -536,19 +536,19 @@ export function Library() {
           <div className="flex items-center gap-1">
             <Button
               variant={viewMode === "grid" ? "default" : "outline"}
-              size="sm"
+              
               onClick={() => handleViewModeChange("grid")}
               className="size-9 p-0"
             >
-              <Grid2x2 className="size-4" />
+              <Grid2x2 className="size-5" />
             </Button>
             <Button
               variant={viewMode === "list" ? "default" : "outline"}
-              size="sm"
+              
               onClick={() => handleViewModeChange("list")}
               className="size-9 p-0"
             >
-              <List className="size-4" />
+              <List className="size-5" />
             </Button>
           </div>
         </div>
@@ -652,7 +652,7 @@ export function Library() {
                 </CardContent>
                 <CardFooter className="p-4">
                   <Button
-                    size="sm"
+                    
                     className="w-full"
                     variant="ghost"
                     onClick={(e) => handleOpenBook(book, e)}
@@ -753,7 +753,7 @@ export function Library() {
                       )}
                     </div>
                     <Button
-                      size="sm"
+                      
                       className="w-auto"
                       variant="ghost"
                       onClick={(e) => handleOpenBook(book, e)}

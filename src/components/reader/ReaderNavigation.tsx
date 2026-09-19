@@ -34,7 +34,7 @@ export function ReaderNavigation({
           disabled={!hasPrevious}
         >
           <div className="flex items-center gap-2">
-          <ChevronLeft className="size-4" />
+          <ChevronLeft className="size-5" />
           <span className="hidden md:block">{t("common.previous")}</span>
           </div>
         </Button>
@@ -52,7 +52,7 @@ export function ReaderNavigation({
         >
           <div className="flex items-center gap-2">
           <span className="hidden md:block">{t("common.next")}</span>
-          <ChevronRight className="size-4" />
+          <ChevronRight className="size-5" />
           </div>
         </Button>
       </div>

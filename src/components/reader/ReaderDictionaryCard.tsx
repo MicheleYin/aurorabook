@@ -71,7 +71,7 @@ export function ReaderDictionaryCard({
       }}
     >
       <div className="flex items-start gap-3 border-b px-4 py-3">
-        <BookOpen className="mt-0.5 size-4 shrink-0 text-primary" />
+        <BookOpen className="mt-0.5 size-5 shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             {t("reader.dictionary.title")}
@@ -87,7 +87,7 @@ export function ReaderDictionaryCard({
           onClick={handleClose}
           aria-label={t("reader.dictionary.close")}
         >
-          <X className="size-4" />
+          <X className="size-5" />
         </Button>
       </div>
       <div
