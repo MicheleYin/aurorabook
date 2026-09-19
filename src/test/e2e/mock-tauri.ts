@@ -234,6 +234,13 @@ export async function invoke<T = unknown>(
     }
     case "get_app_settings":
       return clone(settings) as T;
+    case "get_keyboard_shortcuts":
+      return [] as T;
+    case "upsert_keyboard_shortcut":
+      return clone(a.binding) as T;
+    case "reset_keyboard_shortcut":
+    case "reset_all_keyboard_shortcuts":
+      return undefined as T;
     case "get_reader_preferences":
       return {
         theme: settings.theme ?? "system",

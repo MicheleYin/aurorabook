@@ -253,3 +253,16 @@ pub struct ReaderPreferences {
     pub font_size: String,
 }
 
+/// Custom keyboard shortcut binding persisted in SQLite.
+/// `match` is a JSON array of key-chord objects (same shape as the frontend).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyboardShortcutBinding {
+    pub action_id: String,
+    /// Display labels shown in the UI (e.g. ["F1", "?"] or ["Space"]).
+    pub keys: Vec<String>,
+    /// Match chords JSON (array of objects with optional key/code/mod/shift/alt).
+    #[serde(rename = "match")]
+    pub match_chords: serde_json::Value,
+}
+

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { useAudioProgressContext } from "@/context/AudioProgressContext";
 
 import { useAppContext } from "../../context/AppContext";
+import { useRegisterShortcutActions } from "../../context/KeyboardShortcutsContext";
 import { useSettingsContext } from "../../context/SettingsContext";
 import { useBookConversion } from "../../hooks/useBookConversion";
 import { useUnfinishedChapterDuration } from "../../hooks/useUnfinishedChapterDuration";
@@ -74,6 +75,7 @@ export function Library() {
   }, [books]);
 
   const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [viewMode, setViewMode] = useState<LibraryViewMode>(() =>
     normalizeLibraryViewMode(settings?.libraryViewMode)
   );
@@ -390,6 +392,22 @@ export function Library() {
     }
   };
 
+  useRegisterShortcutActions({
+    importBook: () => {
+      void handleAddBook();
+    },
+    focusSearch: () => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    },
+    viewGrid: () => {
+      handleViewModeChange("grid");
+    },
+    viewList: () => {
+      handleViewModeChange("list");
+    },
+  });
+
   const handleBookClick = (book: Book) => {
     setSelectedBookId(book.id);
     setIsDialogOpen(true);
@@ -509,6 +527,7 @@ export function Library() {
         </div>
         <div className="flex items-center gap-2">
           <Input
+            ref={searchInputRef}
             type="text"
             placeholder="Search books by title, author, or subject..."
             value={searchQuery}
@@ -557,7 +576,7 @@ export function Library() {
                 key={`${book.id}-${filterKey}`}
                 data-testid={`library-book-${book.id}`}
                 className={cn(
-                  "cursor-pointer hover:shadow-lg transition-shadow library-item-enter flex flex-col justify-between 2xl:w-60",
+                  "cursor-pointer hover:shadow-lg transition-shadow library-item-enter flex flex-col justify-between gap-0 py-0 2xl:w-60",
                   staggerDelay(index, 30)
                 )}
                 onClick={() => handleBookClick(book)}
@@ -650,7 +669,7 @@ export function Library() {
               <Card
                 key={`${book.id}-${filterKey}`}
                 className={cn(
-                  "cursor-pointer hover:bg-muted/50 transition-colors library-item-enter",
+                  "cursor-pointer hover:bg-muted/50 transition-colors library-item-enter gap-0 py-0",
                   staggerDelay(index, 30)
                 )}
                 onClick={() => handleBookClick(book)}

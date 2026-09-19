@@ -1841,6 +1841,59 @@ pub async fn update_reader_preferences(
     Ok(preferences)
 }
 
+/// List custom keyboard shortcut bindings (defaults live on the frontend).
+#[tauri::command]
+pub async fn get_keyboard_shortcuts(
+    app: tauri::AppHandle,
+) -> AppResult<Vec<KeyboardShortcutBinding>> {
+    let db = get_db_connection(&app)
+        .await
+        .map_err(AppError::Store)?;
+    KeyboardShortcutsRepository::list(db.as_ref())
+        .await
+        .map_err(AppError::Store)
+}
+
+/// Upsert one custom keyboard shortcut binding.
+#[tauri::command]
+pub async fn upsert_keyboard_shortcut(
+    binding: KeyboardShortcutBinding,
+    app: tauri::AppHandle,
+) -> AppResult<KeyboardShortcutBinding> {
+    let db = get_db_connection(&app)
+        .await
+        .map_err(AppError::Store)?;
+    KeyboardShortcutsRepository::upsert(db.as_ref(), &binding)
+        .await
+        .map_err(AppError::Store)?;
+    Ok(binding)
+}
+
+/// Reset one shortcut action to its built-in default.
+#[tauri::command]
+pub async fn reset_keyboard_shortcut(
+    action_id: String,
+    app: tauri::AppHandle,
+) -> AppResult<()> {
+    let db = get_db_connection(&app)
+        .await
+        .map_err(AppError::Store)?;
+    KeyboardShortcutsRepository::delete(db.as_ref(), &action_id)
+        .await
+        .map_err(AppError::Store)
+}
+
+/// Reset all shortcuts to built-in defaults.
+#[tauri::command]
+pub async fn reset_all_keyboard_shortcuts(app: tauri::AppHandle) -> AppResult<()> {
+    let db = get_db_connection(&app)
+        .await
+        .map_err(AppError::Store)?;
+    KeyboardShortcutsRepository::delete_all(db.as_ref())
+        .await
+        .map_err(AppError::Store)
+}
+
 /// Update book last opened time
 #[tauri::command]
 pub async fn update_book_last_opened_time(

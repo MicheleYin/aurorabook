@@ -16,6 +16,7 @@ import { defaultTtsSynthesisQuality } from "../../lib/settings-utils";
 import { LogViewer } from "../debug/LogViewer";
 import { ThemeSwitcher } from "../ThemeSwitcher";
 import { LanguageSelect } from "./LanguageSelect";
+import { ShortcutSettingsCard } from "./ShortcutSettingsCard";
 import { TtsLanguageSelect } from "./TtsLanguageSelect";
 import {
   Accordion,
@@ -460,6 +461,8 @@ export function Settings() {
 
           <LogViewer isOpen={logViewerOpen} onOpenChange={setLogViewerOpen} />
 
+          <ShortcutSettingsCard />
+
           {/* FAQ Section */}
           <Card>
             <CardHeader>
@@ -475,6 +478,15 @@ export function Settings() {
                   <AccordionContent>
                     <p className="text-sm text-muted-foreground">
                       {t("faq.how_works.a")}
+                    </p>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="keyboard-shortcuts">
+                  <AccordionTrigger>{t("faq.shortcuts.q")}</AccordionTrigger>
+                  <AccordionContent>
+                    <p className="text-sm text-muted-foreground">
+                      {t("faq.shortcuts.a")}
                     </p>
                   </AccordionContent>
                 </AccordionItem>

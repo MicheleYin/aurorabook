@@ -8,6 +8,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Library } from "./components/library/Library";
 import { Reader } from "./components/reader/Reader";
 import { Settings } from "./components/settings/SettingsPanel";
+import { ShortcutsHelpDialog } from "./components/shortcuts/ShortcutsHelpDialog";
 import { Toaster } from "./components/ui/sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { AppProvider, TabValue, useAppContext } from "./context/AppContext";
@@ -22,6 +23,7 @@ import {
   useChapterProgressContext,
 } from "./context/ChapterProgressContext";
 import { ConversionStateProvider } from "./context/ConversionStateContext";
+import { KeyboardShortcutsProvider } from "./context/KeyboardShortcutsContext";
 import {
   SettingsProvider,
   useSettingsContext,
@@ -145,6 +147,7 @@ function AppContent() {
         </div>
       </Tabs>
       <FloatingAudioPlayer />
+      <ShortcutsHelpDialog />
     </div>
   );
 }
@@ -344,7 +347,9 @@ function AppWithProviders() {
     >
       <AppClosingHandler />
       <ConversionCallbackHandler />
-      <AppContent />
+      <KeyboardShortcutsProvider>
+        <AppContent />
+      </KeyboardShortcutsProvider>
     </AppProvider>
   );
 }

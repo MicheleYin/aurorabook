@@ -25,9 +25,11 @@ import { useAudioProgressContext } from "@/context/AudioProgressContext";
 import { useAudioSyncContext } from "@/context/AudioSyncContext";
 import { useChapterProgressContext } from "@/context/ChapterProgressContext";
 import { useConversionState } from "@/context/ConversionStateContext";
+import { useRegisterShortcutActions } from "@/context/KeyboardShortcutsContext";
 import { useSettingsContext } from "@/context/SettingsContext";
 
 import { applyMediaPlaybackRate, mimeTypeFromTrackHref } from "../../lib/audio-progress-utils";
+import { PLAYBACK_RATES } from "../../lib/keyboard-shortcuts";
 import {
   liveStreamPlaybackUrl,
   shouldHoldLivePlayback,
@@ -1545,6 +1547,79 @@ export function FloatingAudioPlayer() {
     return () => window.removeEventListener("aurora-native-skip", onSkip);
   }, [handleNextTrack, handlePreviousTrack]);
 
+  useRegisterShortcutActions({
+    playPause: () => {
+      if (!currentAudioTrack) return false;
+      void handlePlayPause();
+    },
+    skipBack: () => {
+      if (!currentAudioTrack) return false;
+      handleSkipBackward();
+    },
+    skipForward: () => {
+      if (!currentAudioTrack) return false;
+      handleSkipForward();
+    },
+    prevTrack: () => {
+      if (!currentAudioTrack) return false;
+      void handlePreviousTrack();
+    },
+    nextTrack: () => {
+      if (!currentAudioTrack) return false;
+      void handleNextTrack();
+    },
+    toggleMinimizePlayer: () => {
+      if (!currentAudioTrack) return false;
+      setPlayerMinimized(!isMinimized);
+    },
+    slowerRate: () => {
+      if (!currentAudioTrack) return false;
+      const index = PLAYBACK_RATES.indexOf(
+        playbackRate as (typeof PLAYBACK_RATES)[number]
+      );
+      const currentIndex =
+        index >= 0
+          ? index
+          : PLAYBACK_RATES.reduce(
+              (best, rate, i) =>
+                Math.abs(rate - playbackRate) <
+                Math.abs(PLAYBACK_RATES[best] - playbackRate)
+                  ? i
+                  : best,
+              0
+            );
+      if (currentIndex <= 0) return;
+      setPlaybackRate(PLAYBACK_RATES[currentIndex - 1]);
+    },
+    fasterRate: () => {
+      if (!currentAudioTrack) return false;
+      const index = PLAYBACK_RATES.indexOf(
+        playbackRate as (typeof PLAYBACK_RATES)[number]
+      );
+      const currentIndex =
+        index >= 0
+          ? index
+          : PLAYBACK_RATES.reduce(
+              (best, rate, i) =>
+                Math.abs(rate - playbackRate) <
+                Math.abs(PLAYBACK_RATES[best] - playbackRate)
+                  ? i
+                  : best,
+              0
+            );
+      if (currentIndex >= PLAYBACK_RATES.length - 1) return;
+      setPlaybackRate(PLAYBACK_RATES[currentIndex + 1]);
+    },
+    showAudioPlayer: () => {
+      if (!currentBook) return false;
+      if (currentAudioTrack) {
+        setPlayerMinimized(false);
+        return;
+      }
+      loadLastOpenedAudioTrack(currentBook, false);
+    },
+  });
+
   // Seek/restore progress for all platforms (desktop restore + engine seek events).
   useEffect(() => {
     const onSeekUi = (event: Event) => {
@@ -2183,9 +2258,10 @@ export function FloatingAudioPlayer() {
                     data-testid="audio-loading-spinner"
                   />
                 ) : isPlaying ? (
-                  <Pause className="h-6 w-6" />
+                  <Pause className="h-6 w-6 shrink-0
+                  " />
                 ) : (
-                  <Play className="h-6 w-6" />
+                  <Play className="h-6 w-6 shrink-0" />
                 )}
               </Button>
 

@@ -794,7 +794,7 @@ export function BookDetailDialog({
               >
                 <SelectTrigger className="w-full gap-2">
                   {isExportingAudio || isAnotherBookExporting ? (
-                    <>
+                    <div className="flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span>
                         {isAnotherBookExporting
@@ -803,12 +803,12 @@ export function BookDetailDialog({
                               format: formatLabel(activeExportFormat ?? "mp3"),
                             })}
                       </span>
-                    </>
+                    </div>
                   ) : (
-                    <>
+                    <div className="flex items-center gap-2">
                       <Download className="h-4 w-4" />
                       <SelectValue placeholder={t("book.export")} />
-                    </>
+                    </div>
                   )}
                 </SelectTrigger>
                 <SelectContent className="w-full">
