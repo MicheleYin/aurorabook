@@ -277,7 +277,7 @@ function ThemeSideCard({
         aria-pressed={selected || following}
         aria-label={t("app.switch_theme", { theme: label })}
         className={cn(
-          "relative flex h-20 w-full flex-col items-start justify-between p-3 text-left",
+          "relative flex h-24 w-full flex-col items-start justify-between gap-1 p-3 text-left",
           previewClass
         )}
       >
@@ -292,6 +292,17 @@ function ThemeSideCard({
         <span className="text-sm font-medium">
           {variants.find((v) => v.active)?.label ?? label}
         </span>
+        <span
+          className={cn(
+            "mt-auto h-1.5 w-14 rounded-full",
+            themeClassNames(variants.find((v) => v.active)?.theme)
+          )}
+          style={{
+            backgroundColor:
+              "hsl(var(--audio-highlight) / var(--audio-highlight-word-alpha))",
+          }}
+          aria-hidden="true"
+        />
       </button>
       <div className="flex items-center gap-1.5 border-t border-border/60 bg-background/80 px-2 py-1.5">
         {variants.map((variant) => (
@@ -313,19 +324,18 @@ function ThemeSideCard({
                 : "opacity-70 hover:opacity-100"
             )}
           >
-          <span
-  className={cn(
-    "h-4 w-4 rounded-full border",
-    themeClassNames(variant.theme)
-  )}
-  style={{
-    backgroundColor: "hsl(var(--primary))",
-    borderColor: "hsl(var(--border))",
-    // transform to add alpha to the color
-  
-  }}
-  aria-hidden="true"
-/>
+            <span
+              className={cn(
+                "h-4 w-4 rounded-full border",
+                themeClassNames(variant.theme)
+              )}
+              style={{
+                backgroundColor:
+                  "hsl(var(--audio-highlight) / var(--audio-highlight-word-alpha))",
+                borderColor: "hsl(var(--border))",
+              }}
+              aria-hidden="true"
+            />
           </button>
         ))}
       </div>

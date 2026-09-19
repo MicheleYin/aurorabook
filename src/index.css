@@ -68,6 +68,12 @@
     --radius: 0.75rem;
     --font-sans: "Inter", sans-serif;
 
+    /* Audio sync highlight (sentence + word). Tuned per theme for contrast. */
+    --audio-highlight: 48 96% 70%;
+    --audio-highlight-enter-alpha: 0.55;
+    --audio-highlight-active-alpha: 0.35;
+    --audio-highlight-word-alpha: 0.85;
+
     /* Animation durations */
     --anim-duration-fast: 150ms;
     --anim-duration-normal: 200ms;
@@ -112,6 +118,12 @@
     --border: 36 22% 84%;
     --input: 36 22% 84%;
     --ring: 30 22% 28%;
+
+    /* Warm gold on paper — readable, not harsh */
+    --audio-highlight: 38 78% 68%;
+    --audio-highlight-enter-alpha: 0.5;
+    --audio-highlight-active-alpha: 0.32;
+    --audio-highlight-word-alpha: 0.78;
   }
 
   .dark {
@@ -142,6 +154,12 @@
     --border: 220 15% 23%;
     --input: 220 15% 18%;
     --ring: 212.7 26.8% 83.9%;
+
+    /* Amber on dark slate */
+    --audio-highlight: 36 80% 42%;
+    --audio-highlight-enter-alpha: 0.4;
+    --audio-highlight-active-alpha: 0.28;
+    --audio-highlight-word-alpha: 0.55;
   }
 
   /* Pitch black — pure black dark theme */
@@ -173,6 +191,12 @@
     --border: 0 0% 14%;
     --input: 0 0% 10%;
     --ring: 0 0% 72%;
+
+    /* Brighter gold on pure black for visibility */
+    --audio-highlight: 42 92% 48%;
+    --audio-highlight-enter-alpha: 0.42;
+    --audio-highlight-active-alpha: 0.3;
+    --audio-highlight-word-alpha: 0.58;
   }
 
 
@@ -205,6 +229,12 @@
   --border: 145 18% 68%;
   --input: 145 18% 68%;
   --ring: 150 38% 25%;
+
+  /* Soft chartreuse — pops on green without muddy brown */
+  --audio-highlight: 78 62% 62%;
+  --audio-highlight-enter-alpha: 0.5;
+  --audio-highlight-active-alpha: 0.34;
+  --audio-highlight-word-alpha: 0.8;
 }
 /* Sunset — warm orange / terracotta */
 .theme-sunset {
@@ -235,6 +265,12 @@
   --border: 22 35% 82%;
   --input: 22 35% 82%;
   --ring: 14 68% 43%;
+
+  /* Soft cream-yellow — distinct from terracotta primary */
+  --audio-highlight: 48 90% 72%;
+  --audio-highlight-enter-alpha: 0.52;
+  --audio-highlight-active-alpha: 0.34;
+  --audio-highlight-word-alpha: 0.82;
 }
 
 /* Rose — soft pink / dusty berry */
@@ -266,6 +302,12 @@
   --border: 345 25% 84%;
   --input: 345 25% 84%;
   --ring: 340 45% 40%;
+
+  /* Dusty rose-gold highlight */
+  --audio-highlight: 350 58% 78%;
+  --audio-highlight-enter-alpha: 0.5;
+  --audio-highlight-active-alpha: 0.36;
+  --audio-highlight-word-alpha: 0.82;
 }
 /* Midnight Violet — richer indigo / violet dark */
 .dark.theme-dark_violet {
@@ -296,6 +338,12 @@
   --border: 253 22% 29%;
   --input: 253 25% 21%;
   --ring: 263 65% 72%;
+
+  /* Soft lavender — readable on indigo */
+  --audio-highlight: 275 55% 48%;
+  --audio-highlight-enter-alpha: 0.42;
+  --audio-highlight-active-alpha: 0.3;
+  --audio-highlight-word-alpha: 0.58;
 }
 /* Plum — dark pink / purple, cozy */
 .dark.theme-plum {
@@ -326,6 +374,12 @@
   --border: 330 18% 25%;
   --input: 330 18% 19%;
   --ring: 330 55% 72%;
+
+  /* Magenta-rose glow on plum */
+  --audio-highlight: 328 52% 48%;
+  --audio-highlight-enter-alpha: 0.42;
+  --audio-highlight-active-alpha: 0.3;
+  --audio-highlight-word-alpha: 0.58;
 }
 /* Dark Green — deep evergreen */
 .dark.theme-dark_green {
@@ -356,6 +410,12 @@
   --border: 145 22% 27%;
   --input: 145 25% 19%;
   --ring: 142 40% 62%;
+
+  /* Moss-lime on evergreen */
+  --audio-highlight: 95 45% 40%;
+  --audio-highlight-enter-alpha: 0.42;
+  --audio-highlight-active-alpha: 0.3;
+  --audio-highlight-word-alpha: 0.58;
 }
   * {
     @apply border-border;
@@ -573,46 +633,17 @@
       background-color: transparent;
     }
     100% {
-      /* Light mode */
-      background-color: rgba(254, 240, 138, 0.6); /* yellow-200/60 */
+      background-color: hsl(
+        var(--audio-highlight) / var(--audio-highlight-enter-alpha)
+      );
     }
   }
 
   @keyframes audio-highlight-fade-out {
     0% {
-      /* Light mode */
-      background-color: rgba(254, 240, 138, 0.6); /* yellow-200/60 */
-    }
-    100% {
-      background-color: transparent;
-    }
-  }
-
-  /* Dark mode animations */
-  .dark .audio-highlight.audio-highlight-enter {
-    animation: audio-highlight-fade-in-dark var(--anim-duration-slow)
-      var(--anim-easing-ease-out) forwards;
-  }
-
-  .dark .audio-highlight.audio-highlight-exit {
-    animation: audio-highlight-fade-out-dark var(--anim-duration-slow)
-      var(--anim-easing-ease-in) forwards;
-  }
-
-  @keyframes audio-highlight-fade-in-dark {
-    0% {
-      background-color: transparent;
-    }
-    100% {
-      /* Dark mode */
-      background-color: rgba(133, 77, 14, 0.4); /* yellow-700/40 */
-    }
-  }
-
-  @keyframes audio-highlight-fade-out-dark {
-    0% {
-      /* Dark mode */
-      background-color: rgba(133, 77, 14, 0.4); /* yellow-700/40 */
+      background-color: hsl(
+        var(--audio-highlight) / var(--audio-highlight-enter-alpha)
+      );
     }
     100% {
       background-color: transparent;
@@ -653,12 +684,10 @@
 
   /* Active state - background fully visible, still no shadows/layout props */
   .audio-highlight.audio-highlight-active {
-    background-color: rgba(254, 240, 138, 0.35);
+    background-color: hsl(
+      var(--audio-highlight) / var(--audio-highlight-active-alpha)
+    );
     box-shadow: none !important;
-  }
-
-  .dark .audio-highlight.audio-highlight-active {
-    background-color: rgba(133, 77, 14, 0.25);
   }
 
   .audio-word {
@@ -675,11 +704,9 @@
   }
 
   .audio-word.audio-highlight-word {
-    background-color: rgba(254, 240, 138, 0.85);
-  }
-
-  .dark .audio-word.audio-highlight-word {
-    background-color: rgba(133, 77, 14, 0.55);
+    background-color: hsl(
+      var(--audio-highlight) / var(--audio-highlight-word-alpha)
+    );
   }
 
   /* Fade out animation when removing highlight - only affects background */
