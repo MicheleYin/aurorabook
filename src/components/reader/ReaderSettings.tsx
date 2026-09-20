@@ -1,9 +1,9 @@
-import { Check } from "lucide-react";
 import { useEffect, useRef } from "react";
+import { Check } from "lucide-react";
 
+import type { UITheme } from "../../types/ui";
 import { useTranslation } from "../../lib/i18n";
 import { cn } from "../../lib/utils";
-import type { UITheme } from "../../types/ui";
 import { ThemeSwitcher } from "../ThemeSwitcher";
 import { Card, CardContent } from "../ui/card";
 import {
@@ -89,162 +89,167 @@ export function ReaderSettings({
 
   return (
     <Drawer open={isOpen} onOpenChange={onOpenChange}>
-      <DrawerContent className="max-h-[80vh] flex flex-col">
+      <DrawerContent className="max-h-[80vh] flex flex-col safe-area-right safe-area-left">
         <DrawerHandle />
         <DrawerHeader className="pb-4">
           <DrawerTitle>{t("reader.settings")}</DrawerTitle>
         </DrawerHeader>
+
         <div className="flex flex-col gap-4 overflow-y-auto p-4">
-          <div className="space-y-2">
-            <Label className="text-sm">{t("reader.theme")}</Label>
-            <ThemeSwitcher
-              value={(settings.theme as UITheme) || "system"}
-              onChange={handleThemeChange}
-            />
+          <div className="flex max-md:flex-col md:flex-row gap-4 p-4 justify-around">
+            <div className="space-y-2 w-full">
+              <Label className="text-sm">{t("reader.theme")}</Label>
+              <ThemeSwitcher
+                value={(settings.theme as UITheme) || "system"}
+                onChange={handleThemeChange}
+              />
+            </div>
+
+            <div className="space-y-2 w-full">
+              <Label>{t("reader.font_family")}</Label>
+              <div className="flex flex-row gap-3 overflow-x-auto p-1">
+                <Card
+                  ref={fontFamilyMerriweatherRef}
+                  className={cn(
+                    "w-28 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
+                    settings.fontFamily === "merriweather" &&
+                      "border-primary ring-2 ring-primary"
+                  )}
+                  onClick={() => handleFontFamilyChange("merriweather")}
+                >
+                  <CardContent className="flex h-32 flex-col items-center gap-2 p-4">
+                    <div className="text-2xl font-serif">Aa</div>
+                    <span className="text-center text-xs">Merriweather</span>
+                    <span className="text-xs text-muted-foreground">
+                      {t("reader.font_serif")}
+                    </span>
+                    <div className="flex size-5 items-center justify-center">
+                      {settings.fontFamily === "merriweather" && (
+                        <Check className="size-5 text-primary" />
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card
+                  ref={fontFamilyInterRef}
+                  className={cn(
+                    "w-28 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
+                    settings.fontFamily === "inter" &&
+                      "border-primary ring-2 ring-primary"
+                  )}
+                  onClick={() => handleFontFamilyChange("inter")}
+                >
+                  <CardContent className="flex h-32 flex-col items-center gap-2 p-4">
+                    <div className="text-2xl font-sans">Aa</div>
+                    <span className="text-center text-xs">Inter</span>
+                    <span className="text-xs text-muted-foreground">
+                      {t("reader.font_sans")}
+                    </span>
+                    <div className="flex size-5 items-center justify-center">
+                      {settings.fontFamily === "inter" && (
+                        <Check className="size-5 text-primary" />
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card
+                  ref={fontFamilyMonospaceRef}
+                  className={cn(
+                    "w-28 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
+                    settings.fontFamily === "monospace" &&
+                      "border-primary ring-2 ring-primary"
+                  )}
+                  onClick={() => handleFontFamilyChange("monospace")}
+                >
+                  <CardContent className="flex h-32 flex-col items-center gap-2 p-4">
+                    <div className="text-2xl font-mono">Aa</div>
+                    <span className="text-center text-xs">Monospace</span>
+                    <span className="text-xs text-muted-foreground">
+                      {t("reader.font_fixed")}
+                    </span>
+                    <div className="flex size-5 items-center justify-center">
+                      {settings.fontFamily === "monospace" && (
+                        <Check className="size-5 text-primary" />
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
           </div>
 
-          <div className="space-y-3">
-            <Label>{t("reader.font_family")}</Label>
-            <div className="flex flex-row gap-3 overflow-x-auto p-1">
-              <Card
-                ref={fontFamilyMerriweatherRef}
-                className={cn(
-                  "w-28 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
-                  settings.fontFamily === "merriweather" &&
-                    "border-primary ring-2 ring-primary"
-                )}
-                onClick={() => handleFontFamilyChange("merriweather")}
-              >
-                <CardContent className="flex h-32 flex-col items-center gap-2 p-4">
-                  <div className="text-2xl font-serif">Aa</div>
-                  <span className="text-center text-xs">Merriweather</span>
-                  <span className="text-xs text-muted-foreground">
-                    {t("reader.font_serif")}
-                  </span>
-                  <div className="flex size-5 items-center justify-center">
-                    {settings.fontFamily === "merriweather" && (
-                      <Check className="size-5 text-primary" />
-                    )}
+          <div className="flex max-md:flex-col md:flex-row gap-4 p-4 w-full justify-around">
+            <div className="space-y-3 w-full">
+              <Label>{t("reader.font_size")}</Label>
+              <Card>
+                <CardContent className="space-y-4 p-4 w-full">
+                  <div className="flex items-end justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-medium">{fontSizeValue}px</p>
+                      <p className="text-xs text-muted-foreground">
+                        {t("reader.font_size")}
+                      </p>
+                    </div>
+                    <div
+                      className="text-right leading-none"
+                      style={{ fontSize: `${fontSizeValue}px` }}
+                    >
+                      Aa
+                    </div>
                   </div>
-                </CardContent>
-              </Card>
-              <Card
-                ref={fontFamilyInterRef}
-                className={cn(
-                  "w-28 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
-                  settings.fontFamily === "inter" &&
-                    "border-primary ring-2 ring-primary"
-                )}
-                onClick={() => handleFontFamilyChange("inter")}
-              >
-                <CardContent className="flex h-32 flex-col items-center gap-2 p-4">
-                  <div className="text-2xl font-sans">Aa</div>
-                  <span className="text-center text-xs">Inter</span>
-                  <span className="text-xs text-muted-foreground">
-                    {t("reader.font_sans")}
-                  </span>
-                  <div className="flex size-5 items-center justify-center">
-                    {settings.fontFamily === "inter" && (
-                      <Check className="size-5 text-primary" />
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-              <Card
-                ref={fontFamilyMonospaceRef}
-                className={cn(
-                  "w-28 flex-shrink-0 cursor-pointer transition-all hover:border-primary",
-                  settings.fontFamily === "monospace" &&
-                    "border-primary ring-2 ring-primary"
-                )}
-                onClick={() => handleFontFamilyChange("monospace")}
-              >
-                <CardContent className="flex h-32 flex-col items-center gap-2 p-4">
-                  <div className="text-2xl font-mono">Aa</div>
-                  <span className="text-center text-xs">Monospace</span>
-                  <span className="text-xs text-muted-foreground">
-                    {t("reader.font_fixed")}
-                  </span>
-                  <div className="flex size-5 items-center justify-center">
-                    {settings.fontFamily === "monospace" && (
-                      <Check className="size-5 text-primary" />
-                    )}
+                  <Slider
+                    value={[fontSizeValue]}
+                    min={11}
+                    max={36}
+                    step={1}
+                    onValueChange={handleFontSizeChange}
+                    aria-label={t("reader.font_size")}
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>11px</span>
+                    <span>36px</span>
                   </div>
                 </CardContent>
               </Card>
             </div>
-          </div>
 
-          <div className="space-y-3">
-            <Label>{t("reader.font_size")}</Label>
-            <Card>
-              <CardContent className="space-y-4 p-4">
-                <div className="flex items-end justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-medium">{fontSizeValue}px</p>
-                    <p className="text-xs text-muted-foreground">
-                      {t("reader.font_size")}
-                    </p>
+            <div className="space-y-3 w-full">
+              <Label>{t("reader.padding")}</Label>
+              <Card>
+                <CardContent className="space-y-4 p-4 w-full">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-medium">
+                        {contentPaddingValue}px
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {t("reader.padding")}
+                      </p>
+                    </div>
+                    <div className="w-24 rounded border-2 border-dashed border-muted-foreground/30 p-2">
+                      <div
+                        className="h-8 rounded bg-muted"
+                        style={{
+                          marginInline: `${Math.min(contentPaddingValue / 2, 24)}px`,
+                        }}
+                      />
+                    </div>
                   </div>
-                  <div
-                    className="text-right leading-none"
-                    style={{ fontSize: `${fontSizeValue}px` }}
-                  >
-                    Aa
+                  <Slider
+                    value={[contentPaddingValue]}
+                    min={8}
+                    max={128}
+                    step={2}
+                    onValueChange={handlePaddingChange}
+                    aria-label={t("reader.padding")}
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>8px</span>
+                    <span>128px</span>
                   </div>
-                </div>
-                <Slider
-                  value={[fontSizeValue]}
-                  min={11}
-                  max={36}
-                  step={1}
-                  onValueChange={handleFontSizeChange}
-                  aria-label={t("reader.font_size")}
-                />
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>11px</span>
-                  <span>36px</span>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="space-y-3">
-            <Label>{t("reader.padding")}</Label>
-            <Card>
-              <CardContent className="space-y-4 p-4">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-medium">
-                      {contentPaddingValue}px
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {t("reader.padding")}
-                    </p>
-                  </div>
-                  <div className="w-24 rounded border-2 border-dashed border-muted-foreground/30 p-2">
-                    <div
-                      className="h-8 rounded bg-muted"
-                      style={{
-                        marginInline: `${Math.min(contentPaddingValue / 2, 24)}px`,
-                      }}
-                    />
-                  </div>
-                </div>
-                <Slider
-                  value={[contentPaddingValue]}
-                  min={8}
-                  max={128}
-                  step={2}
-                  onValueChange={handlePaddingChange}
-                  aria-label={t("reader.padding")}
-                />
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>8px</span>
-                  <span>128px</span>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </div>
       </DrawerContent>

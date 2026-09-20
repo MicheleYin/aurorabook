@@ -1,18 +1,21 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { Pause, Play } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useSettingsContext } from "@/context/SettingsContext";
-import { useTranslation } from "../../lib/i18n";
 
-import { KOKORO_VOICE_GROUPS, voiceSamplePathsToTry } from "../../constants/kokoro";
+import type { TtsSynthesisQuality } from "../../types/settings";
+import type { UITheme } from "../../types/ui";
+import {
+  KOKORO_VOICE_GROUPS,
+  voiceSamplePathsToTry,
+} from "../../constants/kokoro";
 import { voiceMatchesTtsLanguage } from "../../constants/languages";
 import { SHOW_LOGS, SUPPORT_EMAIL } from "../../constants/support";
+import { useTranslation } from "../../lib/i18n";
 import { emailLogsReport, exportLogsToFile } from "../../lib/log-export";
 import { logger } from "../../lib/logger";
 import { defaultTtsSynthesisQuality } from "../../lib/settings-utils";
-import type { TtsSynthesisQuality } from "../../types/settings";
-import type { UITheme } from "../../types/ui";
 import { LogViewer } from "../debug/LogViewer";
 import { ThemeSwitcher } from "../ThemeSwitcher";
 import {
@@ -54,7 +57,9 @@ export function Settings() {
   } = useSettingsContext();
   const { t } = useTranslation();
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
-  const [playingSampleLang, setPlayingSampleLang] = useState<string | null>(null);
+  const [playingSampleLang, setPlayingSampleLang] = useState<string | null>(
+    null
+  );
   const [appVersion, setAppVersion] = useState<string>(t("common.loading"));
   const [logViewerOpen, setLogViewerOpen] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -199,7 +204,9 @@ export function Settings() {
   const handleTtsQualityChange = useCallback(
     async (value: string | undefined) => {
       if (value === "fastest" || value === "balanced" || value === "quality") {
-        await saveSettings({ ttsSynthesisQuality: value as TtsSynthesisQuality });
+        await saveSettings({
+          ttsSynthesisQuality: value as TtsSynthesisQuality,
+        });
       }
     },
     [saveSettings]
@@ -235,7 +242,9 @@ export function Settings() {
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-2">
           <div className="animate-spin rounded-full size-6 border-b-2 border-primary mx-auto"></div>
-          <p className="text-sm text-muted-foreground">{t("app.loading_settings")}</p>
+          <p className="text-sm text-muted-foreground">
+            {t("app.loading_settings")}
+          </p>
         </div>
       </div>
     );
@@ -245,7 +254,9 @@ export function Settings() {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-2">
-          <p className="text-sm text-destructive">{t("app.failed_load_settings")}</p>
+          <p className="text-sm text-destructive">
+            {t("app.failed_load_settings")}
+          </p>
           <button
             onClick={reloadSettings}
             className="text-sm text-primary hover:underline"
@@ -261,10 +272,10 @@ export function Settings() {
     <div className="flex h-full flex-col overflow-auto select-none">
       <div className="app-page-padding app-page-padding--safe-top space-y-6">
         <div className="space-y-2">
-          <h1 className="text-3xl font-bold tracking-tight">{t("app.settings")}</h1>
-          <p className="text-muted-foreground">
-            {t("app.manage_preferences")}
-          </p>
+          <h1 className="text-3xl font-bold tracking-tight">
+            {t("app.settings")}
+          </h1>
+          <p className="text-muted-foreground">{t("app.manage_preferences")}</p>
         </div>
 
         {error && (
@@ -280,9 +291,7 @@ export function Settings() {
           <Card>
             <CardHeader>
               <CardTitle>{t("settings.application")}</CardTitle>
-              <CardDescription>
-                {t("app.customize_experience")}
-              </CardDescription>
+              <CardDescription>{t("app.customize_experience")}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <LanguageSelect />
@@ -323,7 +332,8 @@ export function Settings() {
                 <Select
                   clearable={false}
                   value={
-                    settings?.ttsSynthesisQuality ?? defaultTtsSynthesisQuality()
+                    settings?.ttsSynthesisQuality ??
+                    defaultTtsSynthesisQuality()
                   }
                   onValueChange={handleTtsQualityChange}
                 >
@@ -400,7 +410,7 @@ export function Settings() {
                     </div>
                     <Button
                       variant="outline"
-                      
+
                       onClick={() =>
                         handlePlaySample(
                           selectedVoice.id,
@@ -425,7 +435,9 @@ export function Settings() {
           <Card>
             <CardHeader>
               <CardTitle>{t("settings.general")}</CardTitle>
-              <CardDescription>{t("settings.general_description")}</CardDescription>
+              <CardDescription>
+                {t("settings.general_description")}
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-col gap-2">
@@ -442,7 +454,7 @@ export function Settings() {
                   </p>
                   <Button
                     variant="outline"
-                    
+
                     className="w-fit"
                     onClick={() => setLogViewerOpen(true)}
                   >
@@ -467,9 +479,7 @@ export function Settings() {
           <Card>
             <CardHeader>
               <CardTitle>{t("settings.faq")}</CardTitle>
-              <CardDescription>
-                {t("settings.faq_description")}
-              </CardDescription>
+              <CardDescription>{t("settings.faq_description")}</CardDescription>
             </CardHeader>
             <CardContent>
               <Accordion type="single" collapsible className="w-full">
@@ -512,9 +522,7 @@ export function Settings() {
                 </AccordionItem>
 
                 <AccordionItem value="foreground">
-                  <AccordionTrigger>
-                    {t("faq.foreground.q")}
-                  </AccordionTrigger>
+                  <AccordionTrigger>{t("faq.foreground.q")}</AccordionTrigger>
                   <AccordionContent>
                     <p className="text-sm text-muted-foreground">
                       {t("faq.foreground.a")}
@@ -523,9 +531,7 @@ export function Settings() {
                 </AccordionItem>
 
                 <AccordionItem value="can-stop">
-                  <AccordionTrigger>
-                    {t("faq.can_stop.q")}
-                  </AccordionTrigger>
+                  <AccordionTrigger>{t("faq.can_stop.q")}</AccordionTrigger>
                   <AccordionContent>
                     <p className="text-sm text-muted-foreground">
                       {t("faq.can_stop.a")}
@@ -534,9 +540,7 @@ export function Settings() {
                 </AccordionItem>
 
                 <AccordionItem value="audio-sync">
-                  <AccordionTrigger>
-                    {t("faq.audio_sync.q")}
-                  </AccordionTrigger>
+                  <AccordionTrigger>{t("faq.audio_sync.q")}</AccordionTrigger>
                   <AccordionContent>
                     <p className="text-sm text-muted-foreground">
                       {t("faq.audio_sync.a")}
@@ -575,21 +579,21 @@ export function Settings() {
                     <div className="flex flex-wrap gap-2">
                       <Button
                         variant="outline"
-                        
+
                         onClick={handleExportLogs}
                       >
                         {t("faq.bug_report.export_logs")}
                       </Button>
                       <Button
                         variant="outline"
-                        
+
                         onClick={() => setLogViewerOpen(true)}
                       >
                         {t("faq.bug_report.view_logs")}
                       </Button>
                       <Button
                         variant="default"
-                        
+
                         onClick={() => {
                           void handleEmailSupport();
                         }}
@@ -603,6 +607,10 @@ export function Settings() {
             </CardContent>
           </Card>
         </div>
+        {
+          // Spacer to ensure content is not hidden behind fixed elements of the tabs
+        }
+        <div className="w-full h-10"></div>
       </div>
     </div>
   );

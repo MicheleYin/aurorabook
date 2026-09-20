@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { type as osType } from "@tauri-apps/plugin-os";
@@ -14,18 +15,19 @@ import {
   User,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import {
-  type AudioExportFormat,
-  type AudioExportProgressPayload,
-  type AudioExportStatusPayload,
-  useAudioExportState,
+import type {
+  AudioExportFormat,
+  AudioExportProgressPayload,
+  AudioExportStatusPayload,
 } from "@/context/AudioExportStateContext";
 import type { ConversionProgress } from "@/context/ConversionStateContext";
+import { useAudioExportState } from "@/context/AudioExportStateContext";
 import { useConversionState } from "@/context/ConversionStateContext";
 import { useSettingsContext } from "@/context/SettingsContext";
+
+import type { Book } from "../../types/book";
 import { humanizeDurationLocale } from "../../constants/languages";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { useUnfinishedChapterDuration } from "../../hooks/useUnfinishedChapterDuration";
@@ -35,7 +37,6 @@ import {
 } from "../../lib/book-audio-duration";
 import { useTranslation } from "../../lib/i18n";
 import { logger } from "../../lib/logger";
-import type { Book } from "../../types/book";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -106,9 +107,7 @@ const BookDetailContent = ({
   const audioExportStepKey = audioExportProgress
     ? `conversion.step.${audioExportProgress.currentStep.replace(/-/g, "_")}`
     : "";
-  const audioExportStepLabel = audioExportProgress
-    ? t(audioExportStepKey)
-    : "";
+  const audioExportStepLabel = audioExportProgress ? t(audioExportStepKey) : "";
 
   return (
     <div className="space-y-6">
@@ -213,7 +212,9 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">{t("book.reading_progress")}</p>
+            <p className="text-sm font-medium mb-2">
+              {t("book.reading_progress")}
+            </p>
             <div className="h-2 bg-muted rounded-full overflow-hidden">
               <div
                 className="h-full bg-primary"
@@ -228,7 +229,9 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">{t("book.conversion_status")}</p>
+            <p className="text-sm font-medium mb-2">
+              {t("book.conversion_status")}
+            </p>
             <Badge
               variant={
                 book.conversionStatus === "done"
@@ -248,13 +251,20 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">{t("book.conversion_progress")}</p>
+            <p className="text-sm font-medium mb-2">
+              {t("book.conversion_progress")}
+            </p>
             <div className="space-y-2">
               <div className="text-sm text-muted-foreground">
-                {t(`conversion.step.${conversionProgress.currentStep.replace(/-/g, '_')}`)}
+                {t(
+                  `conversion.step.${conversionProgress.currentStep.replace(/-/g, "_")}`
+                )}
               </div>
               <div className="text-xs text-muted-foreground">
-                {t("book.chapter_count", { current: conversionProgress.currentChapter, total: conversionProgress.totalChapters })}
+                {t("book.chapter_count", {
+                  current: conversionProgress.currentChapter,
+                  total: conversionProgress.totalChapters,
+                })}
               </div>
               {conversionProgress.message.trim().length > 0 && (
                 <div className="text-xs text-muted-foreground leading-snug">
@@ -299,7 +309,9 @@ const BookDetailContent = ({
         <>
           <Separator />
           <div>
-            <p className="text-sm font-medium mb-2">{t("book.export_progress")}</p>
+            <p className="text-sm font-medium mb-2">
+              {t("book.export_progress")}
+            </p>
             <div className="space-y-2">
               <div className="text-sm text-muted-foreground">
                 {audioExportProgress.message
@@ -427,12 +439,8 @@ export function BookDetailDialog({
   const { settings } = useSettingsContext();
   const isMobile = useIsMobile();
 
-  const {
-    convertingBookId,
-    conversionProgress,
-    eta,
-    isConverting,
-  } = useConversionState();
+  const { convertingBookId, conversionProgress, eta, isConverting } =
+    useConversionState();
 
   const {
     isAnyExporting,
@@ -457,9 +465,7 @@ export function BookDetailDialog({
     book,
     isOpen
   );
-  const isConvertingThisBook = Boolean(
-    book && convertingBookId === book.id
-  );
+  const isConvertingThisBook = Boolean(book && convertingBookId === book.id);
   const bookConversionProgress =
     book && convertingBookId === book.id ? conversionProgress : null;
   const bookEta = book && convertingBookId === book.id ? eta : null;
@@ -469,15 +475,13 @@ export function BookDetailDialog({
     book && exportProgress?.bookId === book.id ? derivedExportEtaMs : null;
 
   const isExportingAudio = Boolean(
-    book &&
-      isAnyExporting &&
-      activeExportBookId === book.id
+    book && isAnyExporting && activeExportBookId === book.id
   );
   const isAnotherBookExporting = Boolean(
     isAnyExporting &&
-      activeExportBookId !== null &&
-      book &&
-      activeExportBookId !== book.id
+    activeExportBookId !== null &&
+    book &&
+    activeExportBookId !== book.id
   );
 
   const handleDeleteClick = useCallback(() => onDelete(), [onDelete]);
@@ -569,9 +573,12 @@ export function BookDetailDialog({
 
         await runAudioExport(book.id, format, filePath);
 
-        toast.success(t("book.export_success", { format: formatLabel(format) }), {
-          id: toastId,
-        });
+        toast.success(
+          t("book.export_success", { format: formatLabel(format) }),
+          {
+            id: toastId,
+          }
+        );
       } catch (err) {
         logger.error(`Failed to export ${formatLabel(format)}:`, err);
         const message =
@@ -619,10 +626,7 @@ export function BookDetailDialog({
   if (!book) return null;
 
   const isExportDisabled =
-    isDeleting ||
-    isConvertingThisBook ||
-    isExportingAudio ||
-    isAnyExporting;
+    isDeleting || isConvertingThisBook || isExportingAudio || isAnyExporting;
 
   return (
     <>
@@ -646,7 +650,7 @@ export function BookDetailDialog({
                 }
               />
             </div>
-            <DialogFooter className="flex-shrink-0 gap-2">
+            <DialogFooter className="shrink-0 gap-2">
               <Button
                 onClick={() => {
                   onOpenBook(book);
@@ -663,7 +667,7 @@ export function BookDetailDialog({
                 disabled={isExportDisabled}
                 clearable={false}
               >
-                <SelectTrigger className="w-[170px] gap-2">
+                <SelectTrigger className="w-42.5 gap-2">
                   {isExportingAudio || isAnotherBookExporting ? (
                     <div className="flex items-center gap-2">
                       <Loader2 className="size-5 animate-spin" />
@@ -696,17 +700,17 @@ export function BookDetailDialog({
                 </SelectContent>
               </Select>
               {isExportingAudio && (
-                  <Button
-                    variant="outline"
-                    type="button"
-                    onClick={() => void handleCancelAudioExport()}
-                    disabled={isDeleting}
-                    className="gap-2"
-                  >
-                    <X className="size-5" />
-                    {t("book.cancel_export")}
-                  </Button>
-                )}
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={() => void handleCancelAudioExport()}
+                  disabled={isDeleting}
+                  className="gap-2"
+                >
+                  <X className="size-5" />
+                  {t("book.cancel_export")}
+                </Button>
+              )}
               {book.conversionStatus === "started" && isConvertingThisBook && (
                 <Button
                   variant="outline"
@@ -775,7 +779,7 @@ export function BookDetailDialog({
                 }
               />
             </div>
-            <DrawerFooter className="flex-shrink-0 gap-2 p-4">
+            <DrawerFooter className="shrink-0 gap-2 p-4 safe-area-bottom">
               <Button
                 onClick={() => {
                   onOpenBook(book);
@@ -833,17 +837,17 @@ export function BookDetailDialog({
                 </SelectContent>
               </Select>
               {isExportingAudio && (
-                  <Button
-                    variant="outline"
-                    type="button"
-                    onClick={() => void handleCancelAudioExport()}
-                    disabled={isDeleting}
-                    className="gap-2 w-full"
-                  >
-                    <X className="size-5" />
-                    {t("book.cancel_export")}
-                  </Button>
-                )}
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={() => void handleCancelAudioExport()}
+                  disabled={isDeleting}
+                  className="gap-2 w-full"
+                >
+                  <X className="size-5" />
+                  {t("book.cancel_export")}
+                </Button>
+              )}
               {book.conversionStatus === "started" && isConvertingThisBook && (
                 <Button
                   variant="outline"

@@ -1,10 +1,10 @@
-import { BookOpen, Volume2 } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
+import { BookOpen, Volume2 } from "lucide-react";
 
+import type { Book, Chapter } from "../../types/book";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { useConversionState } from "../../context/ConversionStateContext";
 import { cn, formatTime } from "../../lib/utils";
-import type { Book, Chapter } from "../../types/book";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -189,7 +189,7 @@ export function TOCDrawer({
           <BookOpen className="size-5" />
         </Button>
       </DrawerTrigger>
-      <DrawerContent className="w-80 max-w-[85vw] !max-h-screen top-0 bottom-0 left-0 right-auto rounded-r-none rounded-t-none rounded-l-none safe-area-top">
+      <DrawerContent className="w-80 max-w-[85vw] max-h-screen! top-0 bottom-0 left-0 right-auto rounded-r-none rounded-t-none rounded-l-none safe-area-top safe-area-left">
         <DrawerHeader className="pb-4">
           <DrawerTitle>Table of Contents</DrawerTitle>
         </DrawerHeader>
@@ -211,17 +211,18 @@ export function TOCDrawer({
               >
                 <div className="flex items-center gap-2">
                   <div className="font-medium flex-1">{chapter.title}</div>
-                  {showPendingStatus && chapterIndex === currentConvertingChapter && (
-                    <Badge
-                      variant="secondary"
-                      className={cn(
-                        "h-5 px-1.5 text-[10px] shrink-0",
-                        pendingStatusClass
-                      )}
-                    >
-                      {pendingStatusText}
-                    </Badge>
-                  )}
+                  {showPendingStatus &&
+                    chapterIndex === currentConvertingChapter && (
+                      <Badge
+                        variant="secondary"
+                        className={cn(
+                          "h-5 px-1.5 text-[10px] shrink-0",
+                          pendingStatusClass
+                        )}
+                      >
+                        {pendingStatusText}
+                      </Badge>
+                    )}
                   {playingChapterHref === chapter.href && (
                     <Badge
                       variant="secondary"
