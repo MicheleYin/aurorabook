@@ -181,9 +181,9 @@ export function ReaderSettings({
           <div className="flex max-md:flex-col md:flex-row gap-4 p-4 w-full justify-around">
             <div className="space-y-3 w-full">
               <Label>{t("reader.font_size")}</Label>
-              <Card>
-                <CardContent className="space-y-4 p-4 w-full">
-                  <div className="flex items-end justify-between gap-4">
+              <Card className="h-full">
+                <CardContent className="space-y-4 p-4 w-full flex flex-col">
+                  <div className="flex items-end justify-between gap-4 h-full">
                     <div>
                       <p className="text-sm font-medium">{fontSizeValue}px</p>
                       <p className="text-xs text-muted-foreground">
@@ -215,9 +215,9 @@ export function ReaderSettings({
 
             <div className="space-y-3 w-full">
               <Label>{t("reader.padding")}</Label>
-              <Card>
-                <CardContent className="space-y-4 p-4 w-full">
-                  <div className="flex items-center justify-between gap-4">
+              <Card className="h-full">
+                <CardContent className="space-y-4 p-4 w-full flex flex-col">
+                  <div className="flex items-center justify-between gap-4 h-full">
                     <div>
                       <p className="text-sm font-medium">
                         {contentPaddingValue}px
@@ -228,7 +228,7 @@ export function ReaderSettings({
                     </div>
                     <div className="w-24 rounded border-2 border-dashed border-muted-foreground/30 p-2">
                       <div
-                        className="h-8 rounded bg-muted"
+                        className="h-4 rounded bg-muted"
                         style={{
                           marginInline: `${Math.min(contentPaddingValue / 2, 24)}px`,
                         }}
