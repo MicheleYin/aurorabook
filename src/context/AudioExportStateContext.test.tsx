@@ -1,17 +1,13 @@
+import type { ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { ReactNode } from "react";
 
+import type { AudioExportProgressPayload } from "./AudioExportStateContext";
+import { emitTauriEvent, invoke, listen } from "../test/tauri-mocks";
 import {
   AudioExportStateProvider,
   useAudioExportState,
-  type AudioExportProgressPayload,
 } from "./AudioExportStateContext";
-import {
-  emitTauriEvent,
-  invoke,
-  listen,
-} from "../test/tauri-mocks";
 
 function wrapper({ children }: { children: ReactNode }) {
   return <AudioExportStateProvider>{children}</AudioExportStateProvider>;
@@ -45,7 +41,11 @@ describe("AudioExportStateProvider", () => {
       if (cmd === "cancel_audio_export") {
         return true;
       }
-      if (cmd === "export_as_mp3" || cmd === "export_as_m4a" || cmd === "export_as_m4b") {
+      if (
+        cmd === "export_as_mp3" ||
+        cmd === "export_as_m4a" ||
+        cmd === "export_as_m4b"
+      ) {
         return undefined;
       }
       throw new Error(`Unexpected invoke: ${cmd}`);
@@ -72,9 +72,9 @@ describe("AudioExportStateProvider", () => {
     const { result } = renderHook(() => useAudioExportState(), { wrapper });
 
     await waitFor(() => {
-      expect(listen.mock.calls.some((c) => c[0] === "audio-export-progress")).toBe(
-        true
-      );
+      expect(
+        listen.mock.calls.some((c) => c[0] === "audio-export-progress")
+      ).toBe(true);
     });
 
     act(() => {
@@ -91,7 +91,11 @@ describe("AudioExportStateProvider", () => {
     act(() => {
       emitTauriEvent(
         "audio-export-progress",
-        progress({ currentStep: "completed", processedTracks: 10, percent: 100 })
+        progress({
+          currentStep: "completed",
+          processedTracks: 10,
+          percent: 100,
+        })
       );
     });
 

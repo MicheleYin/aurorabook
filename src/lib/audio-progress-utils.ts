@@ -31,9 +31,10 @@ export type NativePlayerEventResult = {
  * Maps a native-player-event payload to UI / progress state.
  * Does not drive WebView media — AVPlayer is the only engine on iOS.
  */
-export function applyNativePlayerEvent(
-  event: { type: string; time?: number }
-): NativePlayerEventResult {
+export function applyNativePlayerEvent(event: {
+  type: string;
+  time?: number;
+}): NativePlayerEventResult {
   const idle: NativePlayerEventResult = {
     nativeTime: null,
     synthesiseEnded: false,

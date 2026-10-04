@@ -1,12 +1,12 @@
-import {
-    CircleCheck,
-    Info,
-    Loader2,
-    OctagonX,
-    TriangleAlert,
-} from "lucide-react";
-import { type CSSProperties } from "react";
 import type { ToasterProps } from "sonner";
+import { type CSSProperties } from "react";
+import {
+  CircleCheck,
+  Info,
+  Loader2,
+  OctagonX,
+  TriangleAlert,
+} from "lucide-react";
 import { Toaster as SonnerToaster } from "sonner";
 
 const toastClassNames = {
@@ -16,8 +16,7 @@ const toastClassNames = {
   title: "!text-sm !font-medium !leading-snug",
   actionButton:
     "group-[.toast]:bg-primary group-[.toast]:text-primary-foreground",
-  cancelButton:
-    "group-[.toast]:bg-muted group-[.toast]:text-muted-foreground",
+  cancelButton: "group-[.toast]:bg-muted group-[.toast]:text-muted-foreground",
 } as const;
 
 /** Sonner defaults (32 desktop / 16 mobile) plus top safe-area for notch/status bar. */

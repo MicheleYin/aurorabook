@@ -1,15 +1,18 @@
-//! iOS audiobook export without FFmpeg.
+//! Apple audiobook export without FFmpeg.
 //!
 //! * **MP3** — in-process byte-concat of chapter MP3 tracks (LAME-encoded at conversion).
 //! * **M4A / M4B** — AVFoundation via `swift/AudiobookExporter.swift`.
 
-#![cfg_attr(not(target_os = "ios"), allow(dead_code, unused_variables))]
+#![cfg_attr(
+    not(any(target_os = "ios", target_os = "macos")),
+    allow(dead_code, unused_variables)
+)]
 
 use crate::utils::errors::{AppError, AppResult};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 use std::time::Duration;
 
 static IOS_EXPORT_CANCEL: AtomicBool = AtomicBool::new(false);
@@ -44,7 +47,7 @@ pub fn ios_export_progress_percent() -> u8 {
     IOS_EXPORT_PROGRESS.load(Ordering::Relaxed)
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 extern "C" {
     fn aurora_export_audiobook(
         track_paths_json: *const std::ffi::c_char,
@@ -57,6 +60,10 @@ extern "C" {
     ) -> i32;
     fn aurora_export_last_error() -> *mut std::ffi::c_char;
     fn aurora_export_free_string(ptr: *mut std::ffi::c_char);
+}
+
+#[cfg(target_os = "ios")]
+extern "C" {
     fn aurora_place_export_file(
         source_path: *const std::ffi::c_char,
         destination_path_or_url: *const std::ffi::c_char,
@@ -68,7 +75,7 @@ extern "C" {
     fn aurora_share_free_string(ptr: *mut std::ffi::c_char);
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 fn take_c_string(ptr: *mut std::ffi::c_char, free_fn: unsafe extern "C" fn(*mut std::ffi::c_char)) -> Option<String> {
     if ptr.is_null() {
         return None;
@@ -87,8 +94,8 @@ fn take_c_string(ptr: *mut std::ffi::c_char, free_fn: unsafe extern "C" fn(*mut 
     }
 }
 
-#[cfg(target_os = "ios")]
-fn take_ios_export_last_error() -> Option<String> {
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+fn take_avfoundation_export_last_error() -> Option<String> {
     // SAFETY: Swift returns a strdup'd C string or null.
     unsafe { take_c_string(aurora_export_last_error(), aurora_export_free_string) }
 }
@@ -352,7 +359,7 @@ fn looks_like_mp3(bytes: &[u8]) -> bool {
 ///
 /// Runs the Swift FFI on a worker thread and polls `IOS_EXPORT_PROGRESS` on the
 /// calling thread so progress callbacks do not need to be `'static`.
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 pub fn export_m4a_m4b_avfoundation(
     output_path: &str,
     tracks: &[IosPreparedTrack],
@@ -437,7 +444,7 @@ pub fn export_m4a_m4b_avfoundation(
         }
         2 => Err(AppError::Encoding("Audio export cancelled".to_string())),
         _ => {
-            let detail = take_ios_export_last_error()
+            let detail = take_avfoundation_export_last_error()
                 .unwrap_or_else(|| format!("code {code}"));
             Err(AppError::Encoding(format!(
                 "AVFoundation {} export failed: {}",
@@ -448,7 +455,7 @@ pub fn export_m4a_m4b_avfoundation(
     }
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "macos")))]
 pub fn export_m4a_m4b_avfoundation(
     _output_path: &str,
     _tracks: &[IosPreparedTrack],
@@ -459,7 +466,7 @@ pub fn export_m4a_m4b_avfoundation(
     _on_progress: impl FnMut(u8),
 ) -> AppResult<()> {
     Err(AppError::Encoding(
-        "AVFoundation export is only available on iOS".into(),
+        "AVFoundation export is only available on Apple platforms".into(),
     ))
 }
 

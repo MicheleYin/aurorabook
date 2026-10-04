@@ -1,17 +1,13 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { toast } from "sonner";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { emitTauriEvent, invoke, listen } from "../test/tauri-mocks";
 import {
   ConversionStateProvider,
   useConversionState,
 } from "./ConversionStateContext";
-import {
-  emitTauriEvent,
-  invoke,
-  listen,
-} from "../test/tauri-mocks";
 
 vi.mock("../lib/i18n", () => ({
   useTranslation: () => ({
@@ -127,9 +123,9 @@ describe("ConversionStateProvider", () => {
     const { result } = renderHook(() => useConversionState(), { wrapper });
 
     await waitFor(() => {
-      expect(listen.mock.calls.some((c) => c[0] === "conversion-progress")).toBe(
-        true
-      );
+      expect(
+        listen.mock.calls.some((c) => c[0] === "conversion-progress")
+      ).toBe(true);
     });
 
     let convertPromise: Promise<void> = Promise.resolve();
@@ -414,7 +410,8 @@ describe("ConversionStateProvider", () => {
 
       let chapter: number | null = null;
       await act(async () => {
-        chapter = await result.current.refreshCurrentConvertingChapter("book-1");
+        chapter =
+          await result.current.refreshCurrentConvertingChapter("book-1");
       });
 
       expect(chapter).toBe(2);
@@ -423,7 +420,9 @@ describe("ConversionStateProvider", () => {
       });
       expect(result.current.getCurrentConvertingChapter("book-1")).toBe(2);
       expect(result.current.currentConvertingChapterByBook["book-1"]).toBe(2);
-      expect(result.current.getCurrentConvertingChapter("other-book")).toBeNull();
+      expect(
+        result.current.getCurrentConvertingChapter("other-book")
+      ).toBeNull();
     });
 
     it("returns null when refreshing an empty book id", async () => {
@@ -462,7 +461,8 @@ describe("ConversionStateProvider", () => {
 
       let chapter: number | null = -1;
       await act(async () => {
-        chapter = await result.current.refreshCurrentConvertingChapter("book-1");
+        chapter =
+          await result.current.refreshCurrentConvertingChapter("book-1");
       });
 
       expect(chapter).toBeNull();
@@ -485,9 +485,9 @@ describe("ConversionStateProvider", () => {
       await startOpenConversion(result, 0);
 
       await waitFor(() => {
-        expect(listen.mock.calls.some((c) => c[0] === "conversion-progress")).toBe(
-          true
-        );
+        expect(
+          listen.mock.calls.some((c) => c[0] === "conversion-progress")
+        ).toBe(true);
       });
 
       act(() => {
@@ -540,7 +540,9 @@ describe("ConversionStateProvider", () => {
       });
 
       await waitFor(() => {
-        expect(result.current.conversionProgress?.message).toBe("Noisy regress");
+        expect(result.current.conversionProgress?.message).toBe(
+          "Noisy regress"
+        );
       });
       expect(result.current.getCurrentConvertingChapter("book-1")).toBe(2);
     });
@@ -557,9 +559,9 @@ describe("ConversionStateProvider", () => {
       });
 
       await waitFor(() => {
-        expect(listen.mock.calls.some((c) => c[0] === "chapter-completed")).toBe(
-          true
-        );
+        expect(
+          listen.mock.calls.some((c) => c[0] === "chapter-completed")
+        ).toBe(true);
       });
 
       act(() => {

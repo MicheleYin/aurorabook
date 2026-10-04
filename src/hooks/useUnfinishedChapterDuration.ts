@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+import type { Book } from "../types/book";
 import { useConversionState } from "../context/ConversionStateContext";
 import { resolveUnfinishedChapterIndex } from "../lib/book-audio-duration";
 import { logger } from "../lib/logger";
-import type { Book } from "../types/book";
 
 const LIVE_DURATION_POLL_MS = 1000;
 

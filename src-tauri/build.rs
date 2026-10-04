@@ -127,6 +127,101 @@ fn compile_ios_swift_bridges() {
     }
 }
 
+/// Compile the AVFoundation audiobook exporter for macOS.
+fn compile_macos_audiobook_bridge() {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if !target.contains("apple-darwin") {
+        return;
+    }
+
+    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
+        Ok(s) => PathBuf::from(s),
+        Err(_) => return,
+    };
+    let out_dir = match std::env::var("OUT_DIR") {
+        Ok(s) => PathBuf::from(s),
+        Err(_) => return,
+    };
+    let arch = if target.contains("x86_64") {
+        "x86_64"
+    } else {
+        "arm64"
+    };
+    let swift_target = format!("{arch}-apple-macosx12.0");
+    let sdk_path = String::from_utf8(
+        Command::new("xcrun")
+            .args(["--sdk", "macosx", "--show-sdk-path"])
+            .output()
+            .expect("xcrun --show-sdk-path failed")
+            .stdout,
+    )
+    .expect("sdk path utf8")
+    .trim()
+    .to_string();
+
+    let swift_src = manifest_dir.join("swift").join("AudiobookExporter.swift");
+    println!("cargo:rerun-if-changed={}", swift_src.display());
+    if !swift_src.is_file() {
+        panic!(
+            "AudiobookExporter.swift missing at {} — required for macOS native symbols",
+            swift_src.display()
+        );
+    }
+
+    let obj_file = out_dir.join("AudiobookExporter.o");
+    let lib_file = out_dir.join("libAudiobookExporter.a");
+    let output = Command::new("swiftc")
+        .arg("-emit-object")
+        .arg("-o")
+        .arg(&obj_file)
+        .arg("-sdk")
+        .arg(&sdk_path)
+        .arg("-parse-as-library")
+        .arg("-module-name")
+        .arg("AudiobookExporter")
+        .arg("-target")
+        .arg(&swift_target)
+        .arg(&swift_src)
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run swiftc for AudiobookExporter.swift: {e}"));
+    if !output.status.success() {
+        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+        panic!("swiftc failed compiling AudiobookExporter.swift for macOS");
+    }
+
+    let ar_status = Command::new("ar")
+        .args([
+            "rcs",
+            lib_file.to_str().expect("lib path"),
+            obj_file.to_str().expect("obj path"),
+        ])
+        .status()
+        .expect("failed to run ar");
+    assert!(ar_status.success(), "ar failed for libAudiobookExporter.a");
+
+    println!("cargo:rustc-link-lib=static=AudiobookExporter");
+    println!("cargo:rustc-link-search=native={}", out_dir.display());
+
+    let toolchain_dir = String::from_utf8(
+        Command::new("xcrun")
+            .args(["--find", "swiftc"])
+            .output()
+            .expect("xcrun --find swiftc failed")
+            .stdout,
+    )
+    .expect("swiftc path utf8");
+    let toolchain_lib = PathBuf::from(toolchain_dir.trim())
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.join("lib/swift/macosx"))
+        .expect("swift toolchain lib path");
+    println!("cargo:rustc-link-search=native={}", toolchain_lib.display());
+
+    for framework in ["Foundation", "AVFoundation"] {
+        println!("cargo:rustc-link-lib=framework={framework}");
+    }
+}
+
 /// Copy Supertonic 3 assets from the repo’s `supertonic-3/` tree (Hugging Face layout) into
 /// `src-tauri/resources/supertonic/` so Tauri can bundle them.
 ///
@@ -403,6 +498,7 @@ fn main() {
     }
 
     compile_ios_swift_bridges();
+    compile_macos_audiobook_bridge();
 
     // Supertonic uses ONNX Runtime; iOS uses `ort` `alternative-backend` so we link
     // static ORT ourselves (pyke has no iOS WebGPU prebuilts; Xcode often omits ORT_* env).
@@ -497,9 +593,6 @@ fn main() {
 
     sync_supertonic_assets_for_bundle();
     copy_ort_webgpu_dylib_for_desktop_bundle();
-    ensure_macos_ffmpeg_resource();
-    ensure_windows_ffmpeg_resource();
-    strip_ffmpeg_from_ios_assets();
     tauri_build::build()
 }
 
@@ -525,10 +618,7 @@ fn link_ios_ort_static_tree(ort_lib_dir: &Path) {
             .join("onnx-build")
             .join(sdk_subdir);
         if onnx_build_dir.exists() {
-            println!(
-                "cargo:rustc-link-search=native={}",
-                onnx_build_dir.display()
-            );
+            println!("cargo:rustc-link-search=native={}", onnx_build_dir.display());
             if onnx_build_dir.join("libonnx.a").exists() {
                 println!("cargo:rustc-link-lib=static=onnx");
             }
@@ -542,10 +632,7 @@ fn link_ios_ort_static_tree(ort_lib_dir: &Path) {
             .join("protobuf-build")
             .join(sdk_subdir);
         if protobuf_build_dir.exists() {
-            println!(
-                "cargo:rustc-link-search=native={}",
-                protobuf_build_dir.display()
-            );
+            println!("cargo:rustc-link-search=native={}", protobuf_build_dir.display());
             if protobuf_build_dir.join("libprotobuf-lite.a").exists() {
                 println!("cargo:rustc-link-lib=static=protobuf-lite");
             } else if protobuf_build_dir.join("libprotobuf.a").exists() {
@@ -553,26 +640,18 @@ fn link_ios_ort_static_tree(ort_lib_dir: &Path) {
             }
         }
 
-        // Model package (required by onnxruntime_session on recent ORT)
         let model_package_dir = build_base.join("model_package").join(sdk_subdir);
         if model_package_dir.join("libmodel_package.a").exists() {
-            println!(
-                "cargo:rustc-link-search=native={}",
-                model_package_dir.display()
-            );
+            println!("cargo:rustc-link-search=native={}", model_package_dir.display());
             println!("cargo:rustc-link-lib=static=model_package");
         }
 
-        // cpuinfo is required by onnxruntime_common (not only XNNPACK builds)
         let cpuinfo_build_dir = build_base
             .join("_deps")
             .join("pytorch_cpuinfo-build")
             .join(sdk_subdir);
         if cpuinfo_build_dir.join("libcpuinfo.a").exists() {
-            println!(
-                "cargo:rustc-link-search=native={}",
-                cpuinfo_build_dir.display()
-            );
+            println!("cargo:rustc-link-search=native={}", cpuinfo_build_dir.display());
             println!("cargo:rustc-link-lib=static=cpuinfo");
         }
     }
@@ -589,10 +668,8 @@ fn link_ios_ort_static_tree(ort_lib_dir: &Path) {
         "onnxruntime_lora",
         "onnxruntime_session",
     ];
-
     for lib in &core_libs {
-        let lib_path = ort_lib_dir.join(format!("lib{lib}.a"));
-        if lib_path.exists() {
+        if ort_lib_dir.join(format!("lib{lib}.a")).exists() {
             println!("cargo:rustc-link-lib=static={lib}");
         }
     }
@@ -600,10 +677,7 @@ fn link_ios_ort_static_tree(ort_lib_dir: &Path) {
     if let Some(build_base) = build_dir {
         let re2_build_dir = build_base.join("_deps").join("re2-build").join(sdk_subdir);
         if re2_build_dir.exists() {
-            println!(
-                "cargo:rustc-link-search=native={}",
-                re2_build_dir.display()
-            );
+            println!("cargo:rustc-link-search=native={}", re2_build_dir.display());
             if re2_build_dir.join("libre2.a").exists() {
                 println!("cargo:rustc-link-lib=static=re2");
             }
@@ -631,12 +705,8 @@ fn link_ios_ort_static_tree(ort_lib_dir: &Path) {
 
             let abseil_search_paths = find_release_dirs(&abseil_build_dir, sdk_subdir);
             for search_path in &abseil_search_paths {
-                println!(
-                    "cargo:rustc-link-search=native={}",
-                    search_path.display()
-                );
+                println!("cargo:rustc-link-search=native={}", search_path.display());
             }
-
             use std::collections::HashSet;
             let mut linked_libs = HashSet::new();
             for search_path in &abseil_search_paths {
@@ -648,8 +718,7 @@ fn link_ios_ort_static_tree(ort_lib_dir: &Path) {
                         }
                         if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
                             if let Some(name) = file_name.strip_prefix("lib") {
-                                if name.starts_with("absl_") && linked_libs.insert(name.to_string())
-                                {
+                                if name.starts_with("absl_") && linked_libs.insert(name.to_string()) {
                                     println!("cargo:rustc-link-lib=static={name}");
                                 }
                             }
@@ -659,7 +728,6 @@ fn link_ios_ort_static_tree(ort_lib_dir: &Path) {
             }
         }
 
-        // Optional XNNPACK (legacy iOS CPU builds)
         let xnnpack_lib = ort_lib_dir.join("libonnxruntime_providers_xnnpack.a");
         if xnnpack_lib.exists() {
             println!("cargo:rustc-link-lib=static=onnxruntime_providers_xnnpack");
@@ -668,33 +736,19 @@ fn link_ios_ort_static_tree(ort_lib_dir: &Path) {
                 .join("googlexnnpack-build")
                 .join(sdk_subdir);
             if xnnpack_build_dir.exists() {
-                println!(
-                    "cargo:rustc-link-search=native={}",
-                    xnnpack_build_dir.display()
-                );
-                if xnnpack_build_dir.join("libXNNPACK.a").exists() {
-                    println!("cargo:rustc-link-lib=static=XNNPACK");
-                }
-                if xnnpack_build_dir
-                    .join("libxnnpack-microkernels-prod.a")
-                    .exists()
-                {
-                    println!("cargo:rustc-link-lib=static=xnnpack-microkernels-prod");
-                }
-                if xnnpack_build_dir.join("libmicrokernels-prod.a").exists() {
-                    println!("cargo:rustc-link-lib=static=microkernels-prod");
+                println!("cargo:rustc-link-search=native={}", xnnpack_build_dir.display());
+                for lib in ["XNNPACK", "xnnpack-microkernels-prod", "microkernels-prod"] {
+                    if xnnpack_build_dir.join(format!("lib{lib}.a")).exists() {
+                        println!("cargo:rustc-link-lib=static={lib}");
+                    }
                 }
             }
-
             let pthreadpool_build_dir = build_base
                 .join("_deps")
                 .join("pthreadpool-build")
                 .join(sdk_subdir);
             if pthreadpool_build_dir.exists() {
-                println!(
-                    "cargo:rustc-link-search=native={}",
-                    pthreadpool_build_dir.display()
-                );
+                println!("cargo:rustc-link-search=native={}", pthreadpool_build_dir.display());
                 if pthreadpool_build_dir.join("libpthreadpool.a").exists() {
                     println!("cargo:rustc-link-lib=static=pthreadpool");
                 }
@@ -702,7 +756,6 @@ fn link_ios_ort_static_tree(ort_lib_dir: &Path) {
         }
     }
 
-    // Legacy CoreML provider (only if present in older builds)
     let coreml_lib = ort_lib_dir.join("libonnxruntime_providers_coreml.a");
     if coreml_lib.exists() {
         println!("cargo:rustc-link-lib=static=onnxruntime_providers_coreml");
@@ -714,268 +767,6 @@ fn link_ios_ort_static_tree(ort_lib_dir: &Path) {
 
     println!("cargo:rustc-link-lib=framework=Foundation");
     println!("cargo:rustc-link-lib=c++");
-}
-
-/// `tauri.macos.conf.json` lists `resources/ffmpeg-bin/` as a bundle resource, so the path must
-/// exist before `tauri_build::build()` or the build fails with
-/// `resource path resources/ffmpeg-bin doesn't exist`.
-///
-/// Prefer running `scripts/bundle-macos-ffmpeg.cjs`, then env overrides / system `ffmpeg`.
-fn ensure_macos_ffmpeg_resource() {
-    let target = std::env::var("TARGET").unwrap_or_default();
-    if !target.contains("apple-darwin") {
-        return;
-    }
-
-    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
-        Ok(s) => PathBuf::from(s),
-        Err(_) => return,
-    };
-    let bundle_dir = manifest_dir.join("resources").join("ffmpeg-bin");
-    let dest = bundle_dir.join("ffmpeg");
-
-    if dest.is_file()
-        && fs::metadata(&dest)
-            .map(|m| m.len() > 0)
-            .unwrap_or(false)
-        && Command::new(&dest)
-            .arg("-version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    {
-        return;
-    }
-
-    let repo_root = manifest_dir.parent().unwrap_or(&manifest_dir);
-    let bundle_script = repo_root.join("scripts").join("bundle-macos-ffmpeg.cjs");
-    if bundle_script.is_file() {
-        let node = which_node_binary();
-        let output = Command::new(&node)
-            .arg(&bundle_script)
-            .current_dir(repo_root)
-            .output();
-        match output {
-            Ok(out) if out.status.success() && dest.is_file() => {
-                println!(
-                    "cargo:warning=Bundled ffmpeg for macOS via {}",
-                    bundle_script.display()
-                );
-                println!("cargo:rerun-if-changed={}", bundle_script.display());
-                return;
-            }
-            Ok(out) => {
-                eprintln!(
-                    "cargo:warning=bundle-macos-ffmpeg.cjs failed: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
-            }
-            Err(e) => {
-                eprintln!(
-                    "cargo:warning=Could not run bundle-macos-ffmpeg.cjs: {}",
-                    e
-                );
-            }
-        }
-    }
-
-    // Last resort: non-empty placeholder so `tauri_build` path validation passes.
-    // Runtime detection ignores invalid binaries and falls back to PATH.
-    if let Err(e) = fs::create_dir_all(&bundle_dir) {
-        eprintln!(
-            "cargo:warning=ffmpeg resource: failed to create {}: {}",
-            bundle_dir.display(),
-            e
-        );
-        return;
-    }
-    match fs::write(
-        &dest,
-        b"#!/bin/sh\necho 'placeholder ffmpeg; install a real binary' >&2\nexit 1\n",
-    ) {
-        Ok(()) => {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(meta) = fs::metadata(&dest) {
-                    let mut perms = meta.permissions();
-                    perms.set_mode(perms.mode() | 0o755);
-                    let _ = fs::set_permissions(&dest, perms);
-                }
-            }
-            eprintln!(
-                "cargo:warning=Created placeholder {} — run `bun run bundle:ffmpeg:macos` or set AURORABOOK_FFMPEG",
-                dest.display()
-            );
-        }
-        Err(e) => eprintln!(
-            "cargo:warning=ffmpeg resource missing at {} and could not create placeholder: {}",
-            dest.display(),
-            e
-        ),
-    }
-}
-
-fn which_node_binary() -> PathBuf {
-    if let Ok(p) = std::env::var("NODE") {
-        let trimmed = p.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
-        }
-    }
-    PathBuf::from("node")
-}
-
-/// `tauri.windows.conf.json` lists `resources/ffmpeg-bin/` as a bundle resource.
-/// Stage `ffmpeg.exe` via the Windows bundler, or write a non-empty placeholder so
-/// `tauri_build` path validation passes when cross-compiling / in CI preflight.
-fn ensure_windows_ffmpeg_resource() {
-    let target = std::env::var("TARGET").unwrap_or_default();
-    if !target.contains("windows") {
-        return;
-    }
-
-    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
-        Ok(s) => PathBuf::from(s),
-        Err(_) => return,
-    };
-    let bundle_dir = manifest_dir.join("resources").join("ffmpeg-bin");
-    let dest = bundle_dir.join("ffmpeg.exe");
-
-    if dest.is_file()
-        && fs::metadata(&dest)
-            .map(|m| m.len() > 0)
-            .unwrap_or(false)
-    {
-        return;
-    }
-
-    let repo_root = manifest_dir.parent().unwrap_or(&manifest_dir);
-    let bundle_script = repo_root.join("scripts").join("bundle-windows-ffmpeg.cjs");
-    if bundle_script.is_file() {
-        let node = which_node_binary();
-        let mut cmd = Command::new(&node);
-        cmd.arg(&bundle_script).current_dir(repo_root);
-        if target.contains("aarch64") {
-            cmd.env("AURORABOOK_FFMPEG_ARCH", "arm64");
-        } else {
-            cmd.env("AURORABOOK_FFMPEG_ARCH", "x64");
-        }
-        match cmd.output() {
-            Ok(out) if out.status.success() && dest.is_file() => {
-                println!(
-                    "cargo:warning=Bundled ffmpeg for Windows via {}",
-                    bundle_script.display()
-                );
-                println!("cargo:rerun-if-changed={}", bundle_script.display());
-                return;
-            }
-            Ok(out) => {
-                eprintln!(
-                    "cargo:warning=bundle-windows-ffmpeg.cjs failed: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
-            }
-            Err(e) => {
-                eprintln!(
-                    "cargo:warning=Could not run bundle-windows-ffmpeg.cjs: {}",
-                    e
-                );
-            }
-        }
-    }
-
-    if let Err(e) = fs::create_dir_all(&bundle_dir) {
-        eprintln!(
-            "cargo:warning=ffmpeg resource: failed to create {}: {}",
-            bundle_dir.display(),
-            e
-        );
-        return;
-    }
-    match fs::write(
-        &dest,
-        b"placeholder ffmpeg.exe; run `bun run bundle:ffmpeg:windows` or set AURORABOOK_FFMPEG\n",
-    ) {
-        Ok(()) => eprintln!(
-            "cargo:warning=Created placeholder {} — run `bun run bundle:ffmpeg:windows` or set AURORABOOK_FFMPEG",
-            dest.display()
-        ),
-        Err(e) => eprintln!(
-            "cargo:warning=ffmpeg resource missing at {} and could not create placeholder: {}",
-            dest.display(),
-            e
-        ),
-    }
-}
-
-/// iOS App Store rejects standalone binaries like `ffmpeg` inside the app bundle.
-/// Stale copies can linger under `gen/apple/assets` after older configs; remove them
-/// before `tauri_build` stages resources for Xcode.
-fn strip_ffmpeg_from_ios_assets() {
-    let target = std::env::var("TARGET").unwrap_or_default();
-    if !target.contains("apple-ios") {
-        return;
-    }
-
-    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
-        Ok(s) => PathBuf::from(s),
-        Err(_) => return,
-    };
-
-    let candidates = [
-        manifest_dir
-            .join("gen")
-            .join("apple")
-            .join("assets")
-            .join("resources")
-            .join("ffmpeg"),
-        manifest_dir
-            .join("gen")
-            .join("apple")
-            .join("assets")
-            .join("resources")
-            .join("ffmpeg-bin")
-            .join("ffmpeg"),
-    ];
-
-    for path in candidates {
-        if path.is_file() {
-            match fs::remove_file(&path) {
-                Ok(()) => println!(
-                    "cargo:warning=Removed ffmpeg from iOS bundle path {}",
-                    path.display()
-                ),
-                Err(e) => eprintln!(
-                    "cargo:warning=Failed to remove iOS-forbidden ffmpeg at {}: {}",
-                    path.display(),
-                    e
-                ),
-            }
-        }
-    }
-
-    let ffmpeg_bin_dir = manifest_dir
-        .join("gen")
-        .join("apple")
-        .join("assets")
-        .join("resources")
-        .join("ffmpeg-bin");
-    if ffmpeg_bin_dir.is_dir() {
-        match fs::remove_dir_all(&ffmpeg_bin_dir) {
-            Ok(()) => println!(
-                "cargo:warning=Removed ffmpeg-bin from iOS bundle path {}",
-                ffmpeg_bin_dir.display()
-            ),
-            Err(e) => eprintln!(
-                "cargo:warning=Failed to remove iOS-forbidden ffmpeg-bin at {}: {}",
-                ffmpeg_bin_dir.display(),
-                e
-            ),
-        }
-    }
 }
 
 /// `ort` + `webgpu` links Dawn (`libwebgpu_dawn.dylib` / `webgpu_dawn.dll`) via rpath / DLL

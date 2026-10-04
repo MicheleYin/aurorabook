@@ -1,9 +1,9 @@
 import { type } from "@tauri-apps/plugin-os";
 
+import type { PlaybackEngine } from "./types";
 import { createAndroidEngine } from "./engines/androidEngine";
 import { createIosNativeEngine } from "./engines/iosNativeEngine";
 import { createWebviewEngine } from "./engines/webviewEngine";
-import type { PlaybackEngine } from "./types";
 
 /**
  * Resolve the platform playback engine.

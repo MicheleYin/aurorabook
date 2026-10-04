@@ -33,7 +33,10 @@ export interface AppContextType {
 
   currentBook: Book | null;
   setCurrentBook: Dispatch<SetStateAction<Book | null>>;
-  setCurrentBookWithLoading: (book: Book, autoPlayAudio: boolean) => Promise<void>;
+  setCurrentBookWithLoading: (
+    book: Book,
+    autoPlayAudio: boolean
+  ) => Promise<void>;
 
   library: Book[];
   setLibrary: Dispatch<SetStateAction<Book[]>>;
@@ -134,7 +137,12 @@ export function AppProvider({
       // Persist book id before any follow-up tab save can race.
       await saveSettings({ lastOpenedBookId: book.id });
     },
-    [loadLastOpenedChapter, loadLastOpenedAudioTrack, saveAudioProgress, saveSettings]
+    [
+      loadLastOpenedChapter,
+      loadLastOpenedAudioTrack,
+      saveAudioProgress,
+      saveSettings,
+    ]
   );
 
   const changeCurrentTab = useCallback(
@@ -190,7 +198,7 @@ export function AppProvider({
     const savedTab = normalizeAppTab(settings.currentTab);
     const savedBookId = settings.lastOpenedBookId ?? null;
     const savedBook = savedBookId
-      ? library.find((book) => book.id === savedBookId) ?? null
+      ? (library.find((book) => book.id === savedBookId) ?? null)
       : null;
 
     logger.info("Restoring session", {

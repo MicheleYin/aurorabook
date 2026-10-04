@@ -62,7 +62,9 @@ export const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 
 export function isApplePlatform(): boolean {
   if (typeof navigator === "undefined") return false;
-  return /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
+  return /Mac|iPhone|iPad|iPod/i.test(
+    navigator.platform || navigator.userAgent
+  );
 }
 
 export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
@@ -70,7 +72,9 @@ export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   if (target.isContentEditable) return true;
   const tag = target.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-  return target.closest('[contenteditable="true"], input, textarea, select') != null;
+  return (
+    target.closest('[contenteditable="true"], input, textarea, select') != null
+  );
 }
 
 export function scopesInclude(
@@ -82,7 +86,10 @@ export function scopesInclude(
   return list.includes(active);
 }
 
-function matchesMod(event: KeyboardEvent, wantsMod: boolean | undefined): boolean {
+function matchesMod(
+  event: KeyboardEvent,
+  wantsMod: boolean | undefined
+): boolean {
   const apple = isApplePlatform();
   const pressed = apple ? event.metaKey : event.ctrlKey;
   const other = apple ? event.ctrlKey : event.metaKey;
@@ -479,7 +486,9 @@ export function getDefaultShortcutDefinition(
 }
 
 /** True when a stored override differs from the built-in default. */
-export function isCustomShortcutBinding(binding: StoredShortcutBinding): boolean {
+export function isCustomShortcutBinding(
+  binding: StoredShortcutBinding
+): boolean {
   const defaults = getDefaultShortcutDefinition(binding.actionId);
   if (!defaults) return true;
   return !bindingEquivalentTo(binding.match, defaults.match);
@@ -602,4 +611,3 @@ export function chordFromKeyboardEvent(
   display.push(displayNameForKey(key));
   return { chord, keys: display };
 }
-

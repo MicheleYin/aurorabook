@@ -1,7 +1,7 @@
 import { Component, ReactNode } from "react";
 
-import { logger } from "../lib/logger";
 import { useTranslation } from "../lib/i18n";
+import { logger } from "../lib/logger";
 import { Button } from "./ui/button";
 
 interface Props {

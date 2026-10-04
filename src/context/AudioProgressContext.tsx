@@ -15,18 +15,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
+import type { PlaybackEngine, PlaybackEngineKind } from "../audio";
 import type {
   AudioTrack,
   AudioTrackWithData,
   Book,
   BookAudioState,
 } from "../types/book";
-import {
-  clearMediaSession,
-  createPlaybackEngine,
-  type PlaybackEngine,
-  type PlaybackEngineKind,
-} from "../audio";
+import { clearMediaSession, createPlaybackEngine } from "../audio";
 import {
   applyMediaPlaybackRate,
   mimeTypeFromTrackHref,
@@ -252,7 +248,9 @@ export function AudioProgressProvider({
     async (bookId: string, chapterIndex: number) => {
       const engine = engineRef.current;
       if (!engine?.refreshLive) {
-        throw new Error("Live refresh is not supported on this platform engine");
+        throw new Error(
+          "Live refresh is not supported on this platform engine"
+        );
       }
       return engine.refreshLive(bookId, chapterIndex);
     },
@@ -267,8 +265,7 @@ export function AudioProgressProvider({
     if (!currentAudioTrack) return null;
     return {
       currentTrackId: currentAudioTrack.id,
-      currentTrackHref:
-        currentAudioTrack.href ?? currentAudioTrack.filePath,
+      currentTrackHref: currentAudioTrack.href ?? currentAudioTrack.filePath,
       currentTrackIndex: currentAudioTrack.order,
       currentTimeSeconds: getPlaybackTime(),
       updatedAt: new Date().toISOString(),
@@ -465,11 +462,9 @@ export function AudioProgressProvider({
       // Restore audio progress if this matches the last track by id, href, or chapter index.
       const isSameTrack = Boolean(
         savedState &&
-          (
-            savedState.currentTrackId === track.id ||
-            (savedTrackHref && trackHref && savedTrackHref === trackHref) ||
-            (savedTrackIndex !== undefined && savedTrackIndex === track.order)
-          )
+        (savedState.currentTrackId === track.id ||
+          (savedTrackHref && trackHref && savedTrackHref === trackHref) ||
+          (savedTrackIndex !== undefined && savedTrackIndex === track.order))
       );
 
       logger.info("[audio-restore] evaluating saved progress", {
@@ -483,10 +478,7 @@ export function AudioProgressProvider({
         isSameTrack,
       });
 
-      if (
-        isSameTrack &&
-        savedState?.currentTimeSeconds !== undefined
-      ) {
+      if (isSameTrack && savedState?.currentTimeSeconds !== undefined) {
         const savedTime = Math.max(0, savedState.currentTimeSeconds);
         nativeTimeRef.current = savedTime;
 
@@ -580,39 +572,46 @@ export function AudioProgressProvider({
     [audioRef, playAudio, seekAudio]
   );
 
-  const resolveTrackChapterIndex = useCallback((book: Book, track: AudioTrack) => {
-    // Handle live track IDs (format: live-bookId-chapterIndex)
-    if (track.id?.startsWith('live-')) {
-      const parts = track.id.split('-');
-      if (parts.length >= 3) {
-        const chapterIndex = parseInt(parts[parts.length - 1], 10);
-        if (!isNaN(chapterIndex) && chapterIndex >= 0 && chapterIndex < book.chapters.length) {
-          return chapterIndex;
+  const resolveTrackChapterIndex = useCallback(
+    (book: Book, track: AudioTrack) => {
+      // Handle live track IDs (format: live-bookId-chapterIndex)
+      if (track.id?.startsWith("live-")) {
+        const parts = track.id.split("-");
+        if (parts.length >= 3) {
+          const chapterIndex = parseInt(parts[parts.length - 1], 10);
+          if (
+            !isNaN(chapterIndex) &&
+            chapterIndex >= 0 &&
+            chapterIndex < book.chapters.length
+          ) {
+            return chapterIndex;
+          }
         }
       }
-    }
 
-    const trackHref = track.href || track.filePath;
-    if (trackHref && book.audioSyncMap?.segments?.length) {
-      const matchingSegment = book.audioSyncMap.segments.find(
-        (segment) => segment.audioTrackHref === trackHref
-      );
-      if (matchingSegment) {
-        const chapterIndex = book.chapters.findIndex(
-          (chapter) => chapter.href === matchingSegment.chapterHref
+      const trackHref = track.href || track.filePath;
+      if (trackHref && book.audioSyncMap?.segments?.length) {
+        const matchingSegment = book.audioSyncMap.segments.find(
+          (segment) => segment.audioTrackHref === trackHref
         );
-        if (chapterIndex >= 0) {
-          return chapterIndex;
+        if (matchingSegment) {
+          const chapterIndex = book.chapters.findIndex(
+            (chapter) => chapter.href === matchingSegment.chapterHref
+          );
+          if (chapterIndex >= 0) {
+            return chapterIndex;
+          }
         }
       }
-    }
 
-    if (track.order >= 0 && track.order < book.chapters.length) {
-      return track.order;
-    }
+      if (track.order >= 0 && track.order < book.chapters.length) {
+        return track.order;
+      }
 
-    return null;
-  }, []);
+      return null;
+    },
+    []
+  );
 
   const loadAudioTrack = useCallback(
     async (bookId: string, track: AudioTrack, book: Book) => {
@@ -667,7 +666,11 @@ export function AudioProgressProvider({
             : trackTitle;
           const artwork: MediaImage[] = [];
           if (book.coverUrl) {
-            artwork.push({ src: book.coverUrl, sizes: "512x512", type: "image/jpeg" });
+            artwork.push({
+              src: book.coverUrl,
+              sizes: "512x512",
+              type: "image/jpeg",
+            });
           }
           getName()
             .then((appName) => {
@@ -828,11 +831,25 @@ export function AudioProgressProvider({
                   settle();
                 };
 
-                audio.addEventListener("loadedmetadata", settleWithTimeoutClear, { once: true });
-                audio.addEventListener("loadeddata", settleWithTimeoutClear, { once: true });
-                audio.addEventListener("canplay", settleWithTimeoutClear, { once: true });
-                audio.addEventListener("canplaythrough", settleWithTimeoutClear, { once: true });
-                audio.addEventListener("error", settleWithTimeoutClear, { once: true });
+                audio.addEventListener(
+                  "loadedmetadata",
+                  settleWithTimeoutClear,
+                  { once: true }
+                );
+                audio.addEventListener("loadeddata", settleWithTimeoutClear, {
+                  once: true,
+                });
+                audio.addEventListener("canplay", settleWithTimeoutClear, {
+                  once: true,
+                });
+                audio.addEventListener(
+                  "canplaythrough",
+                  settleWithTimeoutClear,
+                  { once: true }
+                );
+                audio.addEventListener("error", settleWithTimeoutClear, {
+                  once: true,
+                });
               });
 
             audioRef.current.src = streamUrl;
@@ -907,8 +924,9 @@ export function AudioProgressProvider({
       }> => {
         let convertingChapter = getCurrentConvertingChapter(bookForLoad.id);
         if (convertingChapter === null) {
-          convertingChapter =
-            await refreshCurrentConvertingChapter(bookForLoad.id);
+          convertingChapter = await refreshCurrentConvertingChapter(
+            bookForLoad.id
+          );
         }
         const allowed =
           bookForLoad.conversionStatus === "started" ||
@@ -1010,10 +1028,7 @@ export function AudioProgressProvider({
           }
         }
 
-        if (
-          !audioTrackToLoad &&
-          savedState.currentTrackIndex !== undefined
-        ) {
+        if (!audioTrackToLoad && savedState.currentTrackIndex !== undefined) {
           const savedTrackIndex = savedState.currentTrackIndex;
           audioTrackToLoad =
             audioTracks.find((track) => track.order === savedTrackIndex) ||
@@ -1093,7 +1108,10 @@ export function AudioProgressProvider({
         try {
           await saveAudioProgress(book);
         } catch (err) {
-          logger.warn("Failed to save audio progress while closing player:", err);
+          logger.warn(
+            "Failed to save audio progress while closing player:",
+            err
+          );
         }
       }
 

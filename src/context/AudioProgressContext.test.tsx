@@ -1,13 +1,7 @@
+import type { ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
 
-import {
-  AudioProgressProvider,
-  useAudioProgressContext,
-} from "./AudioProgressContext";
-import { ConversionStateProvider } from "./ConversionStateContext";
-import { SettingsProvider } from "./SettingsContext";
 import type { AudioTrack, Book } from "../types/book";
 import {
   emitTauriEvent,
@@ -16,6 +10,12 @@ import {
   listen,
   osType,
 } from "../test/tauri-mocks";
+import {
+  AudioProgressProvider,
+  useAudioProgressContext,
+} from "./AudioProgressContext";
+import { ConversionStateProvider } from "./ConversionStateContext";
+import { SettingsProvider } from "./SettingsContext";
 
 vi.mock("../lib/i18n", () => ({
   useTranslation: () => ({
@@ -256,7 +256,8 @@ describe("AudioProgressProvider", () => {
       }
       if (cmd === "get_app_settings") return { audioPlaybackSpeed: 1 };
       if (cmd === "get_current_converting_chapter") return null;
-      if (cmd === "get_audio_stream_url") return "https://stream.local/track.mp3";
+      if (cmd === "get_audio_stream_url")
+        return "https://stream.local/track.mp3";
       throw new Error(`Unexpected invoke: ${cmd}`);
     });
 
@@ -495,9 +496,9 @@ describe("AudioProgressProvider", () => {
 
     await waitFor(() => {
       expect(result.current.isIosNativeAudio).toBe(true);
-      expect(listen.mock.calls.some((call) => call[0] === "native-player-event")).toBe(
-        true
-      );
+      expect(
+        listen.mock.calls.some((call) => call[0] === "native-player-event")
+      ).toBe(true);
     });
 
     act(() => {
@@ -517,7 +518,9 @@ describe("AudioProgressProvider", () => {
     act(() => {
       emitTauriEvent("native-player-event", { type: "timeUpdate", time: 40 });
     });
-    expect(result.current.calculateAudioProgress()?.currentTimeSeconds).toBe(40);
+    expect(result.current.calculateAudioProgress()?.currentTimeSeconds).toBe(
+      40
+    );
 
     act(() => {
       emitTauriEvent("native-player-event", { type: "ended" });
@@ -809,7 +812,9 @@ describe("AudioProgressProvider", () => {
         throw new Error(`Unexpected invoke: ${cmd}`);
       });
 
-      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const { result } = renderHook(() => useAudioProgressContext(), {
+        wrapper,
+      });
       const audio = createAudioElement();
       result.current.audioRef.current = audio;
 
@@ -841,7 +846,9 @@ describe("AudioProgressProvider", () => {
         throw new Error(`Unexpected invoke: ${cmd}`);
       });
 
-      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const { result } = renderHook(() => useAudioProgressContext(), {
+        wrapper,
+      });
       const audio = createAudioElement();
       result.current.audioRef.current = audio;
 
@@ -873,7 +880,9 @@ describe("AudioProgressProvider", () => {
     });
 
     it("treats explicit live-* track ids as live streams", async () => {
-      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const { result } = renderHook(() => useAudioProgressContext(), {
+        wrapper,
+      });
       const book = createBook({
         chapters: [
           {
@@ -933,7 +942,9 @@ describe("AudioProgressProvider", () => {
         throw new Error(`Unexpected invoke: ${cmd}`);
       });
 
-      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const { result } = renderHook(() => useAudioProgressContext(), {
+        wrapper,
+      });
       // Track is not yet in book.audioTracks — still converting.
       const book = createBook({ audioTracks: [] });
       const pendingTrack = createTrack({
@@ -988,7 +999,9 @@ describe("AudioProgressProvider", () => {
         throw new Error(`Unexpected invoke: ${cmd}`);
       });
 
-      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const { result } = renderHook(() => useAudioProgressContext(), {
+        wrapper,
+      });
 
       await act(async () => {
         await result.current.loadLastOpenedAudioTrack(book, false);
@@ -1041,7 +1054,9 @@ describe("AudioProgressProvider", () => {
         throw new Error(`Unexpected invoke: ${cmd}`);
       });
 
-      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const { result } = renderHook(() => useAudioProgressContext(), {
+        wrapper,
+      });
 
       await act(async () => {
         await result.current.loadLastOpenedAudioTrack(book, false);
@@ -1112,7 +1127,9 @@ describe("AudioProgressProvider", () => {
         throw new Error(`Unexpected invoke: ${cmd}`);
       });
 
-      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const { result } = renderHook(() => useAudioProgressContext(), {
+        wrapper,
+      });
       const audio = createAudioElement();
       result.current.audioRef.current = audio;
 
@@ -1176,7 +1193,9 @@ describe("AudioProgressProvider", () => {
         throw new Error(`Unexpected invoke: ${cmd}`);
       });
 
-      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const { result } = renderHook(() => useAudioProgressContext(), {
+        wrapper,
+      });
 
       await act(async () => {
         await result.current.loadLastOpenedAudioTrack(book, false);
@@ -1254,7 +1273,9 @@ describe("AudioProgressProvider", () => {
         throw new Error(`Unexpected invoke: ${cmd}`);
       });
 
-      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const { result } = renderHook(() => useAudioProgressContext(), {
+        wrapper,
+      });
 
       await act(async () => {
         await result.current.loadLastOpenedAudioTrack(book, false);
@@ -1362,7 +1383,9 @@ describe("AudioProgressProvider", () => {
         throw new Error(`Unexpected invoke: ${cmd}`);
       });
 
-      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const { result } = renderHook(() => useAudioProgressContext(), {
+        wrapper,
+      });
       const audio = createAudioElement();
       result.current.audioRef.current = audio;
 
@@ -1378,7 +1401,9 @@ describe("AudioProgressProvider", () => {
     });
 
     it("queues live playback seek/autoplay requests", async () => {
-      const { result } = renderHook(() => useAudioProgressContext(), { wrapper });
+      const { result } = renderHook(() => useAudioProgressContext(), {
+        wrapper,
+      });
 
       const versionBefore = result.current.livePlaybackRequestVersion;
 

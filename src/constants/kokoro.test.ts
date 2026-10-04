@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  normalizeVoiceId,
-  voiceSamplePathsToTry,
-} from "./kokoro";
+import { normalizeVoiceId, voiceSamplePathsToTry } from "./kokoro";
 
 describe("normalizeVoiceId", () => {
   it("keeps valid Supertonic ids", () => {

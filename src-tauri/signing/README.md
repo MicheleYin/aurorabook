@@ -164,7 +164,6 @@ Get-AppxPackage MicheleYin.Aurorabook | Remove-AppxPackage
 
 ```powershell
 # Rebuild exe only
-node scripts/ensure-windows-ffmpeg-resource.cjs --arch=x64
 node scripts/bundle-windows-directml.cjs --arch=x64
 node scripts/with-msvc-env.cjs --target x86_64-pc-windows-msvc -- node scripts/tauri-cli.cjs build --no-bundle --target x86_64-pc-windows-msvc -c src-tauri/tauri.windows.conf.json
 node scripts/ensure-windows-ort-dlls.cjs --arch=x64 --require-dawn
@@ -218,7 +217,7 @@ bun run build:windows:store:arm64
 bun run pack:windows:msix:bundle
 ```
 
-Each arch script: stages FFmpeg/DirectML → `tauri build --no-bundle` → stages `msix-layout/` → syncs Store tile assets → runs `winapp pack`.
+Each arch script: stages DirectML → `tauri build --no-bundle` → stages `msix-layout/` → syncs Store tile assets → runs `winapp pack`.
 
 ### What gets staged
 
@@ -226,7 +225,7 @@ The MSIX layout mirrors the installed NSIS app:
 
 - `aurorabook.exe`
 - `DirectML.dll` (+ `webgpu_dawn.dll`, `dxil.dll`, `dxcompiler.dll` on x64) **beside the exe**
-- `resources/` (TTS models, FFmpeg, voice samples, ort-dylibs)
+- `resources/` (TTS models, voice samples, ort-dylibs)
 
 ### Bump version before each submission
 
@@ -271,26 +270,11 @@ APPLE_TEAM_ID=XXXXXXXXXX bun run scripts/gen-macos-appstore-entitlements.cjs
 
 Or set `APPLE_TEAM_ID` in your shell environment and run without the prefix.
 
-### Bundled FFmpeg for macOS
-
-macOS builds bundle a self-contained FFmpeg directory at `src-tauri/resources/ffmpeg-bin/`
-(executable + dylibs). iOS builds never include FFmpeg.
-
-- `bun run build:macos` and `bun run build:macos:appstore` run `ensure-macos-ffmpeg-resource.cjs` first.
-- Auto-detects Homebrew ffmpeg when present; override with `AURORABOOK_FFMPEG` or `MACOS_APPSTORE_FFMPEG`.
-- Manual staging: `bun run sync:ffmpeg -- /path/to/ffmpeg` or `bun run bundle:ffmpeg:macos`.
-
-The App Store signing step re-signs the nested ffmpeg binary (and bundled dylibs) with
-`Entitlements.macos-appstore.nested-exec.plist`.
-
-## Bundled FFmpeg for Windows
-
-Windows builds stage a pinned **BtbN FFmpeg n8.1 static GPL** binary at
-`src-tauri/resources/ffmpeg-bin/ffmpeg.exe` (includes `libmp3lame` + AAC/MP4).
-
-- `bun run build:windows` / `build:windows:arm64` run `ensure-windows-ffmpeg-resource.cjs` first.
-- Download/stage: `bun run bundle:ffmpeg:windows` (set `AURORABOOK_FFMPEG_ARCH=arm64` for ARM64).
-- Override with a local binary via `AURORABOOK_FFMPEG` or `bun run sync:ffmpeg -- path\to\ffmpeg.exe`.
+Desktop builds no longer bundle FFmpeg. Audiobook export currently looks for an
+FFmpeg executable at runtime, so users who export on desktop must provide it on
+`PATH` until the native export backends described in
+[`../../docs/plans/windows-export-without-ffmpeg.md`](../../docs/plans/windows-export-without-ffmpeg.md)
+are implemented and validated.
 
 ## ONNX Runtime execution providers (desktop)
 

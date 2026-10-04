@@ -83,11 +83,10 @@ bun run test:rust:coverage
 cd src-tauri && cargo llvm-cov --html --open --lib --test mod
 ```
 
-On macOS, `tauri.macos.conf.json` requires `resources/ffmpeg-bin/` (and the ORT
-WebGPU dylib path) to exist for `tauri_build`. On Windows, `tauri.windows.conf.json`
-requires `resources/ffmpeg-bin/` (and `resources/ort-dylibs/` for Dawn on x86_64).
-The coverage / test scripts stub `resources/ffmpeg-bin/ffmpeg` when missing; CI does
-the same. Use `bun run bundle:ffmpeg:windows` to stage a real `ffmpeg.exe`.
+On macOS and Windows, `tauri_build` validates the ORT WebGPU resource paths;
+the coverage / test scripts create placeholders for those paths when needed.
+FFmpeg is not staged for builds. Runtime tests that invoke FFmpeg still require
+it on `PATH`.
 
 ### Full local suite
 

@@ -37,8 +37,11 @@ interface AudioSyncProviderProps {
 }
 
 export function AudioSyncProvider({ children }: AudioSyncProviderProps) {
-  const { settings, isLoading: isLoadingSettings, saveSettings } =
-    useSettingsContext();
+  const {
+    settings,
+    isLoading: isLoadingSettings,
+    saveSettings,
+  } = useSettingsContext();
   const [isSyncEnabled, setIsSyncEnabled] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const isInitialMountRef = useRef(true);

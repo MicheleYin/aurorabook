@@ -6,10 +6,7 @@ import {
   unwrapSentenceWords,
   wrapSentenceWords,
 } from "./audio-sync-highlight";
-import {
-  HIGHLIGHT_CLASS,
-  HIGHLIGHT_WORD_CLASS,
-} from "./audio-sync-utils";
+import { HIGHLIGHT_CLASS, HIGHLIGHT_WORD_CLASS } from "./audio-sync-utils";
 
 describe("wrapSentenceWords / unwrapSentenceWords", () => {
   afterEach(() => {

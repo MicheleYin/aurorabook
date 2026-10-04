@@ -43,6 +43,7 @@ import {
 import { Separator } from "../ui/separator";
 import { LanguageSelect } from "./LanguageSelect";
 import { ShortcutSettingsCard } from "./ShortcutSettingsCard";
+import { StorageSection } from "./StorageSection";
 import { TtsLanguageSelect } from "./TtsLanguageSelect";
 
 export function Settings() {
@@ -470,6 +471,8 @@ export function Settings() {
               )}
             </CardContent>
           </Card>
+
+          <StorageSection />
 
           <LogViewer isOpen={logViewerOpen} onOpenChange={setLogViewerOpen} />
 

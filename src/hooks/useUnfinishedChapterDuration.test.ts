@@ -1,8 +1,8 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { invoke } from "../test/tauri-mocks";
 import type { Book, Chapter } from "../types/book";
+import { invoke } from "../test/tauri-mocks";
 import { useUnfinishedChapterDuration } from "./useUnfinishedChapterDuration";
 
 const conversionState = {
@@ -82,9 +82,9 @@ describe("useUnfinishedChapterDuration", () => {
       bookId: "book-1",
       chapterIndex: 1,
     });
-    expect(conversionState.refreshCurrentConvertingChapter).toHaveBeenCalledWith(
-      "book-1"
-    );
+    expect(
+      conversionState.refreshCurrentConvertingChapter
+    ).toHaveBeenCalledWith("book-1");
   });
 
   it("returns 0 when the dialog is closed", async () => {

@@ -4,6 +4,7 @@ pub mod database;
 pub mod repositories;
 pub mod audio_stream;
 pub mod epub_file_storage;
+pub mod storage;
 pub mod mp3_export;
 pub mod ios_export;
 pub mod logs_export;
@@ -1151,9 +1152,11 @@ pub async fn read_single_audio_track(
 pub async fn delete_book(
     book_id: String,
     app: tauri::AppHandle,
-) -> AppResult<()> {
+) -> AppResult<storage::BookDeletionResult> {
     let db = get_db_connection(&app).await
         .map_err(|e| AppError::Store(e))?;
+    let bytes_before_delete = storage::book_storage_bytes(&app, &book_id).unwrap_or(0);
+    let mut cleanup_warnings = Vec::new();
 
     // Remove any live-conversion checkpoint state tied to this book so deleted books
     // never leave resumable checkpoint metadata or sentence audio artifacts behind.
@@ -1174,6 +1177,7 @@ pub async fn delete_book(
                     book_id,
                     e
                 );
+                cleanup_warnings.push("checkpointFiles".to_string());
             }
         }
     }
@@ -1190,9 +1194,15 @@ pub async fn delete_book(
             book_id,
             e
         );
+        cleanup_warnings.push("bookFiles".to_string());
     }
 
-    Ok(())
+    let bytes_after_delete = storage::book_storage_bytes(&app, &book_id)
+        .unwrap_or(bytes_before_delete);
+    Ok(storage::BookDeletionResult {
+        bytes_removed: bytes_before_delete.saturating_sub(bytes_after_delete),
+        cleanup_warnings,
+    })
 }
 
 

@@ -1,9 +1,9 @@
+import type { ReactNode } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
 
-import { FloatingAudioPlayer } from "./FloatingAudioPlayer";
 import type { AudioTrack, Book } from "../../types/book";
+import { FloatingAudioPlayer } from "./FloatingAudioPlayer";
 
 class ResizeObserverStub {
   observe() {}
@@ -26,10 +26,12 @@ const getCurrentConvertingChapter = vi.fn(() => 1);
 
 const state: {
   currentBook: Book | null;
-  currentAudioTrack: (AudioTrack & {
-    isLiveStream?: boolean;
-    liveChapterIndex?: number;
-  }) | null;
+  currentAudioTrack:
+    | (AudioTrack & {
+        isLiveStream?: boolean;
+        liveChapterIndex?: number;
+      })
+    | null;
   isLoadingAudio: boolean;
   setCurrentBook: (book: Book | null) => void;
   setLibrary: (books: Book[]) => void;
@@ -86,7 +88,10 @@ vi.mock("@/context/AudioProgressContext", () => ({
     pauseAudio: vi.fn(async () => undefined),
     seekAudio: vi.fn(async () => undefined),
     loadLiveAudio: vi.fn(async () => ({ durationSeconds: 0, byteLength: 0 })),
-    refreshLiveAudio: vi.fn(async () => ({ durationSeconds: 0, byteLength: 0 })),
+    refreshLiveAudio: vi.fn(async () => ({
+      durationSeconds: 0,
+      byteLength: 0,
+    })),
     setExpectsMoreContent: vi.fn(async () => undefined),
     markIosNativeReady: vi.fn(),
     loadLastOpenedAudioTrack: vi.fn(),

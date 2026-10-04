@@ -62,7 +62,10 @@ export function bindMediaSessionControls(
       adapter.pause();
     });
     session.setActionHandler("seekto", (details) => {
-      if (typeof details.seekTime === "number" && Number.isFinite(details.seekTime)) {
+      if (
+        typeof details.seekTime === "number" &&
+        Number.isFinite(details.seekTime)
+      ) {
         adapter.seekTo(details.seekTime);
       }
     });
@@ -73,7 +76,10 @@ export function bindMediaSessionControls(
     session.setActionHandler("seekforward", (details) => {
       const offset = details.seekOffset ?? 10;
       const duration = adapter.getDuration();
-      const max = Number.isFinite(duration) && duration > 0 ? duration : adapter.getCurrentTime() + offset;
+      const max =
+        Number.isFinite(duration) && duration > 0
+          ? duration
+          : adapter.getCurrentTime() + offset;
       adapter.seekTo(Math.min(max, adapter.getCurrentTime() + offset));
     });
     session.setActionHandler("previoustrack", () => {

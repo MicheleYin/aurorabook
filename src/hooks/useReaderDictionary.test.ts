@@ -55,7 +55,9 @@ describe("useReaderDictionary", () => {
       expect(result.current.dictionary?.loading).toBe(false);
     });
 
-    expect(invoke).toHaveBeenCalledWith("lookup_dictionary", { term: "aurora" });
+    expect(invoke).toHaveBeenCalledWith("lookup_dictionary", {
+      term: "aurora",
+    });
     expect(result.current.dictionary?.term).toBe("aurora");
     expect(result.current.dictionary?.definition).toBe("the dawn");
     expect(result.current.consumeChromeToggleSuppression()).toBe(false);

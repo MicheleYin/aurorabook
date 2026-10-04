@@ -2,18 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { locale } from "@tauri-apps/plugin-os";
 
-import {
-  AVAILABLE_LANGS,
-  type AppLanguageCode,
-  normalizeAppLanguage,
-} from "../constants/languages";
+import type { AppLanguageCode } from "../constants/languages";
+import { AVAILABLE_LANGS, normalizeAppLanguage } from "../constants/languages";
 
 /** App UI locale — same 30-language set as Supertonic TTS. */
 export type Language = AppLanguageCode;
 
 type Translations = Record<string, string>;
 
-const localeModules = import.meta.glob<{ default: Translations }>("../locales/*.json");
+const localeModules = import.meta.glob<{ default: Translations }>(
+  "../locales/*.json"
+);
 
 const translations = Object.fromEntries(
   AVAILABLE_LANGS.map((code) => [code, {} as Translations])
@@ -62,15 +61,18 @@ export function useTranslation() {
     };
   }, [lang]);
 
-  const t = useCallback((key: string, variables?: Record<string, string | number>) => {
-    let text = translations[lang]?.[key] || translations.en?.[key] || key;
-    if (variables) {
-      Object.entries(variables).forEach(([name, value]) => {
-        text = text.replace(`{{${name}}}`, String(value));
-      });
-    }
-    return text;
-  }, [lang]);
+  const t = useCallback(
+    (key: string, variables?: Record<string, string | number>) => {
+      let text = translations[lang]?.[key] || translations.en?.[key] || key;
+      if (variables) {
+        Object.entries(variables).forEach(([name, value]) => {
+          text = text.replace(`{{${name}}}`, String(value));
+        });
+      }
+      return text;
+    },
+    [lang]
+  );
 
   const changeLanguage = useCallback(async (newLang: Language) => {
     if (Object.keys(translations[newLang] ?? {}).length === 0) {

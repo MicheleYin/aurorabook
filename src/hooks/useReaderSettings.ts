@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
 import type { ReaderSettings } from "../components/reader/ReaderSettings";
+import type { UITheme } from "../types/ui";
 import { useSettingsContext } from "../context/SettingsContext";
 import { logger } from "../lib/logger";
 import {
@@ -10,7 +11,6 @@ import {
   normalizeContentPadding,
   normalizeFontSize,
 } from "../lib/reader-settings-utils";
-import type { UITheme } from "../types/ui";
 
 export function useReaderSettings() {
   const {
@@ -18,8 +18,9 @@ export function useReaderSettings() {
     saveSettings: saveAppSettings,
     applyTheme,
   } = useSettingsContext();
-  const [readerSettings, setReaderSettings] =
-    useState<ReaderSettings>(DEFAULT_READER_SETTINGS);
+  const [readerSettings, setReaderSettings] = useState<ReaderSettings>(
+    DEFAULT_READER_SETTINGS
+  );
   const isInitialLoadRef = useRef(true);
   const isSyncingRef = useRef(false);
 

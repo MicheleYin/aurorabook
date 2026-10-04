@@ -1,6 +1,6 @@
 import React from "react";
-import ReactDOM from "react-dom/client";
 import { type as osType } from "@tauri-apps/plugin-os";
+import ReactDOM from "react-dom/client";
 
 import App from "./App";
 import { initI18n } from "./lib/i18n";

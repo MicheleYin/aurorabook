@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import type { LogEntry } from "../../lib/logger";
 import { exportLogsToFile } from "../../lib/log-export";
 import {
   clearLogs as clearLogStore,
@@ -7,7 +8,6 @@ import {
   logger,
   startBackendLogBridge,
   subscribeToLogs,
-  type LogEntry,
 } from "../../lib/logger";
 import { cn } from "../../lib/utils";
 import { Badge } from "../ui/badge";
@@ -160,7 +160,7 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
             <div className="flex w-full gap-2 sm:ml-auto sm:w-auto">
               <Button
                 variant="outline"
-                
+
                 className="flex-1 sm:flex-none"
                 onClick={handleClear}
               >
@@ -168,7 +168,7 @@ export function LogViewer({ isOpen, onOpenChange }: Readonly<LogViewerProps>) {
               </Button>
               <Button
                 variant="outline"
-                
+
                 className="flex-1 sm:flex-none"
                 onClick={exportLogs}
               >

@@ -16,7 +16,11 @@ export function isPopoverInteraction(event: Event): boolean {
     return false;
   }
 
-  return target.closest("[data-slot='popover-content'], [data-radix-popper-content-wrapper]") !== null;
+  return (
+    target.closest(
+      "[data-slot='popover-content'], [data-radix-popper-content-wrapper]"
+    ) !== null
+  );
 }
 
 export function separateInsideScrollChildren(children: React.ReactNode): {
@@ -31,7 +35,9 @@ export function separateInsideScrollChildren(children: React.ReactNode): {
   React.Children.forEach(children, (child) => {
     if (React.isValidElement(child)) {
       const childType =
-        typeof child.type === "function" && "displayName" in child.type ? (child.type as { displayName?: string }).displayName : undefined;
+        typeof child.type === "function" && "displayName" in child.type
+          ? (child.type as { displayName?: string }).displayName
+          : undefined;
       if (childType === "DialogHeader") {
         headerElement = child;
       } else if (childType === "DialogFooter") {

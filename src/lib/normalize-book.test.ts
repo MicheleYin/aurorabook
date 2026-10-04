@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeAudioTrack,
   normalizeBook,
-  normalizeChapter,
   normalizeBooks,
+  normalizeChapter,
 } from "./normalize-book";
 
 describe("normalizeChapter", () => {

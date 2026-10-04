@@ -1,6 +1,8 @@
+import type { Language } from "../../lib/i18n";
 import { AVAILABLE_LANGS } from "../../constants/languages";
-import { useTranslation, type Language } from "../../lib/i18n";
 import { useSettingsContext } from "../../context/SettingsContext";
+import { useTranslation } from "../../lib/i18n";
+import { Label } from "../ui/label";
 import {
   Select,
   SelectContent,
@@ -8,7 +10,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { Label } from "../ui/label";
 
 export function LanguageSelect() {
   const { t, lang, changeLanguage } = useTranslation();

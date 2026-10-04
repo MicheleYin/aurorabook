@@ -239,8 +239,7 @@ export function applyHighlight(
   const sentenceChanged = state.sentenceId !== marker.sentenceId;
   const nextState: HighlightState = {
     sentenceId: marker.sentenceId,
-    wordIndex:
-      typeof marker.wordIndex === "number" ? marker.wordIndex : null,
+    wordIndex: typeof marker.wordIndex === "number" ? marker.wordIndex : null,
     sentenceEl,
   };
 
@@ -272,10 +271,7 @@ export function applyHighlight(
     ? sentenceEl.querySelectorAll("[data-sync-word]").length
     : wrapSentenceWords(sentenceEl, expectedWords);
   if (typeof marker.wordIndex === "number" && wrappedCount > 0) {
-    const wordIndex = Math.min(
-      Math.max(0, marker.wordIndex),
-      wrappedCount - 1
-    );
+    const wordIndex = Math.min(Math.max(0, marker.wordIndex), wrappedCount - 1);
     const current = sentenceEl.querySelector(
       `.${HIGHLIGHT_WORD_CLASS}`
     ) as HTMLElement | null;

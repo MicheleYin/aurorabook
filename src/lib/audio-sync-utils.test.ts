@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AudioSyncSegment } from "../types/book";
 import {
+  chapterHrefForSync,
   clampScrollTopForElement,
   clampWordCues,
   estimateWordTimings,
@@ -9,22 +10,22 @@ import {
   findSegmentAtTime,
   findWordAtTime,
   getProseContainer,
+  hasNonCollapsedTextSelection,
   isElementFullyVisible,
   isFollowScrollPaused,
-  hasNonCollapsedTextSelection,
   placeWordCuesOnTrack,
-  resolvePlaybackMarker,
-  chapterHrefForSync,
-  readCssLengthPx,
   readAppSafeTopPx,
+  readCssLengthPx,
   readDeviceSafeTopPx,
+  resolvePlaybackMarker,
   scrollTopToRevealRect,
   shouldRunSyncPass,
   uncoveredTopInsetPx,
 } from "./audio-sync-utils";
 
 function seg(
-  partial: Partial<AudioSyncSegment> & Pick<AudioSyncSegment, "clipBegin" | "clipEnd">
+  partial: Partial<AudioSyncSegment> &
+    Pick<AudioSyncSegment, "clipBegin" | "clipEnd">
 ): AudioSyncSegment {
   return {
     textElementId: "w1",
@@ -443,8 +444,10 @@ describe("resolvePlaybackMarker", () => {
     expect(marker?.sentenceId).toBe("f000001");
     expect(marker?.wordIndex).toBe(1);
     expect(marker?.words?.[marker.words.length - 1].endSec).toBeCloseTo(2, 6);
-    const firstSpan = (marker?.words?.[0].endSec ?? 0) - (marker?.words?.[0].startSec ?? 0);
-    const secondSpan = (marker?.words?.[1].endSec ?? 0) - (marker?.words?.[1].startSec ?? 0);
+    const firstSpan =
+      (marker?.words?.[0].endSec ?? 0) - (marker?.words?.[0].startSec ?? 0);
+    const secondSpan =
+      (marker?.words?.[1].endSec ?? 0) - (marker?.words?.[1].startSec ?? 0);
     expect(firstSpan / 0.5).toBeCloseTo(secondSpan / 0.7, 1);
   });
 

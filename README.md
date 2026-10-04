@@ -186,10 +186,10 @@ job; locally, clone that pack into `./supertonic-3` with Git LFS before building
 
 ### Windows
 ```bash
-# Stage pinned FFmpeg n8.1 (BtbN static GPL) then build NSIS installer (x86_64)
+# Build NSIS installer (x86_64)
 bun run build:windows
 
-# ARM64 (DirectML EP; set arch for the FFmpeg download)
+# ARM64 (DirectML EP)
 bun run build:windows:arm64
 ```
 
@@ -205,8 +205,9 @@ bun run build:windows:store:arm64
 Windows x86_64 uses the **WebGPU** ONNX Runtime EP (`webgpu_dawn.dll` and a
 redistributable `DirectML.dll` are installed **next to** `AuroraBook.exe`).
 Windows ARM64 uses **DirectML** only (`DirectML.dll` beside the exe via
-`tauri.windows-arm64.conf.json`). Export requires the bundled `ffmpeg.exe` with
-`libmp3lame`.
+`tauri.windows-arm64.conf.json`). Audiobook export still requires FFmpeg on
+`PATH`; replacing that runtime dependency is tracked in
+[`docs/plans/windows-export-without-ffmpeg.md`](docs/plans/windows-export-without-ffmpeg.md).
 
 CI builds an NSIS installer for x86_64 via
 [`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml)

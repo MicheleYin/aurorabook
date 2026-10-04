@@ -1,13 +1,10 @@
+import type { ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
 
-import {
-  SettingsProvider,
-  useSettingsContext,
-} from "./SettingsContext";
 import { rememberPreferredTheme } from "../lib/theme";
 import { invoke } from "../test/tauri-mocks";
+import { SettingsProvider, useSettingsContext } from "./SettingsContext";
 
 function wrapper({ children }: { children: ReactNode }) {
   return <SettingsProvider>{children}</SettingsProvider>;

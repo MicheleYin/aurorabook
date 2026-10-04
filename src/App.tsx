@@ -1,8 +1,9 @@
+import { useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useRef } from "react";
-
 import { BookOpenIcon, LibraryIcon, SettingsIcon } from "lucide-react";
+
+import type { Book } from "./types/book";
 import { FloatingAudioPlayer } from "./components/audio/FloatingAudioPlayer";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Library } from "./components/library/Library";
@@ -33,7 +34,6 @@ import { useTranslation } from "./lib/i18n";
 import { logger, startBackendLogBridge } from "./lib/logger";
 import { normalizeBook } from "./lib/normalize-book";
 import { cn } from "./lib/utils";
-import type { Book } from "./types/book";
 
 function AppContent() {
   const { currentTab, setCurrentTab, currentBook } = useAppContext();
@@ -66,7 +66,9 @@ function AppContent() {
     );
     return () => {
       delete document.documentElement.dataset.readerImmersive;
-      void invoke("set_ios_immersive_chrome", { hidden: false }).catch(() => {});
+      void invoke("set_ios_immersive_chrome", { hidden: false }).catch(
+        () => {}
+      );
     };
   }, [hideNavTabs]);
 
@@ -117,9 +119,11 @@ function AppContent() {
               className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-2"
             >
               {/* // add library icon */}
-              <div className="flex items-center gap-2"> 
-              <LibraryIcon className="w-5 h-5" />
-              <span className="xs:block hidden transition-all duration-300 ease-out">{t("library.title")}</span>
+              <div className="flex items-center gap-2">
+                <LibraryIcon className="w-5 h-5" />
+                <span className="xs:block hidden transition-all duration-300 ease-out">
+                  {t("library.title")}
+                </span>
               </div>
             </TabsTrigger>
             <TabsTrigger
@@ -127,19 +131,23 @@ function AppContent() {
               disabled={!currentBook}
               className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-2"
             >
-              <div className="flex items-center gap-2"> 
-              <BookOpenIcon className="w-5 h-5" />
-              <span className="xs:block hidden transition-all duration-300 ease-out">{t("reader.title")}</span>
+              <div className="flex items-center gap-2">
+                <BookOpenIcon className="w-5 h-5" />
+                <span className="xs:block hidden transition-all duration-300 ease-out">
+                  {t("reader.title")}
+                </span>
               </div>
             </TabsTrigger>
             <TabsTrigger
               value="settings"
               className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all py-2"
             >
-              <div className="flex items-center gap-2"> 
-              <SettingsIcon className="w-5 h-5" />
-              {/* // add transtion when shownig  */}
-              <span className="xs:block hidden transition-all duration-300 ease-out">{t("app.settings")}</span>
+              <div className="flex items-center gap-2">
+                <SettingsIcon className="w-5 h-5" />
+                {/* // add transtion when shownig  */}
+                <span className="xs:block hidden transition-all duration-300 ease-out">
+                  {t("app.settings")}
+                </span>
               </div>
             </TabsTrigger>
           </TabsList>
@@ -152,7 +160,13 @@ function AppContent() {
 }
 
 function ConversionCallbackHandler() {
-  const { currentBook, setCurrentBook, setLibrary, setCurrentBookWithLoading, loadBooks } = useAppContext();
+  const {
+    currentBook,
+    setCurrentBook,
+    setLibrary,
+    setCurrentBookWithLoading,
+    loadBooks,
+  } = useAppContext();
   const { audioRef, saveAudioProgress } = useAudioProgressContext();
   const { registerCallbacks } = useBookConversion();
 
@@ -202,7 +216,9 @@ function ConversionCallbackHandler() {
                 }
                 return mergeOpenBookAdditively(openBook, normalized);
               });
-              logger.log("Additively refreshed currently open book from chapter completion event");
+              logger.log(
+                "Additively refreshed currently open book from chapter completion event"
+              );
             } else {
               const wasPlaying = Boolean(
                 audioRef.current && !audioRef.current.paused
@@ -233,7 +249,10 @@ function ConversionCallbackHandler() {
   // Register callbacks for conversion events - stays mounted even when Library tab is inactive
   useEffect(() => {
     const unregister = registerCallbacks({
-      onConversionComplete: async (book: Book | null, bookId?: string | null) => {
+      onConversionComplete: async (
+        book: Book | null,
+        bookId?: string | null
+      ) => {
         // Refresh the completed book to get updated chapters/audio tracks
         if (bookId) {
           await refreshBookById(bookId);
@@ -266,7 +285,15 @@ function ConversionCallbackHandler() {
     });
 
     return unregister;
-  }, [registerCallbacks, refreshBookById, currentBook, setLibrary, setCurrentBookWithLoading, audioRef, saveAudioProgress]);
+  }, [
+    registerCallbacks,
+    refreshBookById,
+    currentBook,
+    setLibrary,
+    setCurrentBookWithLoading,
+    audioRef,
+    saveAudioProgress,
+  ]);
 
   return null;
 }

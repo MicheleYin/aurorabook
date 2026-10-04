@@ -1,7 +1,8 @@
-import { RotateCcw } from "lucide-react";
 import { useEffect, useMemo } from "react";
+import { RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
+import type { ShortcutActionId } from "@/lib/keyboard-shortcuts";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -17,7 +18,6 @@ import {
   chordFromKeyboardEvent,
   formatShortcutKeys,
   SHORTCUT_GROUP_ORDER,
-  type ShortcutActionId,
 } from "@/lib/keyboard-shortcuts";
 
 export function ShortcutSettingsCard() {
@@ -112,12 +112,14 @@ export function ShortcutSettingsCard() {
       <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
         <div className="space-y-1.5">
           <CardTitle>{t("shortcuts.settings_title")}</CardTitle>
-          <CardDescription>{t("shortcuts.settings_description")}</CardDescription>
+          <CardDescription>
+            {t("shortcuts.settings_description")}
+          </CardDescription>
         </div>
         <Button
           type="button"
           variant="outline"
-          
+
           className="shrink-0"
           disabled={isBindingsLoading || customizedIds.size === 0}
           onClick={() => {
@@ -204,7 +206,7 @@ export function ShortcutSettingsCard() {
                         <Button
                           type="button"
                           variant="ghost"
-                          
+
                           className="h-8 px-2"
                           onClick={() => {
                             void handleResetOne(item.id);

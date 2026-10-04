@@ -51,7 +51,9 @@ export function isTtsLanguageCode(raw: string): raw is TtsLanguageCode {
 }
 
 /** Normalize stored UI locale / detection to a supported code. */
-export function normalizeAppLanguage(raw: string | undefined | null): AppLanguageCode {
+export function normalizeAppLanguage(
+  raw: string | undefined | null
+): AppLanguageCode {
   if (!raw) return "en";
   const base = raw.split(/[-_]/)[0]!.toLowerCase();
   if (isAppLanguageCode(base)) return base;
@@ -59,7 +61,9 @@ export function normalizeAppLanguage(raw: string | undefined | null): AppLanguag
 }
 
 /** Normalize stored TTS language to a supported Supertonic 3 code. */
-export function normalizeTtsLanguage(raw: string | undefined | null): TtsLanguageCode {
+export function normalizeTtsLanguage(
+  raw: string | undefined | null
+): TtsLanguageCode {
   return normalizeAppLanguage(raw);
 }
 

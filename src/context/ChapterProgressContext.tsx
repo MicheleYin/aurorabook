@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import {
   createContext,
   Dispatch,
@@ -11,22 +10,23 @@ import {
   useRef,
   useState,
 } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
-import { calculateBookProgress } from "@/lib/reader-utils";
 import {
   readAppSafeTopPx,
   scrollTopToRevealRect,
   uncoveredTopInsetPx,
 } from "@/lib/audio-sync-utils";
+import { calculateBookProgress } from "@/lib/reader-utils";
 
-import { logger } from "../lib/logger";
 import type {
   Book,
   BookProgress,
   Chapter,
   ChapterWithContent,
 } from "../types/book";
+import { logger } from "../lib/logger";
 
 export interface ChapterProgressContextType {
   currentChapter: ChapterWithContent | null;
@@ -108,7 +108,8 @@ export function ChapterProgressProvider({
         if (chapterWithContent) {
           const nextContentHtml = chapterWithContent.contentHtml;
           const hasContent =
-            typeof nextContentHtml === "string" && nextContentHtml.trim().length > 0;
+            typeof nextContentHtml === "string" &&
+            nextContentHtml.trim().length > 0;
           const previousChapter = currentChapterRef.current;
 
           // Keep previously loaded content for this chapter if a newer fetch returns empty.
@@ -118,11 +119,14 @@ export function ChapterProgressProvider({
             typeof previousChapter.contentHtml === "string" &&
             previousChapter.contentHtml.trim().length > 0
           ) {
-            logger.warn("[chapter-load] preserving previous non-empty content", {
-              requestId,
-              bookId,
-              chapterId: chapter.id,
-            });
+            logger.warn(
+              "[chapter-load] preserving previous non-empty content",
+              {
+                requestId,
+                bookId,
+                chapterId: chapter.id,
+              }
+            );
             setCurrentChapter(previousChapter);
             return;
           }
@@ -132,7 +136,8 @@ export function ChapterProgressProvider({
             bookId,
             chapterId: chapter.id,
             hasContent,
-            contentLength: typeof nextContentHtml === "string" ? nextContentHtml.length : 0,
+            contentLength:
+              typeof nextContentHtml === "string" ? nextContentHtml.length : 0,
           });
 
           setCurrentChapter({
@@ -178,58 +183,55 @@ export function ChapterProgressProvider({
     [currentChapter, containerRef]
   );
 
-  const restoreProgress = useCallback(
-    (bookToRestore: Book | null) => {
-      const activeChapter = currentChapterRef.current;
-      if (
-        !bookToRestore?.progress ||
-        !containerRef.current ||
-        !activeChapter ||
-        activeChapter.id !== bookToRestore.progress.currentChapterId
-      )
-        return null;
+  const restoreProgress = useCallback((bookToRestore: Book | null) => {
+    const activeChapter = currentChapterRef.current;
+    if (
+      !bookToRestore?.progress ||
+      !containerRef.current ||
+      !activeChapter ||
+      activeChapter.id !== bookToRestore.progress.currentChapterId
+    )
+      return null;
 
-      const progress = bookToRestore.progress;
+    const progress = bookToRestore.progress;
 
-      // Restore scroll position
-      if (progress?.currentChapterScrollTop !== undefined) {
-        containerRef.current.scrollTop = progress.currentChapterScrollTop;
-      }
+    // Restore scroll position
+    if (progress?.currentChapterScrollTop !== undefined) {
+      containerRef.current.scrollTop = progress.currentChapterScrollTop;
+    }
 
-      // Restore element position if available
-      const contentRef = containerRef.current.querySelector(
-        ".prose"
-      ) as HTMLElement;
-      if (progress?.currentChapterElementId && contentRef) {
-        const element = contentRef.querySelector(
-          `#${progress.currentChapterElementId}`
+    // Restore element position if available
+    const contentRef = containerRef.current.querySelector(
+      ".prose"
+    ) as HTMLElement;
+    if (progress?.currentChapterElementId && contentRef) {
+      const element = contentRef.querySelector(
+        `#${progress.currentChapterElementId}`
+      );
+      logger.log(
+        "Restoring element position:",
+        progress.currentChapterElementId,
+        element
+      );
+      if (element) {
+        const container = containerRef.current;
+        const containerRect = container.getBoundingClientRect();
+        const elementRect = element.getBoundingClientRect();
+        const topOffset = uncoveredTopInsetPx(
+          containerRect.top,
+          readAppSafeTopPx()
         );
-        logger.log(
-          "Restoring element position:",
-          progress.currentChapterElementId,
-          element
+        container.scrollTop = scrollTopToRevealRect(
+          container.scrollTop,
+          elementRect.top,
+          containerRect.top,
+          containerRect.height,
+          container.scrollHeight,
+          { topOffset, bottomOffset: 0 }
         );
-        if (element) {
-          const container = containerRef.current;
-          const containerRect = container.getBoundingClientRect();
-          const elementRect = element.getBoundingClientRect();
-          const topOffset = uncoveredTopInsetPx(
-            containerRect.top,
-            readAppSafeTopPx()
-          );
-          container.scrollTop = scrollTopToRevealRect(
-            container.scrollTop,
-            elementRect.top,
-            containerRect.top,
-            containerRect.height,
-            container.scrollHeight,
-            { topOffset, bottomOffset: 0 }
-          );
-        }
       }
-    },
-    []
-  );
+    }
+  }, []);
 
   const loadLastOpenedChapter = useCallback(
     async (book: Book) => {

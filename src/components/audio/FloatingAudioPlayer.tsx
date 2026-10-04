@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ChevronDown,
@@ -12,13 +13,6 @@ import {
   SkipForward,
   X,
 } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
 
 import { useAppContext } from "@/context/AppContext";
 import { useAudioProgressContext } from "@/context/AudioProgressContext";
@@ -28,7 +22,11 @@ import { useConversionState } from "@/context/ConversionStateContext";
 import { useRegisterShortcutActions } from "@/context/KeyboardShortcutsContext";
 import { useSettingsContext } from "@/context/SettingsContext";
 
-import { applyMediaPlaybackRate, mimeTypeFromTrackHref } from "../../lib/audio-progress-utils";
+import type { AudioTrack, Book } from "../../types/book";
+import {
+  applyMediaPlaybackRate,
+  mimeTypeFromTrackHref,
+} from "../../lib/audio-progress-utils";
 import { PLAYBACK_RATES } from "../../lib/keyboard-shortcuts";
 import {
   liveStreamPlaybackUrl,
@@ -37,7 +35,6 @@ import {
 } from "../../lib/live-playback";
 import { logger } from "../../lib/logger";
 import { cn, formatTime } from "../../lib/utils";
-import type { AudioTrack, Book } from "../../types/book";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -192,7 +189,11 @@ export function FloatingAudioPlayer() {
 
   // When <audio> mounts after a deferred webview load, flush pending src via engine.seek.
   useEffect(() => {
-    if (isIosNativeAudio || !currentAudioTrack || currentAudioTrack.isLiveStream) {
+    if (
+      isIosNativeAudio ||
+      !currentAudioTrack ||
+      currentAudioTrack.isLiveStream
+    ) {
       return;
     }
     if (!audioRef.current) return;
@@ -249,10 +250,14 @@ export function FloatingAudioPlayer() {
 
     const firstMissingChapter =
       isConvertingThisBook || hasPartialConversion
-        ? currentBook.chapters.findIndex((_, idx) => !existingChapterIndices.has(idx))
+        ? currentBook.chapters.findIndex(
+            (_, idx) => !existingChapterIndices.has(idx)
+          )
         : -1;
 
-    const reportedConvertingChapter = getCurrentConvertingChapter(currentBook.id);
+    const reportedConvertingChapter = getCurrentConvertingChapter(
+      currentBook.id
+    );
     const shouldFallbackToFirstMissing =
       reportedConvertingChapter !== null &&
       reportedConvertingChapter >= 0 &&
@@ -260,7 +265,9 @@ export function FloatingAudioPlayer() {
       firstMissingChapter >= 0;
 
     const activeConvertingChapter =
-      (shouldFallbackToFirstMissing ? firstMissingChapter : reportedConvertingChapter) ??
+      (shouldFallbackToFirstMissing
+        ? firstMissingChapter
+        : reportedConvertingChapter) ??
       currentLiveTrackChapter ??
       firstMissingChapter;
 
@@ -280,7 +287,8 @@ export function FloatingAudioPlayer() {
           chapterHref: chapter.href,
           filePath: chapter.href,
           href: chapter.href,
-          title: chapter.title || `Chapter ${normalizedActiveConvertingChapter + 1}`,
+          title:
+            chapter.title || `Chapter ${normalizedActiveConvertingChapter + 1}`,
           order: normalizedActiveConvertingChapter,
         });
       }
@@ -297,7 +305,9 @@ export function FloatingAudioPlayer() {
           return false;
         }
         const trackHref = track.href || track.filePath;
-        const sameHref = Boolean(currentHref && trackHref && currentHref === trackHref);
+        const sameHref = Boolean(
+          currentHref && trackHref && currentHref === trackHref
+        );
         const sameOrder = track.order === currentAudioTrack.order;
         const sameChapterHref =
           Boolean(currentAudioTrack.chapterHref) &&
@@ -335,7 +345,8 @@ export function FloatingAudioPlayer() {
       return;
     }
 
-    const currentTrackHref = currentAudioTrack?.href || currentAudioTrack?.filePath;
+    const currentTrackHref =
+      currentAudioTrack?.href || currentAudioTrack?.filePath;
     const currentInList = currentAudioTrack
       ? selectableTracks.some((track) => track.id === currentAudioTrack.id)
       : false;
@@ -356,7 +367,8 @@ export function FloatingAudioPlayer() {
     if (!currentBook) return null;
 
     const completedChapters = currentBook.completedChapters ?? [];
-    const isConvertingThisBook = isConverting && convertingBookId === currentBook.id;
+    const isConvertingThisBook =
+      isConverting && convertingBookId === currentBook.id;
     const hasPartialConversion =
       currentBook.conversionStatus === "started" ||
       (completedChapters.length > 0 &&
@@ -429,7 +441,9 @@ export function FloatingAudioPlayer() {
 
   const currentTrackPosition = useMemo(() => {
     if (!currentAudioTrack) return -1;
-    return selectableTracks.findIndex((track) => track.id === currentAudioTrack.id);
+    return selectableTracks.findIndex(
+      (track) => track.id === currentAudioTrack.id
+    );
   }, [currentAudioTrack, selectableTracks]);
 
   // Update UI state from audio element (desktop / WebView path only).
@@ -585,7 +599,9 @@ export function FloatingAudioPlayer() {
   ]);
 
   const hasNextTrack = useMemo(
-    () => currentTrackPosition >= 0 && currentTrackPosition < selectableTracks.length - 1,
+    () =>
+      currentTrackPosition >= 0 &&
+      currentTrackPosition < selectableTracks.length - 1,
     [currentTrackPosition, selectableTracks.length]
   );
   const hasPreviousTrack = useMemo(
@@ -636,12 +652,12 @@ export function FloatingAudioPlayer() {
         const trackHref = track.href || track.filePath;
         const savedTrackMatches = Boolean(
           savedState &&
-            (savedState.currentTrackId === track.id ||
-              (savedState.currentTrackHref &&
-                trackHref &&
-                savedState.currentTrackHref === trackHref) ||
-              (savedState.currentTrackIndex !== undefined &&
-                savedState.currentTrackIndex === track.order))
+          (savedState.currentTrackId === track.id ||
+            (savedState.currentTrackHref &&
+              trackHref &&
+              savedState.currentTrackHref === trackHref) ||
+            (savedState.currentTrackIndex !== undefined &&
+              savedState.currentTrackIndex === track.order))
         );
 
         queueLivePlaybackRequest(
@@ -659,12 +675,12 @@ export function FloatingAudioPlayer() {
         const trackHref = track.href || track.filePath;
         const savedTrackMatches = Boolean(
           savedState &&
-            (savedState.currentTrackId === track.id ||
-              (savedState.currentTrackHref &&
-                trackHref &&
-                savedState.currentTrackHref === trackHref) ||
-              (savedState.currentTrackIndex !== undefined &&
-                savedState.currentTrackIndex === track.order))
+          (savedState.currentTrackId === track.id ||
+            (savedState.currentTrackHref &&
+              trackHref &&
+              savedState.currentTrackHref === trackHref) ||
+            (savedState.currentTrackIndex !== undefined &&
+              savedState.currentTrackIndex === track.order))
         );
         if (savedTrackMatches && savedState?.currentTimeSeconds !== undefined) {
           setCurrentTime(Math.max(0, savedState.currentTimeSeconds));
@@ -742,7 +758,9 @@ export function FloatingAudioPlayer() {
       return false;
     }
     const href = currentAudioTrack.chapterHref;
-    return Boolean(href && (currentBook.completedChapters ?? []).includes(href));
+    return Boolean(
+      href && (currentBook.completedChapters ?? []).includes(href)
+    );
   }, [currentAudioTrack, currentBook, isLiveStream]);
 
   useEffect(() => {
@@ -750,7 +768,12 @@ export function FloatingAudioPlayer() {
       return;
     }
     void setExpectsMoreContent(!liveChapterCompleted).catch(() => undefined);
-  }, [isIosNativeAudio, isLiveStream, liveChapterCompleted, setExpectsMoreContent]);
+  }, [
+    isIosNativeAudio,
+    isLiveStream,
+    liveChapterCompleted,
+    setExpectsMoreContent,
+  ]);
 
   const liveChapterIndex = useMemo(() => {
     if (!currentAudioTrack) {
@@ -767,7 +790,12 @@ export function FloatingAudioPlayer() {
   }, [liveChapterIndex]);
 
   const liveStreamSourceKey = useMemo(() => {
-    if (!isLiveStream || !currentBook || !currentAudioTrack || liveChapterIndex < 0) {
+    if (
+      !isLiveStream ||
+      !currentBook ||
+      !currentAudioTrack ||
+      liveChapterIndex < 0
+    ) {
       return null;
     }
 
@@ -954,10 +982,7 @@ export function FloatingAudioPlayer() {
     const refreshLiveDuration = async () => {
       try {
         if (isIosNativeAudio) {
-          const status = await refreshLiveAudio(
-            currentBook.id,
-            chapterIndex
-          );
+          const status = await refreshLiveAudio(currentBook.id, chapterIndex);
           if (!cancelled && Number.isFinite(status.durationSeconds)) {
             setLiveGeneratedDuration((prev) =>
               Math.max(prev, status.durationSeconds)
@@ -1014,14 +1039,12 @@ export function FloatingAudioPlayer() {
     const trackHref = activeTrack.href || activeTrack.filePath;
     const savedTrackMatches = Boolean(
       savedState &&
-        (
-          savedState.currentTrackId === activeTrack.id ||
-          (savedState.currentTrackHref &&
-            trackHref &&
-            savedState.currentTrackHref === trackHref) ||
-          (savedState.currentTrackIndex !== undefined &&
-            savedState.currentTrackIndex === activeChapterIndex)
-        )
+      (savedState.currentTrackId === activeTrack.id ||
+        (savedState.currentTrackHref &&
+          trackHref &&
+          savedState.currentTrackHref === trackHref) ||
+        (savedState.currentTrackIndex !== undefined &&
+          savedState.currentTrackIndex === activeChapterIndex))
     );
 
     const bookId = activeBook.id;
@@ -1144,7 +1167,11 @@ export function FloatingAudioPlayer() {
           chapterIndex,
         });
 
-        if (cancelled || requestId !== liveReloadRequestIdRef.current || !audioRef.current) {
+        if (
+          cancelled ||
+          requestId !== liveReloadRequestIdRef.current ||
+          !audioRef.current
+        ) {
           return;
         }
 
@@ -1202,7 +1229,11 @@ export function FloatingAudioPlayer() {
         return;
       }
 
-      if (isLoadingAudio || isSwitchingFromLiveRef.current || isRefreshingLiveSeekRef.current) {
+      if (
+        isLoadingAudio ||
+        isSwitchingFromLiveRef.current ||
+        isRefreshingLiveSeekRef.current
+      ) {
         return;
       }
 
@@ -1232,7 +1263,12 @@ export function FloatingAudioPlayer() {
 
   const maybeRefreshLiveAtBoundary = useCallback(
     (reason: "progress" | "waiting" | "stalled" | "ended") => {
-      if (!isLiveStream || !currentBook || !currentAudioTrack || !audioRef.current) {
+      if (
+        !isLiveStream ||
+        !currentBook ||
+        !currentAudioTrack ||
+        !audioRef.current
+      ) {
         return;
       }
 
@@ -1265,13 +1301,18 @@ export function FloatingAudioPlayer() {
       const boundaryThreshold = 0.35;
       const hasFutureContent = timelineMax > seekMax + boundaryThreshold;
       const nearSeekableBoundary =
-        seekableEnd !== null && currentPosition >= seekableEnd - boundaryThreshold;
+        seekableEnd !== null &&
+        currentPosition >= seekableEnd - boundaryThreshold;
       // On finite snapshots (iOS), `ended` should refresh whenever generated audio
       // has grown past what the current media element can play.
       const endedWithMoreAudio =
-        reason === "ended" && liveGeneratedDuration > currentPosition + boundaryThreshold;
+        reason === "ended" &&
+        liveGeneratedDuration > currentPosition + boundaryThreshold;
 
-      if ((!hasFutureContent && !endedWithMoreAudio) || (!nearSeekableBoundary && reason !== "ended")) {
+      if (
+        (!hasFutureContent && !endedWithMoreAudio) ||
+        (!nearSeekableBoundary && reason !== "ended")
+      ) {
         return;
       }
 
@@ -1363,7 +1404,13 @@ export function FloatingAudioPlayer() {
       audio.removeEventListener("ended", handleEnded);
       clearInterval(interval);
     };
-  }, [audioRef, isLiveStream, liveChapterCompleted, liveGeneratedDuration, maybeRefreshLiveAtBoundary]);
+  }, [
+    audioRef,
+    isLiveStream,
+    liveChapterCompleted,
+    liveGeneratedDuration,
+    maybeRefreshLiveAtBoundary,
+  ]);
 
   useEffect(() => {
     if (!isLiveStream || !waitingForLiveChunksRef.current) {
@@ -1512,12 +1559,7 @@ export function FloatingAudioPlayer() {
     if (!previousTrack) return;
 
     await switchToTrack(previousTrack);
-  }, [
-    hasPreviousTrack,
-    currentTrackPosition,
-    selectableTracks,
-    switchToTrack,
-  ]);
+  }, [hasPreviousTrack, currentTrackPosition, selectableTracks, switchToTrack]);
 
   const handleNextTrack = useCallback(async () => {
     if (!hasNextTrack || currentTrackPosition < 0) return;
@@ -1526,12 +1568,7 @@ export function FloatingAudioPlayer() {
     if (!nextTrack) return;
 
     await switchToTrack(nextTrack);
-  }, [
-    currentTrackPosition,
-    hasNextTrack,
-    selectableTracks,
-    switchToTrack,
-  ]);
+  }, [currentTrackPosition, hasNextTrack, selectableTracks, switchToTrack]);
 
   // Control Center / lock screen next/prev → in-app track switch.
   useEffect(() => {
@@ -1768,9 +1805,7 @@ export function FloatingAudioPlayer() {
       };
       setCurrentBook(updatedBook);
       setLibrary(
-        library.map((book) =>
-          book.id === currentBook.id ? updatedBook : book
-        )
+        library.map((book) => (book.id === currentBook.id ? updatedBook : book))
       );
       await saveAudioProgress(updatedBook);
     }
@@ -1798,7 +1833,7 @@ export function FloatingAudioPlayer() {
 
     const isLiveTrack = Boolean(
       currentAudioTrack.isLiveStream ||
-        currentAudioTrack.id?.startsWith(`live-${currentBook.id}-`)
+      currentAudioTrack.id?.startsWith(`live-${currentBook.id}-`)
     );
     if (!isLiveTrack) {
       return false;
@@ -1822,9 +1857,9 @@ export function FloatingAudioPlayer() {
         track.order === currentAudioTrack.order ||
         Boolean(
           chapterHref &&
-            trackHref &&
-            (trackHref === currentAudioTrack.href ||
-              trackHref === currentAudioTrack.filePath)
+          trackHref &&
+          (trackHref === currentAudioTrack.href ||
+            trackHref === currentAudioTrack.filePath)
         )
       );
     });
@@ -1853,7 +1888,9 @@ export function FloatingAudioPlayer() {
         ? currentBook.chapters[liveChapterIndex].href
         : undefined);
     const completedChapter =
-      currentBook.chapters.find((chapter) => chapter.href === liveChapterHref) ??
+      currentBook.chapters.find(
+        (chapter) => chapter.href === liveChapterHref
+      ) ??
       (liveChapterIndex >= 0 && liveChapterIndex < currentBook.chapters.length
         ? currentBook.chapters[liveChapterIndex]
         : undefined);
@@ -1870,7 +1907,11 @@ export function FloatingAudioPlayer() {
       (track) => track.chapterHref === liveChapterHref
     );
 
-    if (!completedTrack && liveChapterHref && currentBook.audioSyncMap?.segments?.length) {
+    if (
+      !completedTrack &&
+      liveChapterHref &&
+      currentBook.audioSyncMap?.segments?.length
+    ) {
       const segmentForChapter = currentBook.audioSyncMap.segments.find(
         (segment) => segment.chapterHref === liveChapterHref
       );
@@ -1984,7 +2025,10 @@ export function FloatingAudioPlayer() {
           }
         }
       } catch (err) {
-        logger.error("Failed to switch from live track to completed track:", err);
+        logger.error(
+          "Failed to switch from live track to completed track:",
+          err
+        );
       } finally {
         isSwitchingFromLiveRef.current = false;
       }
@@ -2037,7 +2081,11 @@ export function FloatingAudioPlayer() {
           isMinimized ? "p-2" : "space-y-3 p-4"
         )}
       >
-        <audio ref={audioRef} preload="auto" data-testid="floating-audio-element">
+        <audio
+          ref={audioRef}
+          preload="auto"
+          data-testid="floating-audio-element"
+        >
           <track kind="captions" />
         </audio>
 
@@ -2127,7 +2175,9 @@ export function FloatingAudioPlayer() {
                         statusBadge.className
                       )}
                     >
-                      <span className="min-w-0 truncate">{statusBadge.text}</span>
+                      <span className="min-w-0 truncate">
+                        {statusBadge.text}
+                      </span>
                     </Badge>
                   )}
                 </div>
@@ -2155,9 +2205,10 @@ export function FloatingAudioPlayer() {
                 onValueChange={(value) => {
                   if (value == null) return;
                   setPlaybackRate(Number.parseFloat(value));
-                }} clearable={false}
+                }}
+                clearable={false}
               >
-                <SelectTrigger className="h-10 w-20" >
+                <SelectTrigger className="h-10 w-20">
                   <SelectValue placeholder="1x" />
                 </SelectTrigger>
                 <SelectContent>

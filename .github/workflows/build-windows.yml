@@ -17,13 +17,13 @@ jobs:
           - arch: x86_64
             label: x86_64 / WebGPU
             rust_target: x86_64-pc-windows-msvc
-            ffmpeg_arch: x64
+            directml_arch: x64
             tauri_config: ""
             verify_dawn: true
           - arch: arm64
             label: ARM64 / DirectML
             rust_target: aarch64-pc-windows-msvc
-            ffmpeg_arch: arm64
+            directml_arch: arm64
             tauri_config: src-tauri/tauri.windows-arm64.conf.json
             verify_dawn: false
     permissions:
@@ -31,7 +31,7 @@ jobs:
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
       RUST_TARGET: ${{ matrix.rust_target }}
-      AURORABOOK_FFMPEG_ARCH: ${{ matrix.ffmpeg_arch }}
+      AURORABOOK_DIRECTML_ARCH: ${{ matrix.directml_arch }}
     steps:
       - uses: actions/checkout@v4
 
@@ -49,7 +49,6 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             .cargo-target
-            .cache/ffmpeg-windows
             .cache/directml-windows
           key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
@@ -69,11 +68,8 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
-      - name: Bundle FFmpeg for the app
-        run: node scripts/bundle-windows-ffmpeg.cjs --arch=${{ matrix.ffmpeg_arch }}
-
       - name: Stage DirectML redistributable
-        run: node scripts/bundle-windows-directml.cjs --arch=${{ matrix.ffmpeg_arch }}
+        run: node scripts/bundle-windows-directml.cjs --arch=${{ matrix.directml_arch }}
 
       - name: Stage Dawn placeholder for tauri_build (x86_64 only)
         if: matrix.verify_dawn
@@ -101,8 +97,7 @@ jobs:
       - name: Build AuroraBook (NSIS)
         shell: bash
         run: |
-          node scripts/ensure-windows-ffmpeg-resource.cjs --arch=${{ matrix.ffmpeg_arch }}
-          node scripts/bundle-windows-directml.cjs --arch=${{ matrix.ffmpeg_arch }}
+          node scripts/bundle-windows-directml.cjs --arch=${{ matrix.directml_arch }}
           if [ -n "${{ matrix.tauri_config }}" ]; then
             node scripts/tauri-cli.cjs build --target "${RUST_TARGET}" -c "${{ matrix.tauri_config }}"
           else

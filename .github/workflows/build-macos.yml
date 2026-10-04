@@ -38,11 +38,6 @@ jobs:
             ${{ runner.os }}-aarch64-cargo-
             ${{ runner.os }}-cargo-
 
-      - name: Install FFmpeg (Homebrew)
-        run: |
-          brew install ffmpeg
-          ffmpeg -version | head -n 1
-
       - name: Fetch Supertonic TTS models (Git LFS)
         run: |
           git lfs install
@@ -66,16 +61,12 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
-      - name: Bundle FFmpeg for the app
-        run: bun run bundle:ffmpeg:macos
-
       # Intentionally do NOT set APPLE_CERTIFICATE / related secrets here.
       # Missing Actions secrets become empty strings; Tauri treats a present
       # APPLE_CERTIFICATE as "sign" and fails with SecKeychainItemImport.
       # Builds use ad-hoc signingIdentity "-" until Developer ID secrets are wired.
       - name: Build AuroraBook (unsigned / ad-hoc)
         run: |
-          node scripts/ensure-macos-ffmpeg-resource.cjs
           node scripts/tauri-cli.cjs build --target "${RUST_TARGET}" \
             --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
 

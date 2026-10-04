@@ -1,28 +1,32 @@
-import { Play, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { DEFAULT_KOKORO_VOICE_ID, KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
+import { Play, X } from "lucide-react";
+
 import {
-    AVAILABLE_LANGS,
-    normalizeTtsLanguage,
-    voiceMatchesTtsLanguage,
+  DEFAULT_KOKORO_VOICE_ID,
+  KOKORO_VOICE_GROUPS,
+} from "../../constants/kokoro";
+import {
+  AVAILABLE_LANGS,
+  normalizeTtsLanguage,
+  voiceMatchesTtsLanguage,
 } from "../../constants/languages";
 import { useTranslation } from "../../lib/i18n";
 import { Button } from "../ui/button";
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "../ui/dialog";
 import { Label } from "../ui/label";
 import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "../ui/select";
 
 interface PreConversionDialogProps {
@@ -47,7 +51,9 @@ export function PreConversionDialog({
     [defaultLanguage]
   );
 
-  const [selectedLanguage, setSelectedLanguage] = useState(normalizedDefaultLang);
+  const [selectedLanguage, setSelectedLanguage] = useState(
+    normalizedDefaultLang
+  );
   const [selectedVoice, setSelectedVoice] = useState(
     defaultVoiceId || DEFAULT_KOKORO_VOICE_ID
   );
@@ -60,8 +66,8 @@ export function PreConversionDialog({
   }, [isOpen, normalizedDefaultLang, defaultVoiceId]);
 
   const availableVoices = useMemo(() => {
-    return KOKORO_VOICE_GROUPS.flatMap((group) => group.voices).filter((voice) =>
-      voiceMatchesTtsLanguage(voice.languageTag, selectedLanguage)
+    return KOKORO_VOICE_GROUPS.flatMap((group) => group.voices).filter(
+      (voice) => voiceMatchesTtsLanguage(voice.languageTag, selectedLanguage)
     );
   }, [selectedLanguage]);
 
@@ -95,7 +101,11 @@ export function PreConversionDialog({
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">
             <Label htmlFor="tts-language">{t("convert.language")}</Label>
-            <Select clearable={false} value={selectedLanguage} onValueChange={handleLanguageChange}>
+            <Select
+              clearable={false}
+              value={selectedLanguage}
+              onValueChange={handleLanguageChange}
+            >
               <SelectTrigger id="tts-language">
                 <SelectValue placeholder={t("common.select_language")} />
               </SelectTrigger>
@@ -137,7 +147,11 @@ export function PreConversionDialog({
         </div>
 
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} className="gap-2">
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            className="gap-2"
+          >
             <X className="size-5" />
             {t("convert.cancel")}
           </Button>

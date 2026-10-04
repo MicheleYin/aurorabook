@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { createPlaybackEngine } from "./createPlaybackEngine";
 import { osType } from "../test/tauri-mocks";
+import { createPlaybackEngine } from "./createPlaybackEngine";
 
 describe("createPlaybackEngine", () => {
   beforeEach(() => {
@@ -17,14 +17,18 @@ describe("createPlaybackEngine", () => {
 
   it("returns android engine on Android", async () => {
     osType.mockReturnValue("android");
-    const engine = await createPlaybackEngine(() => document.createElement("audio"));
+    const engine = await createPlaybackEngine(() =>
+      document.createElement("audio")
+    );
     expect(engine.kind).toBe("android");
     engine.destroy();
   });
 
   it("returns webview engine on macOS", async () => {
     osType.mockReturnValue("macos");
-    const engine = await createPlaybackEngine(() => document.createElement("audio"));
+    const engine = await createPlaybackEngine(() =>
+      document.createElement("audio")
+    );
     expect(engine.kind).toBe("webview");
     engine.destroy();
   });

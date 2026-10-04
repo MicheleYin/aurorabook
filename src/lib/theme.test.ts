@@ -5,7 +5,6 @@ import {
   clearPreferredThemesForTests,
   getPreferredDarkTheme,
   getPreferredLightTheme,
-  rememberPreferredTheme,
   resolveColorTheme,
   themeClassNames,
 } from "./theme";

@@ -11,7 +11,7 @@
  *
  * Usage:
  *   node scripts/bundle-windows-directml.cjs
- *   AURORABOOK_FFMPEG_ARCH=arm64 node scripts/bundle-windows-directml.cjs
+ *   AURORABOOK_DIRECTML_ARCH=arm64 node scripts/bundle-windows-directml.cjs
  *   node scripts/bundle-windows-directml.cjs --arch=x64
  */
 const fs = require("fs");
@@ -38,9 +38,7 @@ function resolveArch() {
     }
   }
   const fromEnv = (
-    process.env.AURORABOOK_DIRECTML_ARCH ||
-    process.env.AURORABOOK_FFMPEG_ARCH ||
-    ""
+    process.env.AURORABOOK_DIRECTML_ARCH || ""
   )
     .trim()
     .toLowerCase();

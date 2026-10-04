@@ -862,7 +862,7 @@ fn create_mp4_export_file(
     encode_started: Instant,
     mut on_progress: impl FnMut(FfmpegEncodeProgress) + Send,
 ) -> AppResult<()> {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
     {
         let _ = (filelist_path, encode_started);
         if tracks.is_empty() {
@@ -913,32 +913,34 @@ fn create_mp4_export_file(
             },
         )?;
         // `output_path` is already a sandbox Documents/Exports path on iOS.
+        #[cfg(target_os = "ios")]
         if output_path.trim().to_ascii_lowercase().starts_with("file:") {
             crate::book_service::ios_export::place_export_file(&temp_path, output_path)?;
-        } else {
-            let dest = PathBuf::from(output_path);
-            if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    AppError::Store(format!(
-                        "Failed to create export directory {}: {}",
-                        parent.display(),
-                        e
-                    ))
-                })?;
-            }
-            std::fs::copy(&temp_path, &dest).map_err(|e| {
+            return Ok(());
+        }
+
+        let dest = PathBuf::from(output_path);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
                 AppError::Store(format!(
-                    "Failed to write {} export to {}: {}",
-                    format_label,
-                    dest.display(),
+                    "Failed to create export directory {}: {}",
+                    parent.display(),
                     e
                 ))
             })?;
         }
+        std::fs::copy(&temp_path, &dest).map_err(|e| {
+            AppError::Store(format!(
+                "Failed to write {} export to {}: {}",
+                format_label,
+                dest.display(),
+                e
+            ))
+        })?;
         return Ok(());
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "macos")))]
     {
         require_ffmpeg_for_export()?;
         if tracks.is_empty() {

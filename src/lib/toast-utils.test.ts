@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  dismissLoadingToast,
+  showLoadingToast,
+  updateLoadingToastToError,
+  updateLoadingToastToSuccess,
+} from "./toast-utils";
+
 const toast = vi.hoisted(() => ({
   loading: vi.fn(),
   dismiss: vi.fn(),
@@ -8,13 +15,6 @@ const toast = vi.hoisted(() => ({
 }));
 
 vi.mock("sonner", () => ({ toast }));
-
-import {
-  dismissLoadingToast,
-  showLoadingToast,
-  updateLoadingToastToError,
-  updateLoadingToastToSuccess,
-} from "./toast-utils";
 
 describe("toast-utils", () => {
   beforeEach(() => {

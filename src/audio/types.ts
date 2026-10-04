@@ -41,10 +41,7 @@ export interface PlaybackEngine {
   readonly kind: PlaybackEngineKind;
   load(options: LoadTrackOptions): Promise<void>;
   loadLive?(options: LoadLiveOptions): Promise<LiveStatus>;
-  refreshLive?(
-    bookId: string,
-    chapterIndex: number
-  ): Promise<LiveStatus>;
+  refreshLive?(bookId: string, chapterIndex: number): Promise<LiveStatus>;
   setExpectsMore?(expectsMore: boolean): Promise<void>;
   play(): Promise<void>;
   pause(): Promise<void>;

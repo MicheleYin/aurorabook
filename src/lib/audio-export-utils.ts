@@ -1,6 +1,10 @@
 export type AudioExportFormat = "mp3" | "m4a" | "m4b";
 
-export const ALL_AUDIO_EXPORT_FORMATS: AudioExportFormat[] = ["mp3", "m4a", "m4b"];
+export const ALL_AUDIO_EXPORT_FORMATS: AudioExportFormat[] = [
+  "mp3",
+  "m4a",
+  "m4b",
+];
 
 /** Accept only known audiobook export formats from backend status payloads. */
 export function normalizeFormat(f: string | null): AudioExportFormat | null {

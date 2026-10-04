@@ -1,11 +1,16 @@
+import { useRef } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useRef } from "react";
 
-import { useAudioTextSync } from "./useAudioTextSync";
 import type { Book, Chapter } from "../types/book";
-import { HIGHLIGHT_ACTIVE_CLASS, HIGHLIGHT_CLASS, HIGHLIGHT_WORD_CLASS, AUTO_SCROLL_RESUME_MS } from "../lib/audio-sync-utils";
+import {
+  AUTO_SCROLL_RESUME_MS,
+  HIGHLIGHT_ACTIVE_CLASS,
+  HIGHLIGHT_CLASS,
+  HIGHLIGHT_WORD_CLASS,
+} from "../lib/audio-sync-utils";
 import { invoke } from "../test/tauri-mocks";
+import { useAudioTextSync } from "./useAudioTextSync";
 
 const loadChapterContent = vi.fn(async () => undefined);
 
@@ -727,9 +732,9 @@ describe("useAudioTextSync", () => {
         ?.classList.contains(HIGHLIGHT_WORD_CLASS)
     ).toBe(true);
     expect(
-      paragraph.querySelector('[data-sync-word="0"]')?.classList.contains(
-        HIGHLIGHT_WORD_CLASS
-      )
+      paragraph
+        .querySelector('[data-sync-word="0"]')
+        ?.classList.contains(HIGHLIGHT_WORD_CLASS)
     ).toBe(false);
   });
 

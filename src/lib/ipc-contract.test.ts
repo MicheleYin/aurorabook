@@ -1,14 +1,10 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
 import { describe, expect, it } from "vitest";
 
-import {
-  normalizeBook,
-  normalizeChapterWithContent,
-} from "./normalize-book";
 import type { Book, ChapterWithContent } from "../types/book";
+import { normalizeBook, normalizeChapterWithContent } from "./normalize-book";
 
 const fixturesDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   createContext,
   useCallback,
@@ -6,11 +7,18 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-import { useAppContext, type TabValue } from "@/context/AppContext";
+import type { TabValue } from "@/context/AppContext";
+import type {
+  ShortcutActionId,
+  ShortcutDefinition,
+  ShortcutHandler,
+  ShortcutScope,
+  StoredShortcutBinding,
+} from "@/lib/keyboard-shortcuts";
+import { useAppContext } from "@/context/AppContext";
 import {
   bindingEquivalentTo,
   findBindingConflict,
@@ -21,11 +29,6 @@ import {
   parseStoredBindings,
   resolveShortcutDefinitions,
   scopesInclude,
-  type ShortcutActionId,
-  type ShortcutDefinition,
-  type ShortcutHandler,
-  type ShortcutScope,
-  type StoredShortcutBinding,
 } from "@/lib/keyboard-shortcuts";
 import { logger } from "@/lib/logger";
 
@@ -90,10 +93,7 @@ export function KeyboardShortcutsProvider({
   const definitionsRef = useRef(definitions);
   definitionsRef.current = definitions;
 
-  const customizedIds = useMemo(
-    () => new Set(overrides.keys()),
-    [overrides]
-  );
+  const customizedIds = useMemo(() => new Set(overrides.keys()), [overrides]);
 
   const openHelp = useCallback(() => setIsHelpOpen(true), []);
   const closeHelp = useCallback(() => setIsHelpOpen(false), []);
@@ -151,14 +151,13 @@ export function KeyboardShortcutsProvider({
   }, [loadBindings]);
 
   const setShortcutBinding = useCallback(
-    async (binding: StoredShortcutBinding): Promise<SetShortcutBindingResult> => {
+    async (
+      binding: StoredShortcutBinding
+    ): Promise<SetShortcutBindingResult> => {
       const currentDef = definitionsRef.current.find(
         (def) => def.id === binding.actionId
       );
-      if (
-        currentDef &&
-        bindingEquivalentTo(binding.match, currentDef.match)
-      ) {
+      if (currentDef && bindingEquivalentTo(binding.match, currentDef.match)) {
         setRecordingActionId(null);
         return { status: "unchanged" };
       }
@@ -281,11 +280,7 @@ export function KeyboardShortcutsProvider({
         if (!matchesShortcut(event, def)) continue;
 
         // While typing, only allow Escape / help toggle.
-        if (
-          editable &&
-          def.id !== "closeOverlays" &&
-          def.id !== "showHelp"
-        ) {
+        if (editable && def.id !== "closeOverlays" && def.id !== "showHelp") {
           continue;
         }
 

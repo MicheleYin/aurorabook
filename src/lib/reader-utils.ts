@@ -188,7 +188,9 @@ export function clearReaderTextSelection(
   return true;
 }
 
-function isReaderChromeToggleBlockedTarget(target: EventTarget | null): boolean {
+function isReaderChromeToggleBlockedTarget(
+  target: EventTarget | null
+): boolean {
   if (!(target instanceof Element)) {
     return false;
   }

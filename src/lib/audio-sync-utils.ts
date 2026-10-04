@@ -109,7 +109,11 @@ export function segmentsForPlayback(
   }
 ): AudioSyncSegment[] {
   let trackSegments = filterSegmentsForTrack(segments, trackHref || "");
-  if (trackSegments.length === 0 && options?.isLiveTrack && options.liveChapterHref) {
+  if (
+    trackSegments.length === 0 &&
+    options?.isLiveTrack &&
+    options.liveChapterHref
+  ) {
     trackSegments = segments.filter(
       (segment) => segment.chapterHref === options.liveChapterHref
     );
@@ -238,7 +242,11 @@ export function estimateWordTimings(
 
   const duration = Math.max(0.001, clipEnd - clipBegin);
   const weights = tokens.map((token) =>
-    Math.max(1, Array.from(token).filter((ch) => /[0-9A-Za-z\u00C0-\u024F]/.test(ch)).length)
+    Math.max(
+      1,
+      Array.from(token).filter((ch) => /[0-9A-Za-z\u00C0-\u024F]/.test(ch))
+        .length
+    )
   );
   const weightSum = weights.reduce((sum, weight) => sum + weight, 0);
   const rawPauses = tokens.map((token) => pauseAfter(token));
@@ -257,9 +265,7 @@ export function estimateWordTimings(
     const pause = idx + 1 < tokens.length ? pauses[idx] : 0;
     const startSec = cursor;
     const endSec =
-      idx + 1 === tokens.length
-        ? clipEnd
-        : startSec + wordDur + pause;
+      idx + 1 === tokens.length ? clipEnd : startSec + wordDur + pause;
     cues.push({
       word: tokens[idx],
       startSec,
@@ -431,9 +437,7 @@ export interface ViewportOffsets {
 }
 
 /** Parse a CSS length like `47px` / `0px` from a custom property. */
-export function readCssLengthPx(
-  value: string | null | undefined
-): number {
+export function readCssLengthPx(value: string | null | undefined): number {
   if (!value) return 0;
   const parsed = Number.parseFloat(value.trim());
   return Number.isFinite(parsed) ? parsed : 0;
@@ -459,7 +463,9 @@ export function readDeviceSafeTopPx(
     : null
 ): number {
   if (!style) return 0;
-  const device = readCssLengthPx(style.getPropertyValue("--app-device-safe-top"));
+  const device = readCssLengthPx(
+    style.getPropertyValue("--app-device-safe-top")
+  );
   if (device > 0) return device;
   // Fallback for older CSS without device tokens.
   return readAppSafeTopPx(style);
@@ -508,8 +514,7 @@ export function clampScrollTopForElement(
 ): number {
   const targetScrollTop =
     elementOffsetTop - containerOffsetTop - offsets.topOffset - paddingPx;
-  const maxScrollTop =
-    scrollHeight - containerHeight + offsets.bottomOffset;
+  const maxScrollTop = scrollHeight - containerHeight + offsets.bottomOffset;
   return Math.min(Math.max(0, targetScrollTop), maxScrollTop);
 }
 
@@ -531,8 +536,7 @@ export function scrollTopToRevealRect(
     (elementTop - containerTop) -
     offsets.topOffset -
     paddingPx;
-  const maxScrollTop =
-    scrollHeight - containerHeight + offsets.bottomOffset;
+  const maxScrollTop = scrollHeight - containerHeight + offsets.bottomOffset;
   return Math.min(Math.max(0, targetScrollTop), maxScrollTop);
 }
 

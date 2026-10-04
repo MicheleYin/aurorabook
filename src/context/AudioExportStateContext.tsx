@@ -15,13 +15,13 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+import type { AudioExportFormat } from "../lib/audio-export-utils";
 import {
   ALL_AUDIO_EXPORT_FORMATS,
   isTerminalExportStep,
   linearAudioExportEtaMs,
   normalizeFormat,
   parseSupportedAudioExportFormats,
-  type AudioExportFormat,
 } from "../lib/audio-export-utils";
 import { logger } from "../lib/logger";
 
@@ -70,9 +70,8 @@ interface AudioExportStateContextValue {
   resetExportUi: () => void;
 }
 
-const AudioExportStateContext = createContext<AudioExportStateContextValue | null>(
-  null
-);
+const AudioExportStateContext =
+  createContext<AudioExportStateContextValue | null>(null);
 
 export function useAudioExportState() {
   const ctx = useContext(AudioExportStateContext);
@@ -112,9 +111,7 @@ export function AudioExportStateProvider({
       const terminal = isTerminalExportStep(progress.currentStep);
       setIsAnyExporting(!terminal);
       setActiveExportBookId(terminal ? null : progress.bookId);
-      setActiveExportFormat(
-        terminal ? null : normalizeFormat(progress.format)
-      );
+      setActiveExportFormat(terminal ? null : normalizeFormat(progress.format));
       setExportProgress(terminal ? null : progress);
       if (terminal) {
         setExportStartedAtMs(null);

@@ -1,4 +1,5 @@
 import { Loader2 } from "lucide-react";
+
 import { useTranslation } from "../../lib/i18n";
 
 type LoadingScreenProps = {

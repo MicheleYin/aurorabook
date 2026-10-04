@@ -2,15 +2,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { type as osType } from "@tauri-apps/plugin-os";
 
-import { getLogs, type LogEntry } from "./logger";
+import type { LogEntry } from "./logger";
+import { getLogs } from "./logger";
 
 /** Only the most recent entries are included in file/email export. */
 export const MAX_EXPORT_LOGS = 100;
 
 export function logsForExport(logs: LogEntry[] = getLogs()): LogEntry[] {
-  return logs.length > MAX_EXPORT_LOGS
-    ? logs.slice(-MAX_EXPORT_LOGS)
-    : logs;
+  return logs.length > MAX_EXPORT_LOGS ? logs.slice(-MAX_EXPORT_LOGS) : logs;
 }
 
 export function formatLogsForExport(logs: LogEntry[] = getLogs()): string {

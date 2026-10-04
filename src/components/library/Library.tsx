@@ -1,11 +1,15 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { BookOpen, Grid2x2, List, Plus } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import filesize from "filesize";
 
 import { useAudioProgressContext } from "@/context/AudioProgressContext";
 
+import type { Book } from "../../types/book";
+import type { BookDeletionResult } from "../../types/storage";
+import type { LibraryViewMode } from "../../types/settings";
 import { useAppContext } from "../../context/AppContext";
 import { useRegisterShortcutActions } from "../../context/KeyboardShortcutsContext";
 import { useSettingsContext } from "../../context/SettingsContext";
@@ -17,6 +21,7 @@ import {
   totalBookAudioDurationSeconds,
 } from "../../lib/book-audio-duration";
 import { logger } from "../../lib/logger";
+import { useTranslation } from "../../lib/i18n";
 import { normalizeLibraryViewMode } from "../../lib/settings-utils";
 import {
   showLoadingToast,
@@ -24,8 +29,6 @@ import {
   updateLoadingToastToSuccess,
 } from "../../lib/toast-utils";
 import { cn, formatTime } from "../../lib/utils";
-import type { Book } from "../../types/book";
-import type { LibraryViewMode } from "../../types/settings";
 import { LoadingScreen } from "../app/LoadingScreen";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardFooter } from "../ui/card";
@@ -64,8 +67,13 @@ export function Library() {
     loadBooks,
   } = useAppContext();
   const { settings, saveSettings } = useSettingsContext();
-  const { saveAudioProgress, calculateAudioProgress, currentAudioTrack, closeAudioPlayer } =
-    useAudioProgressContext();
+  const { t } = useTranslation();
+  const {
+    saveAudioProgress,
+    calculateAudioProgress,
+    currentAudioTrack,
+    closeAudioPlayer,
+  } = useAudioProgressContext();
 
   const booksRef = useRef(books);
 
@@ -440,8 +448,7 @@ export function Library() {
 
       // Stop and close the player if this book is currently loaded/playing.
       const deletingCurrentBook = currentBook?.id === selectedBookId;
-      const deletingLastOpened =
-        settings?.lastOpenedBookId === selectedBookId;
+      const deletingLastOpened = settings?.lastOpenedBookId === selectedBookId;
       if (
         book &&
         (currentAudioTrack?.bookId === selectedBookId || deletingCurrentBook)
@@ -452,7 +459,7 @@ export function Library() {
         setCurrentBook(null);
       }
 
-      await invoke("delete_book", {
+      const deletion = await invoke<BookDeletionResult>("delete_book", {
         bookId: selectedBookId,
       });
 
@@ -469,7 +476,15 @@ export function Library() {
         setCurrentTab("library");
       }
 
-      updateLoadingToastToSuccess(`"${bookTitle}" deleted`, "delete-book");
+      updateLoadingToastToSuccess(
+        deletion.cleanupWarnings.length
+          ? t("settings.storage.book_deleted_warning", { title: bookTitle })
+          : t("settings.storage.book_deleted", {
+              title: bookTitle,
+              bytes: filesize(deletion.bytesRemoved),
+            }),
+        "delete-book"
+      );
 
       // Remove the book from the list using functional update
       setBooks((prevBooks) =>
@@ -536,7 +551,7 @@ export function Library() {
           <div className="flex items-center gap-1">
             <Button
               variant={viewMode === "grid" ? "default" : "outline"}
-              
+
               onClick={() => handleViewModeChange("grid")}
               className="size-9 p-0"
             >
@@ -544,7 +559,7 @@ export function Library() {
             </Button>
             <Button
               variant={viewMode === "list" ? "default" : "outline"}
-              
+
               onClick={() => handleViewModeChange("list")}
               className="size-9 p-0"
             >
@@ -652,7 +667,6 @@ export function Library() {
                 </CardContent>
                 <CardFooter className="p-4">
                   <Button
-                    
                     className="w-full"
                     variant="ghost"
                     onClick={(e) => handleOpenBook(book, e)}
@@ -753,7 +767,6 @@ export function Library() {
                       )}
                     </div>
                     <Button
-                      
                       className="w-auto"
                       variant="ghost"
                       onClick={(e) => handleOpenBook(book, e)}

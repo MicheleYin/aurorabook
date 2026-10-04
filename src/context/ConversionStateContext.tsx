@@ -25,9 +25,9 @@ import { toast } from "sonner";
 import { Book } from "@/types/book";
 
 import type { AppSettings } from "../types/settings";
-import { logger } from "../lib/logger";
-import { useTranslation } from "../lib/i18n";
 import { humanizeDurationLocale } from "../constants/languages";
+import { useTranslation } from "../lib/i18n";
+import { logger } from "../lib/logger";
 import { dismissLoadingToast } from "../lib/toast-utils";
 
 export interface ConversionProgress {
@@ -83,7 +83,11 @@ interface ConversionStateContextValue {
   getCurrentConvertingChapter: (bookId: string) => number | null;
   refreshCurrentConvertingChapter: (bookId: string) => Promise<number | null>;
   eta: string | null; // Estimated time remaining (e.g., "5m 30s")
-  convertBook: (bookId: string, language?: string, voiceId?: string) => Promise<void>;
+  convertBook: (
+    bookId: string,
+    language?: string,
+    voiceId?: string
+  ) => Promise<void>;
   cancelConversion: (bookId: string | null) => Promise<void>;
   registerCallbacks: (callbacks: ConversionStateCallbacks) => () => void;
 }
@@ -139,43 +143,49 @@ export function ConversionStateProvider({
     [currentConvertingChapterByBook]
   );
 
-  const refreshCurrentConvertingChapter = useCallback(async (bookId: string) => {
-    if (!bookId) return null;
+  const refreshCurrentConvertingChapter = useCallback(
+    async (bookId: string) => {
+      if (!bookId) return null;
 
-    try {
-      const chapter = await invoke<number | null>("get_current_converting_chapter", {
-        bookId,
-      });
+      try {
+        const chapter = await invoke<number | null>(
+          "get_current_converting_chapter",
+          {
+            bookId,
+          }
+        );
 
-      logger.info("[conversion-state] fetched live chapter", {
-        bookId,
-        chapter,
-      });
-
-      setCurrentConvertingChapterByBook((prev) => {
-        if ((prev[bookId] ?? null) === chapter) {
-          return prev;
-        }
-
-        logger.info("[conversion-state] updated live chapter", {
+        logger.info("[conversion-state] fetched live chapter", {
           bookId,
-          previousChapter: prev[bookId] ?? null,
-          nextChapter: chapter,
-          source: "refreshCurrentConvertingChapter",
+          chapter,
         });
 
-        return {
-          ...prev,
-          [bookId]: chapter,
-        };
-      });
+        setCurrentConvertingChapterByBook((prev) => {
+          if ((prev[bookId] ?? null) === chapter) {
+            return prev;
+          }
 
-      return chapter;
-    } catch (err) {
-      logger.warn("Failed to refresh current converting chapter:", err);
-      return null;
-    }
-  }, []);
+          logger.info("[conversion-state] updated live chapter", {
+            bookId,
+            previousChapter: prev[bookId] ?? null,
+            nextChapter: chapter,
+            source: "refreshCurrentConvertingChapter",
+          });
+
+          return {
+            ...prev,
+            [bookId]: chapter,
+          };
+        });
+
+        return chapter;
+      } catch (err) {
+        logger.warn("Failed to refresh current converting chapter:", err);
+        return null;
+      }
+    },
+    []
+  );
 
   const handleConversionComplete = useCallback(
     (book: Book | null, bookId?: string | null) => {
@@ -474,7 +484,10 @@ export function ConversionStateProvider({
         );
         unlisteners.push(unBgCompleted);
       } catch (error) {
-        logger.error("Failed to register conversion Tauri event listeners:", error);
+        logger.error(
+          "Failed to register conversion Tauri event listeners:",
+          error
+        );
       }
     };
 

@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+import type {
+  DictionaryCardLayout,
+  DictionaryLookupResult,
+  SelectionRect,
+} from "../lib/reader-dictionary";
+import { logger } from "../lib/logger";
 import {
   dictionaryCardLayout,
   isDictionaryCardTarget,
   snapshotReaderSelection,
-  type DictionaryCardLayout,
-  type DictionaryLookupResult,
-  type SelectionRect,
 } from "../lib/reader-dictionary";
-import { logger } from "../lib/logger";
 
 export type ReaderDictionaryState = {
   term: string;
@@ -110,7 +112,11 @@ export function useReaderDictionary(
         }
         return;
       }
-      if (event.shiftKey || event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      if (
+        event.shiftKey ||
+        event.key === "ArrowLeft" ||
+        event.key === "ArrowRight"
+      ) {
         window.setTimeout(() => {
           void lookupCurrentSelection();
         }, 0);

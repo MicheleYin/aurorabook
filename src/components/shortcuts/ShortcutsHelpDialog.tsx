@@ -1,11 +1,5 @@
 import { useMemo } from "react";
 
-import { useKeyboardShortcuts } from "@/context/KeyboardShortcutsContext";
-import { useTranslation } from "@/lib/i18n";
-import {
-  formatShortcutKeys,
-  SHORTCUT_GROUP_ORDER,
-} from "@/lib/keyboard-shortcuts";
 import {
   Dialog,
   DialogContent,
@@ -14,6 +8,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
+import { useKeyboardShortcuts } from "@/context/KeyboardShortcutsContext";
+import { useTranslation } from "@/lib/i18n";
+import {
+  formatShortcutKeys,
+  SHORTCUT_GROUP_ORDER,
+} from "@/lib/keyboard-shortcuts";
 
 export function ShortcutsHelpDialog() {
   const { t } = useTranslation();

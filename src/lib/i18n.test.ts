@@ -1,5 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { Language } from "./i18n";
+import {
+  initI18n,
+  loadTranslationsWithModules,
+  mapLocaleToLanguage,
+  useTranslation,
+} from "./i18n";
 
 const invoke = vi.hoisted(() => vi.fn());
 const locale = vi.hoisted(() => vi.fn());
@@ -11,14 +19,6 @@ vi.mock("@tauri-apps/plugin-os", () => ({
   arch: vi.fn(async () => "aarch64"),
   version: vi.fn(async () => "15.0.0"),
 }));
-
-import {
-  initI18n,
-  loadTranslationsWithModules,
-  mapLocaleToLanguage,
-  useTranslation,
-  type Language,
-} from "./i18n";
 
 describe("mapLocaleToLanguage", () => {
   it("maps BCP-47 tags to supported base languages", () => {

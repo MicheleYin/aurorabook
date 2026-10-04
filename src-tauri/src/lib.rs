@@ -403,6 +403,8 @@ pub fn run() {
             book_service::load_epub_audio_bytes,
             book_service::read_single_audio_track,
             book_service::delete_book,
+            book_service::storage::get_storage_report,
+            book_service::storage::cleanup_orphaned_storage,
             book_service::add_book,
             book_service::get_epub_buffer,
             book_service::export_epub_to_file,

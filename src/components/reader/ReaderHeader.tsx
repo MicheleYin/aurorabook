@@ -1,11 +1,11 @@
-import { ArrowLeft, Headphones, Settings } from "lucide-react";
 import { useCallback, useMemo } from "react";
+import { ArrowLeft, Headphones, Settings } from "lucide-react";
 
 import { useAppContext } from "@/context/AppContext";
 
+import type { Book, Chapter } from "../../types/book";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { useConversionState } from "../../context/ConversionStateContext";
-import type { Book, Chapter } from "../../types/book";
 import { Button } from "../ui/button";
 import { TOCDrawer } from "./TOCDrawer";
 

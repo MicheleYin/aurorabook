@@ -25,9 +25,7 @@ function parseArchArg() {
     if (arg.startsWith("--arch=")) return arg.slice("--arch=".length).trim().toLowerCase();
   }
   return (
-    process.env.AURORABOOK_DIRECTML_ARCH ||
-    process.env.AURORABOOK_FFMPEG_ARCH ||
-    ""
+    process.env.AURORABOOK_DIRECTML_ARCH || ""
   )
     .trim()
     .toLowerCase();
@@ -58,7 +56,6 @@ const requireDawn =
 
 const arch = resolveArch();
 process.env.AURORABOOK_DIRECTML_ARCH = arch;
-process.env.AURORABOOK_FFMPEG_ARCH = arch === "arm64" ? "arm64" : "x64";
 
 {
   const status = run(path.join(__dirname, "bundle-windows-directml.cjs"), [

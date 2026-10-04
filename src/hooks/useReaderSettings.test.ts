@@ -1,16 +1,21 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { useReaderSettings } from "./useReaderSettings";
 import { invoke } from "../test/tauri-mocks";
+import { useReaderSettings } from "./useReaderSettings";
 
 const saveAppSettings = vi.fn(async () => undefined);
 const applyTheme = vi.fn();
 
 vi.mock("../context/SettingsContext", () => ({
   useSettingsContext: () => ({
-    settings: { theme: "dark", language: "en", ttsLanguage: "en", ttsVoiceId: "F1" },
+    settings: {
+      theme: "dark",
+      language: "en",
+      ttsLanguage: "en",
+      ttsVoiceId: "F1",
+    },
     saveSettings: saveAppSettings,
     applyTheme,
   }),

@@ -6,12 +6,12 @@
  * library → reader flows without a native shell.
  */
 
-import bookWire from "../../../tests/fixtures/ipc/book.wire.json";
+import appSettingsWire from "../../../tests/fixtures/ipc/app-settings.wire.json";
 import bookBWire from "../../../tests/fixtures/ipc/book-b.wire.json";
-import chapterContentWire from "../../../tests/fixtures/ipc/chapter-content.wire.json";
+import bookWire from "../../../tests/fixtures/ipc/book.wire.json";
 import chapterContent2Wire from "../../../tests/fixtures/ipc/chapter-content-2.wire.json";
 import chapterContentBWire from "../../../tests/fixtures/ipc/chapter-content-b.wire.json";
-import appSettingsWire from "../../../tests/fixtures/ipc/app-settings.wire.json";
+import chapterContentWire from "../../../tests/fixtures/ipc/chapter-content.wire.json";
 
 type EventHandler = (event: { event: string; payload: unknown }) => void;
 

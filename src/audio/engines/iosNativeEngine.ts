@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import { clearMediaSession } from "../mediaSession";
 import type {
   EngineEvent,
   LiveStatus,
@@ -9,6 +8,7 @@ import type {
   LoadTrackOptions,
   PlaybackEngine,
 } from "../types";
+import { clearMediaSession } from "../mediaSession";
 
 type Listener = (event: EngineEvent) => void;
 
@@ -48,41 +48,44 @@ export function createIosNativeEngine(): PlaybackEngine {
     // Clear web Media Session so it cannot fight MPRemoteCommandCenter.
     clearMediaSession();
 
-    void listen<{ type: string; time?: number }>("native-player-event", (event) => {
-      const { type, time } = event.payload;
-      if (type === "play") {
-        playing = true;
-        emit({ type: "play" });
-      } else if (type === "pause") {
-        playing = false;
-        emit({ type: "pause" });
-      } else if (type === "ended") {
-        playing = false;
-        emit({ type: "ended" });
-      } else if (type === "next") {
-        emit({ type: "next" });
-      } else if (type === "prev") {
-        emit({ type: "prev" });
-      } else if (
-        (type === "timeUpdate" || type === "seek") &&
-        typeof time === "number" &&
-        Number.isFinite(time)
-      ) {
-        nativeTime = time;
-        if (type === "timeUpdate") {
+    void listen<{ type: string; time?: number }>(
+      "native-player-event",
+      (event) => {
+        const { type, time } = event.payload;
+        if (type === "play") {
           playing = true;
-          emit({ type: "timeUpdate", time });
-        } else {
-          emit({ type: "seek", time });
+          emit({ type: "play" });
+        } else if (type === "pause") {
+          playing = false;
+          emit({ type: "pause" });
+        } else if (type === "ended") {
+          playing = false;
+          emit({ type: "ended" });
+        } else if (type === "next") {
+          emit({ type: "next" });
+        } else if (type === "prev") {
+          emit({ type: "prev" });
+        } else if (
+          (type === "timeUpdate" || type === "seek") &&
+          typeof time === "number" &&
+          Number.isFinite(time)
+        ) {
+          nativeTime = time;
+          if (type === "timeUpdate") {
+            playing = true;
+            emit({ type: "timeUpdate", time });
+          } else {
+            emit({ type: "seek", time });
+          }
+        } else if (
+          type === "durationUpdate" &&
+          typeof time === "number" &&
+          Number.isFinite(time)
+        ) {
+          emit({ type: "durationUpdate", time });
         }
-      } else if (
-        type === "durationUpdate" &&
-        typeof time === "number" &&
-        Number.isFinite(time)
-      ) {
-        emit({ type: "durationUpdate", time });
       }
-    }).then((fn) => {
+    ).then((fn) => {
       if (destroyed) {
         fn();
         return;
@@ -135,7 +138,10 @@ export function createIosNativeEngine(): PlaybackEngine {
       return status;
     },
 
-    async refreshLive(bookId: string, chapterIndex: number): Promise<LiveStatus> {
+    async refreshLive(
+      bookId: string,
+      chapterIndex: number
+    ): Promise<LiveStatus> {
       return invoke<LiveStatus>("ios_player_refresh_live", {
         bookId,
         chapterIndex,

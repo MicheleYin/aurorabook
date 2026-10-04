@@ -1,6 +1,7 @@
-import { Check } from "lucide-react";
 import { memo, useEffect, useState } from "react";
+import { Check } from "lucide-react";
 
+import type { ColorTheme, DarkTheme, LightTheme, UITheme } from "../types/ui";
 import { anim } from "../lib/animations";
 import { useTranslation } from "../lib/i18n";
 import {
@@ -13,12 +14,13 @@ import {
   themeClassNames,
 } from "../lib/theme";
 import { cn } from "../lib/utils";
-import type { ColorTheme, DarkTheme, LightTheme, UITheme } from "../types/ui";
 import { Switch } from "./ui/switch";
+
 interface ThemeSwitcherProps {
   value: UITheme;
   onChange: (theme: UITheme) => void;
-}const LIGHT_VARIANTS: Array<{
+}
+const LIGHT_VARIANTS: Array<{
   id: LightTheme;
   labelKey: string;
   preview: string;

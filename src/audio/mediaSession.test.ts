@@ -1,13 +1,13 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   bindMediaSessionControls,
   clearMediaSession,
   isMediaSessionBound,
+  MEDIA_SKIP_EVENT,
   setMediaSessionPlaybackState,
   setMediaSessionPositionState,
   unbindMediaSessionControls,
-  MEDIA_SKIP_EVENT,
 } from "./mediaSession";
 
 describe("mediaSession controls", () => {

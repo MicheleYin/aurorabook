@@ -1,13 +1,11 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createWebviewEngine } from "./webviewEngine";
-import { createIosNativeEngine } from "./iosNativeEngine";
 import { createAndroidEngine } from "./androidEngine";
+import { createIosNativeEngine } from "./iosNativeEngine";
+import { createWebviewEngine } from "./webviewEngine";
 
 const invoke = vi.fn();
-const listen = vi.fn(
-  async (_event: string, _handler: unknown) => () => undefined
-);
+const listen = vi.fn(async () => () => undefined);
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) =>
@@ -83,13 +81,16 @@ describe("createWebviewEngine", () => {
     });
 
     expect(setActionHandler).toHaveBeenCalledWith("play", expect.any(Function));
-    expect(setActionHandler).toHaveBeenCalledWith("pause", expect.any(Function));
+    expect(setActionHandler).toHaveBeenCalledWith(
+      "pause",
+      expect.any(Function)
+    );
 
     const playHandler = [...setActionHandler.mock.calls]
       .reverse()
-      .find((call) => call[0] === "play" && typeof call[1] === "function")?.[1] as
-      | ((details: MediaSessionActionDetails) => void)
-      | undefined;
+      .find(
+        (call) => call[0] === "play" && typeof call[1] === "function"
+      )?.[1] as ((details: MediaSessionActionDetails) => void) | undefined;
     playHandler?.({ action: "play" });
     await vi.waitFor(() => {
       expect(audio.play).toHaveBeenCalled();

@@ -1,14 +1,14 @@
-import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import { act, renderHook } from "@testing-library/react";
 import { toast } from "sonner";
+import { beforeEach, describe, expect, it } from "vitest";
 
+import type { Book, Chapter } from "../types/book";
+import { invoke } from "../test/tauri-mocks";
 import {
   ChapterProgressProvider,
   useChapterProgressContext,
 } from "./ChapterProgressContext";
-import type { Book, Chapter } from "../types/book";
-import { invoke } from "../test/tauri-mocks";
 
 function createChapter(overrides: Partial<Chapter> = {}): Chapter {
   return {
@@ -27,7 +27,10 @@ function createBook(overrides: Partial<Book> = {}): Book {
     id: "book-1",
     title: "Book",
     author: "Author",
-    chapters: [chapter, createChapter({ id: "ch-2", href: "ch2.xhtml", chapterOrder: 1 })],
+    chapters: [
+      chapter,
+      createChapter({ id: "ch-2", href: "ch2.xhtml", chapterOrder: 1 }),
+    ],
     sourcePath: "/tmp/a.epub",
     audioTracks: [],
     conversionStatus: "done",
@@ -492,7 +495,10 @@ describe("ChapterProgressProvider", () => {
 
     let loadPromise: Promise<void> | undefined;
     act(() => {
-      loadPromise = result.current.loadChapterContent("book-1", createChapter());
+      loadPromise = result.current.loadChapterContent(
+        "book-1",
+        createChapter()
+      );
     });
 
     expect(result.current.isLoadingChapter).toBe(true);
@@ -555,7 +561,9 @@ describe("ChapterProgressProvider", () => {
 
     expect(result.current.currentChapter?.id).toBe("ch-2");
     expect(
-      (result.current.currentChapter?.contentHtml ?? "").includes("Latest second")
+      (result.current.currentChapter?.contentHtml ?? "").includes(
+        "Latest second"
+      )
     ).toBe(true);
     expect(result.current.isLoadingChapter).toBe(false);
   });

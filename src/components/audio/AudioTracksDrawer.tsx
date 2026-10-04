@@ -1,19 +1,14 @@
-import { List } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import { List } from "lucide-react";
 
+import type { AudioTrack, Book } from "../../types/book";
 import { useConversionState } from "../../context/ConversionStateContext";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { logger } from "../../lib/logger";
 import { cn, formatTime } from "../../lib/utils";
-import type { AudioTrack, Book } from "../../types/book";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "../ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import {
   Drawer,
   DrawerContent,
@@ -215,7 +210,10 @@ export function AudioTracksDrawer({
     }
 
     // Add synthetic live track for the active/converting chapter when no completed track exists yet.
-    if ((isConvertingThisBook || hasPartialConversion) && effectiveConvertingChapter !== null) {
+    if (
+      (isConvertingThisBook || hasPartialConversion) &&
+      effectiveConvertingChapter !== null
+    ) {
       if (!existingChapterIndices.has(effectiveConvertingChapter)) {
         const chapter = book.chapters[effectiveConvertingChapter];
         if (chapter) {
@@ -280,9 +278,7 @@ export function AudioTracksDrawer({
               chapterIndex === currentTrackChapterIndex);
           const trackName = track.title || `Track ${track.order + 1}`;
           const trackHref = track.href || track.filePath;
-          const chapterTitle = trackHref
-            ? trackChapters.get(trackHref)
-            : null;
+          const chapterTitle = trackHref ? trackChapters.get(trackHref) : null;
           // Only show badge on the chapter that's actually being converted (from backend)
           const showStatusBadge =
             chapterIndex === effectiveConvertingChapter ||

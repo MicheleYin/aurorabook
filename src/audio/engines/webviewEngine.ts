@@ -1,3 +1,4 @@
+import type { EngineEvent, LoadTrackOptions, PlaybackEngine } from "../types";
 import { applyMediaPlaybackRate } from "../../lib/audio-progress-utils";
 import { logger } from "../../lib/logger";
 import {
@@ -7,11 +8,6 @@ import {
   setMediaSessionPositionState,
   unbindMediaSessionControls,
 } from "../mediaSession";
-import type {
-  EngineEvent,
-  LoadTrackOptions,
-  PlaybackEngine,
-} from "../types";
 
 type Listener = (event: EngineEvent) => void;
 
@@ -100,7 +96,10 @@ export function createWebviewEngine(
     const audio = getAudio();
     if (!audio || destroyed) return;
     // Attach once per element instance.
-    if ((audio as HTMLAudioElement & { __auroraEngineBound?: boolean }).__auroraEngineBound) {
+    if (
+      (audio as HTMLAudioElement & { __auroraEngineBound?: boolean })
+        .__auroraEngineBound
+    ) {
       if (pendingLoad) {
         const options = pendingLoad;
         pendingLoad = null;
@@ -108,8 +107,9 @@ export function createWebviewEngine(
       }
       return;
     }
-    (audio as HTMLAudioElement & { __auroraEngineBound?: boolean }).__auroraEngineBound =
-      true;
+    (
+      audio as HTMLAudioElement & { __auroraEngineBound?: boolean }
+    ).__auroraEngineBound = true;
     attachElementListeners(audio);
     bindMediaSessionControls({
       play: async () => {

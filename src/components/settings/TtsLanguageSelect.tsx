@@ -1,5 +1,11 @@
+import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
+import {
+  AVAILABLE_LANGS,
+  normalizeTtsLanguage,
+} from "../../constants/languages";
 import { useSettingsContext } from "../../context/SettingsContext";
 import { useTranslation } from "../../lib/i18n";
+import { Label } from "../ui/label";
 import {
   Select,
   SelectContent,
@@ -7,9 +13,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { Label } from "../ui/label";
-import { AVAILABLE_LANGS, normalizeTtsLanguage } from "../../constants/languages";
-import { KOKORO_VOICE_GROUPS } from "../../constants/kokoro";
 
 export function TtsLanguageSelect() {
   const { t } = useTranslation();

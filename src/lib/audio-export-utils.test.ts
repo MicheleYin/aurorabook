@@ -30,11 +30,7 @@ describe("parseSupportedAudioExportFormats", () => {
   });
 
   it("falls back to all formats when empty or invalid", () => {
-    expect(parseSupportedAudioExportFormats([])).toEqual([
-      "mp3",
-      "m4a",
-      "m4b",
-    ]);
+    expect(parseSupportedAudioExportFormats([])).toEqual(["mp3", "m4a", "m4b"]);
     expect(parseSupportedAudioExportFormats(null)).toEqual([
       "mp3",
       "m4a",

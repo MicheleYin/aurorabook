@@ -9,8 +9,7 @@
       "resources/voice-samples/",
       "resources/supertonic/onnx/",
       "resources/supertonic/voice_styles/",
-      "resources/ort-dylibs/",
-      "resources/ffmpeg-bin/"
+      "resources/ort-dylibs/"
     ],
     "windows": {
       "nsis": {

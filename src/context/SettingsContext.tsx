@@ -10,10 +10,13 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-import { normalizeVoiceId } from "../constants/kokoro";
-import { normalizeAppLanguage, normalizeTtsLanguage } from "../constants/languages";
 import type { AppSettings } from "../types/settings";
 import type { UITheme } from "../types/ui";
+import { normalizeVoiceId } from "../constants/kokoro";
+import {
+  normalizeAppLanguage,
+  normalizeTtsLanguage,
+} from "../constants/languages";
 import { logger } from "../lib/logger";
 import {
   defaultTtsSynthesisQuality,
@@ -165,7 +168,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     }
 
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    
+
     const handleSystemThemeChange = () => {
       applyTheme("system");
     };
@@ -206,9 +209,12 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
           settingsRef.current = updatedSettings;
           setSettings(updatedSettings);
 
-          const savedSettings = await invoke<AppSettings>("update_app_settings", {
-            settings: updatedSettings,
-          });
+          const savedSettings = await invoke<AppSettings>(
+            "update_app_settings",
+            {
+              settings: updatedSettings,
+            }
+          );
           const normalized = normalizeAppSettings(savedSettings);
           settingsRef.current = normalized;
           setSettings(normalized);

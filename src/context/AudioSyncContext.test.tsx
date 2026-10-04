@@ -1,14 +1,11 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
 import type { ReactNode } from "react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { toast } from "sonner";
+import { beforeEach, describe, expect, it } from "vitest";
 
-import {
-  AudioSyncProvider,
-  useAudioSyncContext,
-} from "./AudioSyncContext";
-import { SettingsProvider } from "./SettingsContext";
 import { invoke } from "../test/tauri-mocks";
+import { AudioSyncProvider, useAudioSyncContext } from "./AudioSyncContext";
+import { SettingsProvider } from "./SettingsContext";
 
 function wrapper({ children }: { children: ReactNode }) {
   return (

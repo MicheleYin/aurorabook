@@ -1,8 +1,4 @@
-import type {
-  EngineEvent,
-  LoadTrackOptions,
-  PlaybackEngine,
-} from "../types";
+import type { EngineEvent, LoadTrackOptions, PlaybackEngine } from "../types";
 import { createWebviewEngine } from "./webviewEngine";
 
 /**

@@ -3,9 +3,32 @@ import type { ColorTheme, DarkTheme, LightTheme, UITheme } from "../types/ui";
 const PREFERRED_LIGHT_KEY = "aurorabook.preferredLightTheme";
 const PREFERRED_DARK_KEY = "aurorabook.preferredDarkTheme";
 
-const LIGHT_THEMES: readonly LightTheme[] = ["light", "cream", "forest", "sunset", "rose"];
-const DARK_THEMES: readonly DarkTheme[] = ["dark", "pitch", "dark_violet", "plum", "dark_green"];
-const ALL_THEME_CLASSES = ["light", "dark", "theme-cream", "theme-pitch", "theme-dark_violet", "theme-plum", "theme-forest", "theme-sunset", "theme-rose", "theme-dark_green"] as const;
+const LIGHT_THEMES: readonly LightTheme[] = [
+  "light",
+  "cream",
+  "forest",
+  "sunset",
+  "rose",
+];
+const DARK_THEMES: readonly DarkTheme[] = [
+  "dark",
+  "pitch",
+  "dark_violet",
+  "plum",
+  "dark_green",
+];
+const ALL_THEME_CLASSES = [
+  "light",
+  "dark",
+  "theme-cream",
+  "theme-pitch",
+  "theme-dark_violet",
+  "theme-plum",
+  "theme-forest",
+  "theme-sunset",
+  "theme-rose",
+  "theme-dark_green",
+] as const;
 
 /** In-memory fallback when localStorage is unavailable (e.g. some test envs). */
 const memoryStore = new Map<string, string>();
@@ -71,7 +94,9 @@ export function rememberPreferredTheme(theme: ColorTheme): void {
 /** Resolve system / explicit theme to a concrete color theme. */
 export function resolveColorTheme(theme: UITheme): ColorTheme {
   if (theme === "system") {
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const prefersDark = window.matchMedia(
+      "(prefers-color-scheme: dark)"
+    ).matches;
     return prefersDark ? getPreferredDarkTheme() : getPreferredLightTheme();
   }
   return theme;
