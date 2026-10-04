@@ -1,0 +1,80 @@
+name: Build iOS archive
+
+on:
+  workflow_dispatch:
+    inputs:
+      onnxruntime_ref:
+        description: ONNX Runtime tag or branch used for the WebGPU iOS libraries
+        required: true
+        default: v1.29.0
+
+concurrency:
+  group: build-ios-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: iOS arm64 archive (unsigned)
+    runs-on: macos-15
+    timeout-minutes: 360
+    permissions:
+      contents: read
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+      CMAKE_GENERATOR: Ninja
+      ORT_DIRECT_LINK: "1"
+      ORT_LIB_PROFILE: Release
+      ORT_LIB_LOCATION: ${{ github.workspace }}/onnxruntime/build/iOS-webgpu/Release/Release-iphoneos
+      APPLE_DEVELOPMENT_TEAM: ${{ vars.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/onnxruntime
+          ref: ${{ inputs.onnxruntime_ref }}
+          path: onnxruntime
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Install Ninja
+        run: brew install ninja
+
+      - name: Fetch Supertonic TTS models
+        run: |
+          git lfs install
+          git clone --depth 1 https://huggingface.co/Supertone/supertonic-3 supertonic-3
+          git -C supertonic-3 lfs pull
+          test -f supertonic-3/onnx/tts.json
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build ONNX Runtime for iOS WebGPU
+        env:
+          ONNXRUNTIME_DIR: ${{ github.workspace }}/onnxruntime
+        run: ./scripts/build-onnxruntime-ios-webgpu.sh
+
+      - name: Build unsigned App Store archive
+        run: node scripts/tauri-cli.cjs ios build --target aarch64 --archive-only --no-sign
+
+      - name: Upload iOS archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurorabook-ios-arm64-${{ github.run_id }}
+          path: src-tauri/gen/apple/build/aurorabook_iOS.xcarchive
+          if-no-files-found: error
+          retention-days: 14
