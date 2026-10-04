@@ -140,3 +140,5 @@ overflow-checks = false
 
 
 
+[patch.crates-io]
+tao = { git = "https://github.com/tauri-apps/tao", rev = "f216350" }

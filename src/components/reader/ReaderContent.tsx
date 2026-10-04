@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from "react";
 
+import type { Book, ChapterWithContent } from "../../types/book";
+import type { ReaderSettings } from "./ReaderSettings";
 import { useAudioProgressContext } from "../../context/AudioProgressContext";
 import { useAudioTextSync } from "../../hooks/useAudioTextSync";
 import { useReaderDictionary } from "../../hooks/useReaderDictionary";
@@ -15,10 +23,8 @@ import {
 } from "../../lib/reader-utils";
 import { themeClassNames } from "../../lib/theme";
 import { cn } from "../../lib/utils";
-import type { Book, ChapterWithContent } from "../../types/book";
 import { LoadingScreen } from "../app/LoadingScreen";
 import { ReaderDictionaryCard } from "./ReaderDictionaryCard";
-import type { ReaderSettings } from "./ReaderSettings";
 
 interface ReaderContentProps {
   book: Book;
@@ -164,13 +170,7 @@ export function ReaderContent({
       }, 200);
       return () => clearTimeout(timeoutId);
     }
-  }, [
-    book,
-    currentChapter,
-    onRestoreProgress,
-    scrollContainerRef,
-    isLoading,
-  ]);
+  }, [book, currentChapter, onRestoreProgress, scrollContainerRef, isLoading]);
 
   useEffect(() => {
     const container = scrollContainerRef?.current;
@@ -326,8 +326,7 @@ export function ReaderContent({
     const fontSize = Number.isFinite(parsed)
       ? Math.min(36, Math.max(11, parsed))
       : 16;
-    const lineHeight =
-      fontSize >= 20 ? 1.7 : fontSize >= 18 ? 1.65 : 1.6;
+    const lineHeight = fontSize >= 20 ? 1.7 : fontSize >= 18 ? 1.65 : 1.6;
     return {
       fontSize: `${fontSize}px`,
       // Drive .reader-prose !important rules via CSS variables.
@@ -371,7 +370,10 @@ export function ReaderContent({
       onDragStart={(event) => event.preventDefault()}
       title="Tap to toggle header visibility"
     >
-      <div className="reader-content-selectable mx-auto py-8 select-none" style={paddingStyle}>
+      <div
+        className="reader-content-selectable mx-auto py-8 select-none"
+        style={paddingStyle}
+      >
         <div
           ref={contentRef}
           className={cn(
@@ -384,7 +386,9 @@ export function ReaderContent({
             WebkitUserSelect: "none",
           }}
           dangerouslySetInnerHTML={{
-            __html: prepareChapterHtmlForReader(currentChapter.contentHtml || ""),
+            __html: prepareChapterHtmlForReader(
+              currentChapter.contentHtml || ""
+            ),
           }}
         />
       </div>

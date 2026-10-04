@@ -1,42 +1,75 @@
 "use client";
 
+import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { XIcon } from "lucide-react";
-import * as React from "react";
 
-import { isPopoverInteraction, isToastInteraction, separateInsideScrollChildren } from "@/lib/dialog-utils";
+import {
+  isPopoverInteraction,
+  isToastInteraction,
+  separateInsideScrollChildren,
+} from "@/lib/dialog-utils";
 import { cn } from "@/lib/utils";
 
-function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
+function Dialog({
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />;
 }
 
-function DialogTrigger({ ...props }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />;
+function DialogTrigger({
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
+  return (
+    <DialogPrimitive.Trigger
+      className="safe-area-bottom"
+      data-slot="dialog-trigger"
+
+      {...props}
+    />
+  );
 }
 
-function DialogPortal({ ...props }: React.ComponentProps<typeof DialogPrimitive.Portal>) {
+function DialogPortal({
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Portal>) {
   return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />;
 }
 
-function DialogClose({ ...props }: React.ComponentProps<typeof DialogPrimitive.Close>) {
+function DialogClose({
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Close>) {
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
 }
 
-function DialogOverlay({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
+function DialogOverlay({
+  className,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50",
-        className,
+        className
       )}
       {...props}
     />
   );
 }
 
-type MaxWidth = "sm" | "md" | "lg" | "xl" | "2xl" | "3xl" | "4xl" | "5xl" | "6xl" | "7xl" | "full";
+type MaxWidth =
+  | "sm"
+  | "md"
+  | "lg"
+  | "xl"
+  | "2xl"
+  | "3xl"
+  | "4xl"
+  | "5xl"
+  | "6xl"
+  | "7xl"
+  | "full";
 
 const maxWidthClasses: Record<MaxWidth, string> = {
   sm: "sm:max-w-sm",
@@ -99,7 +132,11 @@ function DialogContent({
 
   const { headerElement, footerElement, contentElements } = isInsideScroll
     ? separateInsideScrollChildren(children)
-    : { headerElement: null, footerElement: null, contentElements: [] as React.ReactNode[] };
+    : {
+        headerElement: null,
+        footerElement: null,
+        contentElements: [] as React.ReactNode[],
+      };
 
   return (
     <DialogPortal data-slot="dialog-portal">
@@ -122,23 +159,30 @@ function DialogContent({
           resolveMaxWidthClass(maxWidth),
           // Outside scroll: keep overflow off this node so the dialog-scoped Sonner toaster is not clipped
           // (same idea as inside scroll — toaster sits beside the scrollable region, not inside it).
-          isOutsideScroll && "flex max-h-[calc(100vh-4rem)] min-h-0 flex-col p-6",
+          isOutsideScroll &&
+            "flex max-h-[calc(100vh-4rem)] min-h-0 flex-col p-6",
           isInsideScroll && "flex max-h-[calc(100vh-4rem)] flex-col p-0",
           !isInsideScroll && !isOutsideScroll && "grid min-w-0 gap-4 p-6",
-          className,
+          className
         )}
         {...props}
       >
         {isInsideScroll ? (
           <>
-            {headerElement && <div className="shrink-0 px-6 pt-6">{headerElement}</div>}
+            {headerElement && (
+              <div className="shrink-0 px-6 pt-6">{headerElement}</div>
+            )}
             <div
               className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6"
               onWheel={(e) => {
                 const el = e.currentTarget;
                 const canScrollUp = el.scrollTop > 0;
-                const canScrollDown = el.scrollTop < el.scrollHeight - el.clientHeight;
-                if ((e.deltaY < 0 && canScrollUp) || (e.deltaY > 0 && canScrollDown)) {
+                const canScrollDown =
+                  el.scrollTop < el.scrollHeight - el.clientHeight;
+                if (
+                  (e.deltaY < 0 && canScrollUp) ||
+                  (e.deltaY > 0 && canScrollDown)
+                ) {
                   e.preventDefault();
                   el.scrollTop += e.deltaY;
                 }
@@ -146,7 +190,9 @@ function DialogContent({
             >
               {contentElements}
             </div>
-            {footerElement && <div className="shrink-0 px-6 pb-6">{footerElement}</div>}
+            {footerElement && (
+              <div className="shrink-0 px-6 pb-6">{footerElement}</div>
+            )}
           </>
         ) : isOutsideScroll ? (
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
@@ -170,21 +216,65 @@ function DialogContent({
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="dialog-header" className={cn("flex flex-col gap-2 text-center sm:text-left", className)} {...props} />;
+  return (
+    <div
+      data-slot="dialog-header"
+      className={cn("flex flex-col gap-2 text-center sm:text-left", className)}
+      {...props}
+    />
+  );
 }
 DialogHeader.displayName = "DialogHeader";
 
 function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="dialog-footer" className={cn("flex flex-col-reverse gap-2 sm:flex-row sm:justify-end", className)} {...props} />;
+  return (
+    <div
+      data-slot="dialog-footer"
+      className={cn(
+        "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+        className
+      )}
+      {...props}
+    />
+  );
 }
 DialogFooter.displayName = "DialogFooter";
 
-function DialogTitle({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Title>) {
-  return <DialogPrimitive.Title data-slot="dialog-title" className={cn("text-lg font-semibold leading-none", className)} {...props} />;
+function DialogTitle({
+  className,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Title>) {
+  return (
+    <DialogPrimitive.Title
+      data-slot="dialog-title"
+      className={cn("text-lg font-semibold leading-none", className)}
+      {...props}
+    />
+  );
 }
 
-function DialogDescription({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Description>) {
-  return <DialogPrimitive.Description data-slot="dialog-description" className={cn("text-muted-foreground text-sm", className)} {...props} />;
+function DialogDescription({
+  className,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Description>) {
+  return (
+    <DialogPrimitive.Description
+      data-slot="dialog-description"
+      className={cn("text-muted-foreground text-sm", className)}
+      {...props}
+    />
+  );
 }
 
-export { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogOverlay, DialogPortal, DialogTitle, DialogTrigger };
+export {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+  DialogTrigger,
+};
