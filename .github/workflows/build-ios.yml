@@ -26,7 +26,6 @@ jobs:
       ORT_DIRECT_LINK: "1"
       ORT_LIB_PROFILE: Release
       ORT_LIB_LOCATION: ${{ github.workspace }}/onnxruntime/build/iOS-webgpu/Release/Release-iphoneos
-      APPLE_DEVELOPMENT_TEAM: ${{ vars.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
         with:

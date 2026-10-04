@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const fs = require("fs");
+const fs = require("node:fs");
 
 const cmakePath = process.argv[2];
 if (!cmakePath || !fs.existsSync(cmakePath)) {
@@ -10,7 +10,12 @@ if (!cmakePath || !fs.existsSync(cmakePath)) {
 }
 
 const contents = fs.readFileSync(cmakePath, "utf8");
-if (contents.includes('"-fno-objc-arc"')) process.exit(0);
+if (
+  contents.includes("ObjCUtils.mm") &&
+  contents.includes('PROPERTIES COMPILE_OPTIONS "-fno-objc-arc"')
+) {
+  process.exit(0);
+}
 
 const anchor = "onnxruntime_fetchcontent_makeavailable(dawn)";
 if (!contents.includes(anchor)) {
