@@ -48,6 +48,15 @@ function parseArchArg() {
   return "";
 }
 
+function parseOutputArg() {
+  const args = process.argv.slice(2);
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === "--output") return args[index + 1] || "";
+    if (args[index].startsWith("--output=")) return args[index].slice("--output=".length).trim();
+  }
+  return "";
+}
+
 function resolveArchs() {
   if (hasArg("--bundle")) return ["x64", "arm64"];
   const raw = parseArchArg();
@@ -119,7 +128,10 @@ const version = (() => {
 })();
 
 const args = ["pack", ...layoutDirs, "--manifest", manifest];
-if (version) {
+const output = parseOutputArg();
+if (output) {
+  args.push("--output", output);
+} else if (version) {
   args.push("--output", `AuroraBook_${version}.msix${layoutDirs.length > 1 ? "bundle" : ""}`);
 }
 if (cert) {

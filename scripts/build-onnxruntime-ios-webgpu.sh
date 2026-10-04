@@ -35,12 +35,9 @@ if [ ! -d "$ONNXRUNTIME_DIR" ] || [ ! -f "$ONNXRUNTIME_DIR/build.sh" ]; then
   exit 1
 fi
 
-# Require the ARC workaround (applied in the sibling onnxruntime checkout for this spike).
-if ! grep -q 'ObjCUtils.mm' "$ONNXRUNTIME_DIR/cmake/external/onnxruntime_external_deps.cmake"; then
-  echo "❌ Missing Dawn ObjCUtils ARC patch in onnxruntime_external_deps.cmake"
-  echo "   Apply the iOS -fno-objc-arc fix from microsoft/onnxruntime#32147 first."
-  exit 1
-fi
+# Dawn's ObjCUtils.mm uses manual retain/release; upstream ORT enables ARC for iOS.
+node "$PROJECT_ROOT/scripts/patch-onnxruntime-ios-webgpu.cjs" \
+  "$ONNXRUNTIME_DIR/cmake/external/onnxruntime_external_deps.cmake"
 
 echo "   ORT dir:     $ONNXRUNTIME_DIR"
 echo "   Build dir:   $BUILD_DIR"

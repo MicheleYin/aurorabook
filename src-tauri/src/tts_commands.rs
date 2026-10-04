@@ -271,7 +271,7 @@ pub async fn generate_tts_batch(
 
 /// Convert PCM audio data to MP3 format (Tauri command).
 ///
-/// Encodes 16-bit PCM in-process using `mp3lame-encoder` (no FFmpeg process).
+/// Encodes 16-bit PCM in-process using the pure-Rust Shine encoder.
 ///
 /// # Arguments
 /// * `pcm_data` - 16-bit PCM audio data (little-endian) as bytes
@@ -295,7 +295,7 @@ pub(crate) fn encode_pcm_to_mp3_bytes(
     channels: u32,
     bitrate: Option<u32>,
 ) -> AppResult<Vec<u8>> {
-    use mp3lame_encoder::{Builder, FlushNoGap, InterleavedPcm, MonoPcm, Quality};
+    use shine_rs::{Mp3Encoder, Mp3EncoderConfig, StereoMode, SUPPORTED_SAMPLE_RATES};
 
     if pcm_data.is_empty() {
         return Err(AppError::Encoding("PCM data is empty".to_string()));
@@ -319,47 +319,39 @@ pub(crate) fn encode_pcm_to_mp3_bytes(
         )));
     }
 
-    let brate = map_bitrate_to_lame(bitrate.unwrap_or(128));
-    let mut builder =
-        Builder::new().ok_or_else(|| AppError::Encoding("Failed to initialize LAME builder".to_string()))?;
-    builder
-        .set_num_channels(channels as u8)
-        .map_err(|e| AppError::Encoding(format!("Failed to set MP3 channel count: {}", e)))?;
-    builder
-        .set_sample_rate(sample_rate)
-        .map_err(|e| AppError::Encoding(format!("Failed to set MP3 sample rate: {}", e)))?;
-    builder
-        .set_brate(brate)
-        .map_err(|e| AppError::Encoding(format!("Failed to set MP3 bitrate: {}", e)))?;
-    builder
-        .set_quality(Quality::Good)
-        .map_err(|e| AppError::Encoding(format!("Failed to set MP3 quality: {}", e)))?;
-
-    let mut encoder = builder
-        .build()
-        .map_err(|e| AppError::Encoding(format!("Failed to build MP3 encoder: {}", e)))?;
-
     let samples: Vec<i16> = pcm_data
         .chunks_exact(2)
         .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
         .collect();
-
+    let target_sample_rate = SUPPORTED_SAMPLE_RATES
+        .iter()
+        .copied()
+        .min_by_key(|candidate| candidate.abs_diff(sample_rate))
+        .unwrap_or(44_100);
+    let samples = resample_interleaved_i16(&samples, channels as usize, sample_rate, target_sample_rate);
+    let config = Mp3EncoderConfig::new()
+        .sample_rate(target_sample_rate)
+        .bitrate(map_mp3_bitrate(bitrate.unwrap_or(128), target_sample_rate))
+        .channels(channels as u8)
+        .stereo_mode(if channels == 1 {
+            StereoMode::Mono
+        } else {
+            StereoMode::JointStereo
+        });
+    let mut encoder = Mp3Encoder::new(config)
+        .map_err(|error| AppError::Encoding(format!("Failed to initialize MP3 encoder: {error}")))?;
     let mut output = Vec::new();
-    output.reserve(mp3lame_encoder::max_required_buffer_size(samples.len()));
-
-    if channels == 1 {
-        encoder
-            .encode_to_vec(MonoPcm(&samples), &mut output)
-            .map_err(|e| AppError::Encoding(format!("MP3 encode failed: {}", e)))?;
-    } else {
-        encoder
-            .encode_to_vec(InterleavedPcm(&samples), &mut output)
-            .map_err(|e| AppError::Encoding(format!("MP3 encode failed: {}", e)))?;
+    let frames = encoder
+        .encode_interleaved(&samples)
+        .map_err(|error| AppError::Encoding(format!("MP3 encode failed: {error}")))?;
+    for frame in frames {
+        output.extend_from_slice(&frame);
     }
-
-    encoder
-        .flush_to_vec::<FlushNoGap>(&mut output)
-        .map_err(|e| AppError::Encoding(format!("MP3 flush failed: {}", e)))?;
+    output.extend_from_slice(
+        &encoder
+            .finish()
+            .map_err(|error| AppError::Encoding(format!("MP3 flush failed: {error}")))?,
+    );
 
     if output.is_empty() {
         return Err(AppError::Encoding(
@@ -391,28 +383,68 @@ mod mp3_concat_clock_tests {
         let concat_duration = playback_duration_seconds(&concat).expect("concat duration");
         assert!((concat_duration - 2.0 * mp3_duration).abs() < 1e-6);
     }
+
+    #[test]
+    fn unsupported_sample_rate_is_resampled_for_mp3_encoding() {
+        let pcm = vec![0.05f32; 36_000];
+        let mp3 = encode_pcm_to_mp3_bytes(f32_to_pcm_le_bytes(&pcm), 18_000, 2, Some(128))
+            .expect("encode resampled stereo MP3");
+        let duration = playback_duration_seconds(&mp3).expect("mp3 duration");
+        assert!((0.8..1.2).contains(&duration));
+    }
 }
 
-pub(crate) fn map_bitrate_to_lame(kbps: u32) -> mp3lame_encoder::Bitrate {
-    use mp3lame_encoder::Bitrate;
-    match kbps {
-        0..=8 => Bitrate::Kbps8,
-        9..=16 => Bitrate::Kbps16,
-        17..=24 => Bitrate::Kbps24,
-        25..=32 => Bitrate::Kbps32,
-        33..=40 => Bitrate::Kbps40,
-        41..=48 => Bitrate::Kbps48,
-        49..=64 => Bitrate::Kbps64,
-        65..=80 => Bitrate::Kbps80,
-        81..=96 => Bitrate::Kbps96,
-        97..=112 => Bitrate::Kbps112,
-        113..=128 => Bitrate::Kbps128,
-        129..=160 => Bitrate::Kbps160,
-        161..=192 => Bitrate::Kbps192,
-        193..=224 => Bitrate::Kbps224,
-        225..=256 => Bitrate::Kbps256,
-        _ => Bitrate::Kbps320,
+pub(crate) fn map_mp3_bitrate(kbps: u32, sample_rate: u32) -> u32 {
+    use shine_rs::SUPPORTED_BITRATES;
+
+    let minimum = if sample_rate > 24_000 { 32 } else { 8 };
+    let maximum = if sample_rate <= 12_000 {
+        64
+    } else if sample_rate <= 24_000 {
+        160
+    } else {
+        320
+    };
+    let requested = kbps.clamp(minimum, maximum);
+    SUPPORTED_BITRATES
+        .iter()
+        .copied()
+        .find(|rate| *rate >= requested && *rate <= maximum)
+        .unwrap_or(maximum)
+}
+
+fn resample_interleaved_i16(
+    samples: &[i16],
+    channels: usize,
+    source_rate: u32,
+    target_rate: u32,
+) -> Vec<i16> {
+    if source_rate == target_rate {
+        return samples.to_vec();
     }
+    let source_frames = samples.len() / channels;
+    if source_frames == 0 {
+        return Vec::new();
+    }
+    let target_frames = (source_frames as f64 * target_rate as f64 / source_rate as f64).round()
+        as usize;
+    let mut output = Vec::with_capacity(target_frames.saturating_mul(channels));
+    for target_frame in 0..target_frames {
+        let position = target_frame as f64 * source_rate as f64 / target_rate as f64;
+        let first_frame = (position as usize).min(source_frames - 1);
+        let second_frame = (first_frame + 1).min(source_frames - 1);
+        let fraction = (position - first_frame as f64) as f32;
+        for channel in 0..channels {
+            let first = samples[first_frame * channels + channel] as f32;
+            let second = samples[second_frame * channels + channel] as f32;
+            output.push(
+                (first * (1.0 - fraction) + second * fraction)
+                    .round()
+                    .clamp(i16::MIN as f32, i16::MAX as f32) as i16,
+            );
+        }
+    }
+    output
 }
 
 #[tauri::command]

@@ -6,6 +6,7 @@
 
 use super::repositories::{AudioRepository, BookRepository};
 use super::get_db_connection;
+#[cfg(any(test, not(any(target_os = "ios", target_os = "android"))))]
 use crate::utils::constants::DEFAULT_MP3_BITRATE;
 use crate::utils::errors::{AppError, AppResult};
 use crate::utils::path_resolver::ResourcePathResolver;

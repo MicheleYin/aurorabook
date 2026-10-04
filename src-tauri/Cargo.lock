@@ -361,7 +361,6 @@ dependencies = [
  "id3",
  "jni",
  "log",
- "mp3lame-encoder",
  "mp4ameta",
  "ndarray",
  "ndk-context",
@@ -377,6 +376,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shine-rs",
  "sqlx",
  "symphonia",
  "tauri",
@@ -403,15 +403,6 @@ name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
-
-[[package]]
-name = "autotools"
-version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef941527c41b0fc0dd48511a8154cd5fc7e29200a0ff8b7203c5d777dbc795cf"
-dependencies = [
- "cc",
-]
 
 [[package]]
 name = "axum"
@@ -2199,6 +2190,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
+
+[[package]]
 name = "html5ever"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2950,26 +2947,6 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "mp3lame-encoder"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60cb9bdd89806317373e36ff745f264b7ed7ffc5bc5aab02dc7d1b837c16a8d4"
-dependencies = [
- "mp3lame-sys",
-]
-
-[[package]]
-name = "mp3lame-sys"
-version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54e3b1772db47828840702e5a2e05694527f731abadf9b931355d54035f019d8"
-dependencies = [
- "autotools",
- "cc",
- "libc",
 ]
 
 [[package]]
@@ -4749,6 +4726,18 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
+]
+
+[[package]]
+name = "shine-rs"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e2645933a5b5c439139f836098c7ad9ad6e934f84e713c4b144b25793100eff"
+dependencies = [
+ "hound",
+ "lazy_static",
+ "log",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

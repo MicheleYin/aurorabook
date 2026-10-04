@@ -211,14 +211,15 @@ pub(crate) fn export_mp3(
     tracks: &[AndroidExportTrack],
     mut on_progress: impl FnMut(usize, u8),
 ) -> AppResult<()> {
-    use mp3lame_encoder::{Builder, FlushNoGap, InterleavedPcm, Quality};
+    use id3::TagLike;
+    use shine_rs::{Mp3Encoder, Mp3EncoderConfig, StereoMode};
     use symphonia::core::codecs::DecoderOptions;
     use symphonia::core::errors::Error as SymphoniaError;
     use symphonia::core::formats::FormatOptions;
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
     use symphonia::core::probe::Hint;
-    use symphonia::core::sample::SampleBuffer;
+    use symphonia::core::audio::SampleBuffer;
     use symphonia::default::{get_codecs, get_probe};
     use std::fs::File;
     use std::io::Write;
@@ -237,28 +238,18 @@ pub(crate) fn export_mp3(
         .tempfile_in(parent.unwrap_or_else(|| Path::new(".")))
         .map_err(|error| AppError::Store(format!("Failed to create MP3 temp file: {error}")))?;
     let temp_path = temp_file.into_temp_path();
-    let mut builder = Builder::new()
-        .ok_or_else(|| AppError::Encoding("Failed to initialize LAME builder".into()))?;
-    builder
-        .set_num_channels(2)
-        .map_err(|error| AppError::Encoding(format!("Failed to set MP3 channels: {error}")))?;
-    builder
-        .set_sample_rate(44_100)
-        .map_err(|error| AppError::Encoding(format!("Failed to set MP3 sample rate: {error}")))?;
-    builder
-        .set_brate(crate::tts_commands::map_bitrate_to_lame(
+    let config = Mp3EncoderConfig::new()
+        .sample_rate(44_100)
+        .bitrate(crate::tts_commands::map_mp3_bitrate(
             crate::utils::constants::DEFAULT_MP3_BITRATE,
+            44_100,
         ))
-        .map_err(|error| AppError::Encoding(format!("Failed to set MP3 bitrate: {error}")))?;
-    builder
-        .set_quality(Quality::Good)
-        .map_err(|error| AppError::Encoding(format!("Failed to set MP3 quality: {error}")))?;
-    let mut encoder = builder
-        .build()
-        .map_err(|error| AppError::Encoding(format!("Failed to build MP3 encoder: {error}")))?;
+        .channels(2)
+        .stereo_mode(StereoMode::JointStereo);
+    let mut encoder = Mp3Encoder::new(config)
+        .map_err(|error| AppError::Encoding(format!("Failed to initialize MP3 encoder: {error}")))?;
     let mut output = File::create(&temp_path)
         .map_err(|error| AppError::Store(format!("Failed to create MP3 output: {error}")))?;
-    let mut encoded = Vec::new();
 
     crate::book_service::ios_export::reset_ios_export_cancel();
     for (track_index, track) in tracks.iter().enumerate() {
@@ -311,15 +302,16 @@ pub(crate) fn export_mp3(
             sample_buffer.copy_interleaved_ref(decoded);
             let normalized = stereo_44100(sample_buffer.samples(), channels, rate);
             if !normalized.is_empty() {
-                encoder
-                    .encode_to_vec(InterleavedPcm(&normalized), &mut encoded)
+                let frames = encoder
+                    .encode_interleaved(&normalized)
                     .map_err(|error| AppError::Encoding(format!("MP3 encode failed: {error}")))?;
-                output.write_all(&encoded).map_err(|error| {
-                    AppError::Store(format!("Write MP3 output failed: {error}"))
-                })?;
-                encoded.clear();
+                for frame in frames {
+                    output.write_all(&frame).map_err(|error| {
+                        AppError::Store(format!("Write MP3 output failed: {error}"))
+                    })?;
+                }
             }
-            decoded_frames = decoded_frames.saturating_add(packet.duration() as u64);
+            decoded_frames = decoded_frames.saturating_add(packet.dur);
             let percent = track
                 .duration_seconds
                 .filter(|duration| *duration > 0.0)
@@ -333,8 +325,8 @@ pub(crate) fn export_mp3(
         on_progress(track_index + 1, 100);
     }
 
-    encoder
-        .flush_to_vec::<FlushNoGap>(&mut encoded)
+    let encoded = encoder
+        .finish()
         .map_err(|error| AppError::Encoding(format!("MP3 encoder flush failed: {error}")))?;
     output
         .write_all(&encoded)
