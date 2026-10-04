@@ -122,9 +122,8 @@ export default defineConfig(async () => ({
         format: "es",
       },
     },
-    // Use esbuild (default) for memory-efficient minification
-    // esbuild is more memory-efficient than terser
-    minify: "esbuild",
+    // Use Vite 8's built-in Oxc minifier instead of the optional esbuild compatibility path.
+    minify: "oxc",
     // Limit CSS code splitting to reduce memory
     cssCodeSplit: true,
     // Report compressed size instead of gzipped to reduce memory
