@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { HardDrive, RefreshCw, Trash2 } from "lucide-react";
 import filesize from "filesize";
+import { HardDrive, RefreshCw, Trash2 } from "lucide-react";
 
-import type {
-  StorageCleanupResult,
-  StorageReport,
-} from "../../types/storage";
+import type { StorageCleanupResult, StorageReport } from "../../types/storage";
 import { useTranslation } from "../../lib/i18n";
 import { Button } from "../ui/button";
 import {
@@ -98,7 +95,9 @@ export function StorageSection() {
             title={t("settings.storage.scan")}
             data-testid="storage-refresh-button"
           >
-            <RefreshCw className={isLoading ? "size-4 animate-spin" : "size-4"} />
+            <RefreshCw
+              className={isLoading ? "size-4 animate-spin" : "size-4"}
+            />
           </Button>
         </div>
       </CardHeader>
@@ -124,7 +123,10 @@ export function StorageSection() {
                 <p className="text-sm text-muted-foreground">
                   {t("settings.storage.total")}
                 </p>
-                <p className="text-xl font-semibold tabular-nums" data-testid="storage-total-size">
+                <p
+                  className="text-xl font-semibold tabular-nums"
+                  data-testid="storage-total-size"
+                >
                   {filesize(report.totalBytes)}
                 </p>
               </div>
@@ -138,7 +140,10 @@ export function StorageSection() {
               </div>
             </div>
 
-            <section className="space-y-2" aria-labelledby="storage-books-title">
+            <section
+              className="space-y-2"
+              aria-labelledby="storage-books-title"
+            >
               <h3 id="storage-books-title" className="font-medium">
                 {t("settings.storage.books")}
               </h3>
@@ -167,7 +172,10 @@ export function StorageSection() {
               )}
             </section>
 
-            <section className="space-y-2" aria-labelledby="storage-issues-title">
+            <section
+              className="space-y-2"
+              aria-labelledby="storage-issues-title"
+            >
               <h3 id="storage-issues-title" className="font-medium">
                 {t("settings.storage.issues")}
               </h3>
@@ -194,7 +202,10 @@ export function StorageSection() {
                   ))}
                 </ul>
               ) : (
-                <p className="text-sm text-muted-foreground" data-testid="storage-no-issues">
+                <p
+                  className="text-sm text-muted-foreground"
+                  data-testid="storage-no-issues"
+                >
                   {t("settings.storage.no_issues")}
                 </p>
               )}
@@ -213,7 +224,10 @@ export function StorageSection() {
               </Button>
             )}
             {confirmCleanup && (
-              <div className="space-y-3 rounded-md border border-destructive/40 p-3" role="group">
+              <div
+                className="space-y-3 rounded-md border border-destructive/40 p-3"
+                role="group"
+              >
                 <p className="text-sm">
                   {t("settings.storage.cleanup_confirmation", {
                     count: removableIssueCount,

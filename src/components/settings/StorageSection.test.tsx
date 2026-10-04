@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { invoke } from "../../test/tauri-mocks";
 import type { StorageReport } from "../../types/storage";
+import { invoke } from "../../test/tauri-mocks";
 import { StorageSection } from "./StorageSection";
 
 const report: StorageReport = {
@@ -43,7 +43,9 @@ describe("StorageSection", () => {
     fireEvent.click(await screen.findByTestId("storage-cleanup-button"));
     expect(invoke).not.toHaveBeenCalledWith("cleanup_orphaned_storage");
 
-    fireEvent.click(await screen.findByTestId("storage-confirm-cleanup-button"));
+    fireEvent.click(
+      await screen.findByTestId("storage-confirm-cleanup-button")
+    );
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("cleanup_orphaned_storage");
     });

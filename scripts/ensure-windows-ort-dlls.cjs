@@ -22,19 +22,18 @@ const root = path.join(__dirname, "..");
 
 function parseArchArg() {
   for (const arg of process.argv.slice(2)) {
-    if (arg.startsWith("--arch=")) return arg.slice("--arch=".length).trim().toLowerCase();
+    if (arg.startsWith("--arch="))
+      return arg.slice("--arch=".length).trim().toLowerCase();
   }
-  return (
-    process.env.AURORABOOK_DIRECTML_ARCH || ""
-  )
-    .trim()
-    .toLowerCase();
+  return (process.env.AURORABOOK_DIRECTML_ARCH || "").trim().toLowerCase();
 }
 
 function resolveArch() {
   const raw = parseArchArg();
-  if (raw === "arm64" || raw === "aarch64" || raw === "winarm64") return "arm64";
-  if (raw === "x64" || raw === "x86_64" || raw === "amd64" || raw === "win64") return "x64";
+  if (raw === "arm64" || raw === "aarch64" || raw === "winarm64")
+    return "arm64";
+  if (raw === "x64" || raw === "x86_64" || raw === "amd64" || raw === "win64")
+    return "x64";
   const triple = (process.env.TAURI_ENV_TARGET_TRIPLE || "").toLowerCase();
   if (triple.includes("aarch64") || triple.includes("arm64")) return "arm64";
   if (process.platform === "win32" && process.arch === "arm64") return "arm64";
@@ -66,7 +65,13 @@ process.env.AURORABOOK_DIRECTML_ARCH = arch;
 
 // Also place DirectML.dll beside the built exe when present (NSIS sibling / load-time).
 const targetRoot = resolveCargoTargetDir(root);
-const dmlSrc = path.join(root, "src-tauri", "resources", "ort-dylibs", "DirectML.dll");
+const dmlSrc = path.join(
+  root,
+  "src-tauri",
+  "resources",
+  "ort-dylibs",
+  "DirectML.dll"
+);
 const siblingCandidates = [
   path.join(targetRoot, "release"),
   path.join(targetRoot, "x86_64-pc-windows-msvc", "release"),
@@ -85,7 +90,11 @@ if (fs.existsSync(dmlSrc) && fs.statSync(dmlSrc).size > 64) {
       if (needsCopy) {
         if (fs.existsSync(dest)) fs.unlinkSync(dest);
         fs.copyFileSync(dmlSrc, dest);
-        console.log("ensure-windows-ort-dlls: also", path.relative(root, dest), "(beside exe)");
+        console.log(
+          "ensure-windows-ort-dlls: also",
+          path.relative(root, dest),
+          "(beside exe)"
+        );
       }
     }
   }

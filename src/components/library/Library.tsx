@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import filesize from "filesize";
 import { BookOpen, Grid2x2, List, Plus } from "lucide-react";
 import { toast } from "sonner";
-import filesize from "filesize";
 
 import { useAudioProgressContext } from "@/context/AudioProgressContext";
 
 import type { Book } from "../../types/book";
-import type { BookDeletionResult } from "../../types/storage";
 import type { LibraryViewMode } from "../../types/settings";
+import type { BookDeletionResult } from "../../types/storage";
 import { useAppContext } from "../../context/AppContext";
 import { useRegisterShortcutActions } from "../../context/KeyboardShortcutsContext";
 import { useSettingsContext } from "../../context/SettingsContext";
@@ -20,8 +20,8 @@ import {
   sumAudioTrackDurationSeconds,
   totalBookAudioDurationSeconds,
 } from "../../lib/book-audio-duration";
-import { logger } from "../../lib/logger";
 import { useTranslation } from "../../lib/i18n";
+import { logger } from "../../lib/logger";
 import { normalizeLibraryViewMode } from "../../lib/settings-utils";
 import {
   showLoadingToast,

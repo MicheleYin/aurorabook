@@ -30,7 +30,9 @@ function runOrFail(cmd, args, opts = {}) {
 }
 
 if (String(process.env.SKIP_MACOS_APPSTORE_PKG || "").trim() === "1") {
-  console.log("sign-macos-appstore-pkg: SKIP_MACOS_APPSTORE_PKG=1, skipping .pkg signing.");
+  console.log(
+    "sign-macos-appstore-pkg: SKIP_MACOS_APPSTORE_PKG=1, skipping .pkg signing."
+  );
   process.exit(0);
 }
 
@@ -45,12 +47,16 @@ function resolveCargoTargetDir() {
   return path.resolve(tauriDir, "..", "..", ".cargo-target");
 }
 
-const identity = (process.env.APPLE_MACOS_INSTALLER_SIGNING_IDENTITY || "").trim();
+const identity = (
+  process.env.APPLE_MACOS_INSTALLER_SIGNING_IDENTITY || ""
+).trim();
 if (!identity) {
   console.error(
     "sign-macos-appstore-pkg: set APPLE_MACOS_INSTALLER_SIGNING_IDENTITY to your Mac Installer identity."
   );
-  console.error('  Example: "3rd Party Mac Developer Installer: Your Name (TEAMID)"');
+  console.error(
+    '  Example: "3rd Party Mac Developer Installer: Your Name (TEAMID)"'
+  );
   console.error("  List identities: security find-identity -v");
   process.exit(1);
 }
@@ -60,11 +66,16 @@ try {
   const conf = JSON.parse(fs.readFileSync(confPath, "utf8"));
   productName = conf.productName;
 } catch (e) {
-  console.error("sign-macos-appstore-pkg: could not read productName from tauri.conf.json:", e.message);
+  console.error(
+    "sign-macos-appstore-pkg: could not read productName from tauri.conf.json:",
+    e.message
+  );
   process.exit(1);
 }
 if (!productName) {
-  console.error("sign-macos-appstore-pkg: tauri.conf.json missing productName.");
+  console.error(
+    "sign-macos-appstore-pkg: tauri.conf.json missing productName."
+  );
   process.exit(1);
 }
 
@@ -91,18 +102,35 @@ if (!fs.existsSync(appPath)) {
     console.error("sign-macos-appstore-pkg: app bundle not found:", appPath);
     console.error("  Also checked:", legacyApp);
     console.error("  CARGO_TARGET_DIR:", cargoTargetDir);
-    console.error("  Run build:macos:appstore first (without SKIP_MACOS_APPSTORE_PKG during build).");
+    console.error(
+      "  Run build:macos:appstore first (without SKIP_MACOS_APPSTORE_PKG during build)."
+    );
     process.exit(1);
   }
 }
 
 // ITMS-90238: bundled nested Mach-O binaries must be signed with app cert + nested entitlements.
 const nestedBinaryCandidates = [
-  path.join(appPath, "Contents", "Resources", "resources", "ort-dylibs", "libwebgpu_dawn.dylib"),
-  path.join(appPath, "Contents", "Resources", "ort-dylibs", "libwebgpu_dawn.dylib"),
+  path.join(
+    appPath,
+    "Contents",
+    "Resources",
+    "resources",
+    "ort-dylibs",
+    "libwebgpu_dawn.dylib"
+  ),
+  path.join(
+    appPath,
+    "Contents",
+    "Resources",
+    "ort-dylibs",
+    "libwebgpu_dawn.dylib"
+  ),
 ];
 
-const nestedBinaryPaths = nestedBinaryCandidates.filter((p) => fs.existsSync(p) && fs.statSync(p).isFile());
+const nestedBinaryPaths = nestedBinaryCandidates.filter(
+  (p) => fs.existsSync(p) && fs.statSync(p).isFile()
+);
 
 if (nestedBinaryPaths.length > 0) {
   const appSigningIdentity = (process.env.APPLE_SIGNING_IDENTITY || "").trim();
@@ -110,12 +138,20 @@ if (nestedBinaryPaths.length > 0) {
     console.error(
       "sign-macos-appstore-pkg: nested binaries are present; set APPLE_SIGNING_IDENTITY (Mac App Store Application) to sign them and re-sign the .app."
     );
-    console.error('  Example: "3rd Party Mac Developer Application: Your Name (TEAMID)"');
+    console.error(
+      '  Example: "3rd Party Mac Developer Application: Your Name (TEAMID)"'
+    );
     process.exit(1);
   }
 
-  const appStoreEntitlementsPath = path.join(tauriDir, "Entitlements.macos-appstore.plist");
-  const nestedExecEntitlementsPath = path.join(tauriDir, "Entitlements.macos-appstore.nested-exec.plist");
+  const appStoreEntitlementsPath = path.join(
+    tauriDir,
+    "Entitlements.macos-appstore.plist"
+  );
+  const nestedExecEntitlementsPath = path.join(
+    tauriDir,
+    "Entitlements.macos-appstore.nested-exec.plist"
+  );
   if (!fs.existsSync(appStoreEntitlementsPath)) {
     console.error(
       "sign-macos-appstore-pkg: missing app entitlements file:",
@@ -133,7 +169,10 @@ if (nestedBinaryPaths.length > 0) {
 
   // Nested binaries should only inherit sandbox entitlement; avoid hardened-runtime flags (ITMS-90885).
   for (const nestedPath of nestedBinaryPaths) {
-    console.log("sign-macos-appstore-pkg: signing nested binary", path.relative(root, nestedPath));
+    console.log(
+      "sign-macos-appstore-pkg: signing nested binary",
+      path.relative(root, nestedPath)
+    );
     runOrFail(
       "codesign",
       [
@@ -148,7 +187,9 @@ if (nestedBinaryPaths.length > 0) {
     );
   }
 
-  console.log("sign-macos-appstore-pkg: re-signing app bundle after nested signing");
+  console.log(
+    "sign-macos-appstore-pkg: re-signing app bundle after nested signing"
+  );
   runOrFail(
     "codesign",
     [
@@ -174,7 +215,15 @@ const outPkg =
 
 runOrFail(
   "xcrun",
-  ["productbuild", "--sign", identity, "--component", appPath, "/Applications", outPkg],
+  [
+    "productbuild",
+    "--sign",
+    identity,
+    "--component",
+    appPath,
+    "/Applications",
+    outPkg,
+  ],
   { cwd: root }
 );
 

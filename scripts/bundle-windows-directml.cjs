@@ -34,18 +34,22 @@ function resolveArch() {
     if (arg.startsWith("--arch=")) {
       const v = arg.slice("--arch=".length).trim().toLowerCase();
       if (v === "arm64" || v === "aarch64" || v === "winarm64") return "arm64";
-      if (v === "x64" || v === "x86_64" || v === "amd64" || v === "win64") return "x64";
+      if (v === "x64" || v === "x86_64" || v === "amd64" || v === "win64")
+        return "x64";
     }
   }
-  const fromEnv = (
-    process.env.AURORABOOK_DIRECTML_ARCH || ""
-  )
+  const fromEnv = (process.env.AURORABOOK_DIRECTML_ARCH || "")
     .trim()
     .toLowerCase();
   if (fromEnv === "arm64" || fromEnv === "aarch64" || fromEnv === "winarm64") {
     return "arm64";
   }
-  if (fromEnv === "x64" || fromEnv === "x86_64" || fromEnv === "amd64" || fromEnv === "win64") {
+  if (
+    fromEnv === "x64" ||
+    fromEnv === "x86_64" ||
+    fromEnv === "amd64" ||
+    fromEnv === "win64"
+  ) {
     return "x64";
   }
   const triple = (process.env.TAURI_ENV_TARGET_TRIPLE || "").toLowerCase();
@@ -61,7 +65,9 @@ function nugetUrl() {
 
 function nugetBinPath(arch) {
   // NuGet layout: bin/x64-win/DirectML.dll, bin/arm64-win/DirectML.dll
-  return arch === "arm64" ? "bin/arm64-win/DirectML.dll" : "bin/x64-win/DirectML.dll";
+  return arch === "arm64"
+    ? "bin/arm64-win/DirectML.dll"
+    : "bin/x64-win/DirectML.dll";
 }
 
 function followRedirect(url, redirectsLeft = 8) {
@@ -112,9 +118,13 @@ function extractZip(zipPath, outDir) {
     );
     if (ps.status === 0) return;
   }
-  const unzip = spawnSync("unzip", ["-o", zipPath, "-d", outDir], { encoding: "utf8" });
+  const unzip = spawnSync("unzip", ["-o", zipPath, "-d", outDir], {
+    encoding: "utf8",
+  });
   if (unzip.status === 0) return;
-  const tar = spawnSync("tar", ["-xf", zipPath, "-C", outDir], { encoding: "utf8" });
+  const tar = spawnSync("tar", ["-xf", zipPath, "-C", outDir], {
+    encoding: "utf8",
+  });
   if (tar.status === 0) return;
   throw new Error(`Failed to extract ${zipPath}`);
 }
@@ -134,8 +144,14 @@ function looksLikePe(filePath) {
 async function main() {
   const arch = resolveArch();
   const url = nugetUrl();
-  const nupkg = path.join(cacheDir, `Microsoft.AI.DirectML.${DIRECTML_VERSION}.nupkg`);
-  const extractRoot = path.join(cacheDir, `${DIRECTML_VERSION}-${arch}-extract`);
+  const nupkg = path.join(
+    cacheDir,
+    `Microsoft.AI.DirectML.${DIRECTML_VERSION}.nupkg`
+  );
+  const extractRoot = path.join(
+    cacheDir,
+    `${DIRECTML_VERSION}-${arch}-extract`
+  );
   const relDll = nugetBinPath(arch);
 
   fs.mkdirSync(cacheDir, { recursive: true });
