@@ -222,6 +222,32 @@ fn compile_macos_audiobook_bridge() {
     }
 }
 
+fn compile_windows_audiobook_bridge() {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if !target.contains("windows") {
+        return;
+    }
+
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+    let source = Path::new(&manifest_dir)
+        .join("windows")
+        .join("AudiobookExporter.cpp");
+    println!("cargo:rerun-if-changed={}", source.display());
+    if !source.is_file() {
+        panic!("Windows Media Foundation bridge is missing at {}", source.display());
+    }
+
+    cc::Build::new()
+        .cpp(true)
+        .file(&source)
+        .flag_if_supported("/std:c++17")
+        .compile("aurora_windows_audiobook_export");
+
+    for library in ["mfplat", "mfreadwrite", "mfuuid", "ole32"] {
+        println!("cargo:rustc-link-lib={library}");
+    }
+}
+
 /// Copy Supertonic 3 assets from the repo’s `supertonic-3/` tree (Hugging Face layout) into
 /// `src-tauri/resources/supertonic/` so Tauri can bundle them.
 ///
@@ -499,6 +525,7 @@ fn main() {
 
     compile_ios_swift_bridges();
     compile_macos_audiobook_bridge();
+    compile_windows_audiobook_bridge();
 
     // Supertonic uses ONNX Runtime; iOS uses `ort` `alternative-backend` so we link
     // static ORT ourselves (pyke has no iOS WebGPU prebuilts; Xcode often omits ORT_* env).

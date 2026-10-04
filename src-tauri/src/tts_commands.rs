@@ -393,7 +393,7 @@ mod mp3_concat_clock_tests {
     }
 }
 
-fn map_bitrate_to_lame(kbps: u32) -> mp3lame_encoder::Bitrate {
+pub(crate) fn map_bitrate_to_lame(kbps: u32) -> mp3lame_encoder::Bitrate {
     use mp3lame_encoder::Bitrate;
     match kbps {
         0..=8 => Bitrate::Kbps8,

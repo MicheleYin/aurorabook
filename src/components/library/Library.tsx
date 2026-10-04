@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import filesize from "filesize";
+import { filesize } from "filesize";
 import { BookOpen, Grid2x2, List, Plus } from "lucide-react";
 import { toast } from "sonner";
 

@@ -7,6 +7,10 @@ pub mod epub_file_storage;
 pub mod storage;
 pub mod mp3_export;
 pub mod ios_export;
+#[cfg(target_os = "windows")]
+pub mod windows_export;
+#[cfg(target_os = "android")]
+pub mod android_export;
 pub mod logs_export;
 
 pub use models::*;

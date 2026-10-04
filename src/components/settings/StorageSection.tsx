@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import filesize from "filesize";
+import { filesize } from "filesize";
 import { HardDrive, RefreshCw, Trash2 } from "lucide-react";
 
 import type { StorageCleanupResult, StorageReport } from "../../types/storage";

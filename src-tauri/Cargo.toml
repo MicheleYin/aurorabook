@@ -78,7 +78,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite"] }
 
 # In-tree Supertonic TTS runtime
 # Base ort (no EP feature). Platform targets add WebGPU / DirectML below.
@@ -93,6 +93,14 @@ async-stream = "0.3.6"
 cocoa = "0.26"
 # macOS desktop: WebGPU EP (links libwebgpu_dawn).
 ort = { version = "2.0.0-rc.12", features = ["webgpu"] }
+
+[target.'cfg(any(target_os = "windows", target_os = "android"))'.dependencies]
+mp4ameta = "0.13"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
+id3 = "1.16"
 
 # Windows x86_64: WebGPU EP (Dawn / DX12).
 [target.'cfg(all(target_os = "windows", target_arch = "x86_64"))'.dependencies]

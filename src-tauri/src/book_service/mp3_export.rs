@@ -794,6 +794,7 @@ fn apply_mp4_metadata_and_chapters(
 
 fn create_mp3_export_file(
     output_path: &str,
+    book: &crate::book_service::models::Book,
     tracks: &[PreparedTrackInput],
     filelist_path: &std::path::Path,
     encode_started: Instant,
@@ -826,7 +827,34 @@ fn create_mp3_export_file(
         return Ok(());
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(target_os = "android")]
+    {
+        let _ = (filelist_path, encode_started);
+        let android_tracks: Vec<crate::book_service::android_export::AndroidExportTrack> = tracks
+            .iter()
+            .map(|track| crate::book_service::android_export::AndroidExportTrack {
+                path: track.path.clone(),
+                title: track.title.clone(),
+                duration_seconds: track.duration_seconds,
+            })
+            .collect();
+        return crate::book_service::android_export::export_mp3(
+            PathBuf::from(output_path).as_path(),
+            book,
+            &android_tracks,
+            |processed_tracks, percent| {
+                on_progress(FfmpegEncodeProgress {
+                    processed_tracks,
+                    total_tracks: tracks.len(),
+                    percent: 40 + ((percent as usize * 59) / 100) as u8,
+                    eta_ms: None,
+                    message: format!("Encoding MP3 via native Android encoder ({}%)", percent),
+                });
+            },
+        );
+    }
+
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     {
         require_ffmpeg_for_export()?;
         let bitrate_arg = format!("{}k", DEFAULT_MP3_BITRATE);
@@ -940,7 +968,76 @@ fn create_mp4_export_file(
         return Ok(());
     }
 
-    #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    {
+        let _ = (filelist_path, encode_started);
+        let windows_tracks: Vec<crate::book_service::windows_export::WindowsExportTrack> = tracks
+            .iter()
+            .map(|track| crate::book_service::windows_export::WindowsExportTrack {
+                path: track.path.clone(),
+                title: track.title.clone(),
+                duration_seconds: track.duration_seconds,
+            })
+            .collect();
+        return crate::book_service::windows_export::export_m4a_or_m4b(
+            PathBuf::from(output_path).as_path(),
+            book,
+            format.as_str(),
+            &windows_tracks,
+            |processed_tracks, percent| {
+                on_progress(FfmpegEncodeProgress {
+                    processed_tracks,
+                    total_tracks: tracks.len(),
+                    percent: 40 + ((percent as usize * 59) / 100) as u8,
+                    eta_ms: None,
+                    message: format!(
+                        "Encoding {} via Windows Media Foundation ({}%)",
+                        format.as_str().to_uppercase(),
+                        percent
+                    ),
+                });
+            },
+        );
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let _ = (filelist_path, encode_started);
+        let android_tracks: Vec<crate::book_service::android_export::AndroidExportTrack> = tracks
+            .iter()
+            .map(|track| crate::book_service::android_export::AndroidExportTrack {
+                path: track.path.clone(),
+                title: track.title.clone(),
+                duration_seconds: track.duration_seconds,
+            })
+            .collect();
+        return crate::book_service::android_export::export_m4a_or_m4b(
+            PathBuf::from(output_path).as_path(),
+            book,
+            format.as_str(),
+            &android_tracks,
+            |processed_tracks, percent| {
+                on_progress(FfmpegEncodeProgress {
+                    processed_tracks,
+                    total_tracks: tracks.len(),
+                    percent: 40 + ((percent as usize * 59) / 100) as u8,
+                    eta_ms: None,
+                    message: format!(
+                        "Encoding {} via Android MediaCodec ({}%)",
+                        format.as_str().to_uppercase(),
+                        percent
+                    ),
+                });
+            },
+        );
+    }
+
+    #[cfg(not(any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "windows",
+        target_os = "android"
+    )))]
     {
         require_ffmpeg_for_export()?;
         if tracks.is_empty() {
@@ -1364,6 +1461,7 @@ pub async fn export_as_mp3(
 
     if let Err(e) = create_mp3_export_file(
         final_output_str,
+        &book,
         &prepared_tracks,
         &filelist_path,
         started,
