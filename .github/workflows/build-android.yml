@@ -1,0 +1,117 @@
+name: Build Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      format:
+        description: Android package format
+        required: true
+        type: choice
+        default: apk
+        options:
+          - apk
+          - aab
+
+concurrency:
+  group: build-android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Android ARM64 (${{ inputs.format }})
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
+      ANDROID_NDK_VERSION: 27.2.12479018
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK and NDK
+        run: |
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}"
+          echo "NDK_HOME=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cargo-target
+          key: ubuntu-android-arm64-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ubuntu-android-arm64-cargo-
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Fetch Supertonic TTS models
+        run: |
+          git lfs install
+          git clone --depth 1 https://huggingface.co/Supertone/supertonic-3 supertonic-3
+          git -C supertonic-3 lfs pull
+          test -f supertonic-3/onnx/tts.json
+          python3 - <<'PY'
+          from pathlib import Path
+          onnx = list(Path("supertonic-3/onnx").glob("*.onnx"))
+          assert onnx, "no .onnx files under supertonic-3/onnx"
+          sample = onnx[0]
+          assert not sample.read_bytes()[:120].startswith(b"version https://git-lfs.github.com/spec/v1"), f"{sample} is still an LFS pointer"
+          print(f"ok: {sample} ({sample.stat().st_size} bytes)")
+          PY
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build unsigned Android package
+        env:
+          PACKAGE_FORMAT: ${{ inputs.format }}
+        run: |
+          case "$PACKAGE_FORMAT" in
+            apk) output_flag=--apk ;;
+            aab) output_flag=--aab ;;
+            *) echo "Unsupported package format: $PACKAGE_FORMAT" >&2; exit 1 ;;
+          esac
+          node scripts/tauri-cli.cjs android build --ci --target aarch64 "$output_flag"
+
+      - name: Stage Android package
+        env:
+          PACKAGE_FORMAT: ${{ inputs.format }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/aurorabook-android"
+          mapfile -d '' outputs < <(find src-tauri/gen/android/app/build/outputs -type f -name "*.$PACKAGE_FORMAT" -print0)
+          if [ "${#outputs[@]}" -eq 0 ]; then
+            echo "No .$PACKAGE_FORMAT output found" >&2
+            exit 1
+          fi
+          for output in "${outputs[@]}"; do
+            cp "$output" "$RUNNER_TEMP/aurorabook-android/"
+          done
+
+      - name: Upload unsigned Android package
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurorabook-android-arm64-${{ inputs.format }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/aurorabook-android/*
+          if-no-files-found: error
+          retention-days: 14
