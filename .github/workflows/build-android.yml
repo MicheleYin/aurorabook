@@ -83,6 +83,9 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
+      - name: Initialize Android project
+        run: node scripts/tauri-cli.cjs android init --ci --skip-targets-install
+
       - name: Build unsigned Android package
         env:
           PACKAGE_FORMAT: ${{ inputs.format }}
