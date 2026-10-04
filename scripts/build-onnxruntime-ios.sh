@@ -9,7 +9,7 @@ echo "🔨 Building ONNX Runtime for iOS"
 echo "=================================="
 
 # Configuration
-IOS_DEPLOYMENT_TARGET="15.1"
+IOS_DEPLOYMENT_TARGET="${IOS_DEPLOYMENT_TARGET:-16.3}"
 BUILD_CONFIG="Release"
 ONNXRUNTIME_DIR="${ONNXRUNTIME_DIR:-../onnxruntime}"
 BUILD_DIR="${ONNXRUNTIME_DIR}/build/iOS"
