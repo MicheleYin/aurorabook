@@ -91,7 +91,7 @@ supertonic-3/
 .github/instructions/codacy.instructions.md
 
 # App Store Connect screenshot dumps (filenames contain `|`, invalid on Windows)
-AuroraBook/
+/AuroraBook/
 
 # Windows SDK packages and generated files
 .winapp
