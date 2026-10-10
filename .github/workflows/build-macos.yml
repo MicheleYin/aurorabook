@@ -3,21 +3,26 @@ name: Build macOS
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: build-macos-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: macOS (aarch64)
+    name: macOS arm64 (unsigned)
     runs-on: macos-15
-    permissions:
-      contents: read
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
       RUST_TARGET: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -63,8 +68,7 @@ jobs:
 
       # Signing and App Store packaging happen locally after downloading the artifact.
       - name: Build AuroraBook (unsigned)
-        run: |
-          node scripts/tauri-cli.cjs build --target "${RUST_TARGET}" --no-sign
+        run: node scripts/tauri-cli.cjs build --target "$RUST_TARGET" --no-sign --bundles app,dmg
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4

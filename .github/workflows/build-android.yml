@@ -22,7 +22,7 @@ permissions:
 jobs:
   build:
     name: Android ARM64 (${{ inputs.format }})
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
       ANDROID_NDK_VERSION: 27.2.12479018

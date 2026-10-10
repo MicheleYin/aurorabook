@@ -12,15 +12,17 @@ concurrency:
   group: build-ios-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: iOS arm64 archive (unsigned)
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 360
-    permissions:
-      contents: read
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
+      IPHONEOS_DEPLOYMENT_TARGET: "16.3"
       CMAKE_POLICY_VERSION_MINIMUM: "3.5"
       CMAKE_GENERATOR: Ninja
       ORT_DIRECT_LINK: "1"
@@ -38,6 +40,10 @@ jobs:
           ref: ${{ inputs.onnxruntime_ref }}
           path: onnxruntime
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -50,6 +56,25 @@ jobs:
         with:
           targets: aarch64-apple-ios
 
+      - name: Identify iOS toolchain
+        id: ios-toolchain
+        run: |
+          toolchain_fingerprint="$({
+            xcode-select -p
+            xcodebuild -version
+            xcrun --sdk iphoneos --show-sdk-version
+          } | shasum -a 256 | cut -c1-16)"
+          echo "cache_key=$toolchain_fingerprint" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cargo-target
+          key: macos-ios-arm64-${{ steps.ios-toolchain.outputs.cache_key }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: macos-ios-arm64-${{ steps.ios-toolchain.outputs.cache_key }}-
+
       - name: Install Ninja
         run: brew install ninja
 
@@ -59,17 +84,85 @@ jobs:
           git clone --depth 1 https://huggingface.co/Supertone/supertonic-3 supertonic-3
           git -C supertonic-3 lfs pull
           test -f supertonic-3/onnx/tts.json
+          python3 - <<'PY'
+          from pathlib import Path
+          onnx = list(Path("supertonic-3/onnx").glob("*.onnx"))
+          assert onnx, "no .onnx files under supertonic-3/onnx"
+          sample = onnx[0]
+          data = sample.read_bytes()[:120]
+          assert not data.startswith(b"version https://git-lfs.github.com/spec/v1"), f"{sample} is still an LFS pointer"
+          print(f"ok: {sample} ({sample.stat().st_size} bytes)")
+          PY
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
+<<<<<<< Updated upstream
       - name: Build ONNX Runtime for iOS WebGPU
+=======
+      - name: Verify Xcode and iOS SDK
+        run: |
+          xcodebuild -version
+          sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
+          sdk_major="${sdk_version%%.*}"
+          echo "iOS SDK: $sdk_version"
+          if (( sdk_major < 26 )); then
+            echo "::error::iOS SDK 26 or later is required, found $sdk_version"
+            exit 1
+          fi
+
+      - name: Initialize iOS project
+        run: node scripts/tauri-cli.cjs ios init --ci --skip-targets-install
+
+      - name: Patch iOS Info.plist and entitlements
+        run: python3 scripts/patch-ios-project.py
+
+      - name: Enforce iOS deployment target
+        run: |
+          project_dir="src-tauri/gen/apple"
+          sed -i '' "s/iOS: [0-9.]*$/iOS: $IPHONEOS_DEPLOYMENT_TARGET/" "$project_dir/project.yml"
+          sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '$IPHONEOS_DEPLOYMENT_TARGET'/" "$project_dir/Podfile"
+          sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = $IPHONEOS_DEPLOYMENT_TARGET;/g" "$project_dir/aurorabook.xcodeproj/project.pbxproj"
+
+      - name: Build ONNX Runtime for iOS with WebGPU
+        if: ${{ inputs.use_webgpu }}
+>>>>>>> Stashed changes
         env:
           ONNXRUNTIME_DIR: ${{ github.workspace }}/onnxruntime
         run: ./scripts/build-onnxruntime-ios-webgpu.sh
 
+<<<<<<< Updated upstream
+=======
+      - name: Build ONNX Runtime for iOS without WebGPU
+        if: ${{ !inputs.use_webgpu }}
+        env:
+          ONNXRUNTIME_DIR: ${{ github.workspace }}/onnxruntime
+        run: ./scripts/build-onnxruntime-ios.sh
+
+      - name: Select ONNX Runtime libraries
+        env:
+          USE_WEBGPU: ${{ inputs.use_webgpu }}
+        run: |
+          if [[ "$USE_WEBGPU" == "true" ]]; then
+            ort_lib_location="$GITHUB_WORKSPACE/onnxruntime/build/iOS-webgpu/Release/Release-iphoneos"
+          else
+            ort_lib_location="$GITHUB_WORKSPACE/onnxruntime/build/iOS/Release/Release-iphoneos"
+          fi
+          echo "ORT_LIB_LOCATION=$ort_lib_location" >> "$GITHUB_ENV"
+
+>>>>>>> Stashed changes
       - name: Build unsigned App Store archive
         run: node scripts/tauri-cli.cjs ios build --target aarch64 --archive-only --no-sign
+
+      - name: Verify archived app minimum iOS version
+        run: |
+          app="src-tauri/gen/apple/build/aurorabook_iOS.xcarchive/Products/Applications/AuroraBook.app"
+          minimum_version="$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$app/Info.plist")"
+          echo "Archived app minimum iOS version: $minimum_version"
+          if [[ "$minimum_version" != "$IPHONEOS_DEPLOYMENT_TARGET" ]]; then
+            echo "::error::Expected iOS $IPHONEOS_DEPLOYMENT_TARGET, found iOS $minimum_version"
+            exit 1
+          fi
 
       - name: Upload iOS archive
         uses: actions/upload-artifact@v4
