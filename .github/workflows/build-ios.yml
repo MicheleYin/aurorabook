@@ -3,9 +3,15 @@ name: Build iOS archive
 on:
   workflow_dispatch:
     inputs:
-      onnxruntime_ref:
-        description: ONNX Runtime tag or branch used for the WebGPU iOS libraries
+      use_webgpu:
+        description: Build ONNX Runtime with WebGPU (slower); off uses CPU/XNNPACK
         required: true
+        type: boolean
+        default: false
+      onnxruntime_ref:
+        description: ONNX Runtime tag or branch used for the iOS libraries
+        required: true
+        type: string
         default: v1.29.0
 
 concurrency:
@@ -27,8 +33,6 @@ jobs:
       CMAKE_GENERATOR: Ninja
       ORT_DIRECT_LINK: "1"
       ORT_LIB_PROFILE: Release
-      ORT_LIB_LOCATION: ${{ github.workspace }}/onnxruntime/build/iOS-webgpu/Release/Release-iphoneos
-      APPLE_DEVELOPMENT_TEAM: ${{ vars.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -97,9 +101,6 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
-<<<<<<< Updated upstream
-      - name: Build ONNX Runtime for iOS WebGPU
-=======
       - name: Verify Xcode and iOS SDK
         run: |
           xcodebuild -version
@@ -126,13 +127,10 @@ jobs:
 
       - name: Build ONNX Runtime for iOS with WebGPU
         if: ${{ inputs.use_webgpu }}
->>>>>>> Stashed changes
         env:
           ONNXRUNTIME_DIR: ${{ github.workspace }}/onnxruntime
         run: ./scripts/build-onnxruntime-ios-webgpu.sh
 
-<<<<<<< Updated upstream
-=======
       - name: Build ONNX Runtime for iOS without WebGPU
         if: ${{ !inputs.use_webgpu }}
         env:
@@ -150,7 +148,6 @@ jobs:
           fi
           echo "ORT_LIB_LOCATION=$ort_lib_location" >> "$GITHUB_ENV"
 
->>>>>>> Stashed changes
       - name: Build unsigned App Store archive
         run: node scripts/tauri-cli.cjs ios build --target aarch64 --archive-only --no-sign
 
