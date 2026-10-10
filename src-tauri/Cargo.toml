@@ -137,8 +137,3 @@ overflow-checks = false
 # - Reducing opt-level to 2 for audio-related crates
 # - Using #[inline(never)] on critical audio processing functions
 # - Adding #[target_feature(enable = "fma")] for specific optimizations
-
-
-
-[patch.crates-io]
-tao = { git = "https://github.com/tauri-apps/tao", rev = "f216350" }
