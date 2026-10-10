@@ -97,9 +97,6 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
-<<<<<<< Updated upstream
-      - name: Build ONNX Runtime for iOS WebGPU
-=======
       - name: Verify Xcode and iOS SDK
         run: |
           xcodebuild -version
@@ -124,33 +121,11 @@ jobs:
           sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '$IPHONEOS_DEPLOYMENT_TARGET'/" "$project_dir/Podfile"
           sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = $IPHONEOS_DEPLOYMENT_TARGET;/g" "$project_dir/aurorabook.xcodeproj/project.pbxproj"
 
-      - name: Build ONNX Runtime for iOS with WebGPU
-        if: ${{ inputs.use_webgpu }}
->>>>>>> Stashed changes
+      - name: Build ONNX Runtime for iOS WebGPU
         env:
           ONNXRUNTIME_DIR: ${{ github.workspace }}/onnxruntime
         run: ./scripts/build-onnxruntime-ios-webgpu.sh
 
-<<<<<<< Updated upstream
-=======
-      - name: Build ONNX Runtime for iOS without WebGPU
-        if: ${{ !inputs.use_webgpu }}
-        env:
-          ONNXRUNTIME_DIR: ${{ github.workspace }}/onnxruntime
-        run: ./scripts/build-onnxruntime-ios.sh
-
-      - name: Select ONNX Runtime libraries
-        env:
-          USE_WEBGPU: ${{ inputs.use_webgpu }}
-        run: |
-          if [[ "$USE_WEBGPU" == "true" ]]; then
-            ort_lib_location="$GITHUB_WORKSPACE/onnxruntime/build/iOS-webgpu/Release/Release-iphoneos"
-          else
-            ort_lib_location="$GITHUB_WORKSPACE/onnxruntime/build/iOS/Release/Release-iphoneos"
-          fi
-          echo "ORT_LIB_LOCATION=$ort_lib_location" >> "$GITHUB_ENV"
-
->>>>>>> Stashed changes
       - name: Build unsigned App Store archive
         run: node scripts/tauri-cli.cjs ios build --target aarch64 --archive-only --no-sign
 
