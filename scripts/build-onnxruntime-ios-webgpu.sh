@@ -35,10 +35,41 @@ if [ ! -d "$ONNXRUNTIME_DIR" ] || [ ! -f "$ONNXRUNTIME_DIR/build.sh" ]; then
   exit 1
 fi
 
-# Require the ARC workaround (applied in the sibling onnxruntime checkout for this spike).
-if ! grep -q 'ObjCUtils.mm' "$ONNXRUNTIME_DIR/cmake/external/onnxruntime_external_deps.cmake"; then
+# Apply the iOS ARC workaround to the sibling onnxruntime checkout when needed.
+ONNXRUNTIME_DEPS_CMAKE="$ONNXRUNTIME_DIR/cmake/external/onnxruntime_external_deps.cmake"
+if [ ! -f "$ONNXRUNTIME_DEPS_CMAKE" ]; then
+  echo "❌ Missing ONNX Runtime external dependencies file: $ONNXRUNTIME_DEPS_CMAKE"
+  exit 1
+fi
+
+python3 - "$ONNXRUNTIME_DEPS_CMAKE" <<'PY'
+from pathlib import Path
+import sys
+
+cmake_file = Path(sys.argv[1])
+source = cmake_file.read_text()
+source_path = '"${dawn_SOURCE_DIR}/src/dawn/utils/ObjCUtils.mm"'
+
+if source_path not in source or '"-fno-objc-arc"' not in source:
+    anchor = "    onnxruntime_fetchcontent_makeavailable(dawn)\n"
+    workaround = '''
+    # iOS: Dawn's ObjCUtils.mm uses MRC retain/release; ORT's iOS toolchain forces ARC.
+    if (CMAKE_SYSTEM_NAME STREQUAL "iOS" AND DEFINED dawn_SOURCE_DIR)
+      set_source_files_properties(
+        "${dawn_SOURCE_DIR}/src/dawn/utils/ObjCUtils.mm"
+        DIRECTORY "${dawn_SOURCE_DIR}/src/dawn/utils"
+        PROPERTIES COMPILE_OPTIONS "-fno-objc-arc")
+    endif()
+'''
+    if source.count(anchor) != 1:
+        print("❌ Could not locate the Dawn FetchContent block to apply the iOS ARC workaround.", file=sys.stderr)
+        sys.exit(1)
+    cmake_file.write_text(source.replace(anchor, anchor + workaround, 1))
+PY
+
+if ! grep -q 'ObjCUtils.mm' "$ONNXRUNTIME_DEPS_CMAKE"; then
   echo "❌ Missing Dawn ObjCUtils ARC patch in onnxruntime_external_deps.cmake"
-  echo "   Apply the iOS -fno-objc-arc fix from microsoft/onnxruntime#32147 first."
+  echo "   Could not apply the iOS -fno-objc-arc fix from microsoft/onnxruntime#32147."
   exit 1
 fi
 

@@ -21,13 +21,12 @@ export CMAKE_POLICY_VERSION_MINIMUM=3.5
 ```
 
 This script will:
-- Check prerequisites
+
+- Check prerequisites and apply the Dawn `ObjCUtils.mm` ARC workaround from
+  [onnxruntime#32147](https://github.com/microsoft/onnxruntime/issues/32147) when needed
 - Build ONNX Runtime for iOS device (arm64) with `--use_webgpu`
 - Output libraries to `../onnxruntime/build/iOS-webgpu/Release/Release-iphoneos/`
 - Produce `libonnxruntime_providers_webgpu.a` plus Dawn/Tint static libs under `_deps/`
-
-Requires the Dawn `ObjCUtils.mm` ARC workaround in the sibling onnxruntime checkout
-([onnxruntime#32147](https://github.com/microsoft/onnxruntime/issues/32147)).
 
 **Note:** The build process can take 30-60 minutes depending on your machine.
 
@@ -49,6 +48,7 @@ bun run build:ios:sim
 ## Build Configuration
 
 The build system is configured to:
+
 - Prefer ONNX Runtime libraries in `onnxruntime/build/iOS-webgpu/Release/Release-iphoneos/`
 - Link WebGPU EP + Dawn/Tint static libraries (and Metal / QuartzCore / IOSurface)
 - Register `ep::WebGPU` with CPU fallback in Supertonic TTS
@@ -65,12 +65,12 @@ ls -la ../onnxruntime/build/iOS-webgpu/Release/Release-iphoneos/libonnxruntime_*
 ls -la ../onnxruntime/build/iOS-webgpu/Release/Release-iphoneos/libonnxruntime_providers_webgpu.a
 ```
 
-2. Set `ORT_LIB_LOCATION` explicitly (see `src-tauri/signing/LOCAL_IOS_BUILD.md`)
+1. Set `ORT_LIB_LOCATION` explicitly (see `src-tauri/signing/LOCAL_IOS_BUILD.md`)
 
 ### Dawn ObjCUtils / ARC errors
 
-Apply the `-fno-objc-arc` patch for `ObjCUtils.mm` in
-`onnxruntime/cmake/external/onnxruntime_external_deps.cmake` (see #32147).
+The build script applies the `-fno-objc-arc` workaround for `ObjCUtils.mm` in
+`onnxruntime/cmake/external/onnxruntime_external_deps.cmake` automatically (see #32147).
 
 ### WebGPU EP not working
 
