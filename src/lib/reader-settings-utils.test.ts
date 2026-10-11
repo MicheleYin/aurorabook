@@ -15,9 +15,10 @@ describe("normalizeFontSize", () => {
   });
 
   it("clamps numeric values", () => {
-    expect(normalizeFontSize("10")).toBe("12");
-    expect(normalizeFontSize("30")).toBe("28");
+    expect(normalizeFontSize("10")).toBe("11");
+    expect(normalizeFontSize("30")).toBe("30");
     expect(normalizeFontSize("17.6")).toBe("18");
+    expect(normalizeFontSize("37")).toBe("36");
   });
 
   it("falls back for invalid values", () => {
@@ -35,8 +36,9 @@ describe("normalizeContentPadding", () => {
 
   it("clamps and rounds numeric padding to even values", () => {
     expect(normalizeContentPadding("7")).toBe("8");
-    expect(normalizeContentPadding("65")).toBe("64");
+    expect(normalizeContentPadding("65")).toBe("66");
     expect(normalizeContentPadding("25")).toBe("26");
+    expect(normalizeContentPadding("129")).toBe("128");
   });
 
   it("falls back for invalid values", () => {

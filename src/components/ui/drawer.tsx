@@ -122,7 +122,7 @@ function DrawerDescription({
 }
 
 /** AuroraBook call-sites still render this; DrawerContent already draws the bottom handle. */
-function DrawerHandle(_props: React.ComponentProps<"div">) {
+function DrawerHandle() {
   return null;
 }
 

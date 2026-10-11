@@ -12,6 +12,7 @@ export default [
       "**/dist/**",
       "**/build/**",
       "**/target/**",
+      "src-tauri/gen/**",
       "**/.history/**",
       "**/.mypy_cache/**",
       "**/.svelte-kit/**",

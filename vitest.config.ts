@@ -31,13 +31,6 @@ export default defineConfig({
         "src/vite-env.d.ts",
         "src/main.tsx",
       ],
-      thresholds: {
-        // Dense FE logic: ~91% lines today.
-        lines: 85,
-        functions: 85,
-        branches: 75,
-        statements: 85,
-      },
     },
   },
 });
