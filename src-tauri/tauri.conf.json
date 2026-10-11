@@ -43,7 +43,6 @@
       "entitlements": "Entitlements.macos.plist"
     },
     "iOS": {
-      "developmentTeam": "YOUR_TEAM_ID",
       "frameworks": [],
       "minimumSystemVersion": "16.3"
     }

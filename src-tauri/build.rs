@@ -273,6 +273,7 @@ fn file_needs_sync(from: &Path, to: &Path) -> bool {
 /// ort-sys looks for Dawn under `_deps/dawn-build/.../Release`, but Xcode iOS builds
 /// place archives in `Release-iphoneos/`. Supplement search paths and link Metal
 /// frameworks Dawn needs. Safe to call when ORT_LIB_LOCATION is already set.
+#[cfg(feature = "ios-webgpu")]
 fn link_ios_webgpu_dawn_deps(ort_lib_dir: &Path) {
     let webgpu_lib = ort_lib_dir.join("libonnxruntime_providers_webgpu.a");
     if !webgpu_lib.exists() {
@@ -404,9 +405,10 @@ fn main() {
 
     compile_ios_swift_bridges();
 
-    // Supertonic uses ONNX Runtime; iOS uses `ort` `alternative-backend` so we link
-    // static ORT ourselves (pyke has no iOS WebGPU prebuilts; Xcode often omits ORT_* env).
+    // WebGPU iOS uses `alternative-backend` and links the local static runtime.
+    #[cfg(feature = "ios-webgpu")]
     let target = std::env::var("TARGET").unwrap_or_default();
+    #[cfg(feature = "ios-webgpu")]
     if target.contains("apple-ios") {
         let env_ort_lib = std::env::var("ORT_LIB_LOCATION").ok().map(PathBuf::from);
 
@@ -505,6 +507,7 @@ fn main() {
 
 /// Link the full ORT static library tree for iOS (Xcode `Release-iphoneos` layout).
 /// Used with ort `alternative-backend` so ort-sys does not download/link.
+#[cfg(feature = "ios-webgpu")]
 fn link_ios_ort_static_tree(ort_lib_dir: &Path) {
     println!("cargo:rustc-link-search=native={}", ort_lib_dir.display());
 
