@@ -98,6 +98,14 @@ jobs:
           print(f"ok: {sample} ({sample.stat().st_size} bytes)")
           PY
 
+      - name: Stage Supertonic resources for Tauri
+        run: |
+          mkdir -p src-tauri/resources/supertonic/onnx src-tauri/resources/supertonic/voice_styles
+          rsync -a supertonic-3/onnx/ src-tauri/resources/supertonic/onnx/
+          rsync -a supertonic-3/voice_styles/ src-tauri/resources/supertonic/voice_styles/
+          test -f src-tauri/resources/supertonic/onnx/tts.json
+          test -n "$(find src-tauri/resources/supertonic/onnx -name '*.onnx' -print -quit)"
+
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
