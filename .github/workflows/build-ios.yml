@@ -31,7 +31,6 @@ jobs:
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
       IPHONEOS_DEPLOYMENT_TARGET: "16.3"
-      APPLE_DEVELOPMENT_TEAM: ${{ vars.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
         with:
