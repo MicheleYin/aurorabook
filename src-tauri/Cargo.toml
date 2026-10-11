@@ -13,6 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # Dev-only binary: do not ship in Tauri bundles (see required-features below).
 [features]
 gen-voice-samples = []
+ios-webgpu = ["ort/alternative-backend", "ort/webgpu"]
 
 [[bin]]
 name = "gen_voice_samples"
@@ -102,17 +103,16 @@ ort = { version = "2.0.0-rc.12", features = ["webgpu"] }
 [target.'cfg(all(target_os = "windows", target_arch = "aarch64"))'.dependencies]
 ort = { version = "2.0.0-rc.12", features = ["directml"] }
 
-# iOS: WebGPU EP (Dawn → Metal) + CPU fallback. `alternative-backend` disables
-# ort-sys prebuilt download/link (pyke has no iOS `webgpu` dist); build.rs links
-# local static ORT from ORT_LIB_LOCATION / auto-discovered iOS-webgpu tree.
+# iOS defaults to the prebuilt CoreML runtime + CPU fallback. Enable the
+# `ios-webgpu` Cargo feature to use local static ONNX Runtime WebGPU libraries.
 # waterkit-background: BGContinuedProcessingTaskRequest (iOS 26+) via Swift bridge.
 [target.'cfg(target_os = "ios")'.dependencies]
 ort = { version = "2.0.0-rc.12", default-features = false, features = [
   "std",
   "ndarray",
   "api-24",
-  "webgpu",
-  "alternative-backend",
+  "coreml",
+  "download-binaries",
 ] }
 waterkit-background = { path = "../patches/waterkit-background" }
 

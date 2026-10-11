@@ -907,8 +907,8 @@ pub fn load_voice_style(voice_style_paths: &[String], verbose: bool) -> Result<S
 }
 
 /// With `alternative-backend`, ort does not call `OrtGetApiBase` itself.
-/// iOS links a local static ORT in `build.rs`, so we must register that API first.
-#[cfg(target_os = "ios")]
+/// WebGPU iOS builds link a local static ORT in `build.rs`, so register its API first.
+#[cfg(all(target_os = "ios", feature = "ios-webgpu"))]
 fn ensure_ios_ort_api() {
     static ORT_API_INIT: Once = Once::new();
     ORT_API_INIT.call_once(|| {
@@ -941,8 +941,11 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
     }
     #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
     log::debug!("Supertonic TTS: prefer DirectML, CPU fallback");
+    #[cfg(all(target_os = "ios", feature = "ios-webgpu"))]
+    log::debug!("Supertonic TTS: prefer WebGPU, CPU fallback");
+    #[cfg(all(target_os = "ios", not(feature = "ios-webgpu")))]
+    log::debug!("Supertonic TTS: prefer CoreML, CPU fallback");
     #[cfg(any(
-        target_os = "ios",
         target_os = "macos",
         all(target_os = "windows", target_arch = "x86_64")
     ))]
@@ -955,7 +958,7 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
     ))]
     log::debug!("Supertonic TTS: using CPU EP (no GPU EP configured for this platform)");
 
-    #[cfg(target_os = "ios")]
+    #[cfg(all(target_os = "ios", feature = "ios-webgpu"))]
     ensure_ios_ort_api();
 
     // Ensure a single ORT environment is committed before session create.
@@ -977,7 +980,7 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
 
         // iOS: try WebGPU (Dawn→Metal) + CPU first. If session create fails
         // (EP register/OOM), rebuild CPU-only. Keep Level1 + 1 thread for memory.
-        #[cfg(target_os = "ios")]
+        #[cfg(all(target_os = "ios", feature = "ios-webgpu"))]
         {
             let build_ios = |use_webgpu: bool| -> Result<Session> {
                 let builder = Session::builder()
@@ -1015,6 +1018,26 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
                     build_ios(false)
                 }
             };
+        }
+
+        #[cfg(all(target_os = "ios", not(feature = "ios-webgpu")))]
+        {
+            let builder = Session::builder()
+                .map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
+            return builder
+                .with_execution_providers([
+                    ep::CoreML::default().build(),
+                    ep::CPU::default().build(),
+                ])
+                .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?
+                .with_optimization_level(GraphOptimizationLevel::Level1)
+                .map_err(|e| anyhow!("ORT optimization level setup failed: {e}"))?
+                .with_intra_threads(1)
+                .map_err(|e| anyhow!("ORT intra-threads setup failed: {e}"))?
+                .with_memory_pattern(true)
+                .map_err(|e| anyhow!("ORT memory pattern setup failed: {e}"))?
+                .commit_from_file(path)
+                .map_err(|e| anyhow!("ORT failed to load model '{}': {e}", path.display()));
         }
 
         let builder =
