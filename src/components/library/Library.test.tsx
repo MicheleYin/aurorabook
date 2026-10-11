@@ -1,8 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { Library } from "./Library";
 import type { Book } from "../../types/book";
+import { Library } from "./Library";
 
 const appState = {
   isLoadingLibrary: false,
@@ -37,6 +37,10 @@ vi.mock("../../context/AppContext", () => ({
     setCurrentBook: vi.fn(),
     setCurrentTab: vi.fn(),
   }),
+}));
+
+vi.mock("../../context/KeyboardShortcutsContext", () => ({
+  useRegisterShortcutActions: () => undefined,
 }));
 
 vi.mock("../../context/SettingsContext", () => ({
