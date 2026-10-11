@@ -73,7 +73,10 @@ export function snapshotReaderSelection(
   }
 
   const range = selection.getRangeAt(0);
-  if (!root.contains(range.commonAncestorContainer)) {
+  const isInsideReader =
+    root.contains(range.commonAncestorContainer) ||
+    Boolean(root.shadowRoot?.contains(range.commonAncestorContainer));
+  if (!isInsideReader) {
     return null;
   }
 

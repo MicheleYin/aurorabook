@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   dictionaryCardLayout,
@@ -38,6 +38,43 @@ describe("snapshotReaderSelection", () => {
     expect(snapshotReaderSelection(root)).toBeNull();
     outside.remove();
     root.remove();
+  });
+
+  it("accepts a selection inside the reader shadow root", () => {
+    const host = document.createElement("div");
+    const content = host.attachShadow({ mode: "open" });
+    const paragraph = document.createElement("p");
+    paragraph.textContent = "aurora";
+    content.appendChild(paragraph);
+    document.body.appendChild(host);
+
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    Object.defineProperty(range, "getBoundingClientRect", {
+      value: () => ({
+        top: 10,
+        left: 10,
+        width: 40,
+        height: 18,
+        bottom: 28,
+        right: 50,
+      }),
+    });
+    const selection = {
+      rangeCount: 1,
+      isCollapsed: false,
+      getRangeAt: () => range,
+      toString: () => "aurora",
+    } as Selection;
+    const getSelection = vi
+      .spyOn(window, "getSelection")
+      .mockReturnValue(selection);
+
+    expect(host.shadowRoot?.contains(range.commonAncestorContainer)).toBe(true);
+    expect(snapshotReaderSelection(host)?.query).toBe("aurora");
+
+    getSelection.mockRestore();
+    host.remove();
   });
 });
 

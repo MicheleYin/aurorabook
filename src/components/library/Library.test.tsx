@@ -10,6 +10,9 @@ const appState = {
   currentBook: null as Book | null,
 };
 
+const setCurrentBookWithLoading = vi.fn(async () => undefined);
+const setCurrentTab = vi.fn();
+
 const conversionState = {
   convertingBookId: null as string | null,
   conversionProgress: null as null | {
@@ -32,10 +35,10 @@ vi.mock("../../context/AppContext", () => ({
     library: appState.library,
     setLibrary: vi.fn(),
     isLoadingLibrary: appState.isLoadingLibrary,
-    setCurrentBookWithLoading: vi.fn(),
+    setCurrentBookWithLoading,
     currentBook: appState.currentBook,
     setCurrentBook: vi.fn(),
-    setCurrentTab: vi.fn(),
+    setCurrentTab,
   }),
 }));
 
@@ -112,6 +115,8 @@ describe("Library UI states", () => {
     appState.isLoadingLibrary = false;
     appState.library = [createBook()];
     appState.currentBook = null;
+    setCurrentBookWithLoading.mockClear();
+    setCurrentTab.mockClear();
     conversionState.convertingBookId = null;
     conversionState.conversionProgress = null;
     conversionState.eta = null;
@@ -122,6 +127,18 @@ describe("Library UI states", () => {
     render(<Library />);
     expect(screen.getByTestId("library-loading")).toBeInTheDocument();
     expect(screen.getByText("Loading library...")).toBeInTheDocument();
+  });
+
+  it("returns to the reader tab without reloading the already open book", () => {
+    const book = createBook();
+    appState.library = [book];
+    appState.currentBook = createBook();
+
+    render(<Library />);
+    screen.getByRole("button", { name: "Open" }).click();
+
+    expect(setCurrentBookWithLoading).not.toHaveBeenCalled();
+    expect(setCurrentTab).toHaveBeenCalledWith("reader");
   });
 
   it("shows conversion progress on the active book card", () => {

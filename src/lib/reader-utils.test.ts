@@ -6,6 +6,7 @@ import {
   clearReaderTextSelection,
   getPointerDistance,
   isNativeReaderContextMenuTarget,
+  mountChapterInReaderShadowRoot,
   prepareChapterHtmlForReader,
   READER_CHROME_TOGGLE_DRAG_THRESHOLD_PX,
   scrollTopAfterChromeToggle,
@@ -306,6 +307,39 @@ describe("prepareChapterHtmlForReader", () => {
     const prepared = prepareChapterHtmlForReader(html);
     expect(prepared).toContain(".chapter { color: red; }");
     expect(prepared).toContain('id="f000001"');
+  });
+});
+
+describe("mountChapterInReaderShadowRoot", () => {
+  it("keeps app styles and chapter styles inside the shadow boundary", () => {
+    const appStyles = document.createElement("style");
+    appStyles.textContent = ".app-shell { color: red; }";
+    document.head.appendChild(appStyles);
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const chapterHtml =
+      '<style>body { color: blue; }</style><p id="f000001">Chapter text</p>';
+    const { themeContainer, contentContainer } = mountChapterInReaderShadowRoot(
+      host,
+      chapterHtml
+    );
+
+    expect(host.hasAttribute("data-reader-chapter-shadow-host")).toBe(true);
+    expect(host.shadowRoot?.querySelector("style")?.textContent).toContain(
+      ".app-shell"
+    );
+    expect(contentContainer.querySelector("style")?.textContent).toContain(
+      "body"
+    );
+    expect(contentContainer.querySelector("#f000001")?.textContent).toBe(
+      "Chapter text"
+    );
+    expect(themeContainer.contains(contentContainer)).toBe(true);
+    expect(document.querySelector("[data-reader-chapter-content]")).toBeNull();
+
+    host.remove();
+    appStyles.remove();
   });
 });
 
