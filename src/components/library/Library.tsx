@@ -1,11 +1,13 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { BookOpen, Grid2x2, List, Plus } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { useAudioProgressContext } from "@/context/AudioProgressContext";
 
+import type { Book } from "../../types/book";
+import type { LibraryViewMode } from "../../types/settings";
 import { useAppContext } from "../../context/AppContext";
 import { useRegisterShortcutActions } from "../../context/KeyboardShortcutsContext";
 import { useSettingsContext } from "../../context/SettingsContext";
@@ -24,8 +26,6 @@ import {
   updateLoadingToastToSuccess,
 } from "../../lib/toast-utils";
 import { cn, formatTime } from "../../lib/utils";
-import type { Book } from "../../types/book";
-import type { LibraryViewMode } from "../../types/settings";
 import { LoadingScreen } from "../app/LoadingScreen";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardFooter } from "../ui/card";
@@ -64,8 +64,12 @@ export function Library() {
     loadBooks,
   } = useAppContext();
   const { settings, saveSettings } = useSettingsContext();
-  const { saveAudioProgress, calculateAudioProgress, currentAudioTrack, closeAudioPlayer } =
-    useAudioProgressContext();
+  const {
+    saveAudioProgress,
+    calculateAudioProgress,
+    currentAudioTrack,
+    closeAudioPlayer,
+  } = useAudioProgressContext();
 
   const booksRef = useRef(books);
 
@@ -136,6 +140,11 @@ export function Library() {
 
   const handleOpenBook = (book: Book, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    if (currentBook?.id === book.id) {
+      setCurrentTab("reader");
+      return;
+    }
+
     void (async () => {
       await setCurrentBookWithLoading(book, false);
       setCurrentTab("reader");
@@ -440,8 +449,7 @@ export function Library() {
 
       // Stop and close the player if this book is currently loaded/playing.
       const deletingCurrentBook = currentBook?.id === selectedBookId;
-      const deletingLastOpened =
-        settings?.lastOpenedBookId === selectedBookId;
+      const deletingLastOpened = settings?.lastOpenedBookId === selectedBookId;
       if (
         book &&
         (currentAudioTrack?.bookId === selectedBookId || deletingCurrentBook)
@@ -536,7 +544,7 @@ export function Library() {
           <div className="flex items-center gap-1">
             <Button
               variant={viewMode === "grid" ? "default" : "outline"}
-              
+
               onClick={() => handleViewModeChange("grid")}
               className="size-9 p-0"
             >
@@ -544,7 +552,7 @@ export function Library() {
             </Button>
             <Button
               variant={viewMode === "list" ? "default" : "outline"}
-              
+
               onClick={() => handleViewModeChange("list")}
               className="size-9 p-0"
             >
@@ -652,7 +660,6 @@ export function Library() {
                 </CardContent>
                 <CardFooter className="p-4">
                   <Button
-                    
                     className="w-full"
                     variant="ghost"
                     onClick={(e) => handleOpenBook(book, e)}
@@ -753,7 +760,6 @@ export function Library() {
                       )}
                     </div>
                     <Button
-                      
                       className="w-auto"
                       variant="ghost"
                       onClick={(e) => handleOpenBook(book, e)}

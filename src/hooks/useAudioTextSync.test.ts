@@ -1,11 +1,16 @@
+import { useRef } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useRef } from "react";
 
-import { useAudioTextSync } from "./useAudioTextSync";
 import type { Book, Chapter } from "../types/book";
-import { HIGHLIGHT_ACTIVE_CLASS, HIGHLIGHT_CLASS, HIGHLIGHT_WORD_CLASS, AUTO_SCROLL_RESUME_MS } from "../lib/audio-sync-utils";
+import {
+  AUTO_SCROLL_RESUME_MS,
+  HIGHLIGHT_ACTIVE_CLASS,
+  HIGHLIGHT_CLASS,
+  HIGHLIGHT_WORD_CLASS,
+} from "../lib/audio-sync-utils";
 import { invoke } from "../test/tauri-mocks";
+import { useAudioTextSync } from "./useAudioTextSync";
 
 const loadChapterContent = vi.fn(async () => undefined);
 
@@ -132,6 +137,7 @@ function mountReaderDom() {
 
   const prose = document.createElement("div");
   prose.className = "prose";
+  prose.setAttribute("data-reader-chapter-content", "true");
   const span1 = document.createElement("span");
   span1.id = "w1";
   span1.textContent = "Hello";
@@ -167,7 +173,10 @@ function mountReaderDom() {
   Object.defineProperty(span2, "offsetTop", { value: 600 });
 
   prose.append(span1, span2);
-  scrollContainer.appendChild(prose);
+  const shadowHost = document.createElement("div");
+  shadowHost.setAttribute("data-reader-chapter-shadow-host", "");
+  shadowHost.attachShadow({ mode: "open" }).appendChild(prose);
+  scrollContainer.appendChild(shadowHost);
   document.body.appendChild(scrollContainer);
 
   const audio = document.createElement("audio");
@@ -727,9 +736,9 @@ describe("useAudioTextSync", () => {
         ?.classList.contains(HIGHLIGHT_WORD_CLASS)
     ).toBe(true);
     expect(
-      paragraph.querySelector('[data-sync-word="0"]')?.classList.contains(
-        HIGHLIGHT_WORD_CLASS
-      )
+      paragraph
+        .querySelector('[data-sync-word="0"]')
+        ?.classList.contains(HIGHLIGHT_WORD_CLASS)
     ).toBe(false);
   });
 

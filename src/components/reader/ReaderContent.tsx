@@ -16,6 +16,7 @@ import { isDictionaryCardTarget } from "../../lib/reader-dictionary";
 import {
   clearReaderTextSelection,
   getPointerDistance,
+  mountChapterInReaderShadowRoot,
   prepareChapterHtmlForReader,
   READER_CHROME_TOGGLE_DELAY_MS,
   scrollTopAfterChromeToggle,
@@ -199,8 +200,10 @@ export function ReaderContent({
     if (!contentRef.current) return;
 
     const handleLinkClick = (e: Event) => {
-      const target = e.target as HTMLElement;
-      if (target.tagName === "A" || target.closest("a")) {
+      const hasAnchor = e
+        .composedPath()
+        .some((node) => node instanceof HTMLAnchorElement);
+      if (hasAnchor) {
         e.preventDefault();
         e.stopPropagation();
       }
@@ -344,6 +347,46 @@ export function ReaderContent({
     return { paddingLeft: padding, paddingRight: padding };
   }, [settings]);
 
+  const preparedChapterHtml = useMemo(
+    () => prepareChapterHtmlForReader(currentChapter.contentHtml || ""),
+    [currentChapter.contentHtml]
+  );
+
+  useLayoutEffect(() => {
+    const host = contentRef.current;
+    if (!host) return;
+    mountChapterInReaderShadowRoot(host, preparedChapterHtml);
+  }, [currentChapter.id, isLoading, preparedChapterHtml]);
+
+  useLayoutEffect(() => {
+    const shadowRoot = contentRef.current?.shadowRoot;
+    const themeContainer = shadowRoot?.querySelector<HTMLElement>(
+      "[data-reader-chapter-theme]"
+    );
+    const contentContainer = shadowRoot?.querySelector<HTMLElement>(
+      "[data-reader-chapter-content]"
+    );
+    if (!themeContainer || !contentContainer) return;
+
+    themeContainer.className = themeClass;
+    contentContainer.className = cn(
+      "prose prose-slate dark:prose-invert reader-prose max-w-none cursor-default select-none",
+      fontFamilyClass
+    );
+    contentContainer.style.fontSize = String(fontSizeStyle.fontSize);
+    contentContainer.style.lineHeight = String(fontSizeStyle.lineHeight);
+    contentContainer.style.setProperty(
+      "--reader-font-size",
+      String(fontSizeStyle.fontSize)
+    );
+    contentContainer.style.setProperty(
+      "--reader-line-height",
+      String(fontSizeStyle.lineHeight)
+    );
+    contentContainer.style.userSelect = "none";
+    contentContainer.style.setProperty("-webkit-user-select", "none");
+  }, [fontFamilyClass, fontSizeStyle, isLoading, themeClass]);
+
   if (isLoading) {
     return (
       <div
@@ -374,23 +417,7 @@ export function ReaderContent({
         className="reader-content-selectable mx-auto py-8 select-none"
         style={paddingStyle}
       >
-        <div
-          ref={contentRef}
-          className={cn(
-            "prose prose-slate dark:prose-invert reader-prose max-w-none cursor-default select-none",
-            fontFamilyClass
-          )}
-          style={{
-            ...fontSizeStyle,
-            userSelect: "none",
-            WebkitUserSelect: "none",
-          }}
-          dangerouslySetInnerHTML={{
-            __html: prepareChapterHtmlForReader(
-              currentChapter.contentHtml || ""
-            ),
-          }}
-        />
+        <div ref={contentRef} className="reader-chapter-shadow-host" />
       </div>
       {dictionary ? (
         <ReaderDictionaryCard

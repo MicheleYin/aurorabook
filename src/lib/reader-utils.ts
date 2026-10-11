@@ -31,6 +31,34 @@ export function prepareChapterHtmlForReader(html: string): string {
   return `${headAssets}${parsed.body.innerHTML}`;
 }
 
+export function mountChapterInReaderShadowRoot(
+  host: HTMLDivElement,
+  html: string
+): {
+  themeContainer: HTMLDivElement;
+  contentContainer: HTMLDivElement;
+} {
+  const shadowRoot = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+  shadowRoot.replaceChildren();
+  host.dataset.readerChapterShadowHost = "";
+
+  document.head
+    .querySelectorAll('style, link[rel~="stylesheet"]')
+    .forEach((styleNode) => {
+      shadowRoot.appendChild(styleNode.cloneNode(true));
+    });
+
+  const themeContainer = document.createElement("div");
+  themeContainer.dataset.readerChapterTheme = "";
+  const contentContainer = document.createElement("div");
+  contentContainer.dataset.readerChapterContent = "true";
+  contentContainer.innerHTML = html;
+  themeContainer.appendChild(contentContainer);
+  shadowRoot.appendChild(themeContainer);
+
+  return { themeContainer, contentContainer };
+}
+
 /**
  * Calculates the reading progress for a book based on scroll position and current chapter
  * @param scrollContainer - The scrollable container element
@@ -188,7 +216,9 @@ export function clearReaderTextSelection(
   return true;
 }
 
-function isReaderChromeToggleBlockedTarget(target: EventTarget | null): boolean {
+function isReaderChromeToggleBlockedTarget(
+  target: EventTarget | null
+): boolean {
   if (!(target instanceof Element)) {
     return false;
   }
