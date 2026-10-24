@@ -18,9 +18,9 @@
  *   MACOS_APPSTORE_PKG_OUT — output .pkg path (default: next to the .app in bundle/macos/)
  *   CARGO_TARGET_DIR — where Cargo wrote the build (default: repo /.cargo-target per src-tauri/.cargo/config.toml)
  */
-const fs = require("fs");
-const path = require("path");
-const { spawnSync } = require("child_process");
+const fs = require("node:fs");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 function runOrFail(cmd, args, opts = {}) {
   const result = spawnSync(cmd, args, { stdio: "inherit", ...opts });
@@ -30,7 +30,9 @@ function runOrFail(cmd, args, opts = {}) {
 }
 
 if (String(process.env.SKIP_MACOS_APPSTORE_PKG || "").trim() === "1") {
-  console.log("sign-macos-appstore-pkg: SKIP_MACOS_APPSTORE_PKG=1, skipping .pkg signing.");
+  console.log(
+    "sign-macos-appstore-pkg: SKIP_MACOS_APPSTORE_PKG=1, skipping .pkg signing."
+  );
   process.exit(0);
 }
 
@@ -45,12 +47,16 @@ function resolveCargoTargetDir() {
   return path.resolve(tauriDir, "..", "..", ".cargo-target");
 }
 
-const identity = (process.env.APPLE_MACOS_INSTALLER_SIGNING_IDENTITY || "").trim();
+const identity = (
+  process.env.APPLE_MACOS_INSTALLER_SIGNING_IDENTITY || ""
+).trim();
 if (!identity) {
   console.error(
     "sign-macos-appstore-pkg: set APPLE_MACOS_INSTALLER_SIGNING_IDENTITY to your Mac Installer identity."
   );
-  console.error('  Example: "3rd Party Mac Developer Installer: Your Name (TEAMID)"');
+  console.error(
+    '  Example: "3rd Party Mac Developer Installer: Your Name (TEAMID)"'
+  );
   console.error("  List identities: security find-identity -v");
   process.exit(1);
 }
@@ -60,11 +66,16 @@ try {
   const conf = JSON.parse(fs.readFileSync(confPath, "utf8"));
   productName = conf.productName;
 } catch (e) {
-  console.error("sign-macos-appstore-pkg: could not read productName from tauri.conf.json:", e.message);
+  console.error(
+    "sign-macos-appstore-pkg: could not read productName from tauri.conf.json:",
+    e.message
+  );
   process.exit(1);
 }
 if (!productName) {
-  console.error("sign-macos-appstore-pkg: tauri.conf.json missing productName.");
+  console.error(
+    "sign-macos-appstore-pkg: tauri.conf.json missing productName."
+  );
   process.exit(1);
 }
 
@@ -74,33 +85,74 @@ function bundleDirForTargetRoot(targetRoot) {
   return path.join(targetRoot, ...bundleSubpath);
 }
 
+const configuredAppPath = (process.env.MACOS_APPSTORE_APP_PATH || "").trim();
 let cargoTargetDir = resolveCargoTargetDir();
-let bundleDir = bundleDirForTargetRoot(cargoTargetDir);
-let appPath = path.join(bundleDir, `${productName}.app`);
+let bundleDir;
+let appPath;
 
-if (!fs.existsSync(appPath)) {
-  const legacyBundle = bundleDirForTargetRoot(path.join(tauriDir, "target"));
-  const legacyApp = path.join(legacyBundle, `${productName}.app`);
-  if (fs.existsSync(legacyApp)) {
-    bundleDir = legacyBundle;
-    appPath = legacyApp;
-    console.warn(
-      "sign-macos-appstore-pkg: using legacy src-tauri/target bundle (prefer .cargo-target per .cargo/config.toml)."
+if (configuredAppPath) {
+  appPath = path.resolve(root, configuredAppPath);
+  bundleDir = path.dirname(appPath);
+  if (
+    path.basename(appPath) !== `${productName}.app` ||
+    !fs.existsSync(appPath)
+  ) {
+    console.error(
+      "sign-macos-appstore-pkg: configured app bundle not found:",
+      appPath
     );
-  } else {
-    console.error("sign-macos-appstore-pkg: app bundle not found:", appPath);
-    console.error("  Also checked:", legacyApp);
-    console.error("  CARGO_TARGET_DIR:", cargoTargetDir);
-    console.error("  Run build:macos:appstore first (without SKIP_MACOS_APPSTORE_PKG during build).");
     process.exit(1);
+  }
+} else {
+  bundleDir = bundleDirForTargetRoot(cargoTargetDir);
+  appPath = path.join(bundleDir, `${productName}.app`);
+
+  if (!fs.existsSync(appPath)) {
+    const legacyBundle = bundleDirForTargetRoot(path.join(tauriDir, "target"));
+    const legacyApp = path.join(legacyBundle, `${productName}.app`);
+    if (fs.existsSync(legacyApp)) {
+      bundleDir = legacyBundle;
+      appPath = legacyApp;
+      console.warn(
+        "sign-macos-appstore-pkg: using legacy src-tauri/target bundle (prefer .cargo-target per .cargo/config.toml)."
+      );
+    } else {
+      console.error("sign-macos-appstore-pkg: app bundle not found:", appPath);
+      console.error("  Also checked:", legacyApp);
+      console.error("  CARGO_TARGET_DIR:", cargoTargetDir);
+      console.error(
+        "  Run build:macos:appstore first or use MACOS_APPSTORE_APP_PATH."
+      );
+      process.exit(1);
+    }
   }
 }
 
 // ITMS-90238: bundled nested Mach-O binaries must be signed with app cert + nested entitlements.
 const nestedBinaryCandidates = [
-  path.join(appPath, "Contents", "Resources", "resources", "ort-dylibs", "libwebgpu_dawn.dylib"),
-  path.join(appPath, "Contents", "Resources", "ort-dylibs", "libwebgpu_dawn.dylib"),
-  path.join(appPath, "Contents", "Resources", "resources", "ffmpeg-bin", "ffmpeg"),
+  path.join(
+    appPath,
+    "Contents",
+    "Resources",
+    "resources",
+    "ort-dylibs",
+    "libwebgpu_dawn.dylib"
+  ),
+  path.join(
+    appPath,
+    "Contents",
+    "Resources",
+    "ort-dylibs",
+    "libwebgpu_dawn.dylib"
+  ),
+  path.join(
+    appPath,
+    "Contents",
+    "Resources",
+    "resources",
+    "ffmpeg-bin",
+    "ffmpeg"
+  ),
   path.join(appPath, "Contents", "Resources", "ffmpeg-bin", "ffmpeg"),
   path.join(appPath, "Contents", "Resources", "resources", "ffmpeg"),
   path.join(appPath, "Contents", "Resources", "ffmpeg"),
@@ -108,7 +160,14 @@ const nestedBinaryCandidates = [
 
 function collectFfmpegLibDylibs(appBundlePath) {
   const libDirs = [
-    path.join(appBundlePath, "Contents", "Resources", "resources", "ffmpeg-bin", "lib"),
+    path.join(
+      appBundlePath,
+      "Contents",
+      "Resources",
+      "resources",
+      "ffmpeg-bin",
+      "lib"
+    ),
     path.join(appBundlePath, "Contents", "Resources", "ffmpeg-bin", "lib"),
   ];
   const out = [];
@@ -125,55 +184,52 @@ function collectFfmpegLibDylibs(appBundlePath) {
 }
 
 const nestedBinaryPaths = [
-  ...nestedBinaryCandidates.filter((p) => fs.existsSync(p) && fs.statSync(p).isFile()),
+  ...nestedBinaryCandidates.filter(
+    (p) => fs.existsSync(p) && fs.statSync(p).isFile()
+  ),
   ...collectFfmpegLibDylibs(appPath),
 ];
 
-if (nestedBinaryPaths.length > 0) {
-  const appSigningIdentity = (process.env.APPLE_SIGNING_IDENTITY || "").trim();
-  if (!appSigningIdentity) {
-    console.error(
-      "sign-macos-appstore-pkg: nested binaries are present; set APPLE_SIGNING_IDENTITY (Mac App Store Application) to sign them and re-sign the .app."
-    );
-    console.error('  Example: "3rd Party Mac Developer Application: Your Name (TEAMID)"');
-    process.exit(1);
-  }
+const appSigningIdentity = (process.env.APPLE_SIGNING_IDENTITY || "").trim();
+if (!appSigningIdentity) {
+  console.error(
+    "sign-macos-appstore-pkg: set APPLE_SIGNING_IDENTITY to your Mac App Store Application identity."
+  );
+  console.error(
+    '  Example: "3rd Party Mac Developer Application: Your Name (TEAMID)"'
+  );
+  process.exit(1);
+}
 
-  const appStoreEntitlementsPath = path.join(tauriDir, "Entitlements.macos-appstore.plist");
-  const nestedExecEntitlementsPath = path.join(tauriDir, "Entitlements.macos-appstore.nested-exec.plist");
-  if (!fs.existsSync(appStoreEntitlementsPath)) {
-    console.error(
-      "sign-macos-appstore-pkg: missing app entitlements file:",
-      appStoreEntitlementsPath
-    );
-    process.exit(1);
-  }
-  if (!fs.existsSync(nestedExecEntitlementsPath)) {
-    console.error(
-      "sign-macos-appstore-pkg: missing nested entitlements file:",
-      nestedExecEntitlementsPath
-    );
-    process.exit(1);
-  }
+const appStoreEntitlementsPath = path.join(
+  tauriDir,
+  "Entitlements.macos-appstore.plist"
+);
+const nestedExecEntitlementsPath = path.join(
+  tauriDir,
+  "Entitlements.macos-appstore.nested-exec.plist"
+);
+if (!fs.existsSync(appStoreEntitlementsPath)) {
+  console.error(
+    "sign-macos-appstore-pkg: missing app entitlements file:",
+    appStoreEntitlementsPath
+  );
+  process.exit(1);
+}
+if (!fs.existsSync(nestedExecEntitlementsPath)) {
+  console.error(
+    "sign-macos-appstore-pkg: missing nested entitlements file:",
+    nestedExecEntitlementsPath
+  );
+  process.exit(1);
+}
 
-  // Nested binaries should only inherit sandbox entitlement; avoid hardened-runtime flags (ITMS-90885).
-  for (const nestedPath of nestedBinaryPaths) {
-    console.log("sign-macos-appstore-pkg: signing nested binary", path.relative(root, nestedPath));
-    runOrFail(
-      "codesign",
-      [
-        "--force",
-        "--sign",
-        appSigningIdentity,
-        "--entitlements",
-        nestedExecEntitlementsPath,
-        nestedPath,
-      ],
-      { cwd: root }
-    );
-  }
-
-  console.log("sign-macos-appstore-pkg: re-signing app bundle after nested signing");
+// Nested binaries should only inherit sandbox entitlement; avoid hardened-runtime flags (ITMS-90885).
+for (const nestedPath of nestedBinaryPaths) {
+  console.log(
+    "sign-macos-appstore-pkg: signing nested binary",
+    path.relative(root, nestedPath)
+  );
   runOrFail(
     "codesign",
     [
@@ -181,26 +237,51 @@ if (nestedBinaryPaths.length > 0) {
       "--sign",
       appSigningIdentity,
       "--entitlements",
-      appStoreEntitlementsPath,
-      appPath,
+      nestedExecEntitlementsPath,
+      nestedPath,
     ],
     { cwd: root }
   );
-} else {
+}
+
+if (nestedBinaryPaths.length === 0) {
   console.warn(
     "sign-macos-appstore-pkg: no nested binary found under",
     nestedBinaryCandidates.map((p) => path.relative(root, p)).join(" or ")
   );
 }
 
+console.log("sign-macos-appstore-pkg: signing app bundle");
+runOrFail(
+  "codesign",
+  [
+    "--force",
+    "--sign",
+    appSigningIdentity,
+    "--entitlements",
+    appStoreEntitlementsPath,
+    appPath,
+  ],
+  { cwd: root }
+);
+
 const outPkg =
   (process.env.MACOS_APPSTORE_PKG_OUT || "").trim() ||
-  path.join(bundleDir, `${productName.replace(/[\s/\\\(\)]/g, "")}.pkg`);
+  path.join(bundleDir, `${productName.replace(/[\s/\\()]/g, "")}.pkg`);
 
 runOrFail(
   "xcrun",
-  ["productbuild", "--sign", identity, "--component", appPath, "/Applications", outPkg],
+  [
+    "productbuild",
+    "--sign",
+    identity,
+    "--component",
+    appPath,
+    "/Applications",
+    outPkg,
+  ],
   { cwd: root }
 );
+runOrFail("pkgutil", ["--check-signature", outPkg], { cwd: root });
 
 console.log("sign-macos-appstore-pkg: wrote", path.relative(root, outPkg));
