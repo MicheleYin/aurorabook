@@ -1,10 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import {
-  openBook,
-  waitForAudioRestored,
-  waitForLibrary,
-} from "./helpers/e2e";
+import { openBook, waitForAudioRestored, waitForLibrary } from "./helpers/e2e";
 
 test.describe("UI state correctness (mock Tauri IPC)", () => {
   test("1. open book restores saved audio time", async ({ page }) => {
@@ -38,7 +34,7 @@ test.describe("UI state correctness (mock Tauri IPC)", () => {
         paragraph.evaluate((el) => {
           const rect = el.getBoundingClientRect();
           return rect.top >= 0 && rect.top < window.innerHeight;
-        }),
+        })
       )
       .toBe(true);
   });
@@ -96,8 +92,17 @@ test.describe("UI state correctness (mock Tauri IPC)", () => {
     await page.getByTestId("floating-audio-element").evaluate((el) => {
       const audio = el as HTMLAudioElement;
       audio.currentTime = 18;
-      audio.dispatchEvent(new Event("timeupdate"));
     });
+    await expect
+      .poll(
+        () =>
+          page.getByTestId("floating-audio-element").evaluate((el) => {
+            const audio = el as HTMLAudioElement;
+            return !audio.seeking && Math.abs(audio.currentTime - 18) < 0.75;
+          }),
+        { timeout: 10_000 }
+      )
+      .toBe(true);
 
     await page.getByTestId("audio-close").click();
     await expect(page.getByTestId("floating-audio-player")).toHaveCount(0);
@@ -120,8 +125,8 @@ test.describe("UI state correctness (mock Tauri IPC)", () => {
         (s) =>
           s.bookId === "book-e2e-001" &&
           typeof s.audioState?.currentTimeSeconds === "number" &&
-          Math.abs((s.audioState.currentTimeSeconds ?? 0) - 18) < 1,
-      ),
+          Math.abs((s.audioState.currentTimeSeconds ?? 0) - 18) < 1
+      )
     ).toBe(true);
 
     await page.getByRole("tab", { name: "Library" }).click();
@@ -247,7 +252,7 @@ test.describe("UI state correctness (mock Tauri IPC)", () => {
 
     await page.keyboard.press("Escape");
     const progress = page.getByTestId(
-      "library-conversion-progress-book-e2e-001",
+      "library-conversion-progress-book-e2e-001"
     );
     await expect(progress).toBeVisible({ timeout: 15_000 });
     await expect(progress.getByText(/Synthesizing chapter 1/i)).toBeVisible();
