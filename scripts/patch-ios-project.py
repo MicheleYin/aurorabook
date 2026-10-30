@@ -7,6 +7,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 APPLE_PROJECT_DIR = ROOT / "src-tauri/gen/apple"
 PROJECT_DIR = APPLE_PROJECT_DIR / "aurorabook_iOS"
+SCRIPT_KEY = "script:"
+XCODE_SCRIPT_COMMAND = "ios xcode-script"
 
 
 def patch_tauri_xcode_launcher() -> None:
@@ -58,21 +60,63 @@ process.exit(result.status === null ? 1 : result.status);
     replace_xcode_script(project_file, 'shellScript = "', escaped_script)
 
 
+def find_yaml_script_matches(
+    lines: list[str], marker: str
+) -> list[tuple[int, int, int | None]]:
+    matches: list[tuple[int, int, int | None]] = []
+    for index, line in enumerate(lines):
+        if marker not in line:
+            continue
+        if XCODE_SCRIPT_COMMAND in line:
+            matches.append((index, index + 1, None))
+            continue
+
+        script_value = line.split(SCRIPT_KEY, 1)[-1].strip()
+        if not script_value.startswith("|"):
+            continue
+
+        block_end, content_indent, block_text = read_yaml_block(lines, index)
+        if XCODE_SCRIPT_COMMAND in block_text:
+            matches.append((index, block_end, content_indent))
+    return matches
+
+
+def read_yaml_block(lines: list[str], index: int) -> tuple[int, int | None, str]:
+    content_indent: int | None = None
+    block_end = index + 1
+    block_lines: list[str] = []
+    for block_index in range(index + 1, len(lines)):
+        block_line = lines[block_index]
+        if block_line.strip():
+            indentation = len(block_line) - len(block_line.lstrip())
+            if content_indent is None:
+                content_indent = indentation
+            elif indentation < content_indent:
+                break
+            block_lines.append(block_line)
+        block_end = block_index + 1
+    return block_end, content_indent, "".join(block_lines)
+
+
 def replace_xcode_script(
     path: Path, marker: str, script: str, *, yaml: bool = False
 ) -> None:
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    matches = [
-        index
-        for index, line in enumerate(lines)
-        if marker in line and "ios xcode-script" in line
-    ]
+    if yaml:
+        matches = find_yaml_script_matches(lines, marker)
+    else:
+        matches = [
+            (index, index + 1, None)
+            for index, line in enumerate(lines)
+            if marker in line and XCODE_SCRIPT_COMMAND in line
+        ]
+
     if len(matches) != 1:
         raise RuntimeError(
             f"Expected one iOS xcode-script entry in {path}, found {len(matches)}"
         )
 
-    index = matches[0]
+    index, block_end, content_indent = matches[0]
     line = lines[index]
     if line.endswith("\r\n"):
         newline = "\r\n"
@@ -82,7 +126,15 @@ def replace_xcode_script(
         newline = ""
     body = line.rstrip("\r\n")
     if yaml:
-        start = body.index("script:") + len("script:")
+        if content_indent is not None:
+            indentation = len(body) - len(body.lstrip())
+            lines[index:block_end] = [
+                " " * indentation + marker + " |" + newline,
+                " " * content_indent + script + newline,
+            ]
+            path.write_text("".join(lines), encoding="utf-8")
+            return
+        start = body.index(SCRIPT_KEY) + len(SCRIPT_KEY)
         body = body[:start] + " '" + script + "'"
     else:
         start = body.index(marker) + len(marker)
