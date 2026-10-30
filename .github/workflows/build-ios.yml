@@ -148,6 +148,8 @@ jobs:
         run: ./scripts/build-onnxruntime-ios-webgpu.sh
 
       - name: Build unsigned App Store archive
+        env:
+          CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
         run: |
           args=(ios build --target aarch64 --archive-only --no-sign)
           if [[ "${{ inputs.ios_runtime }}" == "webgpu" ]]; then
@@ -162,6 +164,23 @@ jobs:
           echo "Archived app minimum iOS version: $minimum_version"
           if [[ "$minimum_version" != "$IPHONEOS_DEPLOYMENT_TARGET" ]]; then
             echo "::error::Expected iOS $IPHONEOS_DEPLOYMENT_TARGET, found iOS $minimum_version"
+            exit 1
+          fi
+
+      - name: Verify iOS app icon
+        run: |
+          app="src-tauri/gen/apple/build/aurorabook_iOS.xcarchive/Products/Applications/AuroraBook.app"
+          iconset="src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset"
+          test -s "$iconset/Contents.json"
+          test -s "$iconset/AppIcon-512@2x.png"
+          test -s "$app/Assets.car"
+
+      - name: Verify iOS scene configuration
+        run: |
+          app="src-tauri/gen/apple/build/aurorabook_iOS.xcarchive/Products/Applications/AuroraBook.app"
+          delegate="$(/usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneDelegateClassName' "$app/Info.plist")"
+          if [[ "$delegate" != "TaoSceneDelegate" ]]; then
+            echo "::error::Expected TaoSceneDelegate in the archived scene configuration, found $delegate"
             exit 1
           fi
 
