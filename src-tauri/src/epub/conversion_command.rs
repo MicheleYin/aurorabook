@@ -426,8 +426,8 @@ struct BookData {
     /// Cumulative wall time from previous conversion sessions (for ETA seeding).
     prior_elapsed_ms: u64,
     conversion_chapters: Vec<ConversionChapter>,
-    total_chapters_with_text: usize,
-    completed_chapters_with_text: usize,
+    total_chapters: usize,
+    completed_chapters: usize,
     voice_id: String,
     language: String,
 }
@@ -464,16 +464,11 @@ async fn load_and_prepare_book(
         .map(|book| book.completed_chapters.iter().cloned().collect())
         .unwrap_or_default();
 
-    let total_chapters_with_text = all_conversion_chapters
-        .iter()
-        .filter(|chapter| chapter.word_count > 0)
-        .count();
+    let total_chapters = all_conversion_chapters.len();
 
-    let completed_chapters_with_text = all_conversion_chapters
+    let completed_chapters = all_conversion_chapters
         .iter()
-        .filter(|chapter| {
-            chapter.word_count > 0 && completed_chapter_hrefs.contains(&chapter.href)
-        })
+        .filter(|chapter| completed_chapter_hrefs.contains(&chapter.href))
         .count();
 
     let words_processed_from_completed: usize = all_conversion_chapters
@@ -487,9 +482,7 @@ async fn load_and_prepare_book(
     // Skip chapters that are already completed to avoid recomputation.
     let mut conversion_chapters: Vec<_> = all_conversion_chapters
         .iter()
-        .filter(|chapter| {
-            chapter.word_count > 0 && !completed_chapter_hrefs.contains(&chapter.href)
-        })
+        .filter(|chapter| !completed_chapter_hrefs.contains(&chapter.href))
         .cloned()
         .collect();
 
@@ -521,9 +514,6 @@ async fn load_and_prepare_book(
         }
     }
 
-    // Remove chapters that have no remaining words after checkpoint restoration.
-    conversion_chapters.retain(|chapter| chapter.word_count > 0);
-
     let initial_words_processed = words_processed_from_completed
         .saturating_add(words_processed_from_checkpoint)
         .min(total_words_all_chapters);
@@ -552,8 +542,8 @@ async fn load_and_prepare_book(
     let total_chapters_remaining = conversion_chapters.len();
 
     log::info!(
-        "Prepared conversion with resume: {} completed chapters with text, {} remaining (baseline {} words, prior elapsed {} ms)",
-        completed_chapters_with_text,
+        "Prepared conversion with resume: {} completed chapters, {} remaining (baseline {} words, prior elapsed {} ms)",
+        completed_chapters,
         total_chapters_remaining,
         initial_words_processed,
         prior_elapsed_ms
@@ -567,8 +557,8 @@ async fn load_and_prepare_book(
         initial_words_processed,
         prior_elapsed_ms,
         conversion_chapters,
-        total_chapters_with_text,
-        completed_chapters_with_text,
+        total_chapters,
+        completed_chapters,
         voice_id: voice_id.to_string(),
         language: language.to_string(),
     })
@@ -595,20 +585,13 @@ async fn handle_all_chapters_completed(
         if let Ok(Some(mut book)) =
             BookRepository::find_by_source_path(db.as_ref(), source_path).await
         {
-            // Verify that all chapters with text content are completed
-            let chapters_with_text: usize = book
-                .chapters
-                .iter()
-                .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
-                .count();
-
-            if book.completed_chapters.len() >= chapters_with_text {
+            if book.are_all_chapters_completed() {
                 book.conversion_status = ConversionStatus::Done;
-                log::info!("All chapters with text content completed ({} of {} total chapters), marking conversion as done", 
+                log::info!("All {} of {} chapters completed, marking conversion as done",
                     book.completed_chapters.len(), book.chapters.len());
             } else {
-                log::warn!("Expected all chapters to be completed, but only {}/{} chapters with text are completed", 
-                    book.completed_chapters.len(), chapters_with_text);
+                log::warn!("Expected all {} chapters to be completed, but only {} are marked complete",
+                    book.chapters.len(), book.completed_chapters.len());
             }
 
             book.total_words = Some(total_words_all_chapters);
@@ -636,9 +619,9 @@ async fn prepare_conversion(
     book_data: &BookData,
 ) -> AppResult<ConversionPrep> {
     log::info!(
-        "Starting conversion: {} chapters with text total ({} completed, {} remaining)",
-        book_data.total_chapters_with_text,
-        book_data.completed_chapters_with_text,
+        "Starting conversion: {} chapters total ({} completed, {} remaining)",
+        book_data.total_chapters,
+        book_data.completed_chapters,
         book_data.conversion_chapters.len()
     );
 
@@ -650,8 +633,8 @@ async fn prepare_conversion(
         .sum();
 
     emit_progress(app, ConversionProgress {
-        current_chapter: book_data.completed_chapters_with_text,
-        total_chapters: book_data.total_chapters_with_text,
+        current_chapter: book_data.completed_chapters,
+        total_chapters: book_data.total_chapters,
         words_processed: book_data.initial_words_processed,
         total_words: book_data.total_words_all_chapters,
         words_in_current_chapter: 0,
@@ -660,7 +643,7 @@ async fn prepare_conversion(
             "Converting {} remaining chapters ({} words left) after skipping {} completed chapters and restoring {} checkpoint words",
             book_data.conversion_chapters.len(),
             total_words_remaining,
-            book_data.completed_chapters_with_text,
+            book_data.completed_chapters,
             book_data.words_processed_from_checkpoint
         ),
         session_baseline_words: book_data.initial_words_processed,
@@ -730,8 +713,8 @@ async fn perform_conversion(
         Some(Arc::clone(&cancel_token)),
         Some(book_data.initial_words_processed),
         Some(book_data.total_words_all_chapters),
-        Some(book_data.completed_chapters_with_text),
-        Some(book_data.total_chapters_with_text),
+        Some(book_data.completed_chapters),
+        Some(book_data.total_chapters),
         Some(book_data.prior_elapsed_ms),
     )
     .await;
@@ -898,33 +881,15 @@ async fn save_converted_epub_and_update_book(
     let final_book = if let Ok(Some(mut book)) =
         BookRepository::find_by_source_path(db.as_ref(), source_path).await
     {
-        // Try to count chapters with text content first
-        let chapters_with_text: usize = book
-            .chapters
-            .iter()
-            .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
-            .count();
+        log::debug!("Final conversion status check: completed_chapters={}, total_chapters={}, current_status={:?}",
+            book.completed_chapters.len(), book.chapters.len(), book.conversion_status);
 
-        // If no chapters with word_count found, use total chapters as fallback
-        // (this can happen if chapters were reloaded from EPUB without word_count)
-        let expected_completed = if chapters_with_text > 0 {
-            chapters_with_text
-        } else {
-            // Fallback: use total chapters if word_count is not available
-            // This is safe because we only convert chapters with text content
-            book.chapters.len()
-        };
-
-        log::debug!("Final conversion status check: completed_chapters={}, chapters_with_text={}, total_chapters={}, expected_completed={}, current_status={:?}", 
-            book.completed_chapters.len(), chapters_with_text, book.chapters.len(), expected_completed, book.conversion_status);
-
-        // Check if all expected chapters are completed
-        if book.completed_chapters.len() == expected_completed && expected_completed > 0 {
+        if book.are_all_chapters_completed() {
             if book.conversion_status != ConversionStatus::Done {
                 book.conversion_status = ConversionStatus::Done;
                 log::info!(
                     "Conversion completed - all {} chapters are done, setting status to Done",
-                    expected_completed
+                    book.chapters.len()
                 );
                 if let Err(e) = BookRepository::save(db.as_ref(), &book).await {
                     log::warn!("Failed to save conversion status as Done: {}", e);
@@ -938,7 +903,7 @@ async fn save_converted_epub_and_update_book(
             log::warn!(
                 "Conversion not complete yet: {}/{} chapters are completed (status: {:?})",
                 book.completed_chapters.len(),
-                expected_completed,
+                book.chapters.len(),
                 book.conversion_status
             );
         }

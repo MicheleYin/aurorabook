@@ -332,8 +332,8 @@ pub fn run() {
                 }
             }
             
-            // Create and configure the main window
-            window::create_main_window(app)?;
+            // Configure the main window created from tauri.conf.json.
+            window::configure_main_window(app)?;
             
             // Initialize database connection (single pool for entire app)
             // Use a dedicated runtime kept in managed state (no mem::forget).
