@@ -3,14 +3,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
 import type { ReaderSettings } from "../components/reader/ReaderSettings";
+import type { UITheme } from "../types/ui";
 import { useSettingsContext } from "../context/SettingsContext";
 import { logger } from "../lib/logger";
 import {
   DEFAULT_READER_SETTINGS,
   normalizeContentPadding,
   normalizeFontSize,
+  normalizePaginationMode,
 } from "../lib/reader-settings-utils";
-import type { UITheme } from "../types/ui";
 
 export function useReaderSettings() {
   const {
@@ -18,8 +19,9 @@ export function useReaderSettings() {
     saveSettings: saveAppSettings,
     applyTheme,
   } = useSettingsContext();
-  const [readerSettings, setReaderSettings] =
-    useState<ReaderSettings>(DEFAULT_READER_SETTINGS);
+  const [readerSettings, setReaderSettings] = useState<ReaderSettings>(
+    DEFAULT_READER_SETTINGS
+  );
   const isInitialLoadRef = useRef(true);
   const isSyncingRef = useRef(false);
 
@@ -47,6 +49,7 @@ export function useReaderSettings() {
           theme: mergeTheme(preferences.theme),
           fontSize: normalizeFontSize(preferences.fontSize),
           contentPadding: normalizeContentPadding(preferences.contentPadding),
+          paginationMode: normalizePaginationMode(preferences.paginationMode),
         };
         setReaderSettings(syncedPreferences);
         isInitialLoadRef.current = false;
@@ -101,6 +104,7 @@ export function useReaderSettings() {
           ...settings,
           fontSize: normalizeFontSize(settings.fontSize),
           contentPadding: normalizeContentPadding(settings.contentPadding),
+          paginationMode: normalizePaginationMode(settings.paginationMode),
         };
 
         if (

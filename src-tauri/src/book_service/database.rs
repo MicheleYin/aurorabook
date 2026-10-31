@@ -369,6 +369,7 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
             progress_current_chapter_element_id TEXT,
             progress_current_chapter_element_index INTEGER,
             progress_current_chapter_scroll_top REAL,
+            progress_current_chapter_scroll_left REAL,
             progress_current_chapter_scroll_height REAL,
             progress_current_chapter_client_height REAL,
             progress_chapter_progress_percent REAL,
@@ -440,6 +441,18 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
                 .execute(pool)
                 .await
                 .map_err(|e| format!("Failed to add conversion_elapsed_ms to books: {}", e))?;
+        }
+        if !books_sql.contains("progress_current_chapter_scroll_left") {
+            log::info!("Migrating books table (adding progress_current_chapter_scroll_left)");
+            sqlx::query("ALTER TABLE books ADD COLUMN progress_current_chapter_scroll_left REAL")
+                .execute(pool)
+                .await
+                .map_err(|e| {
+                    format!(
+                        "Failed to add progress_current_chapter_scroll_left to books: {}",
+                        e
+                    )
+                })?;
         }
     }
 
@@ -755,6 +768,7 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
             font_family TEXT NOT NULL DEFAULT 'merriweather',
             content_padding TEXT NOT NULL DEFAULT 'comfortable',
             font_size TEXT NOT NULL DEFAULT 'medium',
+            pagination_mode TEXT NOT NULL DEFAULT 'scroll',
             updated_at TEXT NOT NULL
         )
         "#,
@@ -762,6 +776,23 @@ async fn init_database_schema(pool: &SqlitePool) -> Result<(), String> {
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to create reader_preferences table: {}", e))?;
+
+    let reader_preference_columns =
+        sqlx::query("PRAGMA table_info(reader_preferences)")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("Failed to inspect reader preferences schema: {}", e))?;
+    if !reader_preference_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "pagination_mode")
+    {
+        sqlx::query(
+            "ALTER TABLE reader_preferences ADD COLUMN pagination_mode TEXT NOT NULL DEFAULT 'scroll'",
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to add reader pagination preference: {}", e))?;
+    }
 
     // Custom keyboard shortcut bindings (missing row = use frontend defaults).
     sqlx::query(

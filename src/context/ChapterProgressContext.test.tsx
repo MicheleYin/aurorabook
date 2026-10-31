@@ -270,6 +270,46 @@ describe("ChapterProgressProvider", () => {
     expect(container.scrollTop).toBe(88);
   });
 
+  it("restores the saved horizontal position in paginated mode", async () => {
+    const { result } = renderHook(() => useChapterProgressContext(), {
+      wrapper,
+    });
+
+    const container = document.createElement("div");
+    container.dataset.readerPagination = "pages";
+    Object.defineProperties(container, {
+      scrollLeft: { configurable: true, writable: true, value: 0 },
+      scrollWidth: { configurable: true, value: 1200 },
+      clientWidth: { configurable: true, value: 300 },
+    });
+    result.current.containerRef.current = container;
+
+    await act(async () => {
+      await result.current.loadChapterContent("book-1", createChapter());
+    });
+
+    act(() => {
+      result.current.restoreProgress(
+        createBook({
+          progress: {
+            currentChapterId: "ch-1",
+            currentChapterHref: "ch1.xhtml",
+            currentChapterIndex: 0,
+            currentChapterScrollTop: 0,
+            currentChapterScrollLeft: 600,
+            currentChapterScrollHeight: 1200,
+            currentChapterClientHeight: 300,
+            chapterProgressPercent: 66.67,
+            bookProgressPercent: 33.33,
+            updatedAt: new Date().toISOString(),
+          },
+        })
+      );
+    });
+
+    expect(container.scrollLeft).toBe(600);
+  });
+
   it("does not restore progress when the saved chapter differs from the active one", async () => {
     const { result } = renderHook(() => useChapterProgressContext(), {
       wrapper,

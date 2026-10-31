@@ -1,16 +1,21 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { useReaderSettings } from "./useReaderSettings";
 import { invoke } from "../test/tauri-mocks";
+import { useReaderSettings } from "./useReaderSettings";
 
 const saveAppSettings = vi.fn(async () => undefined);
 const applyTheme = vi.fn();
 
 vi.mock("../context/SettingsContext", () => ({
   useSettingsContext: () => ({
-    settings: { theme: "dark", language: "en", ttsLanguage: "en", ttsVoiceId: "F1" },
+    settings: {
+      theme: "dark",
+      language: "en",
+      ttsLanguage: "en",
+      ttsVoiceId: "F1",
+    },
     saveSettings: saveAppSettings,
     applyTheme,
   }),
@@ -27,6 +32,7 @@ describe("useReaderSettings", () => {
           fontFamily: "merriweather",
           fontSize: "large",
           contentPadding: "compact",
+          paginationMode: "pages",
         };
       }
       if (cmd === "update_reader_preferences") {
@@ -44,7 +50,28 @@ describe("useReaderSettings", () => {
         theme: "dark",
         fontSize: "18",
         contentPadding: "16",
+        paginationMode: "pages",
       });
+    });
+  });
+
+  it("defaults older reader preferences to continuous scrolling", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reader_preferences") {
+        return {
+          theme: "light",
+          fontFamily: "merriweather",
+          fontSize: "16",
+          contentPadding: "24",
+        };
+      }
+      return undefined;
+    });
+
+    const { result } = renderHook(() => useReaderSettings());
+
+    await waitFor(() => {
+      expect(result.current.readerSettings.paginationMode).toBe("scroll");
     });
   });
 
@@ -73,6 +100,7 @@ describe("useReaderSettings", () => {
         fontFamily: "merriweather",
         fontSize: "xlarge",
         contentPadding: "spacious",
+        paginationMode: "pages",
       });
     });
 
@@ -82,6 +110,7 @@ describe("useReaderSettings", () => {
         theme: "light",
         fontSize: "20",
         contentPadding: "48",
+        paginationMode: "pages",
       }),
     });
     expect(saveAppSettings).toHaveBeenCalledWith({ theme: "light" });

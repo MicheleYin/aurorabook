@@ -182,6 +182,51 @@ describe("calculateBookProgress", () => {
     expect(progress.bookProgressPercent).toBe(0);
     expect(progress.chapterProgressPercent).toBe(20);
   });
+
+  it("stores horizontal page progress separately in paginated mode", () => {
+    const currentChapter: Chapter = {
+      id: "chapter-1",
+      bookId: "book-1",
+      title: "Chapter 1",
+      href: "chapter-1.xhtml",
+      chapterOrder: 0,
+    };
+    const book = createBook([currentChapter]);
+    const scrollContainer = document.createElement("div") as HTMLDivElement;
+    scrollContainer.dataset.readerPagination = "pages";
+    Object.defineProperties(scrollContainer, {
+      scrollLeft: { configurable: true, value: 200, writable: true },
+      scrollWidth: { configurable: true, value: 800 },
+      clientWidth: { configurable: true, value: 200 },
+      scrollTop: { configurable: true, value: 0, writable: true },
+      scrollHeight: { configurable: true, value: 400 },
+      clientHeight: { configurable: true, value: 400 },
+    });
+    setRect(scrollContainer, { top: 0, left: 100, right: 300, bottom: 400 });
+
+    const shadowHost = document.createElement("div");
+    shadowHost.setAttribute("data-reader-chapter-shadow-host", "");
+    const shadowRoot = shadowHost.attachShadow({ mode: "open" });
+    const content = document.createElement("section");
+    content.setAttribute("data-reader-chapter-content", "");
+    const paragraph = document.createElement("p");
+    paragraph.id = "page-paragraph";
+    content.appendChild(paragraph);
+    shadowRoot.appendChild(content);
+    scrollContainer.appendChild(shadowHost);
+    setRect(paragraph, { top: 20, bottom: 40, left: 110, right: 180 });
+
+    const progress = calculateBookProgress(
+      scrollContainer,
+      book,
+      currentChapter
+    );
+
+    expect(progress.currentChapterScrollTop).toBe(0);
+    expect(progress.currentChapterScrollLeft).toBe(200);
+    expect(progress.chapterProgressPercent).toBeCloseTo(100 / 3);
+    expect(progress.currentChapterElementId).toBe("page-paragraph");
+  });
 });
 
 describe("reader chrome and native selection helpers", () => {

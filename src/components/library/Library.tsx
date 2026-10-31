@@ -514,7 +514,7 @@ export function Library() {
   return (
     <div className="flex h-full flex-col overflow-hidden select-none">
       <div className="flex-shrink-0 space-y-4 border-b px-6 pb-6 pt-[max(1.5rem,var(--app-safe-top,0px))]">
-        <div className="flex items-center justify-between">
+        <div className="ios-control-clearance-right flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Library</h1>
             <p className="text-sm text-muted-foreground mt-1">

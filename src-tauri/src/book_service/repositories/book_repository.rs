@@ -39,6 +39,7 @@ impl BookRepository {
                 current_chapter_element_id: row.get("progress_current_chapter_element_id"),
                 current_chapter_element_index: row.get::<Option<i64>, _>("progress_current_chapter_element_index").map(|v| v as usize),
                 current_chapter_scroll_top: row.get::<Option<f64>, _>("progress_current_chapter_scroll_top").unwrap_or(0.0),
+                current_chapter_scroll_left: row.get("progress_current_chapter_scroll_left"),
                 current_chapter_scroll_height: row.get::<Option<f64>, _>("progress_current_chapter_scroll_height").unwrap_or(0.0),
                 current_chapter_client_height: row.get::<Option<f64>, _>("progress_current_chapter_client_height").unwrap_or(0.0),
                 chapter_progress_percent: row.get::<Option<f64>, _>("progress_chapter_progress_percent").unwrap_or(0.0),
@@ -281,6 +282,7 @@ impl BookRepository {
                 file_size_bytes, progress_current_chapter_id, progress_current_chapter_href,
                 progress_current_chapter_index, progress_current_chapter_element_id,
                 progress_current_chapter_element_index, progress_current_chapter_scroll_top,
+                progress_current_chapter_scroll_left,
                 progress_current_chapter_scroll_height, progress_current_chapter_client_height,
                 progress_chapter_progress_percent, progress_book_progress_percent, progress_updated_at,
                 audio_state_current_track_id, audio_state_current_track_href,
@@ -289,7 +291,7 @@ impl BookRepository {
                 completed_chapters, voice_id, total_words, words_processed,
                 conversion_session_baseline_words, conversion_session_started_at,
                 conversion_elapsed_ms, last_opened_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 author = excluded.author,
@@ -305,6 +307,7 @@ impl BookRepository {
                 progress_current_chapter_element_id = excluded.progress_current_chapter_element_id,
                 progress_current_chapter_element_index = excluded.progress_current_chapter_element_index,
                 progress_current_chapter_scroll_top = excluded.progress_current_chapter_scroll_top,
+                progress_current_chapter_scroll_left = excluded.progress_current_chapter_scroll_left,
                 progress_current_chapter_scroll_height = excluded.progress_current_chapter_scroll_height,
                 progress_current_chapter_client_height = excluded.progress_current_chapter_client_height,
                 progress_chapter_progress_percent = excluded.progress_chapter_progress_percent,
@@ -343,6 +346,7 @@ impl BookRepository {
         .bind(model.progress.as_ref().and_then(|p| p.current_chapter_element_id.as_ref()))
         .bind(model.progress.as_ref().and_then(|p| p.current_chapter_element_index.map(|v| v as i64)))
         .bind(model.progress.as_ref().map(|p| p.current_chapter_scroll_top))
+        .bind(model.progress.as_ref().and_then(|p| p.current_chapter_scroll_left))
         .bind(model.progress.as_ref().map(|p| p.current_chapter_scroll_height))
         .bind(model.progress.as_ref().map(|p| p.current_chapter_client_height))
         .bind(model.progress.as_ref().map(|p| p.chapter_progress_percent))
@@ -410,6 +414,7 @@ impl BookRepository {
                 progress_current_chapter_element_id = ?,
                 progress_current_chapter_element_index = ?,
                 progress_current_chapter_scroll_top = ?,
+                progress_current_chapter_scroll_left = ?,
                 progress_current_chapter_scroll_height = ?,
                 progress_current_chapter_client_height = ?,
                 progress_chapter_progress_percent = ?,
@@ -424,6 +429,7 @@ impl BookRepository {
         .bind(&progress.current_chapter_element_id)
         .bind(progress.current_chapter_element_index.map(|v| v as i64))
         .bind(progress.current_chapter_scroll_top)
+        .bind(progress.current_chapter_scroll_left)
         .bind(progress.current_chapter_scroll_height)
         .bind(progress.current_chapter_client_height)
         .bind(progress.chapter_progress_percent)

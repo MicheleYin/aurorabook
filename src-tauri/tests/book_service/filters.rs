@@ -30,6 +30,7 @@ fn create_test_book(id: &str, title: &str, author: &str, progress: Option<f64>) 
             current_chapter_element_id: None,
             current_chapter_element_index: None,
             current_chapter_scroll_top: 0.0,
+            current_chapter_scroll_left: None,
             current_chapter_scroll_height: 1000.0,
             current_chapter_client_height: 800.0,
             chapter_progress_percent: p,
@@ -261,4 +262,3 @@ fn test_no_matching_books() {
     let filtered = filter_books(books, Some(filter));
     assert_eq!(filtered.len(), 0);
 }
-

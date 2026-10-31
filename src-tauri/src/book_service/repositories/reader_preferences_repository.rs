@@ -20,6 +20,7 @@ impl ReaderPreferencesRepository {
                 font_family: row.get("font_family"),
                 content_padding: row.get("content_padding"),
                 font_size: row.get("font_size"),
+                pagination_mode: row.get("pagination_mode"),
             })
         } else {
             // Return default preferences if not found
@@ -29,6 +30,7 @@ impl ReaderPreferencesRepository {
                 font_family: "merriweather".to_string(),
                 content_padding: "comfortable".to_string(),
                 font_size: "medium".to_string(),
+                pagination_mode: "scroll".to_string(),
             })
         }
     }
@@ -44,13 +46,14 @@ impl ReaderPreferencesRepository {
         
         sqlx::query(
             r#"
-            INSERT INTO reader_preferences (id, theme, font_family, content_padding, font_size, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO reader_preferences (id, theme, font_family, content_padding, font_size, pagination_mode, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 theme = excluded.theme,
                 font_family = excluded.font_family,
                 content_padding = excluded.content_padding,
                 font_size = excluded.font_size,
+                pagination_mode = excluded.pagination_mode,
                 updated_at = excluded.updated_at
             "#
         )
@@ -59,6 +62,7 @@ impl ReaderPreferencesRepository {
         .bind(&model.font_family)
         .bind(&model.content_padding)
         .bind(&model.font_size)
+        .bind(&model.pagination_mode)
         .bind(&updated_at)
         .execute(pool)
         .await

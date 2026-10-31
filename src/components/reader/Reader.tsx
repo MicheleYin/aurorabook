@@ -1,18 +1,18 @@
-import { BookOpen } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { BookOpen } from "lucide-react";
 
 import { useAudioSyncContext } from "@/context/AudioSyncContext";
 import { useChapterProgressContext } from "@/context/ChapterProgressContext";
 import { useRegisterShortcutActions } from "@/context/KeyboardShortcutsContext";
+
+import type { Chapter } from "../../types/book";
 import { useAppContext } from "../../context/AppContext";
 import { useSettingsContext } from "../../context/SettingsContext";
-
 import { useReaderSettings } from "../../hooks/useReaderSettings";
 import { useTranslation } from "../../lib/i18n";
 import { logger } from "../../lib/logger";
 import { normalizeFontSize } from "../../lib/reader-settings-utils";
 import { cn } from "../../lib/utils";
-import type { Chapter } from "../../types/book";
 import { Button } from "../ui/button";
 import { ReaderContent } from "./ReaderContent";
 import { ReaderHeader } from "./ReaderHeader";
@@ -36,6 +36,10 @@ export function Reader() {
     () => settings?.readerHeaderVisible ?? true
   );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [pageStatus, setPageStatus] = useState<{
+    currentPage: number;
+    totalPages: number;
+  } | null>(null);
   const { readerSettings, setReaderSettings } = useReaderSettings();
   const { isSyncEnabled, toggleSync } = useAudioSyncContext();
   const headerRef = useRef<HTMLDivElement>(null);
@@ -248,6 +252,7 @@ export function Reader() {
         onRestoreProgress={restoreProgress}
         onContentClick={handleContentClick}
         settings={readerSettings}
+        onPageStatusChange={setPageStatus}
       />
       <div
         className={cn(
@@ -262,6 +267,9 @@ export function Reader() {
           currentChapter={currentChapter}
           onPrevious={handlePreviousChapter}
           onNext={handleNextChapter}
+          pageStatus={
+            readerSettings.paginationMode === "pages" ? pageStatus : null
+          }
         />
       </div>
       <ReaderSettings

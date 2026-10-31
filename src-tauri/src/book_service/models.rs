@@ -104,6 +104,8 @@ pub struct BookProgress {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_chapter_element_index: Option<usize>,
     pub current_chapter_scroll_top: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_chapter_scroll_left: Option<f64>,
     pub current_chapter_scroll_height: f64,
     pub current_chapter_client_height: f64,
     pub chapter_progress_percent: f64,
@@ -262,6 +264,12 @@ pub struct ReaderPreferences {
     pub font_family: String,
     pub content_padding: String,
     pub font_size: String,
+    #[serde(default = "default_reader_pagination_mode")]
+    pub pagination_mode: String,
+}
+
+fn default_reader_pagination_mode() -> String {
+    "scroll".to_string()
 }
 
 /// Custom keyboard shortcut binding persisted in SQLite.
@@ -276,4 +284,3 @@ pub struct KeyboardShortcutBinding {
     #[serde(rename = "match")]
     pub match_chords: serde_json::Value,
 }
-

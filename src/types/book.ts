@@ -8,6 +8,7 @@ export interface BookProgress {
   currentChapterElementId?: string;
   currentChapterElementIndex?: number;
   currentChapterScrollTop: number;
+  currentChapterScrollLeft?: number;
   currentChapterScrollHeight: number;
   currentChapterClientHeight: number;
   chapterProgressPercent: number;

@@ -90,6 +90,7 @@ fn test_book_progress_creation() {
         current_chapter_element_id: Some("para-1".to_string()),
         current_chapter_element_index: Some(0),
         current_chapter_scroll_top: 100.0,
+        current_chapter_scroll_left: None,
         current_chapter_scroll_height: 1000.0,
         current_chapter_client_height: 800.0,
         chapter_progress_percent: 0.1,
@@ -195,6 +196,7 @@ fn test_book_with_all_fields() {
             current_chapter_element_id: None,
             current_chapter_element_index: None,
             current_chapter_scroll_top: 0.0,
+            current_chapter_scroll_left: None,
             current_chapter_scroll_height: 1000.0,
             current_chapter_client_height: 800.0,
             chapter_progress_percent: 0.0,
@@ -221,4 +223,3 @@ fn test_book_with_all_fields() {
     assert!(book.progress.is_some());
     assert_eq!(book.conversion_status, ConversionStatus::Done);
 }
-

@@ -14,6 +14,13 @@ import {
   DrawerTitle,
 } from "../ui/drawer";
 import { Label } from "../ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Slider } from "../ui/slider";
 
 export interface ReaderSettings {
@@ -21,6 +28,7 @@ export interface ReaderSettings {
   fontFamily: string;
   fontSize: string;
   contentPadding: string;
+  paginationMode: "scroll" | "pages";
 }
 
 interface ReaderSettingsProps {
@@ -55,6 +63,11 @@ export function ReaderSettings({
 
   const handlePaddingChange = ([contentPadding]: number[]) => {
     onSettingsChange({ ...settings, contentPadding: String(contentPadding) });
+  };
+
+  const handlePaginationModeChange = (paginationMode: string | undefined) => {
+    if (paginationMode !== "scroll" && paginationMode !== "pages") return;
+    onSettingsChange({ ...settings, paginationMode });
   };
 
   const fontSizeValue = Number(settings.fontSize) || 16;
@@ -96,6 +109,27 @@ export function ReaderSettings({
         </DrawerHeader>
 
         <div className="flex flex-col gap-4 overflow-y-auto p-4">
+          <div className="space-y-2">
+            <Label htmlFor="reader-pagination-mode">
+              {t("reader.reading_mode")}
+            </Label>
+            <Select
+              value={settings.paginationMode}
+              onValueChange={handlePaginationModeChange}
+              clearable={false}
+            >
+              <SelectTrigger id="reader-pagination-mode">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="scroll">
+                  {t("reader.mode_scroll")}
+                </SelectItem>
+                <SelectItem value="pages">{t("reader.mode_pages")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="flex max-md:flex-col md:flex-row gap-4 p-4 justify-around">
             <div className="space-y-2 w-full">
               <Label className="text-sm">{t("reader.theme")}</Label>

@@ -71,14 +71,21 @@ export function calculateBookProgress(
   currentBook: Book,
   currentChapter: Chapter
 ): BookProgress {
-  const scrollTop = scrollContainer.scrollTop;
-  const scrollHeight = scrollContainer.scrollHeight;
-  const clientHeight = scrollContainer.clientHeight;
+  const isPaginated = scrollContainer.dataset.readerPagination === "pages";
+  const scrollTop = isPaginated ? 0 : scrollContainer.scrollTop;
+  const scrollLeft = isPaginated ? scrollContainer.scrollLeft : undefined;
+  const scrollHeight = isPaginated
+    ? scrollContainer.scrollWidth
+    : scrollContainer.scrollHeight;
+  const clientHeight = isPaginated
+    ? scrollContainer.clientWidth
+    : scrollContainer.clientHeight;
+  const progressPosition = isPaginated ? (scrollLeft ?? 0) : scrollTop;
 
   // Calculate chapter progress
   const chapterProgress =
     scrollHeight > clientHeight
-      ? Math.min(100, (scrollTop / (scrollHeight - clientHeight)) * 100)
+      ? Math.min(100, (progressPosition / (scrollHeight - clientHeight)) * 100)
       : 100;
 
   // Find current chapter index
@@ -114,9 +121,14 @@ export function calculateBookProgress(
       const htmlEl = el as HTMLElement;
       const rect = htmlEl.getBoundingClientRect();
       const containerRect = scrollContainer.getBoundingClientRect();
-      const distance = Math.abs(rect.top - containerRect.top);
+      const isVisible = isPaginated
+        ? rect.right > containerRect.left && rect.left < containerRect.right
+        : rect.top >= containerRect.top;
+      const distance = isPaginated
+        ? Math.abs(rect.left - containerRect.left)
+        : Math.abs(rect.top - containerRect.top);
 
-      if (distance < closestDistance && rect.top >= containerRect.top) {
+      if (distance < closestDistance && isVisible) {
         closestDistance = distance;
         closestElement = htmlEl;
         foundIndex = index;
@@ -140,6 +152,7 @@ export function calculateBookProgress(
     currentChapterElementId: elementId,
     currentChapterElementIndex: elementIndex,
     currentChapterScrollTop: scrollTop,
+    currentChapterScrollLeft: scrollLeft,
     currentChapterScrollHeight: scrollHeight,
     currentChapterClientHeight: clientHeight,
     chapterProgressPercent: chapterProgress,

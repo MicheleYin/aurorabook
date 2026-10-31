@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 
 import type { Book, ChapterWithContent } from "../../types/book";
@@ -13,6 +14,11 @@ import { useAudioTextSync } from "../../hooks/useAudioTextSync";
 import { useReaderDictionary } from "../../hooks/useReaderDictionary";
 import { logger } from "../../lib/logger";
 import { isDictionaryCardTarget } from "../../lib/reader-dictionary";
+import {
+  getReaderPageCount,
+  getReaderPageIndex,
+  getReaderPageScrollLeft,
+} from "../../lib/reader-pagination-utils";
 import {
   clearReaderTextSelection,
   getPointerDistance,
@@ -37,6 +43,9 @@ interface ReaderContentProps {
   scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
   headerRef: React.RefObject<HTMLDivElement | null> | undefined;
   isHeaderVisible?: boolean;
+  onPageStatusChange?: (
+    status: { currentPage: number; totalPages: number } | null
+  ) => void;
 }
 
 export function ReaderContent({
@@ -49,8 +58,22 @@ export function ReaderContent({
   scrollContainerRef,
   headerRef,
   isHeaderVisible,
+  onPageStatusChange,
 }: Readonly<ReaderContentProps>) {
+  const isPaginated = settings?.paginationMode === "pages";
   const contentRef = useRef<HTMLDivElement>(null);
+  const previousPageWidthRef = useRef(0);
+  const previousPaginationModeRef = useRef(isPaginated);
+  const previousLayoutChapterIdRef = useRef(currentChapter.id);
+  const scrollSnapTimeoutRef = useRef<number | null>(null);
+  const reportedPageStatusRef = useRef<{
+    currentPage: number;
+    totalPages: number;
+  } | null>(null);
+  const [pageStatus, setPageStatus] = useState({
+    currentPage: 1,
+    totalPages: 1,
+  });
   const scrollPositionRef = useRef<number>(0);
   const pendingChromeScrollRef = useRef<{
     scrollTop: number;
@@ -103,7 +126,8 @@ export function ReaderContent({
     book,
     scrollContainerRef ?? null,
     headerRef,
-    isHeaderVisible
+    isHeaderVisible,
+    isPaginated
   );
 
   const captureChromeScroll = useCallback(() => {
@@ -117,6 +141,235 @@ export function ReaderContent({
     };
     beginChromeToggle();
   }, [beginChromeToggle, headerRef, isHeaderVisible, scrollContainerRef]);
+
+  const updatePageStatus = useCallback(
+    (container = scrollContainerRef?.current) => {
+      if (!container || !isPaginated) {
+        if (reportedPageStatusRef.current !== null) {
+          reportedPageStatusRef.current = null;
+          setPageStatus({ currentPage: 1, totalPages: 1 });
+          onPageStatusChange?.(null);
+        }
+        return;
+      }
+
+      const totalPages = getReaderPageCount(
+        container.scrollWidth,
+        container.clientWidth
+      );
+      const status = {
+        currentPage:
+          getReaderPageIndex(
+            container.scrollLeft,
+            container.clientWidth,
+            totalPages
+          ) + 1,
+        totalPages,
+      };
+      const previousStatus = reportedPageStatusRef.current;
+      if (
+        previousStatus?.currentPage === status.currentPage &&
+        previousStatus.totalPages === status.totalPages
+      ) {
+        return;
+      }
+      reportedPageStatusRef.current = status;
+      setPageStatus(status);
+      onPageStatusChange?.(status);
+    },
+    [isPaginated, onPageStatusChange, scrollContainerRef]
+  );
+
+  useLayoutEffect(() => {
+    const container = scrollContainerRef?.current;
+    const host = contentRef.current;
+    if (!container || !host) return;
+    if (previousLayoutChapterIdRef.current !== currentChapter.id) {
+      previousLayoutChapterIdRef.current = currentChapter.id;
+      container.scrollTo({ left: 0 });
+      previousPageWidthRef.current = 0;
+      reportedPageStatusRef.current = null;
+    }
+    let contentObserver: MutationObserver | null = null;
+
+    const updateLayout = () => {
+      const content = host.shadowRoot?.querySelector<HTMLElement>(
+        "[data-reader-chapter-content]"
+      );
+      if (!content) return;
+      if (
+        isPaginated &&
+        !contentObserver &&
+        typeof MutationObserver !== "undefined"
+      ) {
+        contentObserver = new MutationObserver(updateLayout);
+        contentObserver.observe(content, {
+          childList: true,
+          characterData: true,
+          subtree: true,
+        });
+      }
+
+      const pageWidth = container.clientWidth;
+      const pageHeight = container.clientHeight;
+      if (pageWidth <= 0 || pageHeight <= 0) return;
+
+      const previousMode = previousPaginationModeRef.current;
+      const modeChanged = previousMode !== isPaginated;
+      const previousProgress = previousMode
+        ? container.scrollLeft /
+          Math.max(1, container.scrollWidth - container.clientWidth)
+        : container.scrollTop /
+          Math.max(1, container.scrollHeight - container.clientHeight);
+
+      if (!isPaginated) {
+        content.classList.remove("reader-paginated-content");
+        content.style.width = "";
+        content.style.height = "";
+        content.style.columnWidth = "";
+        content.style.columnGap = "";
+        content.style.columnFill = "";
+        host.style.height = "";
+        if (modeChanged) {
+          void content.offsetHeight;
+          container.scrollTop =
+            previousProgress *
+            Math.max(0, container.scrollHeight - container.clientHeight);
+        }
+        container.scrollLeft = 0;
+        previousPaginationModeRef.current = false;
+        previousPageWidthRef.current = 0;
+        updatePageStatus(container);
+        return;
+      }
+
+      const oldPageWidth = previousPageWidthRef.current;
+      const oldPageIndex =
+        oldPageWidth > 0
+          ? getReaderPageIndex(
+              container.scrollLeft,
+              oldPageWidth,
+              getReaderPageCount(container.scrollWidth, oldPageWidth)
+            )
+          : 0;
+      const requestedPadding = Number(settings?.contentPadding);
+      const padding = Number.isFinite(requestedPadding)
+        ? Math.min(
+            Math.max(8, requestedPadding),
+            Math.max(8, (pageWidth - 64) / 2)
+          )
+        : 24;
+      const pageContentWidth = Math.max(1, pageWidth - padding * 2);
+      const safeBottom = isHeaderVisible
+        ? Number.parseFloat(
+            getComputedStyle(document.documentElement).getPropertyValue(
+              "--app-device-safe-bottom"
+            )
+          ) || 0
+        : 0;
+      const pageContentHeight = Math.max(
+        1,
+        pageHeight - 64 - (isHeaderVisible ? 72 + safeBottom : 0)
+      );
+
+      host.style.height = `${pageContentHeight}px`;
+      content.classList.add("reader-paginated-content");
+      content.style.width = `${pageContentWidth}px`;
+      content.style.height = `${pageContentHeight}px`;
+      content.style.columnWidth = `${pageContentWidth}px`;
+      content.style.columnGap = `${padding * 2}px`;
+      content.style.columnFill = "auto";
+      void content.offsetWidth;
+
+      const totalPages = getReaderPageCount(container.scrollWidth, pageWidth);
+      if (modeChanged) {
+        container.scrollLeft =
+          previousProgress * Math.max(0, container.scrollWidth - pageWidth);
+      } else if (oldPageWidth > 0 && oldPageWidth !== pageWidth) {
+        container.scrollLeft = getReaderPageScrollLeft(
+          oldPageIndex,
+          pageWidth,
+          totalPages
+        );
+      } else {
+        container.scrollLeft = getReaderPageScrollLeft(
+          getReaderPageIndex(container.scrollLeft, pageWidth, totalPages),
+          pageWidth,
+          totalPages
+        );
+      }
+      previousPaginationModeRef.current = true;
+      previousPageWidthRef.current = pageWidth;
+      updatePageStatus(container);
+    };
+
+    updateLayout();
+    const layoutTimeout = window.setTimeout(updateLayout, 0);
+    host.addEventListener("load", updateLayout, true);
+    const observer =
+      isPaginated && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(updateLayout)
+        : null;
+    observer?.observe(container);
+    return () => {
+      window.clearTimeout(layoutTimeout);
+      host.removeEventListener("load", updateLayout, true);
+      observer?.disconnect();
+      contentObserver?.disconnect();
+    };
+  }, [
+    currentChapter.id,
+    isLoading,
+    isHeaderVisible,
+    isPaginated,
+    scrollContainerRef,
+    settings?.contentPadding,
+    settings?.fontFamily,
+    settings?.fontSize,
+    updatePageStatus,
+  ]);
+
+  const handleContainerScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      if (isPaginated) {
+        const container = event.currentTarget;
+        updatePageStatus(container);
+        if (scrollSnapTimeoutRef.current !== null) {
+          window.clearTimeout(scrollSnapTimeoutRef.current);
+        }
+        scrollSnapTimeoutRef.current = window.setTimeout(() => {
+          scrollSnapTimeoutRef.current = null;
+          const pageCount = getReaderPageCount(
+            container.scrollWidth,
+            container.clientWidth
+          );
+          const pageIndex = getReaderPageIndex(
+            container.scrollLeft,
+            container.clientWidth,
+            pageCount
+          );
+          const targetScrollLeft = getReaderPageScrollLeft(
+            pageIndex,
+            container.clientWidth,
+            pageCount
+          );
+          if (Math.abs(container.scrollLeft - targetScrollLeft) > 2) {
+            container.scrollTo({ left: targetScrollLeft, behavior: "smooth" });
+          }
+        }, 120);
+      }
+    },
+    [isPaginated, updatePageStatus]
+  );
+
+  useEffect(
+    () => () => {
+      if (scrollSnapTimeoutRef.current !== null) {
+        window.clearTimeout(scrollSnapTimeoutRef.current);
+      }
+    },
+    []
+  );
 
   useLayoutEffect(() => {
     const pending = pendingChromeScrollRef.current;
@@ -143,11 +396,13 @@ export function ReaderContent({
       void header.offsetHeight;
       nextHeaderHeight = header.getBoundingClientRect().height;
     }
-    container.scrollTop = scrollTopAfterChromeToggle(
-      pending.scrollTop,
-      pending.headerHeight,
-      nextHeaderHeight
-    );
+    container.scrollTo({
+      top: scrollTopAfterChromeToggle(
+        pending.scrollTop,
+        pending.headerHeight,
+        nextHeaderHeight
+      ),
+    });
   }, [headerRef, isHeaderVisible, scrollContainerRef]);
 
   // Restore progress when chapter content is loaded
@@ -371,7 +626,8 @@ export function ReaderContent({
     themeContainer.className = themeClass;
     contentContainer.className = cn(
       "prose prose-slate dark:prose-invert reader-prose max-w-none cursor-default select-none",
-      fontFamilyClass
+      fontFamilyClass,
+      isPaginated && "reader-paginated-content"
     );
     contentContainer.style.fontSize = String(fontSizeStyle.fontSize);
     contentContainer.style.lineHeight = String(fontSizeStyle.lineHeight);
@@ -385,7 +641,7 @@ export function ReaderContent({
     );
     contentContainer.style.userSelect = "none";
     contentContainer.style.setProperty("-webkit-user-select", "none");
-  }, [fontFamilyClass, fontSizeStyle, isLoading, themeClass]);
+  }, [fontFamilyClass, fontSizeStyle, isLoading, isPaginated, themeClass]);
 
   if (isLoading) {
     return (
@@ -397,6 +653,11 @@ export function ReaderContent({
           <LoadingScreen />
           <p className="text-sm text-muted-foreground">Loading chapter...</p>
         </div>
+        {isPaginated ? (
+          <span className="sr-only" aria-live="polite">
+            {pageStatus.currentPage} / {pageStatus.totalPages}
+          </span>
+        ) : null}
       </div>
     );
   }
@@ -404,8 +665,25 @@ export function ReaderContent({
   return (
     <div
       ref={scrollContainerRef}
-      className={cn("flex-1 overflow-y-auto select-none", themeClass)}
+      className={cn(
+        "flex-1 select-none",
+        isPaginated
+          ? "overflow-x-auto overflow-y-hidden snap-x snap-mandatory"
+          : "overflow-y-auto",
+        themeClass
+      )}
       data-testid="reader-scroll-container"
+      data-reader-pagination={isPaginated ? "pages" : "scroll"}
+      onScroll={handleContainerScroll}
+      style={
+        isPaginated
+          ? {
+              touchAction: "pan-x",
+              scrollSnapType: "x mandatory",
+              scrollbarWidth: "none",
+            }
+          : undefined
+      }
       onPointerDown={handlePointerDown}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
@@ -415,7 +693,11 @@ export function ReaderContent({
     >
       <div
         className="reader-content-selectable mx-auto py-8 select-none"
-        style={paddingStyle}
+        style={
+          isPaginated
+            ? { ...paddingStyle, height: "100%", boxSizing: "border-box" }
+            : paddingStyle
+        }
       >
         <div ref={contentRef} className="reader-chapter-shadow-host" />
       </div>

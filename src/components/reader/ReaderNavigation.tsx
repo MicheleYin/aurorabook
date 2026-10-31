@@ -4,11 +4,17 @@ import type { Book, Chapter } from "../../types/book";
 import { useTranslation } from "../../lib/i18n";
 import { Button } from "../ui/button";
 
+interface PageStatus {
+  currentPage: number;
+  totalPages: number;
+}
+
 interface ReaderNavigationProps {
   book: Book;
   currentChapter: Chapter;
   onPrevious: () => void;
   onNext: () => void;
+  pageStatus: PageStatus | null;
 }
 
 export function ReaderNavigation({
@@ -16,6 +22,7 @@ export function ReaderNavigation({
   currentChapter,
   onPrevious,
   onNext,
+  pageStatus,
 }: Readonly<ReaderNavigationProps>) {
   const { t } = useTranslation();
   const currentChapterIndex = book.chapters.findIndex(
@@ -38,11 +45,19 @@ export function ReaderNavigation({
             <span className="hidden md:block">{t("common.previous")}</span>
           </div>
         </Button>
-        <div className="text-sm text-muted-foreground">
+        <div className="text-center text-sm text-muted-foreground">
           {t("book.chapter_count", {
             current: currentChapterIndex + 1,
             total: book.chapters.length,
           })}
+          {pageStatus ? (
+            <span className="block text-xs">
+              {t("reader.page_count", {
+                current: pageStatus.currentPage,
+                total: pageStatus.totalPages,
+              })}
+            </span>
+          ) : null}
         </div>
         <Button
           variant="outline"

@@ -393,6 +393,55 @@ describe("useAudioTextSync", () => {
     expect(scrollContainer.scrollTo).toHaveBeenCalled();
   });
 
+  it("moves to the audio word's page even while follow-scroll is paused", () => {
+    const { scrollContainer, span2 } = mountReaderDom();
+    Object.defineProperties(scrollContainer, {
+      scrollLeft: { configurable: true, writable: true, value: 0 },
+      scrollWidth: { configurable: true, value: 900 },
+      clientWidth: { configurable: true, value: 300 },
+    });
+    scrollContainer.scrollTo = vi.fn();
+    span2.getBoundingClientRect = () =>
+      ({
+        top: 200,
+        bottom: 220,
+        left: 610,
+        right: 700,
+        width: 90,
+        height: 20,
+        x: 610,
+        y: 200,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    const book = createBook();
+
+    const { result: refs } = renderHook(() => {
+      const scrollContainerRef = useRef<HTMLDivElement | null>(scrollContainer);
+      return { scrollContainerRef };
+    });
+
+    renderHook(() =>
+      useAudioTextSync(
+        book,
+        refs.current.scrollContainerRef,
+        undefined,
+        true,
+        true
+      )
+    );
+
+    act(() => {
+      scrollContainer.dispatchEvent(new Event("wheel", { bubbles: true }));
+      seekAudio(audioRef.current as HTMLAudioElement, 6.0);
+    });
+
+    expect(span2.classList.contains(HIGHLIGHT_CLASS)).toBe(true);
+    expect(scrollContainer.scrollTo).toHaveBeenCalledWith({
+      left: 600,
+      behavior: "smooth",
+    });
+  });
+
   it("lets the user scroll and resumes follow-scroll after idle", () => {
     const { scrollContainer, span2 } = mountReaderDom();
     scrollContainer.scrollTo = vi.fn();

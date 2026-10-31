@@ -5,6 +5,7 @@ export const DEFAULT_READER_SETTINGS: ReaderSettings = {
   fontFamily: "merriweather",
   fontSize: "16",
   contentPadding: "24",
+  paginationMode: "scroll",
 };
 
 /** Map legacy labels or clamp numeric font sizes to the reader scale. */
@@ -45,4 +46,10 @@ export function normalizeContentPadding(value: string | undefined): string {
       return DEFAULT_READER_SETTINGS.contentPadding;
     }
   }
+}
+
+export function normalizePaginationMode(
+  value: string | undefined
+): "scroll" | "pages" {
+  return value === "pages" ? "pages" : "scroll";
 }
