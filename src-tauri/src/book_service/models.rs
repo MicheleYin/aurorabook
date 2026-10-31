@@ -170,6 +170,17 @@ pub struct Book {
     pub last_opened_time: Option<String>,
 }
 
+impl Book {
+    pub fn are_all_chapters_completed(&self) -> bool {
+        !self.chapters.is_empty()
+            && self.chapters.iter().all(|chapter| {
+                self.completed_chapters
+                    .iter()
+                    .any(|href| href == &chapter.href)
+            })
+    }
+}
+
 /// Library filter options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

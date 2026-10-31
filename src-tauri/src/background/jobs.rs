@@ -1,4 +1,4 @@
-//! Conversion job coordinator: maps book/job ids ↔ BG task identifiers and progress.
+//! Conversion job coordinator for app-level progress and cancellation.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,20 +10,16 @@ use uuid::Uuid;
 
 use crate::utils::errors::{AppError, AppResult};
 
-#[cfg(target_os = "ios")]
-use waterkit_background::BackgroundTask;
-
 pub const CONVERT_TASK_PREFIX: &str = "com.micheleyin.aurorabook.convert.";
-pub const CONVERT_TASK_PATTERN: &str = "com.micheleyin.aurorabook.convert.*";
 
-/// Result of starting a continued-processing conversion job.
+/// Result of starting a tracked conversion job.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContinuedConversionStart {
     pub job_id: String,
     pub task_id: String,
     pub book_id: String,
-    /// False on non-iOS or when continued processing is unavailable (conversion may still run).
+    /// Retained for API compatibility; system continued processing is disabled.
     pub continued_processing: bool,
 }
 
@@ -53,10 +49,6 @@ struct ConversionJob {
     book_id: String,
     task_id: String,
     cancel_token: Arc<AtomicBool>,
-    #[cfg(target_os = "ios")]
-    bg_task: Option<BackgroundTask>,
-    pending_progress: Option<(u64, u64)>,
-    title: String,
     finished: bool,
 }
 
@@ -84,15 +76,9 @@ impl BackgroundCoordinator {
         &self,
         book_id: &str,
         cancel_token: Arc<AtomicBool>,
-        title: &str,
     ) -> AppResult<ContinuedConversionStart> {
         let job_id = Uuid::new_v4().to_string();
         let task_id = format!("{CONVERT_TASK_PREFIX}{}", Uuid::new_v4());
-        let title = if title.trim().is_empty() {
-            "Converting audiobook".to_string()
-        } else {
-            title.to_string()
-        };
 
         let mut guard = self.inner.lock().map_err(|e| {
             AppError::Store(format!("Failed to lock background coordinator: {e}"))
@@ -112,10 +98,6 @@ impl BackgroundCoordinator {
             book_id: book_id.to_string(),
             task_id: task_id.clone(),
             cancel_token,
-            #[cfg(target_os = "ios")]
-            bg_task: None,
-            pending_progress: None,
-            title,
             finished: false,
         };
 
@@ -127,7 +109,7 @@ impl BackgroundCoordinator {
             job_id,
             task_id,
             book_id: book_id.to_string(),
-            continued_processing: cfg!(target_os = "ios"),
+            continued_processing: false,
         })
     }
 
@@ -167,40 +149,7 @@ impl BackgroundCoordinator {
             .map(|j| (j.job_id.clone(), j.book_id.clone()))
     }
 
-    /// Attach the platform `BackgroundTask` after `Launched`.
-    #[cfg(target_os = "ios")]
-    pub fn attach_launched_task(&self, task: BackgroundTask) -> AppResult<()> {
-        let task_id = task.identifier().as_str().to_string();
-        let mut guard = self.inner.lock().map_err(|e| {
-            AppError::Store(format!("Failed to lock background coordinator: {e}"))
-        })?;
-
-        let job = guard.by_task_id.get_mut(&task_id).ok_or_else(|| {
-            AppError::Store(format!(
-                "No conversion job registered for launched task {}",
-                task_id
-            ))
-        })?;
-
-        if let Some((completed, total)) = job.pending_progress.take() {
-            let percent = progress_percent(completed, total);
-            if let Err(e) = task.update_progress(percent as u64, 100) {
-                log::warn!(
-                    "Failed to flush pending progress for {}: {}",
-                    task_id,
-                    e
-                );
-            }
-            if let Err(e) = task.update_status(job.title.clone(), format!("{percent}%")) {
-                log::warn!("Failed to flush pending status for {}: {}", task_id, e);
-            }
-        }
-
-        job.bg_task = Some(task);
-        Ok(())
-    }
-
-    /// Mark cancel token when the system expires / user cancels from Live Activity.
+    /// Mark the cancel token when a tracked job expires.
     pub fn handle_expiration(&self, task_id: &str, app: &AppHandle) {
         let lifecycle = {
             let mut guard = match self.inner.lock() {
@@ -219,13 +168,6 @@ impl BackgroundCoordinator {
             job.cancel_token.store(true, Ordering::Relaxed);
             job.finished = true;
 
-            #[cfg(target_os = "ios")]
-            if let Some(task) = job.bg_task.take() {
-                if let Err(e) = task.complete(false) {
-                    log::warn!("Failed to complete expired background task: {e}");
-                }
-            }
-
             let event = JobLifecycleEvent {
                 job_id: job.job_id.clone(),
                 task_id: job.task_id.clone(),
@@ -239,7 +181,7 @@ impl BackgroundCoordinator {
         let _ = app.emit("background-task-expired", &lifecycle);
     }
 
-    /// Forward conversion progress to the Live Activity / system UI (percent only).
+    /// Emit conversion progress for a tracked job.
     pub fn report_progress(
         &self,
         book_id: &str,
@@ -266,23 +208,6 @@ impl BackgroundCoordinator {
                 return;
             }
 
-            #[cfg(target_os = "ios")]
-            if let Some(ref task) = job.bg_task {
-                if let Err(e) = task.update_progress(percent as u64, 100) {
-                    log::debug!("update_progress failed for {}: {}", task_id, e);
-                }
-                if let Err(e) = task.update_status(job.title.clone(), format!("{percent}%")) {
-                    log::debug!("update_status failed for {}: {}", task_id, e);
-                }
-            } else {
-                job.pending_progress = Some((completed, total));
-            }
-
-            #[cfg(not(target_os = "ios"))]
-            {
-                job.pending_progress = Some((completed, total));
-            }
-
             JobProgress {
                 job_id: job.job_id.clone(),
                 task_id: job.task_id.clone(),
@@ -296,7 +221,7 @@ impl BackgroundCoordinator {
         let _ = app.emit("background-task-progress", &payload);
     }
 
-    /// Finish the job (success or failure). Always completes the BG task when present.
+    /// Finish the tracked job (success or failure).
     pub fn complete_job(&self, book_id: &str, success: bool, app: &AppHandle) {
         let lifecycle = {
             let mut guard = match self.inner.lock() {
@@ -319,17 +244,6 @@ impl BackgroundCoordinator {
             }
             job.finished = true;
 
-            #[cfg(target_os = "ios")]
-            if let Some(task) = job.bg_task.take() {
-                if success {
-                    let _ = task.update_progress(100, 100);
-                    let _ = task.update_status(job.title.clone(), "100%");
-                }
-                if let Err(e) = task.complete(success) {
-                    log::warn!("Failed to complete background task {}: {}", task_id, e);
-                }
-            }
-
             let event = JobLifecycleEvent {
                 job_id: job.job_id.clone(),
                 task_id: job.task_id.clone(),
@@ -343,7 +257,7 @@ impl BackgroundCoordinator {
         let _ = app.emit("background-task-completed", &lifecycle);
     }
 
-    /// Request cancel of the platform task (Live Activity / scheduler).
+    /// Request cancellation of a tracked conversion.
     pub fn request_cancel_task_id(&self, task_id: &str) -> AppResult<()> {
         let mut guard = self.inner.lock().map_err(|e| {
             AppError::Store(format!("Failed to lock background coordinator: {e}"))
@@ -398,7 +312,7 @@ mod tests {
             job_id: "j1".into(),
             task_id: "t1".into(),
             book_id: "b1".into(),
-            continued_processing: true,
+            continued_processing: false,
         };
         let json = serde_json::to_value(&payload).expect("serialize");
         assert_eq!(json["jobId"], "j1");
@@ -412,7 +326,7 @@ mod tests {
         let coordinator = BackgroundCoordinator::new();
         let token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let started = coordinator
-            .register_job("book-1", token.clone(), "Converting")
+            .register_job("book-1", token.clone())
             .expect("register job");
         assert_eq!(started.book_id, "book-1");
         assert!(started.task_id.starts_with(CONVERT_TASK_PREFIX));
@@ -433,17 +347,17 @@ mod tests {
     }
 
     #[test]
-    fn register_job_uses_default_title_and_replaces_prior_job() {
+    fn register_job_replaces_prior_job() {
         let coordinator = BackgroundCoordinator::new();
         let first_token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let first = coordinator
-            .register_job("book-2", first_token.clone(), "   ")
+            .register_job("book-2", first_token.clone())
             .expect("register first");
         assert_eq!(first.book_id, "book-2");
 
         let second_token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let second = coordinator
-            .register_job("book-2", second_token.clone(), "Again")
+            .register_job("book-2", second_token.clone())
             .expect("register replacement");
         assert_ne!(first.task_id, second.task_id);
         assert_eq!(

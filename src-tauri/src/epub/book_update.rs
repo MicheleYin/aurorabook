@@ -750,24 +750,13 @@ async fn update_book_in_library(
         // Update file size with the converted EPUB size
         book.file_size_bytes = Some(epub_size);
         
-        // Check if all chapters with text content are completed
-        // Only count chapters that have text content (word_count > 0)
-        let chapters_with_text: usize = book.chapters.iter()
-            .filter(|ch| ch.word_count.map(|wc| wc > 0).unwrap_or(false))
-            .count();
-        
-        // Only set status to Done if we've completed ALL chapters with text
-        // Use strict equality to avoid false positives during partial conversions
-        if book.completed_chapters.len() == chapters_with_text && chapters_with_text > 0 {
+        if book.are_all_chapters_completed() {
             book.conversion_status = ConversionStatus::Done;
-            log::info!("All chapters with text content completed ({} of {} total chapters), marking conversion as done", 
-                book.completed_chapters.len(), book.chapters.len());
+            log::info!("All {} chapters completed, marking conversion as done", book.chapters.len());
         } else {
-            // Ensure status remains Started if not all chapters are done
-            // This prevents false "Done" status during partial conversions
-            if book.conversion_status == ConversionStatus::Done && book.completed_chapters.len() < chapters_with_text {
+            if book.conversion_status == ConversionStatus::Done {
                 log::warn!("Conversion status was Done but only {}/{} chapters are completed, resetting to Started", 
-                    book.completed_chapters.len(), chapters_with_text);
+                    book.completed_chapters.len(), book.chapters.len());
                 book.conversion_status = ConversionStatus::Started;
             }
         }
