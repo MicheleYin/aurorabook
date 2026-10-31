@@ -107,6 +107,10 @@ fn player_cache_dir(app: &AppHandle) -> AppResult<PathBuf> {
     Ok(cache_dir)
 }
 
+fn track_cache_file_name(book_id: &str, track_id: &str, ext: &str) -> String {
+    format!("{book_id}-{track_id}.{ext}")
+}
+
 /// Resolve audio bytes and write them to a stable cache path on disk.
 /// Returns the path — AVPlayer requires a `file://` URL, not SQLite bytes.
 #[cfg(target_os = "ios")]
@@ -138,7 +142,7 @@ async fn cache_track_file(
         .and_then(|e| e.to_str())
         .unwrap_or("mp3");
 
-    let file_path = cache_dir.join(format!("{track_id}.{ext}"));
+    let file_path = cache_dir.join(track_cache_file_name(book_id, track_id, ext));
 
     // Skip the write if an identically-sized file already exists.
     if let Ok(meta) = tokio::fs::metadata(&file_path).await {
@@ -508,6 +512,14 @@ mod tests {
         assert_eq!(native_player_event_payload(0, 1.0), None);
         assert_eq!(native_player_event_payload(9, 1.0), None);
         assert_eq!(native_player_event_payload(255, 1.0), None);
+    }
+
+    #[test]
+    fn track_cache_file_name_is_scoped_to_book() {
+        assert_ne!(
+            track_cache_file_name("book-a", "track-1", "mp3"),
+            track_cache_file_name("book-b", "track-1", "mp3")
+        );
     }
 
     #[tokio::test]

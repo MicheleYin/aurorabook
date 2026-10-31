@@ -237,6 +237,54 @@ describe("FloatingAudioPlayer live → completed handoff", () => {
     );
   });
 
+  it("resets the displayed duration when switching books to a track without duration metadata", async () => {
+    const previousTrack: AudioTrack = {
+      id: "shared-track-id",
+      bookId: "book-1",
+      chapterHref: "Text/ch2.xhtml",
+      filePath: "Audio/ch2.mp3",
+      href: "Audio/ch2.mp3",
+      title: "Two",
+      order: 1,
+      duration: 300,
+    };
+    state.currentBook = createLiveBook({ audioTracks: [previousTrack] });
+    state.currentAudioTrack = previousTrack;
+
+    const { rerender } = render(
+      <Wrapper>
+        <FloatingAudioPlayer />
+      </Wrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("audio-duration")).toHaveTextContent("5:00");
+    });
+
+    const nextTrack: AudioTrack = {
+      ...previousTrack,
+      bookId: "book-2",
+      duration: undefined,
+    };
+    state.currentBook = createLiveBook({
+      id: "book-2",
+      audioTracks: [nextTrack],
+    });
+    state.currentAudioTrack = nextTrack;
+
+    await act(async () => {
+      rerender(
+        <Wrapper>
+          <FloatingAudioPlayer />
+        </Wrapper>
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("audio-duration")).toHaveTextContent("1:40");
+    });
+  });
+
   it("disables play controls and shows spinner while audio is loading", async () => {
     state.isLoadingAudio = true;
     render(
