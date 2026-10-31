@@ -106,6 +106,7 @@ ort = { version = "2.0.0-rc.12", features = ["directml"] }
 # iOS defaults to the prebuilt CoreML runtime + CPU fallback. Enable the
 # `ios-webgpu` Cargo feature to use local static ONNX Runtime WebGPU libraries.
 [target.'cfg(target_os = "ios")'.dependencies]
+waterkit-background = { path = "../patches/waterkit-background" }
 ort = { version = "2.0.0-rc.12", default-features = false, features = [
   "std",
   "ndarray",

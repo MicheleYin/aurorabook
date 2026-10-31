@@ -985,7 +985,21 @@ pub(crate) async fn process_chapter(
                             }
                         };
 
-                        // Restore sentence chunk to live stream playback buffer.
+                        let restored_duration = saved.duration_seconds as f32;
+                        // Only accept a checkpoint if it can be decoded. Background
+                        // suspension may interrupt an in-place checkpoint write; skip
+                        // invalid files so the sentence is regenerated instead of
+                        // exporting corrupted MP3 or silently substituting silence.
+                        let Some(pcm) = sentence_pcm_from_mp3(&audio_bytes, restored_duration)
+                        else {
+                            log::warn!(
+                                "Discarding undecodable checkpoint MP3 for sentence {} in chapter {}; sentence will be regenerated",
+                                saved.sentence_index,
+                                chapter_index + 1
+                            );
+                            continue;
+                        };
+
                         manager.push_sentence(
                             bid,
                             chapter_storage_index,
@@ -995,28 +1009,8 @@ pub(crate) async fn process_chapter(
                             saved.sentence_text.clone(),
                             saved.word_alignments.clone(),
                         );
-
-                        // Restore for final chapter merge without re-running TTS.
-                        // Decode MP3 back to PCM and trim/pad to the saved generation
-                        // length so the chapter clock stays on sample counts, not LAME frames.
-                        sentence_mp3_chunks.insert(saved.sentence_index, audio_bytes.clone());
-                        let restored_duration = saved.duration_seconds as f32;
-                        match sentence_pcm_from_mp3(&audio_bytes, restored_duration) {
-                            Some(pcm) => {
-                                sentence_pcm_chunks.insert(saved.sentence_index, pcm);
-                            }
-                            None => {
-                                log::warn!(
-                                    "Could not decode checkpoint MP3 for sentence {} in chapter {}; inserting silence of saved PCM duration",
-                                    saved.sentence_index,
-                                    chapter_index + 1
-                                );
-                                sentence_pcm_chunks.insert(
-                                    saved.sentence_index,
-                                    silence_pcm_for_duration(restored_duration),
-                                );
-                            }
-                        }
+                        sentence_mp3_chunks.insert(saved.sentence_index, audio_bytes);
+                        sentence_pcm_chunks.insert(saved.sentence_index, pcm);
                         if restored_sentence_indices.insert(saved.sentence_index) {
                             let restored_sentence_words = sentence_word_counts
                                 .get(saved.sentence_index)
@@ -1870,7 +1864,7 @@ mod tests {
         calculate_total_words_processed, clean_text_for_tts, concatenate_mp3_in_sentence_order,
         concatenate_pcm_in_sentence_order, generate_audio_path, map_alignments_to_segments,
         map_sentence_clips_to_segments, pad_or_trim_pcm, pcm_sample_count_for_duration,
-        resolve_chapter_path, sentence_text_matches, split_long_sentence,
+        resolve_chapter_path, sentence_pcm_from_mp3, sentence_text_matches, split_long_sentence,
     };
 
     #[test]
@@ -1912,6 +1906,11 @@ mod tests {
         let padded = pad_or_trim_pcm(vec![1.0], 3.0 / SAMPLE_RATE as f32);
         assert_eq!(padded, vec![1.0, 0.0, 0.0]);
         assert_eq!(pcm_sample_count_for_duration(1.0), SAMPLE_RATE as usize);
+    }
+
+    #[test]
+    fn undecodable_checkpoint_mp3_is_rejected() {
+        assert!(sentence_pcm_from_mp3(b"not an mp3", 1.0).is_none());
     }
 
     #[test]

@@ -26,6 +26,26 @@ use tower_http::cors::{Any, CorsLayer};
 const LIVE_BROADCAST_CAPACITY: usize = 4096;
 const LIVE_SNAPSHOT_RESYNC_MS: u64 = 250;
 
+fn write_checkpoint_audio(path: &std::path::Path, audio_bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let temp_path = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)?;
+        file.write_all(audio_bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&temp_path, path)
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(temp_path);
+    }
+    result
+}
+
 // Global flag to track if server has started
 static SERVER_STARTED: OnceLock<Arc<std::sync::atomic::AtomicBool>> = OnceLock::new();
 
@@ -904,7 +924,7 @@ impl LiveStreamManager {
                 sentence.sentence_index,
             );
             
-            std::fs::write(&audio_file_path, &sentence.audio_bytes)
+            write_checkpoint_audio(&audio_file_path, &sentence.audio_bytes)
                 .map_err(|e| format!("Failed to write checkpoint audio file: {}", e))?;
 
             // Save metadata pointing to file (no BLOB in database)
