@@ -33,7 +33,10 @@ export interface AppContextType {
 
   currentBook: Book | null;
   setCurrentBook: Dispatch<SetStateAction<Book | null>>;
-  setCurrentBookWithLoading: (book: Book, autoPlayAudio: boolean) => Promise<void>;
+  setCurrentBookWithLoading: (
+    book: Book,
+    autoPlayAudio: boolean
+  ) => Promise<void>;
 
   library: Book[];
   setLibrary: Dispatch<SetStateAction<Book[]>>;
@@ -68,6 +71,10 @@ interface AppProviderProps {
   ) => Promise<void>;
   calculateAudioProgress: (book: Book) => BookAudioState | null;
   saveAudioProgress: (book: Book) => Promise<void>;
+  closeAudioPlayer: (
+    book: Book,
+    options?: { skipSave?: boolean }
+  ) => Promise<void>;
 }
 
 export function AppProvider({
@@ -78,6 +85,7 @@ export function AppProvider({
   calculateBookProgress,
   calculateAudioProgress,
   saveAudioProgress,
+  closeAudioPlayer,
 }: Readonly<AppProviderProps>) {
   const {
     settings,
@@ -115,8 +123,12 @@ export function AppProvider({
       // FIX: Save the CURRENT book's audio progress BEFORE switching
       // This prevents corrupting the new book's audioState with the old book's data
       const previousBook = currentBookRef.current;
-      if (previousBook && previousBook.id !== book.id) {
+      const isChangingBooks = Boolean(
+        previousBook && previousBook.id !== book.id
+      );
+      if (isChangingBooks && previousBook) {
         await saveAudioProgress(previousBook);
+        await closeAudioPlayer(previousBook, { skipSave: true });
       }
 
       setCurrentBook(book);
@@ -134,7 +146,13 @@ export function AppProvider({
       // Persist book id before any follow-up tab save can race.
       await saveSettings({ lastOpenedBookId: book.id });
     },
-    [loadLastOpenedChapter, loadLastOpenedAudioTrack, saveAudioProgress, saveSettings]
+    [
+      closeAudioPlayer,
+      loadLastOpenedChapter,
+      loadLastOpenedAudioTrack,
+      saveAudioProgress,
+      saveSettings,
+    ]
   );
 
   const changeCurrentTab = useCallback(
@@ -190,7 +208,7 @@ export function AppProvider({
     const savedTab = normalizeAppTab(settings.currentTab);
     const savedBookId = settings.lastOpenedBookId ?? null;
     const savedBook = savedBookId
-      ? library.find((book) => book.id === savedBookId) ?? null
+      ? (library.find((book) => book.id === savedBookId) ?? null)
       : null;
 
     logger.info("Restoring session", {

@@ -33,12 +33,14 @@ const state: {
       })
     | null;
   isLoadingAudio: boolean;
+  isIosNativeAudio: boolean;
   setCurrentBook: (book: Book | null) => void;
   setLibrary: (books: Book[]) => void;
 } = {
   currentBook: null,
   currentAudioTrack: null,
   isLoadingAudio: false,
+  isIosNativeAudio: false,
   setCurrentBook: vi.fn(),
   setLibrary: vi.fn(),
 };
@@ -83,7 +85,7 @@ vi.mock("@/context/AudioProgressContext", () => ({
     livePlaybackRequestVersion: 0,
     playbackRate: 1,
     setPlaybackRate: vi.fn(),
-    isIosNativeAudio: false,
+    isIosNativeAudio: state.isIosNativeAudio,
     isPlaying: false,
     setIsPlaying: vi.fn(),
     isPlaybackActive: vi.fn(() => false),
@@ -167,6 +169,7 @@ describe("FloatingAudioPlayer live → completed handoff", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.isLoadingAudio = false;
+    state.isIosNativeAudio = false;
     state.currentBook = createLiveBook();
     state.currentAudioTrack = {
       id: "live-book-1-1",
@@ -283,6 +286,62 @@ describe("FloatingAudioPlayer live → completed handoff", () => {
     await waitFor(() => {
       expect(screen.getByTestId("audio-duration")).toHaveTextContent("1:40");
     });
+  });
+
+  it("replaces a previous book duration with a shorter native duration", async () => {
+    state.isIosNativeAudio = true;
+    const previousTrack: AudioTrack = {
+      id: "shared-track-id",
+      bookId: "book-1",
+      chapterHref: "Text/ch2.xhtml",
+      filePath: "Audio/ch2.mp3",
+      href: "Audio/ch2.mp3",
+      title: "Two",
+      order: 1,
+      duration: 300,
+    };
+    state.currentBook = createLiveBook({ audioTracks: [previousTrack] });
+    state.currentAudioTrack = previousTrack;
+
+    const { rerender } = render(
+      <Wrapper>
+        <FloatingAudioPlayer />
+      </Wrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("floating-audio-player")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("audio-duration")).toHaveTextContent("5:00");
+
+    const nextTrack: AudioTrack = {
+      ...previousTrack,
+      bookId: "book-2",
+      duration: undefined,
+    };
+    state.currentBook = createLiveBook({
+      id: "book-2",
+      audioTracks: [nextTrack],
+    });
+    state.currentAudioTrack = nextTrack;
+
+    await act(async () => {
+      rerender(
+        <Wrapper>
+          <FloatingAudioPlayer />
+        </Wrapper>
+      );
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("aurora-native-ui", {
+          detail: { type: "durationUpdate", time: 120 },
+        })
+      );
+    });
+    expect(screen.getByTestId("audio-duration")).toHaveTextContent("2:00");
   });
 
   it("disables play controls and shows spinner while audio is loading", async () => {

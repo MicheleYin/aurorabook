@@ -1711,7 +1711,7 @@ export function FloatingAudioPlayer() {
         Number.isFinite(time) &&
         time > 0
       ) {
-        setDuration((prev) => Math.max(prev, time));
+        setDuration(time);
         setLiveGeneratedDuration((prev) => Math.max(prev, time));
       }
     };
