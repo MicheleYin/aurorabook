@@ -163,7 +163,10 @@ export function FloatingAudioPlayer() {
   // Keep the visual clock/duration aligned when the active track identity changes.
   // On iOS the <audio> element is empty, so metadata events never reset these.
   useEffect(() => {
-    if (!currentAudioTrack) return;
+    if (!currentAudioTrack) {
+      setDuration(0);
+      return;
+    }
     const trackDuration =
       typeof currentAudioTrack.duration === "number" &&
       currentAudioTrack.duration > 0
@@ -171,6 +174,10 @@ export function FloatingAudioPlayer() {
         : 0;
     setDuration(trackDuration);
   }, [currentBook?.id, currentAudioTrack?.id, currentAudioTrack?.duration]);
+
+  useEffect(() => {
+    setLiveGeneratedDuration(0);
+  }, [currentBook?.id, currentAudioTrack?.id]);
 
   useEffect(() => {
     currentTimeRef.current = currentTime;

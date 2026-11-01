@@ -344,6 +344,67 @@ describe("FloatingAudioPlayer live → completed handoff", () => {
     expect(screen.getByTestId("audio-duration")).toHaveTextContent("2:00");
   });
 
+  it("resets the live duration maximum when switching iOS books", async () => {
+    state.isIosNativeAudio = true;
+    const previousTrack: AudioTrack & {
+      isLiveStream: boolean;
+      liveChapterIndex: number;
+    } = {
+      id: "live-book-1-1",
+      bookId: "book-1",
+      chapterHref: "Text/ch2.xhtml",
+      filePath: "Text/ch2.xhtml",
+      href: "Text/ch2.xhtml",
+      title: "Two",
+      order: 1,
+      isLiveStream: true,
+      liveChapterIndex: 1,
+    };
+    state.currentAudioTrack = previousTrack;
+
+    const { rerender } = render(
+      <Wrapper>
+        <FloatingAudioPlayer />
+      </Wrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("floating-audio-player")).toBeInTheDocument();
+    });
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("aurora-native-ui", {
+          detail: { type: "durationUpdate", time: 300 },
+        })
+      );
+    });
+    expect(screen.getByTestId("audio-duration")).toHaveTextContent("5:00");
+
+    const nextTrack = {
+      ...previousTrack,
+      id: "live-book-2-1",
+      bookId: "book-2",
+    };
+    state.currentBook = createLiveBook({ id: "book-2" });
+    state.currentAudioTrack = nextTrack;
+    await act(async () => {
+      rerender(
+        <Wrapper>
+          <FloatingAudioPlayer />
+        </Wrapper>
+      );
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("aurora-native-ui", {
+          detail: { type: "durationUpdate", time: 120 },
+        })
+      );
+    });
+    expect(screen.getByTestId("audio-duration")).toHaveTextContent("2:00");
+  });
+
   it("disables play controls and shows spinner while audio is loading", async () => {
     state.isLoadingAudio = true;
     render(
