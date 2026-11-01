@@ -5,7 +5,7 @@ import { createIosNativeEngine } from "./iosNativeEngine";
 import { createWebviewEngine } from "./webviewEngine";
 
 const invoke = vi.fn();
-const listen = vi.fn(async () => () => undefined);
+const listen = vi.fn(async (..._args: unknown[]) => () => undefined);
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) =>
@@ -13,7 +13,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: () => listen(),
+  listen: (eventName: string, handler: (event: unknown) => void) =>
+    listen(eventName, handler),
 }));
 
 describe("createWebviewEngine", () => {
@@ -153,6 +154,71 @@ describe("createIosNativeEngine", () => {
     await engine.seek(42);
     expect(onEvent).toHaveBeenCalledWith({ type: "seek", time: 42 });
 
+    engine.destroy();
+  });
+
+  it("scopes live refresh and completion updates to the latest load", async () => {
+    invoke.mockResolvedValue({ durationSeconds: 4, byteLength: 64 });
+    const engine = createIosNativeEngine();
+
+    await engine.loadLive({
+      bookId: "book-a",
+      chapterIndex: 1,
+      expectsMore: true,
+      title: "Chapter",
+      artist: "Author",
+    });
+    const firstLoad = invoke.mock.calls.find(
+      ([command]) => command === "ios_player_load_live"
+    )?.[1] as { options: { requestId: number } };
+
+    await engine.loadLive({
+      bookId: "book-b",
+      chapterIndex: 2,
+      expectsMore: false,
+      title: "Chapter",
+      artist: "Author",
+    });
+    const latestLoad = invoke.mock.calls
+      .filter(([command]) => command === "ios_player_load_live")
+      .at(-1)?.[1] as {
+      options: { requestId: number; expectsMore: boolean };
+    };
+
+    await engine.refreshLive("book-b", 2);
+    await engine.setExpectsMore(false, "book-b", 2);
+
+    expect(latestLoad.options.requestId).toBeGreaterThan(
+      firstLoad.options.requestId
+    );
+    expect(latestLoad.options.expectsMore).toBe(false);
+    expect(invoke).toHaveBeenCalledWith(
+      "ios_player_refresh_live",
+      expect.objectContaining({ requestId: latestLoad.options.requestId })
+    );
+    expect(invoke).toHaveBeenCalledWith(
+      "ios_player_set_expects_more",
+      expect.objectContaining({
+        bookId: "book-b",
+        chapterIndex: 2,
+        requestId: latestLoad.options.requestId,
+      })
+    );
+
+    engine.destroy();
+  });
+
+  it("does not infer playback from a time update", () => {
+    const engine = createIosNativeEngine();
+    engine.subscribe(vi.fn());
+    const onNativeEvent = listen.mock.calls[0][1] as (
+      event: { payload: { type: string; time: number } }
+    ) => void;
+
+    onNativeEvent({ payload: { type: "timeUpdate", time: 12 } });
+
+    expect(engine.getCurrentTime()).toBe(12);
+    expect(engine.isPlaying()).toBe(false);
     engine.destroy();
   });
 });

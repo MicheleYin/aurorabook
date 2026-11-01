@@ -774,11 +774,24 @@ export function FloatingAudioPlayer() {
     if (!isIosNativeAudio || !isLiveStream) {
       return;
     }
-    void setExpectsMoreContent(!liveChapterCompleted).catch(() => undefined);
+    if (!currentBook || !currentAudioTrack) {
+      return;
+    }
+    const chapterIndex =
+      typeof currentAudioTrack.liveChapterIndex === "number"
+        ? currentAudioTrack.liveChapterIndex
+        : currentAudioTrack.order;
+    void setExpectsMoreContent(
+      !liveChapterCompleted,
+      currentBook.id,
+      chapterIndex
+    ).catch(() => undefined);
   }, [
     isIosNativeAudio,
     isLiveStream,
     liveChapterCompleted,
+    currentAudioTrack,
+    currentBook,
     setExpectsMoreContent,
   ]);
 
@@ -1042,29 +1055,10 @@ export function FloatingAudioPlayer() {
       return;
     }
 
-    const savedState = activeBook.audioState;
-    const trackHref = activeTrack.href || activeTrack.filePath;
-    const savedTrackMatches = Boolean(
-      savedState &&
-      (savedState.currentTrackId === activeTrack.id ||
-        (savedState.currentTrackHref &&
-          trackHref &&
-          savedState.currentTrackHref === trackHref) ||
-        (savedState.currentTrackIndex !== undefined &&
-          savedState.currentTrackIndex === activeChapterIndex))
-    );
-
     const bookId = activeBook.id;
     const chapterIndex = activeChapterIndex;
-    const fallbackResumeTime = savedTrackMatches
-      ? Math.max(0, savedState?.currentTimeSeconds ?? 0)
-      : 0;
     const pendingPlaybackRequest = livePlaybackRequestRef.current;
-    const resumeTime = Math.max(
-      0,
-      pendingPlaybackRequest.resumeTime,
-      fallbackResumeTime
-    );
+    const resumeTime = Math.max(0, pendingPlaybackRequest.resumeTime);
     const wasPlaying = pendingPlaybackRequest.autoPlay;
     livePlaybackRequestRef.current = { resumeTime: 0, autoPlay: false };
     const requestId = ++liveReloadRequestIdRef.current;
@@ -1146,6 +1140,7 @@ export function FloatingAudioPlayer() {
             const status = await loadLiveAudio({
               bookId,
               chapterIndex,
+              expectsMore: !liveChapterCompleted,
               title: activeTrack.title ?? `Chapter ${chapterIndex + 1}`,
               artist: activeBook.author ?? "",
               coverUrl: activeBook.coverUrl ?? null,
@@ -1221,6 +1216,7 @@ export function FloatingAudioPlayer() {
     audioRef,
     isIosNativeAudio,
     isLiveStream,
+    liveChapterCompleted,
     livePlaybackRequestRef,
     livePlaybackRequestVersion,
     liveStreamSourceKey,
@@ -1702,7 +1698,6 @@ export function FloatingAudioPlayer() {
           void saveAudioProgress(currentBookRef.current);
         }
       } else if (type === "timeUpdate") {
-        setIsPlaying(true);
         if (typeof time === "number" && Number.isFinite(time)) {
           setCurrentTime(time);
         }

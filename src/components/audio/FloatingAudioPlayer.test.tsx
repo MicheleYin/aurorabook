@@ -19,7 +19,17 @@ const setCurrentAudioTrack = vi.fn();
 const calculateAudioProgress = vi.fn(() => null);
 const saveAudioProgress = vi.fn(async () => undefined);
 const closeAudioPlayer = vi.fn(async () => undefined);
-const queueLivePlaybackRequest = vi.fn();
+const livePlaybackRequestRef = {
+  current: { resumeTime: 0, autoPlay: false },
+};
+let livePlaybackRequestVersion = 0;
+const queueLivePlaybackRequest = vi.fn(
+  (resumeTime: number, autoPlay: boolean) => {
+    livePlaybackRequestRef.current = { resumeTime, autoPlay };
+    livePlaybackRequestVersion += 1;
+  }
+);
+const seekAudio = vi.fn(async () => undefined);
 const registerCallbacks = vi.fn(() => () => undefined);
 const refreshCurrentConvertingChapter = vi.fn(async () => null);
 const getCurrentConvertingChapter = vi.fn(() => 1);
@@ -81,8 +91,8 @@ vi.mock("@/context/AudioProgressContext", () => ({
     saveAudioProgress,
     closeAudioPlayer,
     queueLivePlaybackRequest,
-    livePlaybackRequestRef: { current: { resumeTime: 0, autoPlay: false } },
-    livePlaybackRequestVersion: 0,
+    livePlaybackRequestRef,
+    livePlaybackRequestVersion,
     playbackRate: 1,
     setPlaybackRate: vi.fn(),
     isIosNativeAudio: state.isIosNativeAudio,
@@ -92,7 +102,7 @@ vi.mock("@/context/AudioProgressContext", () => ({
     getPlaybackTime: vi.fn(() => 0),
     playAudio: vi.fn(async () => undefined),
     pauseAudio: vi.fn(async () => undefined),
-    seekAudio: vi.fn(async () => undefined),
+    seekAudio,
     loadLiveAudio: vi.fn(async () => ({ durationSeconds: 0, byteLength: 0 })),
     refreshLiveAudio: vi.fn(async () => ({
       durationSeconds: 0,
@@ -170,6 +180,8 @@ describe("FloatingAudioPlayer live → completed handoff", () => {
     vi.clearAllMocks();
     state.isLoadingAudio = false;
     state.isIosNativeAudio = false;
+    livePlaybackRequestRef.current = { resumeTime: 0, autoPlay: false };
+    livePlaybackRequestVersion = 0;
     state.currentBook = createLiveBook();
     state.currentAudioTrack = {
       id: "live-book-1-1",
@@ -403,6 +415,43 @@ describe("FloatingAudioPlayer live → completed handoff", () => {
       );
     });
     expect(screen.getByTestId("audio-duration")).toHaveTextContent("2:00");
+  });
+
+  it("restores a converting book from the queued timestamp instead of stale book state", async () => {
+    state.isIosNativeAudio = true;
+    const track = {
+      id: "live-book-1-1",
+      bookId: "book-1",
+      chapterHref: "Text/ch2.xhtml",
+      filePath: "Text/ch2.xhtml",
+      href: "Text/ch2.xhtml",
+      title: "Two",
+      order: 1,
+      isLiveStream: true,
+      liveChapterIndex: 1,
+    };
+    state.currentBook = createLiveBook({
+      audioState: {
+        currentTrackId: track.id,
+        currentTrackHref: track.href,
+        currentTrackIndex: track.order,
+        currentTimeSeconds: 300,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+    state.currentAudioTrack = track;
+    livePlaybackRequestRef.current = { resumeTime: 120, autoPlay: false };
+    livePlaybackRequestVersion = 1;
+
+    render(
+      <Wrapper>
+        <FloatingAudioPlayer />
+      </Wrapper>
+    );
+
+    await waitFor(() => {
+      expect(seekAudio).toHaveBeenCalledWith(120);
+    });
   });
 
   it("disables play controls and shows spinner while audio is loading", async () => {

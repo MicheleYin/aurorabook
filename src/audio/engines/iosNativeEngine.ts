@@ -12,11 +12,20 @@ import type {
 
 type Listener = (event: EngineEvent) => void;
 
+let nextLoadRequestId = Date.now() * 1000;
+
+function createLoadRequestId() {
+  nextLoadRequestId += 1;
+  return nextLoadRequestId;
+}
+
 /**
  * iOS native AVPlayer bridge — audible source of truth for background / Control Center.
  */
 export function createIosNativeEngine(): PlaybackEngine {
   const listeners = new Set<Listener>();
+  let activeRequestId = 0;
+  let activeLiveTrack: { bookId: string; chapterIndex: number } | null = null;
   let nativeTime = 0;
   let playing = false;
   let unlisten: (() => void) | null = null;
@@ -70,7 +79,6 @@ export function createIosNativeEngine(): PlaybackEngine {
       ) {
         nativeTime = time;
         if (type === "timeUpdate") {
-          playing = true;
           emit({ type: "timeUpdate", time });
         } else {
           emit({ type: "seek", time });
@@ -103,10 +111,13 @@ export function createIosNativeEngine(): PlaybackEngine {
 
     async load(options: LoadTrackOptions) {
       ensureNativeBridge();
+      activeRequestId = createLoadRequestId();
+      activeLiveTrack = null;
       nativeTime = 0;
       playing = false;
       await invoke("ios_player_load", {
         options: {
+          requestId: activeRequestId,
           bookId: options.bookId,
           trackId: options.trackId,
           title: options.title,
@@ -122,11 +133,18 @@ export function createIosNativeEngine(): PlaybackEngine {
 
     async loadLive(options: LoadLiveOptions): Promise<LiveStatus> {
       ensureNativeBridge();
+      activeRequestId = createLoadRequestId();
+      activeLiveTrack = {
+        bookId: options.bookId,
+        chapterIndex: options.chapterIndex,
+      };
       nativeTime = 0;
       const status = await invoke<LiveStatus>("ios_player_load_live", {
         options: {
+          requestId: activeRequestId,
           bookId: options.bookId,
           chapterIndex: options.chapterIndex,
+          expectsMore: options.expectsMore,
           title: options.title,
           artist: options.artist,
           coverUrl: options.coverUrl ?? null,
@@ -139,11 +157,21 @@ export function createIosNativeEngine(): PlaybackEngine {
       return invoke<LiveStatus>("ios_player_refresh_live", {
         bookId,
         chapterIndex,
+        requestId: activeRequestId,
       });
     },
 
-    async setExpectsMore(expectsMore: boolean) {
-      await invoke("ios_player_set_expects_more", { expectsMore });
+    async setExpectsMore(
+      expectsMore: boolean,
+      bookId: string,
+      chapterIndex: number
+    ) {
+      await invoke("ios_player_set_expects_more", {
+        expectsMore,
+        bookId,
+        chapterIndex,
+        requestId: activeRequestId,
+      });
     },
 
     async play() {
@@ -204,9 +232,13 @@ export function createIosNativeEngine(): PlaybackEngine {
         unlisten = null;
       }
       void invoke("ios_player_pause").catch(() => undefined);
-      void invoke("ios_player_set_expects_more", { expectsMore: false }).catch(
-        () => undefined
-      );
+      if (activeLiveTrack) {
+        void invoke("ios_player_set_expects_more", {
+          expectsMore: false,
+          ...activeLiveTrack,
+          requestId: activeRequestId,
+        }).catch(() => undefined);
+      }
     },
   };
 }

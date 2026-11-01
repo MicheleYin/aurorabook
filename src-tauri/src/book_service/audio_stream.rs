@@ -46,6 +46,28 @@ fn write_checkpoint_audio(path: &std::path::Path, audio_bytes: &[u8]) -> std::io
     result
 }
 
+fn resolve_checkpoint_audio_path(
+    base_dir: &std::path::Path,
+    book_id: &str,
+    chapter_index: usize,
+    sentence_index: usize,
+    stored_path: &str,
+) -> std::path::PathBuf {
+    use crate::book_service::repositories::ConversionCheckpointRepository;
+
+    let current_path = ConversionCheckpointRepository::get_audio_file_path(
+        base_dir,
+        book_id,
+        chapter_index,
+        sentence_index,
+    );
+    if current_path.is_file() || !std::path::Path::new(stored_path).is_file() {
+        current_path
+    } else {
+        std::path::PathBuf::from(stored_path)
+    }
+}
+
 // Global flag to track if server has started
 static SERVER_STARTED: OnceLock<Arc<std::sync::atomic::AtomicBool>> = OnceLock::new();
 
@@ -461,6 +483,7 @@ struct LiveChapterSnapshot {
     chapter_id: Option<String>,
     chapter_href: Option<String>,
     sentences: BTreeMap<usize, SentencePayload>,
+    revision: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -602,12 +625,16 @@ impl LiveStreamManager {
         let key = format!("{}_{}", book_id, chapter_index);
         {
             let mut snapshots = recover_lock(&self.snapshots);
+            let revision = snapshots
+                .get(&key)
+                .map_or(1, |snapshot| snapshot.revision.saturating_add(1));
             snapshots.insert(
                 key.clone(),
                 LiveChapterSnapshot {
                     chapter_id,
                     chapter_href,
                     sentences: BTreeMap::new(),
+                    revision,
                 },
             );
         }
@@ -654,6 +681,7 @@ impl LiveStreamManager {
             let mut snapshots = recover_lock(&self.snapshots);
             let snapshot = snapshots.entry(key.clone()).or_default();
             snapshot.sentences.insert(sentence_index, payload.clone());
+            snapshot.revision = snapshot.revision.saturating_add(1);
         }
         let map = recover_lock(&self.channels);
         if let Some(tx) = map.get(&key) {
@@ -691,17 +719,54 @@ impl LiveStreamManager {
     }
 
     pub fn snapshot_mp3(&self, book_id: &str, chapter_index: usize) -> Vec<u8> {
-        self.snapshot_contiguous_sentences(book_id, chapter_index)
-            .into_iter()
-            .flat_map(|sentence| sentence.audio_bytes)
-            .collect()
+        self.snapshot_mp3_with_revision(book_id, chapter_index).1
+    }
+
+    pub fn snapshot_status(&self, book_id: &str, chapter_index: usize) -> (u64, usize, f64) {
+        let key = format!("{}_{}", book_id, chapter_index);
+        let snapshots = recover_lock(&self.snapshots);
+        let Some(snapshot) = snapshots.get(&key) else {
+            return (0, 0, 0.0);
+        };
+
+        let mut byte_length = 0;
+        let mut duration = 0.0;
+        for sentence in contiguous_sentence_prefix(&snapshot.sentences) {
+            byte_length += sentence.audio_bytes.len();
+            duration += sentence.clip_duration();
+        }
+        (snapshot.revision, byte_length, duration)
+    }
+
+    pub fn snapshot_mp3_with_revision(
+        &self,
+        book_id: &str,
+        chapter_index: usize,
+    ) -> (u64, Vec<u8>, f64) {
+        let key = format!("{}_{}", book_id, chapter_index);
+        let snapshots = recover_lock(&self.snapshots);
+        let Some(snapshot) = snapshots.get(&key) else {
+            return (0, Vec::new(), 0.0);
+        };
+
+        let sentences = contiguous_sentence_prefix(&snapshot.sentences);
+        let byte_length = sentences
+            .iter()
+            .map(|sentence| sentence.audio_bytes.len())
+            .sum();
+        let duration = sentences
+            .iter()
+            .map(|sentence| sentence.clip_duration())
+            .sum();
+        let mut bytes = Vec::with_capacity(byte_length);
+        for sentence in sentences {
+            bytes.extend_from_slice(&sentence.audio_bytes);
+        }
+        (snapshot.revision, bytes, duration)
     }
 
     pub fn duration_seconds(&self, book_id: &str, chapter_index: usize) -> f64 {
-        self.snapshot_contiguous_sentences(book_id, chapter_index)
-            .into_iter()
-            .map(|sentence| sentence.clip_duration())
-            .sum()
+        self.snapshot_status(book_id, chapter_index).2
     }
 
     pub fn has_sentences(&self, book_id: &str, chapter_index: usize) -> bool {
@@ -948,7 +1013,7 @@ impl LiveStreamManager {
     pub async fn restore_checkpoint(
         &self,
         pool: &sqlx::SqlitePool,
-        _base_dir: &std::path::Path,
+        base_dir: &std::path::Path,
         book_id: &str,
         chapter_index: usize,
         chapter_id: Option<String>,
@@ -962,8 +1027,7 @@ impl LiveStreamManager {
             chapter_index,
         )
         .await
-        .ok()
-        .flatten();
+        ?;
         let resolved_chapter_id =
             chapter_id.or_else(|| checkpoint.as_ref().and_then(|c| c.chapter_id.clone()));
         let resolved_chapter_href =
@@ -990,9 +1054,21 @@ impl LiveStreamManager {
 
         // Restore each sentence into the live stream by loading audio from disk
         for sentence in sentences {
-            // Load audio from file (no database BLOB read)
-            let audio_bytes = std::fs::read(&sentence.audio_file_path)
-                .map_err(|e| format!("Failed to read checkpoint audio file {}: {}", sentence.audio_file_path, e))?;
+            let audio_path = resolve_checkpoint_audio_path(
+                base_dir,
+                book_id,
+                chapter_index,
+                sentence.sentence_index,
+                &sentence.audio_file_path,
+            );
+            let audio_bytes = std::fs::read(&audio_path).map_err(|e| {
+                format!(
+                    "Failed to read checkpoint audio file {} (stored path: {}): {}",
+                    audio_path.display(),
+                    sentence.audio_file_path,
+                    e
+                )
+            })?;
 
             self.push_sentence(
                 book_id,
@@ -1019,7 +1095,7 @@ impl LiveStreamManager {
     pub async fn load_saved_sentence(
         &self,
         pool: &sqlx::SqlitePool,
-        _base_dir: &std::path::Path,
+        base_dir: &std::path::Path,
         book_id: &str,
         chapter_index: usize,
         sentence_index: usize,
@@ -1035,9 +1111,21 @@ impl LiveStreamManager {
         .await?
         {
             Some(sentence) => {
-                // Load audio from file instead of database
-                let audio_bytes = std::fs::read(&sentence.audio_file_path)
-                    .map_err(|e| format!("Failed to read checkpoint audio file {}: {}", sentence.audio_file_path, e))?;
+                let audio_path = resolve_checkpoint_audio_path(
+                    base_dir,
+                    book_id,
+                    chapter_index,
+                    sentence.sentence_index,
+                    &sentence.audio_file_path,
+                );
+                let audio_bytes = std::fs::read(&audio_path).map_err(|e| {
+                    format!(
+                        "Failed to read checkpoint audio file {} (stored path: {}): {}",
+                        audio_path.display(),
+                        sentence.audio_file_path,
+                        e
+                    )
+                })?;
                 let playback_duration_seconds = sentence_playback_duration(
                     &audio_bytes,
                     sentence.duration_seconds,
@@ -1065,26 +1153,24 @@ pub fn get_live_stream_manager() -> Arc<LiveStreamManager> {
         .clone()
 }
 
-async fn hydrate_live_stream_from_checkpoint(
+pub(crate) async fn hydrate_live_stream_from_checkpoint(
     app: &tauri::AppHandle,
     book_id: &str,
     chapter_index: usize,
-) {
+) -> Result<(), AppError> {
     let manager = get_live_stream_manager();
     if manager.has_sentences(book_id, chapter_index) {
-        return;
+        return Ok(());
     }
 
     use tauri::Manager;
-    let Ok(app_data_dir) = app.path().app_data_dir() else {
-        return;
-    };
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Store(format!("app_data_dir unavailable: {e}")))?;
+    let db = get_db_connection(app).await.map_err(AppError::Store)?;
 
-    let Ok(db) = get_db_connection(app).await else {
-        return;
-    };
-
-    match manager
+    let restored = manager
         .restore_checkpoint(
             db.as_ref(),
             &app_data_dir,
@@ -1094,25 +1180,16 @@ async fn hydrate_live_stream_from_checkpoint(
             None,
         )
         .await
-    {
-        Ok(restored) if restored > 0 => {
-            log::info!(
-                "Hydrated live stream from checkpoint: book_id={}, chapter_index={}, restored_sentences={}",
-                book_id,
-                chapter_index,
-                restored
-            );
-        }
-        Ok(_) => {}
-        Err(e) => {
-            log::debug!(
-                "No live checkpoint hydration available for book_id={}, chapter_index={}: {}",
-                book_id,
-                chapter_index,
-                e
-            );
-        }
+        .map_err(AppError::Store)?;
+    if restored > 0 {
+        log::info!(
+            "Hydrated live stream from checkpoint: book_id={}, chapter_index={}, restored_sentences={}",
+            book_id,
+            chapter_index,
+            restored
+        );
     }
+    Ok(())
 }
 
 /// Generate a streaming URL for a live (in-progress) chapter conversion
@@ -1170,7 +1247,7 @@ pub async fn get_audio_live_stream_url(
 
     // Ensure paused/resumed sessions can still stream in-progress chapter audio
     // from persisted checkpoints even before conversion restarts.
-    hydrate_live_stream_from_checkpoint(&app, &book_id, chapter_index).await;
+    hydrate_live_stream_from_checkpoint(&app, &book_id, chapter_index).await?;
 
     let port = get_server_port().load(std::sync::atomic::Ordering::Relaxed);
     if port == 0 {
@@ -1200,7 +1277,7 @@ pub async fn get_live_chapter_duration(
     chapter_index: usize,
     app: tauri::AppHandle,
 ) -> Result<f64, AppError> {
-    hydrate_live_stream_from_checkpoint(&app, &book_id, chapter_index).await;
+    hydrate_live_stream_from_checkpoint(&app, &book_id, chapter_index).await?;
     let manager = get_live_stream_manager();
     let duration = manager.duration_seconds(&book_id, chapter_index);
     log::info!(
@@ -1221,7 +1298,7 @@ pub async fn get_live_sync_marker(
     current_time_seconds: f64,
     app: tauri::AppHandle,
 ) -> Result<LiveSyncMarker, AppError> {
-    hydrate_live_stream_from_checkpoint(&app, &book_id, chapter_index).await;
+    hydrate_live_stream_from_checkpoint(&app, &book_id, chapter_index).await?;
     let manager = get_live_stream_manager();
     Ok(manager.resolve_sync_marker(
         &book_id,
@@ -1237,7 +1314,7 @@ pub async fn get_live_segment_manifest(
     chapter_index: usize,
     app: tauri::AppHandle,
 ) -> Result<Vec<LiveSegmentMeta>, AppError> {
-    hydrate_live_stream_from_checkpoint(&app, &book_id, chapter_index).await;
+    hydrate_live_stream_from_checkpoint(&app, &book_id, chapter_index).await?;
     let manager = get_live_stream_manager();
     let manifest = manager.segment_manifest(&book_id, chapter_index);
     log::info!(
@@ -1257,7 +1334,7 @@ pub async fn get_live_segment_bytes(
     sentence_index: usize,
     app: tauri::AppHandle,
 ) -> Result<Vec<u8>, AppError> {
-    hydrate_live_stream_from_checkpoint(&app, &book_id, chapter_index).await;
+    hydrate_live_stream_from_checkpoint(&app, &book_id, chapter_index).await?;
     let manager = get_live_stream_manager();
     Ok(manager
         .sentence_bytes(&book_id, chapter_index, sentence_index)

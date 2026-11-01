@@ -62,6 +62,7 @@ export interface AudioProgressContextType {
   loadLiveAudio: (options: {
     bookId: string;
     chapterIndex: number;
+    expectsMore: boolean;
     title: string;
     artist: string;
     coverUrl?: string | null;
@@ -70,7 +71,11 @@ export interface AudioProgressContextType {
     bookId: string,
     chapterIndex: number
   ) => Promise<{ durationSeconds: number; byteLength: number }>;
-  setExpectsMoreContent: (expectsMore: boolean) => Promise<void>;
+  setExpectsMoreContent: (
+    expectsMore: boolean,
+    bookId: string,
+    chapterIndex: number
+  ) => Promise<void>;
   /** Mark native player load success; WebView stays muted / empty on iOS. */
   markIosNativeReady: (ready: boolean) => void;
   loadAudioTrack: (
@@ -230,6 +235,7 @@ export function AudioProgressProvider({
     async (options: {
       bookId: string;
       chapterIndex: number;
+      expectsMore: boolean;
       title: string;
       artist: string;
       coverUrl?: string | null;
@@ -257,9 +263,16 @@ export function AudioProgressProvider({
     []
   );
 
-  const setExpectsMoreContent = useCallback(async (expectsMore: boolean) => {
-    await engineRef.current?.setExpectsMore?.(expectsMore);
-  }, []);
+  const setExpectsMoreContent = useCallback(
+    async (expectsMore: boolean, bookId: string, chapterIndex: number) => {
+      await engineRef.current?.setExpectsMore?.(
+        expectsMore,
+        bookId,
+        chapterIndex
+      );
+    },
+    []
+  );
 
   const calculateAudioProgress = useCallback((): BookAudioState | null => {
     if (!currentAudioTrack) return null;
@@ -398,7 +411,6 @@ export function AudioProgressProvider({
           );
         } else if (event.type === "timeUpdate") {
           nativeTimeRef.current = event.time;
-          setPlayingState(true);
           window.dispatchEvent(
             new CustomEvent("aurora-native-ui", {
               detail: { type: "timeUpdate", time: event.time },
@@ -1117,7 +1129,15 @@ export function AudioProgressProvider({
 
       if (isIosRef.current) {
         await pauseAudio().catch(() => undefined);
-        await engineRef.current?.setExpectsMore?.(false).catch(() => undefined);
+        if (currentAudioTrack?.isLiveStream) {
+          const chapterIndex =
+            typeof currentAudioTrack.liveChapterIndex === "number"
+              ? currentAudioTrack.liveChapterIndex
+              : currentAudioTrack.order;
+          await engineRef.current
+            ?.setExpectsMore?.(false, book.id, chapterIndex)
+            .catch(() => undefined);
+        }
       }
 
       // Stop WebView playback (desktop) / clear visual element (iOS)
