@@ -21,12 +21,12 @@ path = "src/bin/gen_voice_samples.rs"
 required-features = ["gen-voice-samples"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.7.4", features = [] }
 cc = "1.0"
 
 [dependencies]
 # Tauri
-tauri = { version = "2", features = [] }
+tauri = { version = "2.12.5", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-opener = "2"
@@ -105,8 +105,8 @@ ort = { version = "2.0.0-rc.12", features = ["directml"] }
 
 # iOS defaults to the prebuilt CoreML runtime + CPU fallback. Enable the
 # `ios-webgpu` Cargo feature to use local static ONNX Runtime WebGPU libraries.
-# waterkit-background: BGContinuedProcessingTaskRequest (iOS 26+) via Swift bridge.
 [target.'cfg(target_os = "ios")'.dependencies]
+waterkit-background = { path = "../patches/waterkit-background" }
 ort = { version = "2.0.0-rc.12", default-features = false, features = [
   "std",
   "ndarray",
@@ -114,12 +114,6 @@ ort = { version = "2.0.0-rc.12", default-features = false, features = [
   "coreml",
   "download-binaries",
 ] }
-waterkit-background = { path = "../patches/waterkit-background" }
-
-
-
-
-
 [profile.release]
 opt-level = 3
 lto = "thin"

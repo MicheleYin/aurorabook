@@ -27,6 +27,7 @@ export type LoadTrackOptions = {
 export type LoadLiveOptions = {
   bookId: string;
   chapterIndex: number;
+  expectsMore: boolean;
   title: string;
   artist: string;
   coverUrl?: string | null;
@@ -45,7 +46,11 @@ export interface PlaybackEngine {
     bookId: string,
     chapterIndex: number
   ): Promise<LiveStatus>;
-  setExpectsMore?(expectsMore: boolean): Promise<void>;
+  setExpectsMore?(
+    expectsMore: boolean,
+    bookId: string,
+    chapterIndex: number
+  ): Promise<void>;
   play(): Promise<void>;
   pause(): Promise<void>;
   seek(seconds: number): Promise<void>;

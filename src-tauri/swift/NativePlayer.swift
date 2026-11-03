@@ -49,9 +49,11 @@ private final class AuroraPlayer: NSObject {
     private var lastEmittedPlaying: Bool?
 
     private var loadedFilePath: String = ""
+    private var activeLoadRequestID: UInt64 = 0
     private var expectsMoreContent = false
     private var waitingForMoreContent = false
     private var wantsPlaying = false
+    private var lastEmittedPlaybackTime = 0.0
     /// Desired playback speed; applied on play, never treated as play intent.
     private var preferredRate: Float = 1.0
     private var pendingSeekSeconds: Double? = nil
@@ -220,9 +222,13 @@ private final class AuroraPlayer: NSObject {
         artist: String,
         duration: Double,
         expectsMore: Bool,
-        coverPath: String
+        coverPath: String,
+        requestID: UInt64
     ) {
-        tearDownObservers()
+        guard requestID >= activeLoadRequestID else { return }
+        activeLoadRequestID = requestID
+        tearDownItemObservers()
+        player?.pause()
 
         loadedFilePath = filePath
         metaTitle = title
@@ -248,17 +254,19 @@ private final class AuroraPlayer: NSObject {
     }
 
     /// Called when Rust has appended more bytes to the same live file.
-    func notifyFileExtended(duration: Double) {
+    func notifyFileExtended(filePath: String, requestID: UInt64, duration: Double) {
+        guard requestID == activeLoadRequestID, filePath == loadedFilePath else { return }
+
         let previousDuration = metaDuration
         metaDuration = max(metaDuration, duration)
         rustPlayerCallback(eventType: 8, value: metaDuration)
         updateNowPlaying(elapsed: currentTime())
 
-        let shouldResume =
-            waitingForMoreContent
-            || (wantsPlaying && currentTime() >= max(0, previousDuration - 0.35))
+        let reachedPreviousEnd = currentTime() >= max(0, previousDuration - 0.35)
+        let shouldReload =
+            waitingForMoreContent || !wantsPlaying || reachedPreviousEnd
 
-        if shouldResume, metaDuration > previousDuration + 0.05 {
+        if shouldReload, metaDuration > previousDuration + 0.05 {
             let resumeAt = min(currentTime(), max(0, previousDuration - 0.05))
             waitingForMoreContent = false
             replaceItem(preservingTime: resumeAt, andPlay: wantsPlaying)
@@ -267,7 +275,13 @@ private final class AuroraPlayer: NSObject {
         }
     }
 
-    func setExpectsMoreContent(_ expectsMore: Bool) {
+    func setExpectsMoreContent(
+        _ expectsMore: Bool,
+        filePath: String,
+        requestID: UInt64
+    ) {
+        guard requestID == activeLoadRequestID, filePath == loadedFilePath else { return }
+
         expectsMoreContent = expectsMore
         if !expectsMore, waitingForMoreContent {
             // Conversion finished while we were waiting at EOF → treat as true end.
@@ -284,6 +298,8 @@ private final class AuroraPlayer: NSObject {
         let attrs = try? FileManager.default.attributesOfItem(atPath: loadedFilePath)
         let fileSize = (attrs?[.size] as? NSNumber)?.intValue ?? 0
         if fileSize <= 0 {
+            player?.pause()
+            player?.replaceCurrentItem(with: nil)
             NSLog("[AuroraPlayer] skip load — empty file %@", loadedFilePath)
             return
         }
@@ -302,6 +318,7 @@ private final class AuroraPlayer: NSObject {
         }
 
         wantsPlaying = andPlay
+        lastEmittedPlaybackTime = seconds
         if seconds > 0.05 {
             pendingSeekSeconds = seconds
         } else {
@@ -333,6 +350,7 @@ private final class AuroraPlayer: NSObject {
 
     func seek(to seconds: Double) {
         let clamped = max(0, seconds)
+        lastEmittedPlaybackTime = clamped
         pendingSeekSeconds = clamped
         waitingForMoreContent = false
         if player?.currentItem?.status == .readyToPlay {
@@ -450,9 +468,13 @@ private final class AuroraPlayer: NSObject {
         let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
         timeObserver = player?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             guard let self else { return }
-            guard self.player?.timeControlStatus == .playing else { return }
             let seconds = time.seconds
             guard seconds.isFinite else { return }
+            let isPlaying = self.player?.timeControlStatus == .playing
+            let hasAdvanced = seconds > self.lastEmittedPlaybackTime + 0.05
+            guard isPlaying || hasAdvanced else { return }
+            guard abs(seconds - self.lastEmittedPlaybackTime) > 0.05 else { return }
+            self.lastEmittedPlaybackTime = seconds
             rustPlayerCallback(eventType: 6, value: seconds)
         }
 
@@ -463,11 +485,20 @@ private final class AuroraPlayer: NSObject {
         ) { [weak self] _ in
             guard let self else { return }
             if self.expectsMoreContent {
-                self.waitingForMoreContent = self.wantsPlaying
-                self.player?.pause()
-                self.updateNowPlaying(elapsed: self.currentTime())
-                // Keep wantsPlaying true so file-extension resume continues.
-                // Pause UI event comes from timeControlStatus observer.
+                let elapsed = self.currentTime()
+                if self.wantsPlaying, self.metaDuration > elapsed + 0.05 {
+                    self.waitingForMoreContent = false
+                    self.replaceItem(
+                        preservingTime: max(0, elapsed - 0.05),
+                        andPlay: true
+                    )
+                } else {
+                    self.waitingForMoreContent = self.wantsPlaying
+                    self.player?.pause()
+                    self.updateNowPlaying(elapsed: elapsed)
+                    // Keep wantsPlaying true so file-extension resume continues.
+                    // Pause UI event comes from timeControlStatus observer.
+                }
             } else {
                 self.wantsPlaying = false
                 self.waitingForMoreContent = false
@@ -508,13 +539,6 @@ private final class AuroraPlayer: NSObject {
         }
     }
 
-    private func tearDownObservers() {
-        tearDownItemObservers()
-        timeControlObserver?.invalidate()
-        timeControlObserver = nil
-        lastEmittedPlaying = nil
-    }
-
     // MARK: — Now Playing
 
     private func updateNowPlaying(elapsed: Double) {
@@ -549,7 +573,8 @@ public func auroraPlayerLoad(
     artist: UnsafePointer<CChar>,
     duration: Double,
     expectsMore: Bool,
-    coverPath: UnsafePointer<CChar>
+    coverPath: UnsafePointer<CChar>,
+    requestID: UInt64
 ) {
     let fp = String(cString: filePath)
     let t = String(cString: title)
@@ -564,7 +589,8 @@ public func auroraPlayerLoad(
             artist: a,
             duration: duration,
             expectsMore: expectsMore,
-            coverPath: cover
+            coverPath: cover,
+            requestID: requestID
         )
     }
     if Thread.isMainThread {
@@ -575,9 +601,18 @@ public func auroraPlayerLoad(
 }
 
 @_cdecl("aurora_player_notify_file_extended")
-public func auroraPlayerNotifyFileExtended(duration: Double) {
+public func auroraPlayerNotifyFileExtended(
+    filePath: UnsafePointer<CChar>,
+    requestID: UInt64,
+    duration: Double
+) {
+    let path = String(cString: filePath)
     let work = {
-        AuroraPlayer.shared.notifyFileExtended(duration: duration)
+        AuroraPlayer.shared.notifyFileExtended(
+            filePath: path,
+            requestID: requestID,
+            duration: duration
+        )
     }
     if Thread.isMainThread {
         work()
@@ -587,9 +622,18 @@ public func auroraPlayerNotifyFileExtended(duration: Double) {
 }
 
 @_cdecl("aurora_player_set_expects_more")
-public func auroraPlayerSetExpectsMore(_ expectsMore: Bool) {
+public func auroraPlayerSetExpectsMore(
+    _ expectsMore: Bool,
+    filePath: UnsafePointer<CChar>,
+    requestID: UInt64
+) {
+    let path = String(cString: filePath)
     let work = {
-        AuroraPlayer.shared.setExpectsMoreContent(expectsMore)
+        AuroraPlayer.shared.setExpectsMoreContent(
+            expectsMore,
+            filePath: path,
+            requestID: requestID
+        )
     }
     if Thread.isMainThread {
         work()

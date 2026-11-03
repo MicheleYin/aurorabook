@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Emitter, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 #[cfg(target_os = "ios")]
 extern "C" {
@@ -94,43 +94,28 @@ pub fn save_window_state(window: &WebviewWindow, app: &AppHandle) {
     }
 }
 
-/// Create and configure the main window with state restoration
-pub fn create_main_window(app: &tauri::App) -> Result<WebviewWindow, String> {
-    // Load saved window state
-    let window_state = load_window_state(app.handle());
-    
-    // Create the main window programmatically
-    let mut win_builder = tauri::WebviewWindowBuilder::new(
-        app,
-        "main",
-        tauri::WebviewUrl::default()
-    );
-    
-    // Configure window properties only on non-iOS platforms
-    // iOS has limited window API support
+/// Configure the main window created from Tauri's app configuration.
+pub fn configure_main_window(app: &tauri::App) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window was not created from Tauri configuration".to_string())?;
+
     #[cfg(not(target_os = "ios"))]
     {
-        win_builder = win_builder
-            .title("AuroraBook")
-            .inner_size(window_state.size.0, window_state.size.1)
-            .min_inner_size(300.0, 300.0);
+        let window_state = load_window_state(app.handle());
+        window
+            .set_size(tauri::LogicalSize::new(
+                window_state.size.0,
+                window_state.size.1,
+            ))
+            .map_err(|e| format!("Failed to restore main window size: {e}"))?;
     }
 
-    // macOS: content draws under the unified title bar (matches iOS edge-to-edge feel).
     #[cfg(target_os = "macos")]
     {
-        win_builder = win_builder.title_bar_style(tauri::TitleBarStyle::Transparent);
-    }
-
-    let window = win_builder.build().map_err(|e| {
-        format!("Failed to create window: {}", e)
-    })?;
-
-    // Restore window state only on non-iOS platforms
-    #[cfg(not(target_os = "ios"))]
-    {
-       
-       
+        window
+            .set_title_bar_style(tauri::TitleBarStyle::Transparent)
+            .map_err(|e| format!("Failed to set macOS title bar style: {e}"))?;
     }
 
     // Set background color only when building for macOS
@@ -177,6 +162,6 @@ pub fn create_main_window(app: &tauri::App) -> Result<WebviewWindow, String> {
         }
     });
 
-    Ok(window)
+    Ok(())
 }
 

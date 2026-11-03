@@ -1,12 +1,12 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { toast } from "sonner";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AppProvider, useAppContext } from "./AppContext";
-import { SettingsProvider } from "./SettingsContext";
 import type { Book } from "../types/book";
 import { invoke } from "../test/tauri-mocks";
+import { AppProvider, useAppContext } from "./AppContext";
+import { SettingsProvider } from "./SettingsContext";
 
 function createBook(overrides: Partial<Book> = {}): Book {
   return {
@@ -47,6 +47,7 @@ const deps = {
   })),
   loadLastOpenedAudioTrack: vi.fn(),
   loadAudioTrack: vi.fn(async () => undefined),
+  closeAudioPlayer: vi.fn(async () => undefined),
   calculateAudioProgress: vi.fn(() => ({
     currentTrackId: "t1",
     currentTrackHref: "ch1.xhtml",
@@ -140,11 +141,26 @@ describe("AppProvider", () => {
     expect(deps.loadLastOpenedAudioTrack).toHaveBeenCalledWith(first, false);
 
     await act(async () => {
+      await result.current.setCurrentBookWithLoading(first, false);
+    });
+    expect(deps.closeAudioPlayer).not.toHaveBeenCalled();
+
+    await act(async () => {
       await result.current.setCurrentBookWithLoading(second, true);
     });
 
     expect(deps.saveAudioProgress).toHaveBeenCalledWith(first);
-    expect(deps.loadLastOpenedAudioTrack).toHaveBeenCalledWith(second, true);
+    expect(deps.closeAudioPlayer).toHaveBeenCalledTimes(1);
+    expect(deps.closeAudioPlayer).toHaveBeenCalledWith(first, {
+      skipSave: true,
+    });
+    expect(deps.loadLastOpenedAudioTrack).toHaveBeenLastCalledWith(
+      second,
+      true
+    );
+    expect(deps.closeAudioPlayer.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.loadLastOpenedAudioTrack.mock.invocationCallOrder.at(-1)!
+    );
     expect(result.current.currentBook?.id).toBe("book-2");
   });
 

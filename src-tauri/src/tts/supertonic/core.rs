@@ -1040,42 +1040,44 @@ pub fn load_text_to_speech(onnx_dir: impl AsRef<Path>, use_gpu: bool) -> Result<
                 .map_err(|e| anyhow!("ORT failed to load model '{}': {e}", path.display()));
         }
 
-        let builder =
-            Session::builder().map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
-        // Windows ARM64: prefer DirectML; fall back to CPU when no DML device
-        // (e.g. VM, missing DirectML.dll, or driver filter mismatch).
-        #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-        let mut builder = builder
-            .with_execution_providers([
-                ep::DirectML::default().build(),
-                ep::CPU::default().build(),
-            ])
-            .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
-        // macOS + Windows x86_64: prefer WebGPU; fall back to CPU when GPU EP unavailable.
-        #[cfg(any(
-            target_os = "macos",
-            all(target_os = "windows", target_arch = "x86_64")
-        ))]
-        let mut builder = builder
-            .with_execution_providers([
-                ep::WebGPU::default().build(),
-                ep::CPU::default().build(),
-            ])
-            .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
-        // Other desktop targets (e.g. Linux): CPU until an EP is wired.
-        #[cfg(all(
-            not(target_os = "ios"),
-            not(target_os = "macos"),
-            not(all(target_os = "windows", target_arch = "x86_64")),
-            not(all(target_os = "windows", target_arch = "aarch64"))
-        ))]
-        let mut builder = builder
-            .with_execution_providers([ep::CPU::default().build()])
-            .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
-        let session = builder
-            .commit_from_file(path)
-            .map_err(|e| anyhow!("ORT failed to load model '{}': {e}", path.display()))?;
-        Ok(session)
+        #[cfg(not(target_os = "ios"))]
+        {
+            let builder =
+                Session::builder().map_err(|e| anyhow!("ORT session builder init failed: {e}"))?;
+            // Windows ARM64: prefer DirectML; fall back to CPU when no DML device
+            // (e.g. VM, missing DirectML.dll, or driver filter mismatch).
+            #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+            let mut builder = builder
+                .with_execution_providers([
+                    ep::DirectML::default().build(),
+                    ep::CPU::default().build(),
+                ])
+                .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
+            // macOS + Windows x86_64: prefer WebGPU; fall back to CPU when GPU EP unavailable.
+            #[cfg(any(
+                target_os = "macos",
+                all(target_os = "windows", target_arch = "x86_64")
+            ))]
+            let mut builder = builder
+                .with_execution_providers([
+                    ep::WebGPU::default().build(),
+                    ep::CPU::default().build(),
+                ])
+                .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
+            // Other desktop targets (e.g. Linux): CPU until an EP is wired.
+            #[cfg(all(
+                not(target_os = "macos"),
+                not(all(target_os = "windows", target_arch = "x86_64")),
+                not(all(target_os = "windows", target_arch = "aarch64"))
+            ))]
+            let mut builder = builder
+                .with_execution_providers([ep::CPU::default().build()])
+                .map_err(|e| anyhow!("ORT execution provider setup failed: {e}"))?;
+            let session = builder
+                .commit_from_file(path)
+                .map_err(|e| anyhow!("ORT failed to load model '{}': {e}", path.display()))?;
+            Ok(session)
+        }
     };
 
     let dp_ort = build_session(&dp_path)?;

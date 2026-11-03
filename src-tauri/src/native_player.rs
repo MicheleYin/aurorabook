@@ -17,18 +17,25 @@
 
 #![cfg_attr(not(target_os = "ios"), allow(dead_code, unused_variables))]
 
+use std::collections::HashMap;
 use std::ffi::CString;
-use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::io::AsyncWriteExt;
 
 use crate::utils::errors::{AppError, AppResult};
 
 // ─── Global AppHandle (set once at init) ─────────────────────────────────────
 
 static PLAYER_APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+static PLAYER_LOAD_REQUEST_ID: AtomicU64 = AtomicU64::new(0);
+static LIVE_PLAYER_FILE_SYNC_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+static LIVE_PLAYER_FILE_REVISIONS: OnceLock<Mutex<HashMap<PathBuf, (u64, usize)>>> =
+    OnceLock::new();
 
 // ─── Swift FFI declarations ───────────────────────────────────────────────────
 
@@ -41,9 +48,18 @@ extern "C" {
         duration: f64,
         expects_more: bool,
         cover_path: *const std::ffi::c_char,
+        request_id: u64,
     );
-    fn aurora_player_notify_file_extended(duration: f64);
-    fn aurora_player_set_expects_more(expects_more: bool);
+    fn aurora_player_notify_file_extended(
+        file_path: *const std::ffi::c_char,
+        request_id: u64,
+        duration: f64,
+    );
+    fn aurora_player_set_expects_more(
+        expects_more: bool,
+        file_path: *const std::ffi::c_char,
+        request_id: u64,
+    );
     fn aurora_player_play();
     fn aurora_player_pause();
     fn aurora_player_seek(seconds: f64);
@@ -107,6 +123,10 @@ fn player_cache_dir(app: &AppHandle) -> AppResult<PathBuf> {
     Ok(cache_dir)
 }
 
+fn track_cache_file_name(book_id: &str, track_id: &str, ext: &str) -> String {
+    format!("{book_id}-{track_id}.{ext}")
+}
+
 /// Resolve audio bytes and write them to a stable cache path on disk.
 /// Returns the path — AVPlayer requires a `file://` URL, not SQLite bytes.
 #[cfg(target_os = "ios")]
@@ -138,7 +158,7 @@ async fn cache_track_file(
         .and_then(|e| e.to_str())
         .unwrap_or("mp3");
 
-    let file_path = cache_dir.join(format!("{track_id}.{ext}"));
+    let file_path = cache_dir.join(track_cache_file_name(book_id, track_id, ext));
 
     // Skip the write if an identically-sized file already exists.
     if let Ok(meta) = tokio::fs::metadata(&file_path).await {
@@ -209,9 +229,13 @@ async fn sync_live_file_to_disk(
 ) -> AppResult<(PathBuf, f64, usize)> {
     use crate::book_service::audio_stream::get_live_stream_manager;
 
+    let _sync_guard = LIVE_PLAYER_FILE_SYNC_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+
     let manager = get_live_stream_manager();
-    let bytes = manager.snapshot_mp3(book_id, chapter_index);
-    let duration = manager.duration_seconds(book_id, chapter_index);
+    let (revision, byte_len, duration) = manager.snapshot_status(book_id, chapter_index);
     let path = live_file_path(app, book_id, chapter_index)?;
 
     if let Some(parent) = path.parent() {
@@ -220,13 +244,86 @@ async fn sync_live_file_to_disk(
             .map_err(|e| AppError::Store(format!("Failed to create live player cache dir: {e}")))?;
     }
 
+    let synced_revisions = LIVE_PLAYER_FILE_REVISIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    let is_already_synced = synced_revisions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&path)
+        .is_some_and(|synced| *synced == (revision, byte_len));
+    if is_already_synced
+        && tokio::fs::metadata(&path)
+            .await
+            .is_ok_and(|metadata| metadata.len() == byte_len as u64)
+    {
+        return Ok((path, duration, byte_len));
+    }
+
+    let (revision, bytes, duration) = manager.snapshot_mp3_with_revision(book_id, chapter_index);
     let byte_len = bytes.len();
-    // Always rewrite so AVPlayer reloads see a coherent contiguous prefix.
-    tokio::fs::write(&path, &bytes)
-        .await
-        .map_err(|e| AppError::Store(format!("Failed to write live audio cache file: {e}")))?;
+    write_live_player_snapshot(&path, &bytes).await?;
+    synced_revisions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(path.clone(), (revision, byte_len));
 
     Ok((path, duration, byte_len))
+}
+
+async fn write_live_player_snapshot(path: &Path, bytes: &[u8]) -> AppResult<()> {
+    let existing = match tokio::fs::read(path).await {
+        Ok(existing) => Some(existing),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(AppError::Store(format!(
+                "Failed to read live audio cache file: {error}"
+            )));
+        }
+    };
+
+    if existing.as_deref() == Some(bytes) {
+        return Ok(());
+    }
+
+    if let Some(existing) = existing.filter(|current| bytes.starts_with(current)) {
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .await
+            .map_err(|e| AppError::Store(format!("Failed to append live audio cache: {e}")))?;
+        file.write_all(&bytes[existing.len()..])
+            .await
+            .map_err(|e| AppError::Store(format!("Failed to append live audio cache: {e}")))?;
+        file.flush()
+            .await
+            .map_err(|e| AppError::Store(format!("Failed to flush live audio cache: {e}")))?;
+        return Ok(());
+    }
+
+    let temporary_path = path.with_extension("mp3.tmp");
+    tokio::fs::write(&temporary_path, bytes)
+        .await
+        .map_err(|e| AppError::Store(format!("Failed to write temporary live audio: {e}")))?;
+
+    #[cfg(not(unix))]
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            let _ = tokio::fs::remove_file(&temporary_path).await;
+            return Err(AppError::Store(format!(
+                "Failed to replace live audio cache file: {error}"
+            )));
+        }
+    }
+
+    if let Err(error) = tokio::fs::rename(&temporary_path, path).await {
+        let _ = tokio::fs::remove_file(&temporary_path).await;
+        return Err(AppError::Store(format!(
+            "Failed to replace live audio cache file: {error}"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "ios")]
@@ -237,6 +334,7 @@ fn call_aurora_player_load(
     duration: f64,
     expects_more: bool,
     cover_path: &str,
+    request_id: u64,
 ) -> AppResult<()> {
     let c_path = CString::new(path.as_bytes())
         .map_err(|e| AppError::Store(format!("Invalid path string: {e}")))?;
@@ -256,7 +354,36 @@ fn call_aurora_player_load(
             duration,
             expects_more,
             c_cover.as_ptr(),
+            request_id,
         );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "ios")]
+fn call_aurora_player_notify_file_extended(
+    file_path: &str,
+    request_id: u64,
+    duration: f64,
+) -> AppResult<()> {
+    let c_path = CString::new(file_path.as_bytes())
+        .map_err(|e| AppError::Store(format!("Invalid path string: {e}")))?;
+    unsafe {
+        aurora_player_notify_file_extended(c_path.as_ptr(), request_id, duration);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "ios")]
+fn call_aurora_player_set_expects_more(
+    expects_more: bool,
+    file_path: &str,
+    request_id: u64,
+) -> AppResult<()> {
+    let c_path = CString::new(file_path.as_bytes())
+        .map_err(|e| AppError::Store(format!("Invalid path string: {e}")))?;
+    unsafe {
+        aurora_player_set_expects_more(expects_more, c_path.as_ptr(), request_id);
     }
     Ok(())
 }
@@ -266,6 +393,8 @@ fn call_aurora_player_load(
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IosPlayerLoadOptions {
+    #[serde(default)]
+    pub request_id: u64,
     pub book_id: String,
     pub track_id: String,
     pub title: Option<String>,
@@ -277,8 +406,11 @@ pub struct IosPlayerLoadOptions {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IosPlayerLoadLiveOptions {
+    #[serde(default)]
+    pub request_id: u64,
     pub book_id: String,
     pub chapter_index: usize,
+    pub expects_more: bool,
     pub title: Option<String>,
     pub artist: Option<String>,
     pub cover_url: Option<String>,
@@ -294,9 +426,13 @@ pub struct IosLivePlayerStatus {
 /// Cache audio to disk and hand it to AVPlayer (iOS only; no-op on other platforms).
 #[tauri::command]
 pub async fn ios_player_load(options: IosPlayerLoadOptions, app: AppHandle) -> AppResult<()> {
+    PLAYER_LOAD_REQUEST_ID.fetch_max(options.request_id, Ordering::SeqCst);
     #[cfg(target_os = "ios")]
     {
         let file_path = cache_track_file(&app, &options.book_id, &options.track_id).await?;
+        if PLAYER_LOAD_REQUEST_ID.load(Ordering::SeqCst) != options.request_id {
+            return Ok(());
+        }
         let cover_path = if let Some(ref cover) = options.cover_url {
             cache_cover_file(&app, &options.book_id, cover)
                 .await
@@ -305,6 +441,9 @@ pub async fn ios_player_load(options: IosPlayerLoadOptions, app: AppHandle) -> A
         } else {
             String::new()
         };
+        if PLAYER_LOAD_REQUEST_ID.load(Ordering::SeqCst) != options.request_id {
+            return Ok(());
+        }
         let path_str = file_path.to_string_lossy();
         call_aurora_player_load(
             path_str.as_ref(),
@@ -313,6 +452,7 @@ pub async fn ios_player_load(options: IosPlayerLoadOptions, app: AppHandle) -> A
             options.duration.unwrap_or(0.0),
             false,
             &cover_path,
+            options.request_id,
         )?;
     }
 
@@ -324,17 +464,30 @@ pub async fn ios_player_load(options: IosPlayerLoadOptions, app: AppHandle) -> A
     Ok(())
 }
 
-/// Sync live chapter MP3 to disk and load it into AVPlayer (expects more content).
+/// Restore and sync a live chapter snapshot, then load it into AVPlayer.
 #[tauri::command]
 pub async fn ios_player_load_live(
     options: IosPlayerLoadLiveOptions,
     app: AppHandle,
 ) -> AppResult<IosLivePlayerStatus> {
+    PLAYER_LOAD_REQUEST_ID.fetch_max(options.request_id, Ordering::SeqCst);
+    crate::book_service::audio_stream::hydrate_live_stream_from_checkpoint(
+        &app,
+        &options.book_id,
+        options.chapter_index,
+    )
+    .await?;
     let (file_path, duration, byte_len) =
         sync_live_file_to_disk(&app, &options.book_id, options.chapter_index).await?;
 
     #[cfg(target_os = "ios")]
     {
+        if PLAYER_LOAD_REQUEST_ID.load(Ordering::SeqCst) != options.request_id {
+            return Ok(IosLivePlayerStatus {
+                duration_seconds: duration,
+                byte_length: byte_len,
+            });
+        }
         let cover_path = if let Some(ref cover) = options.cover_url {
             cache_cover_file(&app, &options.book_id, cover)
                 .await
@@ -343,14 +496,21 @@ pub async fn ios_player_load_live(
         } else {
             String::new()
         };
+        if PLAYER_LOAD_REQUEST_ID.load(Ordering::SeqCst) != options.request_id {
+            return Ok(IosLivePlayerStatus {
+                duration_seconds: duration,
+                byte_length: byte_len,
+            });
+        }
         let path_str = file_path.to_string_lossy();
         call_aurora_player_load(
             path_str.as_ref(),
             options.title.as_deref().unwrap_or(""),
             options.artist.as_deref().unwrap_or(""),
             duration,
-            true,
+            options.expects_more,
             &cover_path,
+            options.request_id,
         )?;
     }
 
@@ -365,20 +525,21 @@ pub async fn ios_player_load_live(
     })
 }
 
-/// Rewrite the live file from the latest contiguous snapshot and notify AVPlayer.
+/// Sync the latest live snapshot and notify AVPlayer if this load is still active.
 #[tauri::command(rename_all = "camelCase")]
 pub async fn ios_player_refresh_live(
     book_id: String,
     chapter_index: usize,
+    request_id: u64,
     app: AppHandle,
 ) -> AppResult<IosLivePlayerStatus> {
-    let (_path, duration, byte_len) =
+    let (path, duration, byte_len) =
         sync_live_file_to_disk(&app, &book_id, chapter_index).await?;
 
     #[cfg(target_os = "ios")]
-    // SAFETY: plain f64 FFI into Swift.
-    unsafe {
-        aurora_player_notify_file_extended(duration);
+    if PLAYER_LOAD_REQUEST_ID.load(Ordering::SeqCst) == request_id {
+        let path_str = path.to_string_lossy();
+        call_aurora_player_notify_file_extended(&path_str, request_id, duration)?;
     }
 
     Ok(IosLivePlayerStatus {
@@ -389,14 +550,23 @@ pub async fn ios_player_refresh_live(
 
 /// Mark whether the current item is still growing (live) or finished.
 #[tauri::command(rename_all = "camelCase")]
-pub async fn ios_player_set_expects_more(expects_more: bool) -> AppResult<()> {
+pub async fn ios_player_set_expects_more(
+    expects_more: bool,
+    book_id: String,
+    chapter_index: usize,
+    request_id: u64,
+    app: AppHandle,
+) -> AppResult<()> {
     #[cfg(target_os = "ios")]
-    // SAFETY: plain bool FFI into Swift.
-    unsafe {
-        aurora_player_set_expects_more(expects_more);
+    if PLAYER_LOAD_REQUEST_ID.load(Ordering::SeqCst) == request_id {
+        call_aurora_player_set_expects_more(
+            expects_more,
+            &live_file_path(&app, &book_id, chapter_index)?.to_string_lossy(),
+            request_id,
+        )?;
     }
     #[cfg(not(target_os = "ios"))]
-    let _ = expects_more;
+    let _ = (expects_more, book_id, chapter_index, request_id, app);
     Ok(())
 }
 
@@ -510,15 +680,49 @@ mod tests {
         assert_eq!(native_player_event_payload(255, 1.0), None);
     }
 
+    #[test]
+    fn track_cache_file_name_is_scoped_to_book() {
+        assert_ne!(
+            track_cache_file_name("book-a", "track-1", "mp3"),
+            track_cache_file_name("book-b", "track-1", "mp3")
+        );
+    }
+
     #[tokio::test]
     async fn non_ios_player_commands_are_safe_noops() {
         assert!(ios_player_play().await.is_ok());
         assert!(ios_player_pause().await.is_ok());
         assert!(ios_player_seek(1.5).await.is_ok());
         assert!(ios_player_set_rate(1.25).await.is_ok());
-        assert!(ios_player_set_expects_more(true).await.is_ok());
         assert_eq!(ios_player_current_time().await.unwrap(), 0.0);
         assert!(!ios_player_is_playing().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn live_player_snapshot_appends_growth_without_rewriting_prefix() {
+        let unique_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "aurora-live-player-{}-{unique_id}.mp3",
+            std::process::id()
+        ));
+
+        write_live_player_snapshot(&path, b"first").await.unwrap();
+        write_live_player_snapshot(&path, b"firstsecond")
+            .await
+            .unwrap();
+        write_live_player_snapshot(&path, b"firstsecond")
+            .await
+            .unwrap();
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"firstsecond");
+
+        write_live_player_snapshot(&path, b"replacement")
+            .await
+            .unwrap();
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"replacement");
+        tokio::fs::remove_file(path).await.unwrap();
     }
 
     #[test]
@@ -543,6 +747,7 @@ mod tests {
         let options: IosPlayerLoadLiveOptions = serde_json::from_value(json!({
             "bookId": "b1",
             "chapterIndex": 3,
+            "expectsMore": true,
             "title": "Chapter 4",
             "artist": "Author"
         }))
